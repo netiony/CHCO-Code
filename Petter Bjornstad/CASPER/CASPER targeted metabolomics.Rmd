@@ -1,0 +1,353 @@
+---
+title: "CASPER targeted metabolomics"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+
+# questions of interest for metabolomics:
+# group comparisons
+#	metabolomics - GIR
+#	metabolomics - body composition data 
+#	metabolomics - renal measures (GFR, RPF, ACR, renal O2)
+
+
+library(knitr)
+
+knitr::opts_chunk$set(echo = FALSE,cache = FALSE)
+knitr::opts_knit$set(root.dir = "E:\\Petter Bjornstad\\Metabolomics")
+
+setwd("E:\\Petter Bjornstad\\Metabolomics")
+
+library(readxl)
+library(NormalizeMets)
+library(pca3d)
+library(pcaMethods)
+library(ggplot2)
+library(rgl)
+library(stringr)
+library(data.table)
+library(dplyr)
+library(mixOmics)
+library(Hmisc)
+library("FactoMineR")
+library("factoextra")
+library(tableone)
+library(reshape2)
+library(corrplot)
+library(sas7bdat)
+library(psych)
+library("ggpubr")
+library("dplyr")
+library("FSA")
+library("gplots")
+library("RColorBrewer")
+library("Hmisc")
+
+source("C:\\Users\\pylell\\Documents\\GitHub\\General-code\\foldchange.r")
+source("C:\\Users\\pylell\\Documents\\GitHub\\General-code\\editcolnames.r")
+
+# read in Petter's SAS dataset
+alldata <- read.sas7bdat("E:\\Petter Bjornstad\\Metabolomics\\Raw data\\casperheir_for_laura.sas7bdat")
+
+# read in NG data - those variables are included in the original dataset, but we want to analyze
+# them separately
+ng_serum <- read.csv("E:\\Petter Bjornstad\\Metabolomics\\Raw data\\NG serum.csv")
+names_ng_serum <- colnames(ng_serum)
+ng_urine <- read.csv("E:\\Petter Bjornstad\\Metabolomics\\Raw data\\NG urine.csv")
+names_ng_urine <- colnames(ng_urine)
+names_ng <- unique(c(names_ng_serum,names_ng_urine))
+names_ng <- names_ng[names_ng != "ID"]
+
+# find variables in alldata that are also in NG
+col_alldata <- colnames(alldata)
+dups <- col_alldata[col_alldata %in% names_ng]
+# take dups out of alldata
+alldata <- alldata[,!(colnames(alldata) %in% dups)]
+
+# remove two patients who dropped out and one who could not complete study
+alldata <- alldata[!(alldata$ID %in% c("CS-18","CS-45","CS-27")),]
+
+npart <- length(unique(alldata$ID))
+
+targeted <- c("Ala3","Arg3","CSSC3","Glu3","Gln3","His3","Ile3","Leu3","Lys3","Met3","Phe3",
+              "Pro3","Ser3","Thr3","Tyr3","Val3","Citrate3","aKG3","succinate3","Fumarate3",
+              "Malate3")
+nonnorm <- c("Ala3","Ser3")
+
+tab_targeted_group <- CreateTableOne(vars=targeted, data=alldata, strata = "group", test=TRUE)
+tab_targeted_group <- print(tab_targeted_group,varLabels=FALSE)
+
+# add FDR corrected p-values
+# need to do individal t-tests so I get the actual p-values
+p_raw <- NULL
+for (i in 1:length(targeted)) {
+  temp <- t.test(alldata[alldata$group==1,paste0(targeted[i])],alldata[alldata$group==4,paste0(targeted[i])],data=alldata,var.equal = T)$p.value
+  p_raw <- c(p_raw,temp)
+}
+p_adj <- round(p.adjust(p_raw),3)
+p_adj[p_adj<0.001] <- "<0.001"
+p_adj <- c("",p_adj)
+tab_targeted_group <- cbind(tab_targeted_group,as.matrix(p_adj))
+colnames(tab_targeted_group) <- c("1","4","p","test","adj-p")
+
+# create df for NormalizeMets
+metabolite <- as.data.frame(targeted)
+row.names(metabolite) <- metabolite$targeted
+
+# featuredata has compound IDs as colnames and sample IDs as rownames
+featuredata <- cbind(alldata$ID,alldata[,targeted])
+row.names(featuredata) <- featuredata$`alldata$ID`
+featuredata$`alldata$ID` <- NULL
+
+sampledata <- alldata[,!(colnames(alldata) %in% targeted)]
+
+# combine the three dataframes
+allmetabdata <- list(featuredata=featuredata,sampledata=sampledata,metabolitedata=metabolite)
+
+# log transform
+logdata <- LogTransform(allmetabdata$featuredata)
+
+# PCA plot
+pcaplots <- NormalizeMets::PcaPlots(featuredata=logdata$featuredata,
+                                    groupdata=allmetabdata$sampledata$group,
+                                    scale=TRUE, center=TRUE,userinput = FALSE,saveplot = TRUE,savetype = "jpeg",
+                                    plotname="C:\\temp\\pca_casper",multiplot=TRUE,interactiveonly = FALSE,varplot = TRUE)
+
+res.pca <- PCA(logdata$featuredata, graph = FALSE)
+png("E:\\Petter Bjornstad\\Metabolomics\\pca_ellipse_casper.png")
+plot1 <- fviz_pca_ind(res.pca,
+             geom.ind = "point", # show points only (nbut not "text")
+             col.ind = as.factor(allmetabdata$sampledata$group), # color by groups
+             palette = c("#00AFBB", "#E7B800"),
+             addEllipses = TRUE, # Concentration ellipse
+             title=""
+             )
+ggpubr::ggpar(plot1,
+              title = "",
+              subtitle = "",
+              caption = "",
+              xlab = "PC1", ylab = "PC2",
+              ggtheme = theme_gray(), palette = "jco")
+plot1 + scale_color_manual(labels=c("T1D","Control"),values= c("#00AFBB", "#E7B800"),"Group") +
+        scale_fill_manual(guide = 'none', values=c("#00AFBB", "#E7B800")) +
+        scale_shape_manual(guide = 'none', values=c(1,2))  +
+        labs(x="PC1",y="PC2")
+dev.off()
+
+# HeatMap 
+HeatMap(featuredata = logdata$featuredata,groupdata = allmetabdata$sampledata$group,interactiveplot = FALSE,
+        colramp=c(75,"magenta","green"),dendrogram = "both",margins = c(5,5),cexRow = 0.2,
+        saveplot=TRUE,plotname="E:\\Petter Bjornstad\\Metabolomics\\heatmap",savetype = "png",
+        key=FALSE)
+
+# create dataset for PLS-DA
+plsda1 <- as.data.frame(sampledata[,c("ID","group")])
+plsda2 <- as.data.frame(allmetabdata$featuredata)
+plsda2 <- as.data.frame(t(plsda2))
+#plsda2$COMP.ID <- rownames(plsda2)
+#names <- metabolite[,c("COMP.ID","BIOCHEMICAL")]
+#plsda2 <- merge(plsda2,names,by="COMP.ID",all.x = TRUE,all.y = TRUE)
+#rownames(plsda2) <- plsda2$BIOCHEMICAL
+#plsda2$COMP.ID <- NULL
+#plsda2$BIOCHEMICAL <- NULL
+plsda2 <- as.data.frame(t(plsda2))
+plsda2$ID <- rownames(plsda2)
+plsda <- merge(plsda1,plsda2,by="ID",all.x = TRUE,all.y = TRUE)
+rownames(plsda) <- plsda$ID
+plsda$ID <- NULL
+plsda[,2:22] <- apply(plsda[2:22],2,as.numeric)
+
+# sPLS-DA analysis
+plsda.res = splsda(X = plsda[,c(2:22)], Y=as.factor(plsda$group), ncomp = 2)
+png(filename="plotIndiv.png")
+plotIndiv(plsda.res, comp = c(1,2),
+          ind.names = FALSE, 
+          ellipse = TRUE, legend = TRUE, title="")
+listvar <- selectVar(plsda.res)
+set.seed(34)  # for reproducible results for this code
+plsda.perf = perf(plsda.res, validation = 'Mfold', folds = 5, 
+                           progressBar = FALSE, nrepeat = 10, dist = 'max.dist',auc=TRUE)
+plsda.perf$error.rate
+auc_save <- plsda.perf$auc$comp1[1]
+auc_true <- as.numeric(plsda.perf$auc$comp1["AUC.mean"])
+png(filename="plsda_perf.png")
+plot(plsda.perf)
+dev.new()
+cim(plsda.res, row.sideColors = color.mixo(as.factor(plsda$group)), row.names = FALSE, col.names=FALSE,
+    legend=list(legend=c("Control","Diabetes")),
+    save="jpeg",
+    name.save = "cim")
+dev.off()
+
+# TOP 20 compounds
+plsda21 = splsda(X = plsda[,c(2:22)], Y=as.factor(plsda$group), ncomp = 2, keepX = c(21,21))
+# loadings plot
+png("loadings_top21.png")
+plotLoadings(plsda21)
+# get list of top 20 compounds
+top21 <- selectVar(plsda21,comp=1)
+top21_2 <- selectVar(plsda21,comp=2)
+
+# correlations with continuous variables
+#	metabolomics - GIR
+#	metabolomics - body composition data 
+#	metabolomics - renal measures (GFR, RPF, ACR, renal O2)
+corrvars <- c("M_I_leankg_GC","M_I_kg_GC","body_fat","screen_bmi_percentile","gfr","rpf","acr_mean","kidney_oxygenation",
+              "kidney_GFR","medullary_GFR","cortex_GFR")
+corrs <- corr.test(alldata[,targeted],alldata[,corrvars],method = "spearman",adjust = "fdr")
+corr_sum <- round(corrs$r,3)
+corr_p <-   round(corrs$p,3)
+corr_p_char <- corr_p
+corr_p_char[corr_p>=0.05] <- ""
+corr_p_char[corr_p<0.05 & corr_p>=0.01] <- "*"
+corr_p_char[!is.na(corr_p) & corr_p<0.01] <- "**"
+
+z<-corr_sum
+extra <- corr_p_char
+rnames <- colnames(z)
+mat_data <- data.matrix(z[,1:ncol(z)])
+#rownames(mat_data) <- rnames
+my_palette <- colorRampPalette(c( "papayawhip", "orange", "brown"))(n = 299)
+png("heatmap2.png")
+heatmap.2(mat_data,
+          cellnote = extra,
+          notecol = "black",
+          # same data set for cell labels
+          main = "", # heat map title
+          
+          cexRow=0.75,
+          cexCol=0.75,
+          # notecol="black",      # change font color of cell labels to black
+          density.info="none",  # turns off density plot inside color legend
+          trace="none",         # turns off trace lines inside the heat map
+          margins =c(6,6),     # widens margins around plot
+          col=my_palette,       # use on color palette defined earlier
+          
+          dendrogram="both",     # only draw a row dendrogram
+          Rowv = TRUE, # apply default clustering method
+          Colv = TRUE,srtCol=45)
+dev.off()
+#par(cex.main=1.5)
+#margins =c(12,20)
+```
+
+# Background
+
+The purpose of this analysis is to test for differences in targeted metabolomics by diabetes status among participants in the CASPER study.  In addition, correlations between metabolites and GIR, body composition, and other renal measures were examined.
+
+# Methods
+
+Data from three participants (CS-18,CS-45,CS-27) were excluded from analysis.  Two of these participants dropped out of the study, and the third was not able to complete the clamp visit.
+
+Metabolites were compared between groups using t-tests.  Both unadjusted and FDR-adjusted p-values are presented.
+
+Multivariate analyses included PCA (unsupervised) and PLS-DA (supervised).  Metabolite concentrations were log-transformed and scaled prior to these analyses.  
+
+Correlations between metabolites and other measures were examined using Spearman's correlation coefficient, with FDR adjusted p-values reported.
+
+Analyses were conducted in R version 3.6.1.
+
+# Results
+
+Data from `r npart` participants were included in analysis.  The table below shows comparisons of metabolite levels in the two groups.
+
+```{r, echo=FALSE}
+kable(tab_targeted_group,caption = "Descriptive statistics for targeted metabolites, by group.")
+```
+<br>
+
+The figure below shows the participants plotted with respect to the first 2 PCA components, with 95% confidence ellipses by diabetes status.
+
+```{r, echo=FALSE}
+knitr::include_graphics("E:\\Petter Bjornstad\\Metabolomics\\pca_ellipse_casper.png",
+                        dpi=100)
+```
+
+The figure below shows the participants plotted with respect to the first 2 PLS-DA components, with 95% confidence ellipses by diabetes status.
+
+```{r, echo=FALSE}
+plotIndiv(plsda.res, comp = c(1,2),
+          ind.names = FALSE, 
+          ellipse = TRUE, legend = TRUE, title="")
+```
+
+The figure below is a clustered image map by diabetes status.  This plot is similar to a heat map but based on sPLS-DA analysis.
+
+```{r, echo=FALSE}
+knitr::include_graphics("E:\\Petter Bjornstad\\Metabolomics\\cim.jpeg")
+```
+
+List of compounds in terms of discrimination of diabetes status, for component 1 of the PLS-DA
+
+```{r, echo=FALSE}
+top21
+```
+
+List of compounds in terms of discrimination of diabetes status, for component 2 of the PLS-DA
+
+```{r, echo=FALSE}
+top21_2
+```
+
+Loadings plot of compounds by diabetes status, for component 1 of the PLS-DA
+
+```{r, echo=FALSE}
+#knitr::include_graphics("loadings_top20.png")
+plotLoadings(plsda21,comp=1)
+```
+
+Loadings plot of compounds by diabetes status, for component 2 of the PLS-DA
+
+```{r, echo=FALSE}
+#knitr::include_graphics("loadings_top20.png")
+plotLoadings(plsda21,comp=2)
+```
+
+5-fold cross-validation was used to examine the performance of the sPLS-DA model and statistics for component 1 are shown below: 
+
+ Overall Error rate : `r plsda.perf$error.rate$overall[1,1]`
+ AUC: `r auc_save[1]`
+
+Heat map of correlations between metabolites, GFR, body composition, and renal measures
+
+```{r, echo=FALSE}
+knitr::include_graphics("E:\\Petter Bjornstad\\Metabolomics\\heatmap2.png")
+```
+
+```{r plsda,cache=TRUE, warning=FALSE}
+# Permutation testing - takes forever, make sure to cache
+n_perm <- 1000
+aucs <- vector(mode="numeric", length=n_perm)
+for (i in 1:n_perm) {
+  Y <- sample(as.factor(plsda$group),replace = F)
+  plsda_res <- plsda(plsda[,c(2:22)],Y,ncomp = 1)
+  perf_plsda <- perf(plsda_res,progressBar=FALSE, auc=TRUE,
+                   validation = "loo")
+  aucs[i] <- as.numeric(perf_plsda$auc$comp1["AUC.mean"])
+}
+ggplot(as.data.frame(aucs),aes(x=aucs)) + 
+  geom_histogram(binwidth = 0.01) + 
+  geom_vline(aes(xintercept=auc_true),color="red") + 
+  theme_bw() + xlab("AUC")
+```
+
+Group labels were permuted `r n_perm` times. One component PLS-DA was run for each permutation and AUC was calculated using leave one out cross-validation. Red line indicates the AUC calculated for non-permuted data.
+
+
+
+Correlations between metabolites, GFR, body composition, and renal measures
+
+```{r, echo=FALSE}
+kable(corr_sum)
+```
+
+P-values for correlations between metabolites, GFR, body composition, and renal measures
+
+```{r, echo=FALSE}
+kable(corr_p)
+```
+
+
