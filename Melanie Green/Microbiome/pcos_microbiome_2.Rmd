@@ -1,0 +1,150 @@
+---
+title: "PCOS 2"
+author: "Tim Vigers & Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(microbiome)
+library(dada2)
+# Check OS and alter file path accordingly.
+if (.Platform$OS.type == "windows") {pathstart <- "//ucdenver.pvt/"} else if (.Platform$OS.type == "unix"){pathstart <- "/Volumes/"}
+```
+
+```{r echo=FALSE}
+# File lists
+basepath <- paste0(pathstart,"som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Laura Tim projects/Melanie Green/Microbiome/")
+rawReads <- paste0(basepath,"Data_Raw/","rawReads/")
+batch1 <- paste0(rawReads,"batch_1")
+batch2 <- paste0(rawReads,"batch_2")
+batch3 <- paste0(rawReads,"batch_3")
+batch1_sub <- sub("\\-.*","",basename(sort(list.files(batch1,pattern = "-R1-",full.names = T))))
+batch2_sub <- sub("\\-.*","",basename(sort(list.files(batch2,pattern = "-R1-",full.names = T))))
+batch3_sub <- sub("\\-.*","",basename(sort(list.files(batch3,pattern = "-R1-",full.names = T))))
+# List of read paths
+forward <- sort(list.files(c(batch1,batch2,batch3),pattern = "-R1-",full.names = T))
+sample_names <- sapply(strsplit(basename(forward), "-"), `[`, 1)
+reverse <- sort(list.files(c(batch1,batch2,batch3),pattern = "-R2-",full.names = T))
+# Sample data
+samdf <- read.csv(paste0(pathstart,"som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Laura Tim projects/Melanie Green/Microbiome/Data_Raw/Clinical data-9-2-2018.csv"),na.strings = c("","na"))
+samdf$batch <- ifelse(samdf$Lib %in% batch1_sub,"Batch 1",ifelse(samdf$Lib %in% batch2_sub,"Batch 2","Batch 3"))
+rownames(samdf) <- samdf$Lib
+```
+
+.bz2 files converted to .gz files using to_gzip.sh
+
+## Plot read quality
+### Forward
+
+```{r echo=FALSE,message=FALSE,cache=TRUE}
+plot_forward_qual <- plotQualityProfile(forward,aggregate = T)
+plot_forward_qual
+```
+
+### Reverse
+
+```{r echo=FALSE,message=FALSE,cache=TRUE}
+plot_reverse_qual <- plotQualityProfile(reverse,aggregate = T)
+plot_reverse_qual
+```
+
+## Trim and filter
+```{r echo=FALSE,message=FALSE,cache=TRUE}
+# Output file names
+trimpath <- paste0(basepath,"Data_Cleaned/","filteredReads/")
+forward_trim <- paste0(trimpath,sub(".fastq.gz","_F_filt.fastq.gz",
+                                                 basename(forward)))
+reverse_trim <- paste0(trimpath,sub(".fastq.gz","_R_filt.fastq.gz",
+                                                 basename(reverse)))
+# Trim (chunk only needs to be run once)
+out <- filterAndTrim(forward, forward_trim, reverse, reverse_trim, truncLen=c(240,160),
+              maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
+              compress=TRUE, multithread=TRUE) # On Windows set multithread=FALSE
+```
+
+## Filtered reads
+```{r echo=FALSE}
+out
+```
+
+## Error rates
+```{r echo=FALSE,cache=TRUE}
+err_forward <- learnErrors(forward_trim, multithread=TRUE)
+err_reverse <- learnErrors(reverse_trim, multithread=TRUE)
+```
+
+### Forward
+
+```{r echo=FALSE,warning=FALSE}
+plot_forward_err <- plotErrors(err_forward, nominalQ=TRUE)
+plot_forward_err
+```
+
+### Reverse
+
+```{r echo=FALSE,warning=FALSE}
+plot_reverse_err <- plotErrors(err_reverse, nominalQ=TRUE)
+plot_reverse_err
+```
+
+```{r echo=FALSE,cache=TRUE,cache.lazy=FALSE}
+# Dereplication
+derep_forward <- derepFastq(forward_trim)
+derep_reverse <- derepFastq(reverse_trim)
+# Rename to match sample names
+names(derep_forward) <- sample_names
+names(derep_reverse) <- sample_names
+```
+
+```{r echo=FALSE,cache=TRUE,include=FALSE}
+# Sample inference
+dada_forward <- dada(derep_forward,err = err_forward,multithread = TRUE)
+dada_reverse <- dada(derep_reverse,err = err_reverse,multithread = TRUE)
+```
+
+```{r echo=FALSE,cache=TRUE}
+# Merge paired reads
+merged <- mergePairs(dada_forward,derep_forward,dada_reverse,derep_reverse)
+```
+
+```{r echo=FALSE,cache=TRUE}
+# Make a sequence table
+seqtab <- makeSequenceTable(merged)
+```
+
+```{r echo=FALSE,cache=TRUE}
+# Remove chimeras
+seqtab_nochim <- removeBimeraDenovo(seqtab,method="consensus",multithread=TRUE)
+```
+
+```{r echo=FALSE,cache=TRUE}
+# Reference files
+silva <- paste0(pathstart,"som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Laura Tim projects/General Microbiome/dada2/silva_nr_v132_train_set.fa.gz")
+silva_species <- paste0(pathstart,"som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Laura Tim projects/General Microbiome/dada2/silva_species_assignment_v132.fa.gz")
+# Assign taxonomy
+# try different reference files
+silva <- "/Users/timvigers/Downloads/silva.bacteria/silva.bacteria.fasta"
+taxa <- assignTaxonomy(seqtab_nochim,silva,multithread=TRUE)
+taxa <- addSpecies(taxa,silva_species)
+```
+
+```{r echo=FALSE,cache=TRUE}
+# Phyloseq object
+otu_mat <- otu_table(seqtab_nochim, taxa_are_rows=FALSE)
+sample_names(otu_mat) <- sub("-R1.*","",sample_names(otu_mat))
+ps <- phyloseq(otu_mat,tax_table(taxa),sample_data(samdf))
+```
+
+```{r echo=FALSE}
+# Richness
+plot_richness(ps, x="SEQRun", measures=c("Shannon", "Simpson"), color="Group")
+# Bar graph
+plot_bar(ps,fill = "Class")
+# Remove taxa with 0 count
+ps_pruned <- prune_taxa(taxa_sums(ps) > 0,ps)
+# Proportions for Bray-Curtis
+ps_prop <- transform_sample_counts(ps_pruned, function(otu) otu/sum(otu))
+ord.nmds.bray <- ordinate(ps_prop, method="NMDS", distance="horn")
+```
