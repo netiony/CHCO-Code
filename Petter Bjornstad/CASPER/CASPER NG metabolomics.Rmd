@@ -1,0 +1,772 @@
+---
+title: "CASPER NG metabolomics"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+
+# questions of interest for metabolomics:
+# group comparisons
+#	metabolomics - GIR
+#	metabolomics - body composition data 
+#	metabolomics - renal measures (GFR, RPF, ACR, renal O2)
+
+
+library(knitr)
+
+knitr::opts_chunk$set(echo = FALSE,cache = FALSE)
+knitr::opts_knit$set(root.dir = "H:\\Endocrinology\\Bjornstad\\Metabolomics")
+
+setwd("H:\\Endocrinology\\Bjornstad\\Metabolomics")
+
+library(readxl)
+library(NormalizeMets)
+library(pca3d)
+library(pcaMethods)
+library(ggplot2)
+library(rgl)
+library(stringr)
+library(data.table)
+library(dplyr)
+library(mixOmics)
+library(Hmisc)
+library("FactoMineR")
+library("factoextra")
+library(tableone)
+library(reshape2)
+library(corrplot)
+library(sas7bdat)
+library(psych)
+library("ggpubr")
+library("dplyr")
+library("FSA")
+library("gplots")
+library("RColorBrewer")
+library("Hmisc")
+library(xlsx)
+
+# notes:
+# need to break out serum compounds by subgroup (if available) or group if not available
+# only use FDR corrections within those groups
+# same with corrleations
+
+# for untargeted analyses, how to show correlations?
+# for targeted and NG, lasso to predict T1D?
+
+# read in NG data - those variables are included in the original dataset, but we want to analyze
+# them separately
+ng_serum <- read.csv("H:\\Endocrinology\\Bjornstad\\Metabolomics\\Raw data\\NG serum.csv")
+ng_urine <- read.csv("H:\\Endocrinology\\Bjornstad\\Metabolomics\\Raw data\\NG urine.csv")
+
+# read in Petter's SAS dataset - only use ppts in that dataset
+alldata <- read.sas7bdat("H:\\Endocrinology\\Bjornstad\\Metabolomics\\Raw data\\casperheir_for_laura.sas7bdat")
+alldata <- alldata[!(alldata$ID %in% c("CS-18","CS-45","CS-27")),]
+keep <- alldata$ID
+ng_serum <- ng_serum[ng_serum$ID %in% keep,]
+ng_urine <- ng_urine[ng_urine$ID %in% keep,]
+
+# remove patients who dropped out and one who could not complete study
+ng_serum <- ng_serum[!(ng_serum$ID %in% c("CS-18","CS-45","CS-27")),]
+ng_urine <- ng_urine[!(ng_urine$ID %in% c("CS-18","CS-45","CS-27")),]
+
+npart_serum <- length(unique(ng_serum$ID))
+
+# drop urine variables that aren't normalized to creatinine
+nocrea <- c("aceU","alaU","alnU","aohibut","arbU","bnhibut","bohibut","bohival","caco","cit","cr","crea","dma",
+            "doeta","dta","etnh","etoh","form","furgly","glcU","glnU","glyU","glyaU","hipU","hisU","hphpaU",
+            "hypU","ileU","indU","lacU","leuU","mntU","mohhip","om","pglu","pohhip","prgly","probet","pseur","qui",
+            "scr","taco","tauU","threU","tmao","tmehis","trig","trp","tyrU","ura","ure","valU","xan","xyl")
+ng_urine <- ng_urine[,!(colnames(ng_urine) %in% nocrea)]
+
+vars_serum <- names(ng_serum[,2:251])
+vars_urine <- names(ng_urine[,2:54])
+
+# read in manually quantified data
+manual <- read.csv("H:\\Endocrinology\\Bjornstad\\Metabolomics\\Raw data\\19465_19709_manual_results.csv")
+names(manual) <- names(ng_urine)
+# drop ppts with missing data
+drop <- c("CS-05","CS-21","CS-52","RH-31","RH-39")
+ng_urine <- ng_urine[!(ng_urine$ID %in% drop),]
+ng_urine <- rbind(ng_urine,manual)
+
+npart_urine <- length(unique(ng_urine$ID))
+
+# create variable for group
+ng_serum$group <- ifelse(regexpr("RH",ng_serum$ID)>0,"Control","T1D")
+ng_urine$group <- ifelse(regexpr("RH",ng_urine$ID)>0,"Control","T1D")
+
+# create table of group comparisons for each class of biomarkers within urine and serum
+# first urine
+# for urine, i have var names, compare to subgroups at https://nightingalehealth.com/biomarkers?filters=urine
+# with one caveat (sorry): 2-hydroxyisobutyrate, 3-hydroxyisobutrate and 3 hydroxyisovaelerate should be under 
+# ketone bodies with acetate
+ketones <- c("ace_crea","aohibut_crea","bohibut_crea","bohival_crea","glya_crea")
+aminoacids <- c("ala_crea","gly_crea", "his_crea","tau_crea","thre_crea","trp_crea","gln_crea")
+misc <- c("aln_crea","cr_crea","dta_crea","etnh_crea","form_crea","hyp_crea","ind_crea","pglu_crea","pohhip_crea",
+          "pseur_crea","ure_crea","doeta_crea")
+dietary <- c("arb_crea","etoh_crea","furgly_crea","mnt_crea","prgly_crea","probet_crea","qui_crea","scr_crea",
+             "taco_crea","tmehis_crea","xan_crea","xyl_crea")
+pyrimidine <- c("bnhibut_crea","ura_crea")
+glycolysis <- c("caco_crea","cit_crea","lac_crea","glc_crea")
+microbial <- c("dma_crea","mohhip_crea","tmao_crea","hphpa_crea")
+phenylalanine <- c("hip_crea")
+bcaa <- c("ile_crea","leu_crea","val_crea")
+nicontinate <- c("om_crea","trig_crea")
+aaa <- c("tyr_crea")
+all_urine <- c("ketones","aminoacids","misc","dietary","pyrimidine","glycolysis","microbial","phenylalanine","bcaa","nicontinate","aaa")
+
+# make urine tables
+for (i in 1:length(all_urine)){
+  tabname <- noquote(paste0("tab_",all_urine[i]))
+  assign(paste0("tab_",all_urine[i]) , CreateTableOne(vars = get(all_urine[i]), data = ng_urine, strata = "group", test = TRUE))
+  assign(paste0("tab_",all_urine[i]) , print(get(tabname),varLabels=FALSE))
+  p_raw <- NULL
+  for (j in 1:length(get(all_urine[i]))) {
+    temp <- t.test(ng_urine[ng_urine$group=="T1D",get(all_urine[i])[j]],ng_urine[ng_urine$group=="Control",get(all_urine[i])[j]],
+                 data=ng_urine,var.equal = T)$p.value
+    p_raw <- c(p_raw,temp)
+  }
+  p_adj <- round(p.adjust(p_raw),3)
+  p_adj[p_adj<0.001] <- "<0.001"
+  p_adj <- c("",p_adj)
+  assign(eval(tabname), cbind(get(tabname),p_adj))
+  assign(eval(tabname), get(tabname)[,-4])
+}
+
+# for serum, need to read in the biomarker annotation file
+serum_biomarkers <- read.csv("H:\\Endocrinology\\Bjornstad\\Metabolomics\\Raw data\\NG serum biomarker annotations.csv")
+# fix levels
+levels(serum_biomarkers$CSV.column.name) <- c(levels(serum_biomarkers$CSV.column.name),"ApoB_ApoA1","PUFA_MUFA",
+                                              "Omega_6_Omega_3","TG_PG")
+serum_biomarkers[serum_biomarkers$CSV.column.name=="ApoB_by_ApoA1",]$CSV.column.name <- "ApoB_ApoA1"
+serum_biomarkers[serum_biomarkers$CSV.column.name=="PUFA_by_MUFA",]$CSV.column.name <- "PUFA_MUFA"
+serum_biomarkers[serum_biomarkers$CSV.column.name=="Omega_6_by_Omega_3",]$CSV.column.name <- "Omega_6_Omega_3"
+serum_biomarkers[serum_biomarkers$CSV.column.name=="TG_by_PG",]$CSV.column.name <- "TG_PG"
+serum_biomarkers <- serum_biomarkers[serum_biomarkers$CSV.column.name != "Total_C",]
+droplevels(serum_biomarkers$CSV.column.name)
+
+all_serum <- levels(serum_biomarkers$Group)
+for (i in 1:length(all_serum)) {
+  assign(eval(all_serum[i]), paste0(unique(serum_biomarkers[serum_biomarkers$Group==paste0(eval(all_serum[i])),]$CSV.column.name)))
+}
+
+# need to match Petter var names with NG var names
+# strip out "2"
+save <- colnames(ng_serum)
+save <- gsub('2','',save)
+colnames(ng_serum) <- save
+
+# do the same to alldata
+# but first we need to get rid of the variables without the "2"
+alldata <- subset(alldata,select=-c(Ala,Tyr,His,Leu,Gly,Gln,Val,Citrate,Phe,Ile))
+save <- colnames(alldata)
+save <- gsub('2','',save)
+colnames(alldata) <- save
+
+
+# make serum tables
+for (i in 1:length(all_serum)){
+  tabname <- noquote(paste0("tab_",all_serum[i]))
+  assign(paste0("tab_",all_serum[i]) , CreateTableOne(vars = get(all_serum[i]), data = ng_serum, strata = "group", test = TRUE))
+  assign(paste0("tab_",all_serum[i]) , print(get(tabname),varLabels=FALSE))
+  p_raw <- NULL
+  for (j in 1:length(get(all_serum[i]))) {
+    temp <- t.test(ng_serum[ng_serum$group=="T1D",get(all_serum[i])[j]],ng_serum[ng_serum$group=="Control",get(all_serum[i])[j]],
+                 data=ng_serum,var.equal = T)$p.value
+    p_raw <- c(p_raw,temp)
+  }
+  p_adj <- round(p.adjust(p_raw),3)
+  p_adj[p_adj<0.001] <- "<0.001"
+  p_adj <- c("",p_adj)
+  assign(eval(tabname), cbind(get(tabname),p_adj))
+  assign(eval(tabname), get(tabname)[,-4])
+}
+
+# create df for NormalizeMets
+metabolite_serum <- as.data.frame(vars_serum)
+#row.names(metabolite) <- metabolite$targeted
+# featuredata has compound IDs as colnames and sample IDs as rownames
+featuredata_serum <- ng_serum[,1:251]
+row.names(featuredata_serum) <- featuredata_serum$ID
+featuredata_serum$ID <- NULL
+sampledata_serum <- alldata[,c("GIR","GIR_per_kg","body_fat","screen_bmi_percentile",
+                               "gfr","rpf","acr_mean","kidney_oxygenation","group","ID")]
+# combine the three dataframes
+allmetabdata_serum <- list(featuredata=featuredata_serum,sampledata=sampledata_serum,metabolitedata=metabolite_serum)
+# log transform
+logdata_serum <- LogTransform(allmetabdata_serum$featuredata)
+
+# create df for NormalizeMets
+metabolite_urine <- as.data.frame(vars_urine)
+#row.names(metabolite) <- metabolite$targeted
+# featuredata has compound IDs as colnames and sample IDs as rownames
+featuredata_urine <- ng_urine[,1:54]
+row.names(featuredata_urine) <- featuredata_urine$ID
+keep <- featuredata_urine$ID
+featuredata_urine$ID <- NULL
+sampledata_urine <- alldata[,c("GIR","GIR_per_kg","body_fat","screen_bmi_percentile",
+                               "gfr","rpf","acr_mean","kidney_oxygenation","group","ID")]
+sampledata_urine <- sampledata_urine[sampledata_urine$ID %in% keep,]
+# combine the three dataframes
+allmetabdata_urine <- list(featuredata=featuredata_urine,sampledata=sampledata_urine,metabolitedata=metabolite_urine)
+# log transform
+logdata_urine <- LogTransform(allmetabdata_urine$featuredata)
+
+# for analyses that can't have missing data, need to impute with KNN
+nomiss_serum <- MissingValues(featuredata =allmetabdata_serum$featuredata,
+                              sampledata = allmetabdata_serum$sampledata,
+                              metabolitedata=allmetabdata_serum$metabolitedata,
+                              feature.cutoff = 0.8, method="knn", seed=3654,
+                              saveoutput = TRUE, 
+                              outputname = "H:\\Endocrinology\\Bjornstad\\Metabolomics\\Clean data\\KNN_serum.csv")
+nomiss_urine <- MissingValues(featuredata =allmetabdata_urine$featuredata,
+                              sampledata = allmetabdata_urine$sampledata,
+                              metabolitedata=allmetabdata_urine$metabolitedata,
+                              feature.cutoff = 0.8, method="knn", seed=3654,
+                              saveoutput = TRUE, 
+                              outputname = "H:\\Endocrinology\\Bjornstad\\Metabolomics\\Clean data\\KNN_urine.csv")
+
+# PCA plot serum
+# pcaplots_serum <- NormalizeMets::PcaPlots(featuredata=nomiss_serum$featuredata,
+#                                     groupdata=nomiss_serum$sampledata$group,
+#                                     scale=TRUE, center=TRUE,userinput = FALSE,saveplot = TRUE,savetype = "jpeg",
+#                                     plotname="H:\\Endocrinology\\Bjornstad\\Metabolomics\\pca_casper_serum",
+#                                     multiplot=TRUE,interactiveonly = FALSE,varplot = TRUE)
+
+res.pca <- PCA(nomiss_serum$featuredata, graph = FALSE)
+png("H:\\Endocrinology\\Bjornstad\\Metabolomics\\pca_ellipse_casper_NGserum.png")
+plot1 <- fviz_pca_ind(res.pca,
+             geom.ind = "point", # show points only (nbut not "text")
+             col.ind = as.factor(nomiss_serum$sampledata$group), # color by groups
+             palette = c("#00AFBB", "#E7B800"),
+             addEllipses = TRUE, # Concentration ellipse
+             title=""
+             )
+ggpubr::ggpar(plot1,
+              title = "",
+              subtitle = "",
+              caption = "",
+              xlab = "PC1", ylab = "PC2",
+              ggtheme = theme_gray(), palette = "jco")
+plot1 + scale_color_manual(labels=c("T1D","Control"),values= c("#00AFBB", "#E7B800"),"Group") +
+        scale_fill_manual(guide = 'none', values=c("#00AFBB", "#E7B800")) +
+        scale_shape_manual(guide = 'none', values=c(1,2))  +
+        labs(x="PC1",y="PC2")
+dev.off()
+
+# PCA plot urine
+# pcaplots_urine <- NormalizeMets::PcaPlots(featuredata=nomiss_urine$featuredata,
+#                                     groupdata=nomiss_urine$sampledata$group,
+#                                     scale=TRUE, center=TRUE,userinput = FALSE,saveplot = TRUE,savetype = "jpeg",
+#                                     plotname="H:\\Endocrinology\\Bjornstad\\Metabolomics\\pca_casper_urine",
+#                                     multiplot=TRUE,interactiveonly = FALSE,varplot = TRUE)
+
+res.pca <- PCA(nomiss_urine$featuredata, graph = FALSE)
+png("H:\\Endocrinology\\Bjornstad\\Metabolomics\\pca_ellipse_casper_NGurine.png")
+plot1 <- fviz_pca_ind(res.pca,
+             geom.ind = "point", # show points only (nbut not "text")
+             col.ind = as.factor(nomiss_urine$sampledata$group), # color by groups
+             palette = c("#00AFBB", "#E7B800"),
+             addEllipses = TRUE, # Concentration ellipse
+             title=""
+             )
+ggpubr::ggpar(plot1,
+              title = "",
+              subtitle = "",
+              caption = "",
+              xlab = "PC1", ylab = "PC2",
+              ggtheme = theme_gray(), palette = "jco")
+plot1 + scale_color_manual(labels=c("T1D","Control"),values= c("#00AFBB", "#E7B800"),"Group") +
+        scale_fill_manual(guide = 'none', values=c("#00AFBB", "#E7B800")) +
+        scale_shape_manual(guide = 'none', values=c(1,2))  +
+        labs(x="PC1",y="PC2")
+dev.off()
+
+# HeatMap serum
+HeatMap(featuredata = nomiss_serum$featuredata,groupdata = nomiss_serum$sampledata$group,interactiveplot = FALSE,
+        colramp=c(75,"magenta","green"),dendrogram = "both",margins = c(5,5),cexRow = 0.2,
+        saveplot=TRUE,plotname="H:\\Endocrinology\\Bjornstad\\Metabolomics\\heatmap_NG_serum",savetype = "png",
+        key=FALSE)
+# HeatMap urine
+HeatMap(featuredata = nomiss_urine$featuredata,groupdata = nomiss_urine$sampledata$group,interactiveplot = FALSE,
+        colramp=c(75,"magenta","green"),dendrogram = "both",margins = c(5,5),cexRow = 0.2,
+        saveplot=TRUE,plotname="H:\\Endocrinology\\Bjornstad\\Metabolomics\\heatmap_NG_urine",savetype = "png",
+        key=FALSE)
+
+# create dataset for PLS-DA - serum
+plsda1 <- as.data.frame(nomiss_serum$sampledata[,c("ID","group")])
+plsda2 <- as.data.frame(allmetabdata_serum$featuredata)
+plsda2 <- as.data.frame(t(plsda2))
+#plsda2$COMP.ID <- rownames(plsda2)
+#names <- metabolite[,c("COMP.ID","BIOCHEMICAL")]
+#plsda2 <- merge(plsda2,names,by="COMP.ID",all.x = TRUE,all.y = TRUE)
+#rownames(plsda2) <- plsda2$BIOCHEMICAL
+#plsda2$COMP.ID <- NULL
+#plsda2$BIOCHEMICAL <- NULL
+plsda2 <- as.data.frame(t(plsda2))
+plsda2$ID <- rownames(plsda2)
+plsda_serum <- merge(plsda1,plsda2,by="ID",all.x = TRUE,all.y = TRUE)
+rownames(plsda_serum) <- plsda_serum$ID
+plsda_serum$ID <- NULL
+#plsda[,2:22] <- apply(plsda[2:22],2,as.numeric)
+
+# create dataset for PLS-DA - urine
+plsda1 <- as.data.frame(nomiss_urine$sampledata[,c("ID","group")])
+plsda2 <- as.data.frame(allmetabdata_urine$featuredata)
+plsda2 <- as.data.frame(t(plsda2))
+#plsda2$COMP.ID <- rownames(plsda2)
+#names <- metabolite[,c("COMP.ID","BIOCHEMICAL")]
+#plsda2 <- merge(plsda2,names,by="COMP.ID",all.x = TRUE,all.y = TRUE)
+#rownames(plsda2) <- plsda2$BIOCHEMICAL
+#plsda2$COMP.ID <- NULL
+#plsda2$BIOCHEMICAL <- NULL
+plsda2 <- as.data.frame(t(plsda2))
+plsda2$ID <- rownames(plsda2)
+plsda_urine <- merge(plsda1,plsda2,by="ID",all.x = TRUE,all.y = TRUE)
+rownames(plsda_urine) <- plsda_urine$ID
+plsda_urine$ID <- NULL
+#plsda[,2:22] <- apply(plsda[2:22],2,as.numeric)
+
+# sPLS-DA analysis - serum
+plsda.res_serum = splsda(X = plsda_serum[,c(2:251)], Y=as.factor(plsda_serum$group), ncomp = 2)
+png(filename="plotIndiv_serum.png")
+plotIndiv(plsda.res_serum, comp = c(1,2),
+          ind.names = FALSE, 
+          ellipse = TRUE, legend = TRUE, title="")
+listvar <- selectVar(plsda.res_serum)
+set.seed(34)  # for reproducible results for this code
+plsda.perf_serum = perf(plsda.res_serum, validation = 'Mfold', folds = 5, 
+                           progressBar = FALSE, nrepeat = 10, dist = 'max.dist',auc=TRUE)
+plsda.perf_serum$error.rate
+auc_save_serum <- plsda.perf_serum$auc$comp1[1]
+png(filename="plsda_perf_serum.png")
+plot(plsda.perf_serum)
+dev.new()
+cim(plsda.res_serum, row.sideColors = color.mixo(as.factor(plsda_serum$group)), row.names = FALSE, col.names=FALSE,
+    legend=list(legend=c("Control","Diabetes")),
+    save="jpeg",
+    name.save = "cim_serum")
+dev.off()
+
+# TOP 20 compounds
+plsda20_serum = splsda(X = plsda_serum[,c(2:251)], Y=as.factor(plsda_serum$group), ncomp = 2, keepX = c(20,20))
+# loadings plot
+png("loadings_top20_serum.png")
+plotLoadings(plsda20_serum)
+# get list of top 20 compounds
+top20_serum <- selectVar(plsda20_serum,comp=1)
+top20_serum_2 <- selectVar(plsda20_serum,comp=2)
+
+# sPLS-DA analysis - urine
+plsda.res_urine = splsda(X = plsda_urine[,c(2:54)], Y=as.factor(plsda_urine$group), ncomp = 2)
+png(filename="plotIndiv_urine.png")
+plotIndiv(plsda.res_urine, comp = c(1,2),
+          ind.names = FALSE, 
+          ellipse = TRUE, legend = TRUE, title="")
+listvar <- selectVar(plsda.res_urine)
+set.seed(34)  # for reproducible results for this code
+plsda.perf_urine = perf(plsda.res_urine, validation = 'Mfold', folds = 5, 
+                           progressBar = FALSE, nrepeat = 10, dist = 'max.dist',auc=TRUE)
+plsda.perf_urine$error.rate
+auc_save_urine <- plsda.perf_urine$auc$comp1[1]
+png(filename="plsda_perf_urine.png")
+plot(plsda.perf_urine)
+dev.new()
+cim(plsda.res_urine, row.sideColors = color.mixo(as.factor(plsda_urine$group)), row.names = FALSE, col.names=FALSE,
+    legend=list(legend=c("Control","Diabetes")),
+    save="jpeg",
+    name.save = "cim_urine")
+dev.off()
+
+# TOP 20 compounds
+plsda20_urine = splsda(X = plsda_urine[,c(2:54)], Y=as.factor(plsda_urine$group), ncomp = 2, keepX = c(20,20))
+# loadings plot
+png("loadings_top20_urine.png")
+plotLoadings(plsda20_urine)
+# get list of top 20 compounds
+top20_urine <- selectVar(plsda20_urine,comp=1)
+top20_urine_2 <- selectVar(plsda20_urine,comp=2)
+
+
+```
+
+# Background
+
+The purpose of this analysis is to test for differences in serum and urine metabolites measured by the Nightingale platform by diabetes status among participants in the CASPER study.  In addition, correlations between metabolites and GIR, body composition, and other renal measures were examined.
+
+# Methods
+
+Data from three participants (CS-18,CS-45,CS-27) were excluded from analysis.  Two of these participants dropped out of the study, and the third was not able to complete the clamp visit. Serum and urine metabolites were analyzed separately.
+
+Metabolites were compared between groups using t-tests.  Both unadjusted and FDR-adjusted p-values are presented.
+
+Multivariate analyses included PCA (unsupervised) and PLS-DA (supervised).  Metabolite concentrations were log-transformed and scaled prior to these analyses.  Missing data were imputed using the k-nearest neighbors method.
+
+Correlations between metabolites and other measures were examined using Spearman's correlation coefficient, with FDR adjusted p-values reported.
+
+Analyses were conducted in R version 3.6.1.
+
+# Results
+
+Data from `r npart_serum` participants were included in analysis of serum metabolites and `r npart_urine` participants were included in analysis of urine metabolites.  
+
+The tables below shows comparisons of serum metabolite levels in the two groups.
+
+```{r, echo=FALSE}
+kable(`tab_Amino acids`, caption="Amino acids")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(tab_Apolipoproteins, caption="Apolipoproteins")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(tab_Cholesterol, caption="Cholesterol")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(`tab_Cholesteryl esters`, caption="Cholesterol esters")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(`tab_Fatty acids`, caption="Fatty acids")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(`tab_Fluid balance`, caption="Fluid balance")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(`tab_Free cholesterol`, caption="Free cholesterol")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(`tab_Glycolysis related metabolites`, caption="Glycolysis related metabolites")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(tab_Inflammation, caption="Inflammation")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(`tab_Ketone bodies`, caption="Ketone bodies")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(`tab_Lipoprotein particle concentrations`, caption="Lipoprotein particle concentrations")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(`tab_Lipoprotein particle sizes`, caption="Lipoprotein particle sizes")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(`tab_Lipoprotein subclasses`, caption="Lipoprotein subclasses")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(`tab_Other lipids`, caption="Other lipids")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(tab_Phospholipids, caption="Phospholipids")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(`tab_Relative lipoprotein lipid concentrations`, caption="Relative lipoprotein lipid concentrations")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(`tab_Total lipids`, caption="Total lipids")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(tab_Triglycerides, caption="Triglycerides")
+```
+<br>
+
+The tables below shows comparisons of urine metabolite levels in the two groups.
+
+```{r, echo=FALSE}
+kable(tab_ketones, caption="Ketones")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(tab_aminoacids, caption="Amino acids")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(tab_misc, caption="Misc")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(tab_dietary, caption="Dietary")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(tab_pyrimidine, caption="Pyrimidine")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(tab_glycolysis, caption="Glycolysis")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(tab_microbial, caption="Microbial")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(tab_phenylalanine, caption="Phenylalanine")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(tab_bcaa, caption="BCAA")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(tab_nicontinate, caption="Nicontinate")
+```
+<br>
+
+```{r, echo=FALSE}
+kable(tab_aaa, caption="Aromatic Amino Acids")
+```
+<br>
+
+The figure below shows the participants plotted with respect to the first 2 PCA components of the serum metabolites, with 95% confidence ellipses by diabetes status.
+
+```{r, echo=FALSE}
+knitr::include_graphics("H:\\Endocrinology\\Bjornstad\\Metabolomics\\pca_ellipse_casper_NGserum.png",
+                        dpi=100)
+```
+
+The figure below shows the participants plotted with respect to the first 2 PCA components of the urine metabolites, with 95% confidence ellipses by diabetes status.
+
+```{r, echo=FALSE}
+knitr::include_graphics("H:\\Endocrinology\\Bjornstad\\Metabolomics\\pca_ellipse_casper_NGurine.png",
+                        dpi=100)
+```
+
+The figure below shows the participants plotted with respect to the first 2 PLS-DA components of the serum metabolites, with 95% confidence ellipses by diabetes status.
+
+```{r, echo=FALSE}
+plotIndiv(plsda.res_serum, comp = c(1,2),
+          ind.names = FALSE, 
+          ellipse = TRUE, legend = TRUE, title="")
+```
+
+The figure below shows the participants plotted with respect to the first 2 PLS-DA components of the urine metabolites, with 95% confidence ellipses by diabetes status.
+
+```{r, echo=FALSE}
+plotIndiv(plsda.res_urine, comp = c(1,2),
+          ind.names = FALSE, 
+          ellipse = TRUE, legend = TRUE, title="")
+```
+
+The figure below is a clustered image map by diabetes status for the serum metabolites.  This plot is similar to a heat map but based on sPLS-DA analysis.
+
+```{r, echo=FALSE}
+knitr::include_graphics("H:\\Endocrinology\\Bjornstad\\Metabolomics\\cim_serum.jpeg")
+```
+
+The figure below is a clustered image map by diabetes status for the urine metabolites.  This plot is similar to a heat map but based on sPLS-DA analysis.
+
+```{r, echo=FALSE}
+knitr::include_graphics("H:\\Endocrinology\\Bjornstad\\Metabolomics\\cim_urine.jpeg")
+```
+
+List of top 20 compounds in terms of discrimination of diabetes status, for component 1 of the PLS-DA for the serum metabolites.
+
+```{r, echo=FALSE}
+top20_serum
+```
+
+List of top 20 compounds in terms of discrimination of diabetes status, for component 2 of the PLS-DA for the serum metabolites.
+
+```{r, echo=FALSE}
+top20_serum_2
+```
+
+List of top 20 compounds in terms of discrimination of diabetes status, for component 1 of the PLS-DA for the urine metabolites.
+
+```{r, echo=FALSE}
+top20_urine
+```
+
+List of top 20 compounds in terms of discrimination of diabetes status, for component 2 of the PLS-DA for the urine metabolites.
+
+```{r, echo=FALSE}
+top20_urine_2
+```
+
+Loadings plot of top 20 compounds by diabetes status, for component 1 of the PLS-DA, for the serum metabolites
+
+```{r, echo=FALSE}
+#knitr::include_graphics("loadings_top20.png")
+plotLoadings(plsda20_serum,comp=1)
+```
+
+Loadings plot of top 20 compounds by diabetes status, for component 2 of the PLS-DA, for the serum metabolites
+
+```{r, echo=FALSE}
+#knitr::include_graphics("loadings_top20.png")
+plotLoadings(plsda20_serum,comp=2)
+```
+
+Loadings plot of top 20 compounds by diabetes status, for component 1 of the PLS-DA, for the urine metabolites
+
+```{r, echo=FALSE}
+#knitr::include_graphics("loadings_top20.png")
+plotLoadings(plsda20_urine,comp=1)
+```
+
+Loadings plot of top 20 compounds by diabetes status, for component 2 of the PLS-DA, for the urine metabolites
+
+```{r, echo=FALSE}
+#knitr::include_graphics("loadings_top20.png")
+plotLoadings(plsda20_urine,comp=2)
+```
+
+5-fold cross-validation was used to examine the performance of the sPLS-DA model and statistics for component 1 for the serum metabolites are shown below: 
+
+ Overall Error rate : `r plsda.perf_serum$error.rate$overall[1,1]`
+ AUC: `r auc_save_serum[1]`
+
+5-fold cross-validation was used to examine the performance of the sPLS-DA model and statistics for component 1 for the urine metabolites are shown below: 
+
+ Overall Error rate : `r plsda.perf_urine$error.rate$overall[1,1]`
+ AUC: `r auc_save_urine[1]`
+
+Heat maps of correlations between serum metabolites, GFR, body composition, and renal measures. Asterisks indicate FDR adjusted p-values *=<0.05, **=<0.01.
+
+```{r, echo=FALSE}
+# making correlations into a loop
+corrvars <- c("GIR","GIR_per_kg","body_fat","screen_bmi_percentile","gfr","rpf","acr_mean","kidney_oxygenation")
+for (i in 1:length(all_serum)) {
+  need <- get(all_serum[i])
+  if(all_serum[i]=="Inflammation") {next}
+  corrs <- corr.test(alldata[,colnames(alldata) %in% need],alldata[,corrvars],method = "spearman",adjust = "fdr")
+  corr_sum <- round(corrs$r,3)
+  corr_p <-   round(corrs$p,3)
+  corr_p_char <- corr_p
+  corr_p_char[corr_p>=0.05] <- ""
+  corr_p_char[corr_p<0.05 & corr_p>=0.01] <- "*"
+  corr_p_char[!is.na(corr_p) & corr_p<0.01] <- "**"
+
+  z<-corr_sum
+  extra <- corr_p_char
+  rnames <- colnames(z)
+  mat_data_serum <- data.matrix(z[,1:ncol(z)])
+  #rownames(mat_data) <- rnames
+  my_palette <- colorRampPalette(c( "papayawhip", "orange", "brown"))(n = 299)
+  heatmap.2(mat_data_serum,
+            cellnote = extra,
+            notecol = "black",
+            # same data set for cell labels
+            main = "", # heat map title
+            
+            cexRow=0.75,
+            cexCol=0.75,
+            # notecol="black",      # change font color of cell labels to black
+            density.info="none",  # turns off density plot inside color legend
+            trace="none",         # turns off trace lines inside the heat map
+            margins =c(6,6),     # widens margins around plot
+            col=my_palette,       # use on color palette defined earlier
+            
+            dendrogram="both",     # only draw a row dendrogram
+            Rowv = TRUE, # apply default clustering method
+            Colv = TRUE,srtCol=45)
+  par(cex.main=1.5)
+  margins =c(12,20)
+}
+```
+
+There is only one inflammatory serum marker (GlycA), so a heat map can't be produced.  Correlations of serum metabolites with GFR, body composition, and renal measures are below.
+
+```{r, echo=FALSE}
+corr.test(alldata[,"GlycA"],alldata[,corrvars],method = "spearman",adjust = "fdr")
+```
+
+Heat maps of correlations between urine metabolites, GFR, body composition, and renal measures. Asterisks indicate FDR adjusted p-values *=<0.05, **=<0.01.
+
+```{r, echo=FALSE}
+dietary <- c("arb_crea","furgly_crea","mnt_crea","prgly_crea","probet_crea","qui_crea","scr_crea",
+             "taco_crea","tmehis_crea","xan_crea","xyl_crea")
+corrvars <- c("GIR","GIR_per_kg","body_fat","screen_bmi_percentile","gfr","rpf","acr_mean","kidney_oxygenation")
+for (i in 1:length(all_urine)) {
+  need <- get(all_urine[i])
+  if(all_urine[i] %in% c("phenylalanine","aaa")) {next}
+  corrs <- corr.test(alldata[,colnames(alldata) %in% need],alldata[,corrvars],method = "spearman",adjust = "fdr")
+  corr_sum <- round(corrs$r,3)
+  corr_p <-   round(corrs$p,3)
+  corr_p_char <- corr_p
+  corr_p_char[corr_p>=0.05] <- ""
+  corr_p_char[corr_p<0.05 & corr_p>=0.01] <- "*"
+  corr_p_char[!is.na(corr_p) & corr_p<0.01] <- "**"
+  
+  z<-corr_sum
+  extra <- corr_p_char
+  extra <- extra[row.names(extra) != "etoh_crea",]
+  rnames <- colnames(z)
+  mat_data_urine <- data.matrix(z[,1:ncol(z)])
+  mat_data_urine <- mat_data_urine[row.names(mat_data_urine) != "etoh_crea",]
+  #rownames(mat_data) <- rnames
+  my_palette <- colorRampPalette(c( "papayawhip", "orange", "brown"))(n = 299)
+  heatmap.2(mat_data_urine,
+            cellnote = extra,
+            notecol = "black",
+            # same data set for cell labels
+            main = "", # heat map title
+            
+            cexRow=0.75,
+            cexCol=0.75,
+            # notecol="black",      # change font color of cell labels to black
+            density.info="none",  # turns off density plot inside color legend
+            trace="none",         # turns off trace lines inside the heat map
+            margins =c(6,6),     # widens margins around plot
+            col=my_palette,       # use on color palette defined earlier
+            
+            dendrogram="both",     # only draw a row dendrogram
+            Rowv = TRUE, # apply default clustering method
+            Colv = TRUE,srtCol=45)
+  par(cex.main=1.5)
+  margins =c(12,20)
+}
+```
+
+There is only one marker in the phenylalanine and aaa groups, so heat maps can't be produced.  Correlations of urine metabolites with GFR, body composition, and renal measures are below.
+
+```{r, echo=FALSE}
+corr.test(alldata[,"hip_crea"],alldata[,corrvars],method = "spearman",adjust = "fdr")
+
+corr.test(alldata[,"tyr_crea"],alldata[,corrvars],method = "spearman",adjust = "fdr")
+
+```
