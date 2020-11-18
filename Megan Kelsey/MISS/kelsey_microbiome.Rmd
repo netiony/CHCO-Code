@@ -1,0 +1,234 @@
+---
+title: "MISS Study - Correlations of Microbiome With Insulin Sensitivity"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo=FALSE, include=FALSE}
+# Load libraries and functions
+library(microbiome)
+library(vegan)
+library(psych)
+library(stringr)
+library(stringi)
+library(dplyr)
+library(knitr)
+library(propr)
+library(phyloseq)
+
+source('C:/Users/pylell/Documents/GitHub/Tim-and-Laura/tim_R_functions.R')
+# Check OS.
+pathstart <- os.check()
+```
+
+```{r echo=FALSE,include=FALSE}
+# Data management
+# Read microbiome data.
+# data are relative abundance, in proportions, not percentages
+filename <- "H:/Endocrinology/Kelsey/Kelsey microbiome/Raw data/MISS_Alltaxa_OTU_12_17_18.csv"
+# read relative abundance data 
+ra <- read.csv(filename,row.names = 1)
+ra <- ra[,-1]
+
+# Make OTU table.
+otumat <- ra
+otumat <- as.matrix(otumat)
+OTU <- otu_table(otumat,taxa_are_rows = T)
+# Make taxa table
+taxmat <- str_split_fixed(rownames(ra),pattern = "/", n = 7)
+rownames(taxmat) <- row.names(ra)
+colnames(taxmat) <-   c("Domain", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+taxmat[taxmat == ""] <- "Unknown"
+TAX <- tax_table(taxmat)
+
+# Read in sample data.
+source("C:/Users/pylell/Documents/GitHub/Kelsey-MISS/MISSENROLLEDPTS-MinimalModelResults_R_2019-02-15_1812.r")
+sammat <- data
+sammat$miss_id <- gsub("-","",sammat$miss_id)
+sammat$miss_id <- gsub("_","",sammat$miss_id)
+sammat$miss_id <- paste0(stri_sub(sammat$miss_id,from=1,to=4),stri_sub(sammat$miss_id,from=6,to=7))
+rownames(sammat) <- sammat$miss_id
+SAM <- sample_data(sammat)
+# Combine into physeq object
+pseq <- phyloseq(OTU, TAX, SAM)
+```
+
+```{r echo=FALSE,include=FALSE}
+# Relative abundance.
+relative <- pseq
+otus <- as.data.frame(otu_table(relative))
+# Transpose.
+otus <- as.data.frame(t(otus))
+otus$subject.id <- rownames(otus)
+# Free testosterone
+temp <- c("insulin_sensitivity","insulin_secretion_mm","disposition_index")
+si <- sammat[temp]
+si$subject.id <- rownames(si)
+final <- merge(otus,si,by="subject.id",all.x = TRUE,all.y=TRUE)
+
+# remove people who are missing all SI variables
+final <- final[!is.na(final$disposition_index) | !is.na(final$insulin_secretion_mm) | !is.na(final$insulin_sensitivity),]
+
+# Move columns
+final <- final %>% select("subject.id",everything())
+
+# delete columns with all 0 counts
+final <- final[,-(which(colSums(final[,-1])==0))]
+N <- nrow(final)
+
+# export final dataset for Megan
+write.csv(final,"H:\\Endocrinology\\Kelsey\\Kelsey microbiome\\Clean data\\export.csv")
+
+# Correlations with insulin sensitivity
+corrs <- corr.test(final[,2:(ncol(final)-3)],final$insulin_sensitivity,method = "spearman",adjust = "fdr")
+# Table
+corr.table <- as.data.frame(cbind(corrs$r,corrs$n,corrs$p))
+corr.table <- round(corr.table,3)
+colnames(corr.table) <- c("R","n","P Value")
+corr.table$Taxa <- rownames(corr.table)
+corr.table <- select(corr.table,"Taxa",everything())
+corr.table <- corr.table[order(corr.table$`P Value`),]
+
+# read in the phylum level data
+phylum <- read.csv('H:/Endocrinology/Kelsey/Kelsey microbiome/Raw data/MISS_Phylum_OTU_12_18_18.csv',row.names = 1)
+phylum <- phylum[,-1]
+# Make OTU table.
+phylummat <- phylum
+phylummat <- as.matrix(phylummat)
+PHY <- otu_table(phylummat,taxa_are_rows = T)
+# Transpose.
+phylummat <- as.data.frame(t(phylummat))
+phylummat$subject.id <- rownames(phylummat)
+phylummat$fb <- phylummat$`Bacteria/Firmicutes` / phylummat$`Bacteria/Bacteroidetes`
+sammat$subject.id <- sammat$miss_id
+phylummat <- merge(phylummat,sammat,by="subject.id",all.x = TRUE,all.y = FALSE)
+# remove people who are missing all SI variables
+phylummat <- phylummat[!is.na(phylummat$disposition_index) | !is.na(phylummat$insulin_secretion_mm) | !is.na(phylummat$insulin_sensitivity),]
+# Move columns
+phylummat <- phylummat %>% select("subject.id",everything())
+
+# Correlations with insulin sensitivity
+corrs_phy <- corr.test(phylummat[c("insulin_sensitivity","insulin_secretion_mm","disposition_index")],phylummat$fb,method = "spearman",adjust = "none")
+corr.table.phy <- as.data.frame(cbind(corrs_phy$r,corrs_phy$n,corrs_phy$p))
+corr.table.phy <- round(corr.table.phy,3)
+colnames(corr.table.phy) <- c("R","n","P Value")
+corr.table.phy$Variable <- rownames(corr.table.phy)
+
+```
+
+# Background
+
+The purpose of this analysis is to examine correlations between relative abundance of microbiota in the MISS study samples with insulin sensitivity, insulin secretion, and disposition index.
+
+# Methods
+
+The following data cleaning and manipulation steps were performed:
+
+1) Patients with missing data from the minimal model were excluded.
+
+Spearman's correlation was used to examine correlation between microbiota relative abundance and insulin sensitivity and secretion variables.  Both unadjusted p-values and p-values with FDR adjustment for multiple testing are reported.  All analyses were performed using R version 3.5.2.
+
+# Results
+
+There were `r N` subjects included in this analysis.
+
+Table 1: Relative Abundance Spearman Correlation with Insulin Sensitivity, FDR Adjusted P-Values
+```{r echo=FALSE}
+kable(corr.table,row.names = F)
+```
+
+```{r echo=FALSE,include=FALSE}
+# Correlations with insulin secretion
+corrs <- corr.test(final[,2:(ncol(final)-3)],final$insulin_secretion_mm,method = "spearman",adjust = "fdr")
+# Table
+corr.table <- as.data.frame(cbind(corrs$r,corrs$n,corrs$p))
+corr.table <- round(corr.table,3)
+colnames(corr.table) <- c("R","n","P Value")
+corr.table$Taxa <- rownames(corr.table)
+corr.table <- select(corr.table,"Taxa",everything())
+corr.table <- corr.table[order(corr.table$`P Value`),]
+```
+
+Table 2: Relative Abundance Spearman Correlation with Insulin Secretion, FDR Adjusted P-Values
+```{r echo=FALSE}
+kable(corr.table,row.names = F)
+```
+
+```{r echo=FALSE,include=FALSE}
+# Correlations with disposition index
+corrs <- corr.test(final[,2:(ncol(final)-3)],final$disposition_index,method = "spearman",adjust = "fdr")
+# Table
+corr.table <- as.data.frame(cbind(corrs$r,corrs$n,corrs$p))
+corr.table <- round(corr.table,3)
+colnames(corr.table) <- c("R","n","P Value")
+corr.table$Taxa <- rownames(corr.table)
+corr.table <- select(corr.table,"Taxa",everything())
+corr.table <- corr.table[order(corr.table$`P Value`),]
+```
+
+Table 3: Relative Abundance Spearman Correlation with Disposition Index, FDR Adjusted P-Values
+```{r echo=FALSE}
+kable(corr.table,row.names = F)
+```
+
+
+```{r echo=FALSE,include=FALSE}
+# Correlations with insulin sensitivity
+corrs <- corr.test(final[,2:(ncol(final)-3)],final$insulin_sensitivity,method = "spearman",adjust = "none")
+# Table
+corr.table <- as.data.frame(cbind(corrs$r,corrs$n,corrs$p))
+corr.table <- round(corr.table,3)
+colnames(corr.table) <- c("R","n","P Value")
+corr.table$Taxa <- rownames(corr.table)
+corr.table <- select(corr.table,"Taxa",everything())
+corr.table <- corr.table[order(corr.table$`P Value`),]
+```
+
+Table 4: Relative Abundance Spearman Correlation with Insulin Sensitivity, Unadjusted P-Values
+```{r echo=FALSE}
+kable(corr.table,row.names = F)
+```
+
+```{r echo=FALSE,include=FALSE}
+# Correlations with insulin secretion
+corrs <- corr.test(final[,2:(ncol(final)-3)],final$insulin_secretion_mm,method = "spearman",adjust = "none")
+# Table
+corr.table <- as.data.frame(cbind(corrs$r,corrs$n,corrs$p))
+corr.table <- round(corr.table,3)
+colnames(corr.table) <- c("R","n","P Value")
+corr.table$Taxa <- rownames(corr.table)
+corr.table <- select(corr.table,"Taxa",everything())
+corr.table <- corr.table[order(corr.table$`P Value`),]
+```
+
+Table 5: Relative Abundance Spearman Correlation with Insulin Secretion, Unadjusted P-Values
+```{r echo=FALSE}
+kable(corr.table,row.names = F)
+```
+
+```{r echo=FALSE,include=FALSE}
+# Correlations with disposition index
+corrs <- corr.test(final[,2:(ncol(final)-3)],final$disposition_index,method = "spearman",adjust = "none")
+# Table
+corr.table <- as.data.frame(cbind(corrs$r,corrs$n,corrs$p))
+corr.table <- round(corr.table,3)
+colnames(corr.table) <- c("R","n","P Value")
+corr.table$Taxa <- rownames(corr.table)
+corr.table <- select(corr.table,"Taxa",everything())
+corr.table <- corr.table[order(corr.table$`P Value`),]
+```
+
+Table 6: Relative Abundance Spearman Correlation with Disposition Index, Unadjusted P-Values
+```{r echo=FALSE}
+kable(corr.table,row.names = F)
+```
+
+Table 7: Correlation of Insulin Sensitivity, Insulin Secretion, and DI with F:B ratio, Unadjusted P-Values
+```{r echo=FALSE}
+kable(corr.table.phy,row.names = F)
+```

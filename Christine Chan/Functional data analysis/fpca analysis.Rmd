@@ -1,0 +1,125 @@
+---
+title: "FPCA analysis of CGM data in patients with CF"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(fpca)
+library(dplyr)
+
+#data <- read.csv("H:\\Endocrinology\\Chan\\Functional data analysis\\Cleaned CGM Data\\master.csv")
+#keep <- data[,c("subjectid","sensorglucose","minutes_scaled")]
+#keep$subjectid <- as.character(data$subjectid)
+#data_unq <- distinct(data, subjectid, minutes, .keep_all=T)
+#data_unq <- as.data.frame(data_unq)
+#data_unq$subjectid <- as.vector(data_unq$subjectid)
+
+# need to delete duplicate subjects (i.e., people who wore CGM twice)
+badsubj <- c("097","075","102","011CC","128","040")
+# master contains the 7 days of readings in sequence
+data <- read.csv("H:\\Endocrinology\\Chan\\Functional data analysis\\Cleaned CGM Data\\master.csv")
+data <- data[!data$subjectid %in% badsubj,]
+data$subjectid <- droplevels(data$subjectid)
+# read in mean daily glucose curves
+data_unq <- read.csv("H:\\Endocrinology\\Chan\\Functional data analysis\\Cleaned CGM Data\\mean_output.csv")
+data_unq <- data_unq[!data_unq$subjectid %in% badsubj,]
+data_unq$subjectid <- droplevels(data_unq$subjectid)
+
+final <- data_unq[,c("subjectid","sensorglucose","minutes")]
+
+## candidate models for fitting ##
+M.set <- c(4, 5, 6)
+r.set <- c(2, 3, 4)
+## setting parameters for fpca.mle ##
+ini.method = "EM"
+basis.method = "bs"
+sl.v = rep(0.5, 10)
+max.step = 80
+grid.l = seq(0, 1, length=288)
+grids = seq(0, 1, length = 288)
+## fit candidate models by fpca.mle ##
+result <- fpca.mle(final, M.set, r.set, ini.method, basis.method, sl.v, max.step, grid.l, grids)
+
+## after getting the result##
+grids.new <- result$grid
+M <- result$selected_model[1] # the selected M (number of basis functions)
+r <- result$selected_model[2] # the selected r (dimension of the process)
+muest <- result$fitted_mean # the estimated mean curve by local linear fitting evaluated at grid
+evalest <- result$eigenvalues # the estimated eigenvalues under the selected model
+sig2est <- result$error_var # the estimated error variance under the selected model
+eigenfest <- result$eigenfunctions # the estimated eigenfunctions under the selected model evaluated at grid
+## derive fpc scores and look at the predicted curve ##
+# fpc scores
+fpcs <- fpca.score(as.matrix(final), grids.new, muest, evalest, eigenfest, sig2est, r)
+# get predicted trajectories on a fine grid: the same grid for which mean and eigenfunctions are evaluated
+pred <- fpca.pred(fpcs, muest, eigenfest)
+
+data(easy)
+result_easy <- fpca.mle(easy$data, M.set, r.set, ini.method, basis.method, sl.v, max.step, grid.l, grids)
+grids.new <- result_easy$grid
+M <- result_easy$selected_model[1] # the selected M (number of basis functions)
+r <- result_easy$selected_model[2] # the selected r (dimension of the process)
+muest <- result_easy$fitted_mean # the estimated mean curve by local linear fitting evaluated at grid
+evalest <- result_easy$eigenvalues # the estimated eigenvalues under the selected model
+sig2est <- result_easy$error_var # the estimated error variance under the selected model
+eigenfest <- result_easy$eigenfunctions # the estimated eigenfunctions under the selected model evaluated at grid
+## derive fpc scores and look at the predicted curve ##
+# fpc scores
+fpcs <- fpca.score(as.matrix(easy$data), grids.new, muest, evalest, eigenfest, sig2est, r)
+# get predicted trajectories on a fine grid: the same grid for which mean and eigenfunctions are evaluated
+pred <- fpca.pred(fpcs, muest, eigenfest)
+
+fpca.score<-function(data.m,grids.u,muhat,eigenvals,eigenfuncs,sig2hat,K){
+##estimated conditional principal component scores (BLUPs): \hat{E(\xi_k|Y)}, k=1,...,K
+##Name:FPcScore
+##para:
+##     data.m -- data matrix; same as input for fpca.mle
+##     grids.u -- grid of time points used in evaluating the mean and eigenfunctions (on the original scale); (returned by fpca. mle)
+##     muhat,eigenvals, eigenfuncs, sig2hat -- (estimated) mean, eigenvalues, eigenfunctions and noise variance; (returned by fpca.mle)
+##     K -- number of eigenfunctions used in the model, i.e., (estimated) dimension of the process
+##return: first K conditional PC scores (the BLUP estimates): n by K
+temp<-table(data.m[,1])
+n<-length(temp)             ##     number of curves;
+m.l<-as.vector(temp)        ##     m.l -- number of time points per curve
+result<-matrix(0,n,K)       ##First K FPC scores for each subject
+
+N <- length(grids.u)        ## number of time points on the grid
+evalmat <- diag(eigenvals[1:K])  ## diagonal matrix of the first K (estimated) eigenvalues
+current <- 0  ## current index
+eigenfuncs.u<-t(eigenfuncs)   ## dimmension: grid_length by K
+
+data.u<-matrix(as.numeric(as.vector(data.m[,-1])),nrow=nrow(data.m[,-1]),ncol=ncol(data.m[,-1]))     ##convert obs matrix to be numierc
+
+  for (i in 1:n){
+      Y <- as.vector(data.u[(current+1):(current+m.l[i]),1])  ## observed  measurements of ith curve
+      meastime <- data.u[(current+1):(current+m.l[i]),2] ## measurement times of the ith curve
+      print(meastime)
+      print(length(meastime))
+      gridtime <- ceiling(N*meastime)   ## project measurement time onto the grid
+      print(gridtime)
+      print(length(gridtime))
+      print(dim(eigenfuncs.u))
+      muy <- muhat[gridtime]
+      Phiy  <- matrix(eigenfuncs.u[gridtime,1:K],ncol=K)
+      Sigy <- Phiy %*% evalmat %*% t(Phiy) + sig2hat * diag(m.l[i])
+      temp.y<-matrix(Y-muy)
+      result[i,] <- evalmat %*% t(Phiy) %*% solve(Sigy,temp.y)
+      current <- current + m.l[i]
+  }
+return(result)
+}
+
+
+```
+
+## Background
+
+## Methods
+
+## Results
+
+

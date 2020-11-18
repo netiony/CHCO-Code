@@ -1,0 +1,260 @@
+---
+title: "Early Glargine in DKA"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+setwd("H:\\Endocrinology\\Ohman\\Ohman early glargine\\Data")
+
+#install_github('palmercl/Table1')
+
+library(tidyr)
+library(magrittr)
+library(dplyr)
+library(lubridate)
+library(zoo) 
+library(M3)
+library(data.table)
+library(Table1)
+library(devtools)
+library(Hmisc)
+library(knitr)
+
+####################################################################################################
+#Data Manipulation #
+####################################################################################################
+
+completeFun <- function(data, desiredCols) {
+  completeVec <- complete.cases(data[, desiredCols])
+  return(data[completeVec, ])
+}
+
+# use Claire's functions
+source(file='H:\\R\\Markdown sample\\01_functions.r')
+
+# read main data sheet
+all <- read.csv("H:\\Endocrinology\\Ohman\\Ohman early glargine\\Data\\CMC_DKA deidentified_1.30.2018 main sheet.csv",na.strings = c("","NA"," "))
+head(all)
+N.MRFin <- dim(distinct(all,MRFin))
+N.StudyID <- dim(distinct(all,StudyID))
+# create a new study ID for merging with glucose data (in combination with age because that's the only way to tell in glucose data)
+all$StudyID.glucose <- sub('\\_.*','',all$StudyID)
+
+# read glucose data sheet
+gluc <- read.csv("H:\\Endocrinology\\Ohman\\Ohman early glargine\\Data\\CMC_DKA deidentified_1.30.2018 glucose.csv")
+# change the name of the glucose ID variable so it can be matched to the main datasheet
+setnames(gluc,"StudyID","StudyID.glucose")
+# convert blank glucose and weird entries to NA
+gluc$Glucose[gluc$Glucose==" "]  <- NA
+gluc$Glucose[gluc$Glucose=="Already Documented"]  <- NA
+gluc$Glucose[gluc$Glucose=="See Comment"]  <- NA
+gluc$Glucose[gluc$Glucose=="Task Duplication"]  <- NA
+gluc$Glucose[gluc$Glucose=="TNP"]  <- NA
+# get rid of missing glucose values
+gluc <- completeFun(gluc,"Glucose.from.Admit..Minutes.")
+gluc <- completeFun(gluc,"Glucose")
+gluc$Glucose <- as.numeric(as.character(gluc$Glucose))
+
+# keep needed variables for primary analysis from main data sheet
+# keep insulin end time, not glargine
+myvars <- c("StudyID","StudyID.glucose","MRFin","Age","Sex","Ethnicity","Height","Weight","HbA1c.Closest.to.Admisson","HbA1c.Most.recent.prior.to.Admission","Insurance.Type",
+            "Median.Income","October.1.2014.Flag","Admit_mod_Date","Admit_Time","Discharge_mod_Date","Discharge_Time",
+            "Last.Insulin.Administration_mod_Date","Last.Insulin.Administration_Time","Glargine_Time","Glargine_mod_Date",
+            "First.Insulin.Start_Time","First.Insulin.Start_mod_Date")
+hosp_er <- all[myvars]
+time_vars <- c("StudyID","StudyID.glucose","Last.Insulin.Administration_mod_Date","Last.Insulin.Administration_Time")
+
+# get rid of missing insulin dates and times
+hosp_er <- completeFun(hosp_er,"Last.Insulin.Administration_mod_Date")
+
+# in the hosp_er dataset, study IDs are unique to an admission (e.g., 1151_1 and 1151_2)
+# but there can be multiple records for the same admission, if the person moved from ER to inpatient
+# keep the one with the latest date and time of IV insulin administration
+sortds <- hosp_er[order(hosp_er$StudyID,desc(hosp_er$Last.Insulin.Administration_mod_Date),desc(hosp_er$Last.Insulin.Administration_Time)),]
+lastinsulin <- sortds %>% group_by(StudyID) %>% filter(row_number(StudyID) == 1)
+
+# merge last date and time of insulin administration to the glucose data
+# keep only those ID/Age combinations that are in both dataframes
+merged <- merge(lastinsulin,gluc,by=c("StudyID.glucose","Age"))
+
+# calculate minutes between admit and insulin discontinuation
+merged$instime <- as_datetime(hms(merged$Last.Insulin.Administration_Time))
+merged$admittime <- as_datetime(hms(merged$Admit_Time))
+# elapsed is just the difference between insulin d/c and admission but does not account for whether those are on different days - that's fixed later
+merged$elapsed <- difftime(merged$instime,merged$admittime,units="mins") 
+merged$min_admit_insdc <- (as.duration(merged$elapsed) + ddays(merged$Last.Insulin.Administration_mod_Date-merged$Admit_mod_Date))/dminutes(1)
+merged$min_insdc_gluc <- ifelse(merged$Glucose.from.Admit..Minutes.>merged$min_admit_insdc,merged$Glucose.from.Admit..Minutes.-merged$min_admit_insdc,NA)
+check <- c("StudyID","Admit_Time","admittime","Last.Insulin.Administration_Time","instime","elapsed","Last.Insulin.Administration_mod_Date","Admit_mod_Date","min_admit_insdc")
+
+# create new group variable for overlap between IV insulin and glargine
+# if glargine is before IV insulin start, then they are in the early group
+# if glargine is after IV insulin start, then check overlap.  If overlap >4 hours, then early.  If overlap <2 hours, then late.
+# Glargine time is not always the same day as admission
+merged$glarginetime <- as_datetime(hms(merged$Glargine_Time))
+merged$temp <- difftime(merged$glarginetime,merged$admittime,units="mins")
+merged$min_admit_glargine <- (as.duration(merged$temp) +   ddays(merged$Glargine_mod_Date-merged$Admit_mod_Date))/dminutes(1)
+merged$min_insdc_glargine <- merged$min_admit_glargine - merged$min_admit_insdc
+merged$temp1 <- merged$min_admit_insdc-240
+merged$temp2 <- merged$min_admit_insdc-120
+merged$group[merged$min_admit_glargine<(merged$min_admit_insdc-240)] <- "Early"
+merged$group[merged$min_admit_glargine>(merged$min_admit_insdc-120)] <- "Late"
+check <- c("StudyID","Admit_mod_Date","admittime","Last.Insulin.Administration_mod_Date","instime","min_admit_insdc","Glargine_mod_Date","glarginetime","min_admit_glargine","min_insdc_glargine","temp1","temp2","group")
+count <- distinct(merged,StudyID.glucose, .keep_all=TRUE)
+table(count$group,useNA="always")
+table(count$group,count$October.1.2014.Flag)
+summary(merged$min_insdc_glargine)
+
+# create new dataframe with glucose values that are within 12 hours of insulin discontinuation, for calculating median
+gluc_med <- merged[!is.na(merged$min_insdc_gluc) & merged$min_insdc_gluc<720,]
+gluc_median <- aggregate(gluc_med$Glucose,list(gluc_med$StudyID.glucose),median)
+setnames(gluc_median,"Group.1","StudyID.glucose")
+setnames(gluc_median,"x","median_glucose")
+
+# determine rebound hyperglycemia - defined as glucose >180 within 12 hours of insulin discontinuation
+# compare minutes after admit that glucose was measured to minutes after admit that insulin was last administered to see if w/in window
+merged$rebound_hyper <- ifelse((!is.na(merged$min_insdc_gluc)) & (merged$min_insdc_gluc<720) & (merged$Glucose>180),1,0)
+merged$test <- ifelse(merged$min_insdc_gluc<720,1,0)
+
+# create a new variable for hypoglycemia (<70) within 12 hours of insulin discontinuation
+merged$hypo_12hr <- ifelse((!is.na(merged$min_insdc_gluc)) & (merged$min_insdc_gluc<720) & (merged$Glucose<70),1,0)
+
+# create a new variable for hypoglycemia (<70) during IV insulin administration
+#merged$hypo_IVins <- 
+
+# need to keep highest value of rebound_hyper
+merged <- merged[order(merged$StudyID,desc(merged$rebound_hyper)),]
+# having both of the next 2 statements should not work/be necessary
+rebound_hyper <- merged %>% group_by(StudyID) %>% filter(row_number(StudyID) == 1)
+#rebound_hyper <- merged %>% group_by(StudyID.glucose) %>% filter(row_number(StudyID.glucose) == 1)
+#rebound_hyper <- merged %>% group_by(StudyID.glucose) %>% top_n(1,StudyID.glucose)
+rebound_hyper[rebound_hyper$rebound_hyper==0,
+             c("StudyID.glucose","min_admit_insdc","Glucose.from.Admit..Minutes.","min_insdc_gluc","Glucose","rebound_hyper","group")]
+
+# create new dataframe to keep highest value of hypoglycemia within 12 hours
+hypo12 <- merged[order(merged$StudyID,desc(merged$hypo_12hr)),]
+hypo12 <- hypo12 %>% group_by(StudyID) %>% filter(row_number(StudyID) == 1)
+
+# combine Military and Private insurance
+rebound_hyper$Insnew <-as.character(rebound_hyper$Insurance.Type)
+rebound_hyper$Insnew[rebound_hyper$Insurance.Type=='Military'|rebound_hyper$Insurance.Type=='Private']<-'Private/Military'
+rebound_hyper$Insnew[rebound_hyper$Insurance.Type=='NaN']<-NA
+rebound_hyper$Insnew <-as.factor(rebound_hyper$Insnew)
+
+# merge back in median glucose values
+rebound_hyper <- merge(rebound_hyper,gluc_median,by.x="StudyID.glucose",by.y="StudyID.glucose")
+
+
+####################################################################################################
+
+####################################################################################################
+#Descriptive Tables #
+####################################################################################################
+
+# Set factors and levels
+rebound_hyper$rebound_hyper <- as.factor(rebound_hyper$rebound_hyper)
+rebound_hyper$group <- as.factor(rebound_hyper$group)
+levels(rebound_hyper$rebound_hyper)=c('No','Yes')
+#levels(rebound_hyper$October.1.2014.Flag)=c('After','Before')
+levels(rebound_hyper$Sex)=c('Female','Male')
+levels(rebound_hyper$Ethnicity)=c('American Indian or Alaska Native','Asian','Black or African American','Hispanic','Multiracial'
+                                  ,'Native Hawaiian or Other Pacific Islander','Other','White')
+levels(rebound_hyper$Insnew)=c('Private/Military','Public','Self Pay')
+
+# convert to numeric
+rebound_hyper$HbA1c.Closest.to.Admisson <- as.numeric(rebound_hyper$HbA1c.Closest.to.Admisson)
+
+# Set Labels
+label(rebound_hyper$rebound_hyper)='Rebound hyperglycemia'
+label(rebound_hyper$group)
+label(rebound_hyper$Sex)='Sex'
+label(rebound_hyper$Ethnicity)='Ethnicity'
+label(rebound_hyper$Insnew)='Insurance'
+label(rebound_hyper$Age)='Age'
+label(rebound_hyper$Height)='Height'
+label(rebound_hyper$Weight)='Weight'
+label(rebound_hyper$HbA1c.Closest.to.Admisson)='HbA1c closest to admission'
+label(rebound_hyper$Median.Income)='Median income'
+label(rebound_hyper$median_glucose)='Median glucose'
+
+N <- sum(!is.na(rebound_hyper$group))
+Nexcl <- sum(is.na(rebound_hyper$group))
+
+tab1 <- final_table(rebound_hyper,c('Sex','Ethnicity',"Insnew","Age","Height","Weight","HbA1c.Closest.to.Admisson","Median.Income"),
+                    group=rebound_hyper$group,margin=2,single=0,ron=2)
+
+####################################################################################################
+
+####################################################################################################
+#Primary Outcome #
+####################################################################################################
+
+# early vs. late glargine variable is October.1.2014.Flag
+#tbl <- table(rebound_hyper$rebound_hyper,rebound_hyper$October.1.2014.Flag)
+#rslt <- chisq.test(tbl)
+tab_primary <- final_table(rebound_hyper,'rebound_hyper',group=rebound_hyper$group,margin=2,single=0,ron=2)
+
+####################################################################################################
+#Median glucose #
+####################################################################################################
+tab_medgluc <- final_table(rebound_hyper,'median_glucose',group=rebound_hyper$group,margin=2,single=0,ron=2)
+
+####################################################################################################
+#Hypoglycemia within 12 hours after insulin discontinuation #
+####################################################################################################
+tab_hypo12 <- final_table(rebound_hyper,'rebound_hyper',group=rebound_hyper$group,margin=2,single=0,ron=2)
+
+```
+
+# Background
+
+The purpose of this study was to determine if early glargine administration in children with DKA prevents rebound hyperglycemia and recurrent ketogenesis without increasing the rate of hypoglycemia.   
+
+# Methods
+
+Early glargine administration was defined as either (1) glargine administered before the start of IV insulin administration or (2) glargine administered after the start of IV insulin administration with >4 hours of overlap with IV insulin.  Late glargine administration was defined as glargine administered with <2 hour overlap with IV insulin.  There were `r Nexcl` participants with between 2-4 hours of overlap with IV insulin who were excluded from this analysis.
+ 
+The primary outcome of this study is rebound hyperglycemia, defined as serum glucose >180 mg/dL within 12 hours of discontinuation of IV insulin.  
+
+The following data cleaning and manipulation steps were performed in order to determine whether each participant met the definition of rebound hyperglycemia:
+
+1)  Study IDs on the main data sheet ending in "_1" or something similar, to indicate distinct encounters, were stripped of the suffix starting with the underscore, so they would match the IDs on the glucose data sheet.
+2)  Missing glucose values or those with comments such as ("Already Documented","See Comment","Task Duplication", and "TNP") deleted from the glucose results.
+3)  Encounters that were missing insulin administration dates and/or times were deleted.
+4)  For each encounter, the last date and time of IV insulin administration was determined.
+5)  The main data sheet was merged with glucose results by a combination of study ID and age, since a participant could have more than one encounter.
+6)  If a participant had a glucose value >180 mg/dL within 12 hours of IV insulin discontinuation, s/he was classified as having rebound hyperglycemia.
+
+Additional data cleaning and manipulation steps included:
+
+1)  Military and private insurance were combined into one category.
+
+Descriptive statistics reported include mean and standard deviations for continuous variables, and frequencies and percentages for categorical variables.  To compare characteristics in the two groups, t-tests were used for continuous variables and the chi-square test or Fisher's exact test was used for categorical variables.
+
+# Results
+
+There were `r N` subjects included in this analysis.  Descriptive statistics are shown in Table 1.
+
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(tab1,caption="Table 1.  Descriptive statistics.  Asterisks indicate that Fisher's exact test was used instead of the chi-square test due to small expected cell value.")
+```
+\
+
+There was a significant difference in the rate of rebound hyperglycemia in the two groups (Table 2).
+
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(tab_primary,caption="Table 2.  Comparison of rates of rebound hyperglycemia.")
+```
+
+\
+
+There was no difference in the median glucose values during the 12 hours after insulin discontinuation (Table 3).
+
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(tab_medgluc,caption="Table 3.  Comparison of median glucose values in the 12 hours after insulin discontinuation.")
+```
+
+

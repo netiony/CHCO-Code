@@ -1,0 +1,304 @@
+---
+title: "FPCA analysis of CGM data in patients with CF"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(fdapace)
+library(lme4)
+library(stringi)
+library(ggplot2)
+
+# need to delete duplicate subjects (i.e., people who wore CGM twice)
+badsubj <- c("097","075","102","011CC","128","040")
+
+# master contains the 7 days of readings in sequence
+data <- read.csv("H:\\Endocrinology\\Chan\\Functional data analysis\\Cleaned CGM Data\\master.csv")
+data <- data[!data$subjectid %in% badsubj,]
+data$subjectid <- droplevels(data$subjectid)
+
+# read in mean daily glucose curves
+data_unq <- read.csv("H:\\Endocrinology\\Chan\\Functional data analysis\\Cleaned CGM Data\\mean_output.csv")
+data_unq <- data_unq[!data_unq$subjectid %in% badsubj,]
+data_unq$subjectid <- droplevels(data_unq$subjectid)
+
+# spaghetti plot of mean curves
+p <- ggplot(data=data_unq,aes(x=minutes,y=sensorglucose,group=subjectid))
+p + geom_point()
+p + geom_line()
+
+# create lists for fdapace
+gluc <- MakeFPCAInputs(data_unq$subjectid,data_unq$minutes,data_unq$sensorglucose)
+
+# run FPCA
+fpcaObjGluc <- FPCA(gluc$Ly, gluc$Lt, list(plot=TRUE, methodMuCovEst='smooth'))
+CreateFuncBoxPlot(fpcaObjGluc)
+
+# evaluate number of components
+K <- SelectK(fpcaObjGluc,criterion = "AIC")
+Kb <- SelectK(fpcaObjGluc,criterion = "BIC")
+Ko <- SelectK(fpcaObjGluc,criterion = 'FVE', FVEthreshold = 0.95)
+
+# visualize fitted trajectories 
+par(mfrow=c(1,2))
+CreatePathPlot( fpcaObjGluc, subset = 1:3, main = "GCV bandwidth", pch = 16, main="K=9")
+CreatePathPlot( fpcaObjGluc, subset = 1:3, main = "User-defined bandwidth", pch = 16, main="K=5",K=5)
+
+# try on normalized time scale
+#gluc_norm <- MakeFPCAInputs(data_unq$subjectid,data_unq$minutes_scaled,data_unq$sensorglucose)
+#fpcaObjGluc_scaled <- FPCA(gluc_norm$Ly, gluc_norm$Lt, list(plot=TRUE, methodMuCovEst='smooth'))
+#K_scaled <- SelectK(fpcaObjGluc_scaled,criterion = "AIC")
+#Kb_scaled <- SelectK(fpcaObjGluc_scaled,criterion = "BIC")
+#Ko_scaled <- SelectK(fpcaObjGluc_scaled,criterion = 'FVE', FVEthreshold = 0.95)
+
+# identify clusters
+#A <- FClust(gluc$Ly, gluc$Lt, optnsFPCA = list(methodMuCovEst = 'smooth',FVEthreshold=0.95), k = 3)
+B <- FClust(gluc$Ly, gluc$Lt, optnsFPCA = list(methodMuCovEst = 'smooth',FVEthreshold=0.95), k = 3, cmethod="kCFC")
+CreatePathPlot(fpcaObjGluc,K=3,col=B$cluster,showObs = FALSE)
+#legend("top",c("1","2","3"))
+#CreatePathPlot(fpcaObjGluc,K=4,col=A$cluster,showObs = FALSE)
+
+# create data for merging with outcomes
+cluster <- as.character(unique(data_unq$subjectid))
+cluster <- as.data.frame(cbind(cluster,B$cluster))
+cluster <- cbind(cluster,fpcaObjGluc$xiEst)
+colnames(cluster) <- c("subjectid","cluster","FPC1","FPC2","FPC3","FPC4","FPC5","FPC6","FPC7","FPC8","FPC9","FPC10","FPC11")
+cgmtimes <- distinct(data, subjectid, timestamp, .keep_all=F)
+cgmtimes$timestamp <- as.POSIXct(as.character(cgmtimes$timestamp), format="%Y-%m-%d %H:%M:%S")
+cgmtimes_min <- aggregate(timestamp~subjectid,cgmtimes,min)
+cluster <- merge(cluster,cgmtimes_min,by="subjectid")
+colnames(cluster) <- c("subjectid","cluster","FPC1","FPC2","FPC3","FPC4","FPC5","FPC6","FPC7","FPC8","FPC9","FPC10","FPC11","cgmtime")
+
+# read in outcomes data
+# pft contains lung function and BMI data
+# glyc contains glycemic data
+# admit contains admissions and exacerbations data
+# mod contains CFTR modulator data
+source("C:\\Users\\pylell\\Documents\\GitHub\\Chan-functional-data-analysis\\read and clean outcomes data.R")
+glyc$a1c <- glyc$`Hbg A1C`
+glyc <- glyc[!glyc$subjectid %in% badsubj,]
+pft <- pft[!pft$subjectid %in% badsubj,]
+admit <- admit[!admit$subjectid %in% badsubj,]
+mod <- mod[!mod$subjectid %in% badsubj,]
+
+# create summary variable to indicate the date at which CFTR modulators were started
+for (i in 1:nrow(mod)) {
+  mod$cftrdate[i] <- as.POSIXct(min(mod$`Earliest Kalydeco Date After Consent`[i],mod$`Earliest Orkambi Date After Consent`[i],mod$`Earliest Symdeko Date After Consent`[i],na.rm = T))
+  mod$ork_sym_date[i]  <- as.POSIXct(min(mod$`Earliest Orkambi Date After Consent`[i],mod$`Earliest Symdeko Date After Consent`[i],na.rm = T))
+  mod$kal_date[i] <- mod$`Earliest Kalydeco Date After Consent`[i]
+}
+class(mod$cftrdate) = c('POSIXct')
+class(mod$ork_sym_date) = c('POSIXct')
+class(mod$kal_date) = c('POSIXct')
+cftrdate <- mod[,c("subjectid","cftrdate","ork_sym_date","kal_date")]
+
+# fit random effects model to a1c and get individual slopes
+a1c <- glyc[!is.na(glyc$a1c),]
+firstdate <- aggregate(testdate~subjectid,a1c,min)
+colnames(firstdate) <- c("subjectid","firsta1c")
+a1c <- merge(a1c,firstdate,by="subjectid")
+a1c$days <- floor(as.numeric(difftime(a1c$testdate,a1c$firsta1c,units=c("days"))))
+a1c <- merge(a1c,cftrdate,by="subjectid",all.x = T,all.y=F)
+a1c$oncftr <- as.factor(ifelse(is.na(a1c$cftrdate),0,ifelse(as.POSIXct(a1c$testdate)>a1c$cftrdate,1,0)))
+a1c$a1cscaled <- scale(a1c$a1c)
+a1c$dayscaled <- scale(a1c$days)
+a1cmodel <- lmer(a1c$a1cscaled ~ 1 + a1c$dayscaled + a1c$oncftr + (1 + a1c$dayscaled | a1c$subjectid))
+a1cslopes <- cbind(as.character(unique(a1c$subjectid)),coef(a1cmodel)$`a1c$subjectid`$`a1c$dayscaled`)
+a1cslopes <- as.data.frame(a1cslopes)
+colnames(a1cslopes) <- c("subjectid","a1cslope")
+a1cslopes$subjectid <- stri_pad(a1cslopes$subjectid,width = 3,pad="0")
+#a1cslopes[a1cslopes$subjectid=="40.1",]$subjectid <- "040.1"
+cluster <- merge(cluster,a1cslopes,by="subjectid",all.x = TRUE,all.y = FALSE)
+cluster$a1cslope <- as.numeric(as.character(cluster$a1cslope))
+# compare a1c slopes in the cluster groups
+kruskal.test(cluster$a1cslope ~ cluster$cluster)
+plot(cluster$a1cslope ~ cluster$cluster)
+cluster$a1cslope_neg <- ifelse(cluster$a1cslope<0,1,0)
+fisher.test(cluster$a1cslope_neg,cluster$cluster)
+table(cluster$a1cslope_neg,cluster$cluster)
+# spaghetti plot of a1c
+# not much going on with a1c
+p <- ggplot(data=a1c,aes(x=days,y=a1c,group=subjectid))
+p + geom_point()
+p + geom_line()
+# now test whether FPC1 is related to a1c slope
+lm1 <- lm(cluster$a1cslope~cluster$FPC1)
+lm1a <- lm(cluster$a1cslope~cluster$FPC2)
+lm1b <- lm(cluster$a1cslope~cluster$FPC1 + cluster$FPC2)
+
+# add BMI and PFT data - by individual outcomes so dates are correct
+# first FVC
+fvc <- pft[!is.na(pft$FVC),]
+firstfvc <- aggregate(`Encounter date`~subjectid,fvc,min)
+colnames(firstfvc) <- c("subjectid","firstfvc")
+fvc <- merge(fvc,firstfvc,by="subjectid")
+fvc$days <- floor(as.numeric(difftime(fvc$`Encounter date`,fvc$firstfvc,units=c("days"))))
+fvc <- merge(fvc,cftrdate,by="subjectid",all.x = T,all.y=F)
+fvc$oncftr <- as.factor(ifelse(is.na(fvc$cftrdate),0,ifelse(fvc$`Encounter date`>fvc$cftrdate,1,0)))
+keepfvc <- c("subjectid","firstfvc","Encounter date","days","FVC","oncftr")
+fvc <- fvc[,keepfvc]
+p <- ggplot(data=fvc,aes(x=days,y=FVC,group=subjectid))
+p + geom_point()
+p + geom_line()
+fvc$FVCscaled <- scale(fvc$FVC)
+fvc$dayscaled <- scale(fvc$days)
+fvcmodel <- lmer(fvc$FVCscaled ~ 1 + fvc$dayscaled + fvc$oncftr + (1 + fvc$dayscaled | as.factor(fvc$subjectid)))
+fvcslopes <- cbind(as.character(unique(fvc$subjectid)),coef(fvcmodel)$`as.factor(fvc$subjectid)`$`fvc$dayscaled`)
+fvcslopes <- as.data.frame(fvcslopes)
+colnames(fvcslopes) <- c("subjectid","fvcslope")
+fvcslopes$subjectid <- stri_pad(fvcslopes$subjectid,width = 3,pad="0")
+cluster <- merge(cluster,fvcslopes,by="subjectid",all.x = TRUE,all.y = FALSE)
+cluster$fvcslope <- as.numeric(as.character(cluster$fvcslope))
+# compare fvc slopes in the cluster groups
+kruskal.test(cluster$fvcslope ~ cluster$cluster)
+plot(cluster$fvcslope ~ cluster$cluster)
+cluster$fvcslope_neg <- ifelse(cluster$fvcslope<0,1,0)
+fisher.test(cluster$fvcslope_neg,cluster$cluster)
+table(cluster$fvcslope_neg,cluster$cluster)
+# now test whether FPC1 is related to fvc slope
+lm2 <- lm(cluster$fvcslope~cluster$FPC1)
+lm2a <- lm(cluster$fvcslope~cluster$FPC2)
+lm2b <- lm(cluster$fvcslope~cluster$FPC1 + cluster$FPC2)
+
+# FEV1
+fev1 <- pft[!is.na(pft$FEV1),]
+firstfev1 <- aggregate(`Encounter date`~subjectid,fev1,min)
+colnames(firstfev1) <- c("subjectid","firstfev1")
+fev1 <- merge(fev1,firstfev1,by="subjectid")
+fev1$days <- floor(as.numeric(difftime(fev1$`Encounter date`,fev1$firstfev1,units=c("days"))))
+fev1 <- merge(fev1,cftrdate,by="subjectid",all.x = T,all.y=F)
+fev1$oncftr <- as.factor(ifelse(is.na(fev1$cftrdate),0,ifelse(fev1$`Encounter date`>fev1$cftrdate,1,0)))
+keepfev1 <- c("subjectid","firstfev1","Encounter date","days","FEV1","oncftr")
+fev1 <- fev1[,keepfev1]
+p <- ggplot(data=fev1,aes(x=days,y=FEV1,group=subjectid))
+p + geom_point()
+p + geom_line()
+fev1$fev1scaled <- scale(fev1$FEV1)
+fev1$dayscaled <- scale(fev1$days)
+fev1model <- lmer(fev1$fev1scaled ~ 1 + fev1$dayscaled + fev1$oncftr +  (1 + fev1$dayscaled | as.factor(fev1$subjectid)))
+fev1slopes <- cbind(as.character(unique(fev1$subjectid)),coef(fev1model)$`as.factor(fev1$subjectid)`$`fev1$dayscaled`)
+fev1slopes <- as.data.frame(fev1slopes)
+colnames(fev1slopes) <- c("subjectid","fev1slope")
+fev1slopes$subjectid <- stri_pad(fev1slopes$subjectid,width = 3,pad="0")
+cluster <- merge(cluster,fev1slopes,by="subjectid",all.x = TRUE,all.y = FALSE)
+cluster$fev1slope <- as.numeric(as.character(cluster$fev1slope))
+# compare FEV1 slopes in the cluster groups
+kruskal.test(cluster$fev1slope ~ cluster$cluster)
+plot(cluster$fev1slope ~ cluster$cluster)
+cluster$fev1slope_neg <- ifelse(cluster$fev1slope<0,1,0)
+fisher.test(cluster$fev1slope_neg,cluster$cluster)
+table(cluster$fev1slope_neg,cluster$cluster)
+# now test whether FPC1 is related to fev1 slope
+lm3 <- lm(cluster$fev1slope~cluster$FPC1)
+plot(cluster$fev1slope~cluster$FPC1)
+lm3a <- lm(cluster$fev1slope~cluster$FPC2)
+lm3b <- lm(cluster$fev1slope~cluster$FPC1 + cluster$FPC2)
+
+#BMI
+bmi <- pft[!is.na(pft$`BMI absolute`) & pft$`BMI absolute`>10,]
+firstbmi <- aggregate(`Encounter date`~subjectid,bmi,min)
+colnames(firstbmi) <- c("subjectid","firstbmi")
+bmi <- merge(bmi,firstbmi,by="subjectid")
+bmi$days <- floor(as.numeric(difftime(bmi$`Encounter date`,bmi$firstbmi,units=c("days"))))
+bmi <- merge(bmi,cftrdate,by="subjectid",all.x = T,all.y=F)
+bmi$oncftr <- as.factor(ifelse(is.na(bmi$cftrdate),0,ifelse(bmi$`Encounter date`>bmi$cftrdate,1,0)))
+keepbmi <- c("subjectid","firstbmi","Encounter date","days","BMI absolute","oncftr")
+bmi <- bmi[,keepbmi]
+p <- ggplot(data=bmi,aes(x=days,y=`BMI absolute`,group=subjectid))
+p + geom_point()
+p + geom_line()
+bmi$bmiscaled <- scale(bmi$`BMI absolute`)
+bmi$dayscaled <- scale(bmi$days)
+bmimodel <- lmer(bmi$bmiscaled ~ 1 + bmi$dayscaled + bmi$oncftr + (1 + bmi$dayscaled | as.factor(bmi$subjectid)))
+bmislopes <- cbind(as.character(unique(bmi$subjectid)),coef(bmimodel)$`as.factor(bmi$subjectid)`$`bmi$dayscaled`)
+bmislopes <- as.data.frame(bmislopes)
+colnames(bmislopes) <- c("subjectid","bmislope")
+bmislopes$subjectid <- stri_pad(bmislopes$subjectid,width = 3,pad="0")
+cluster <- merge(cluster,bmislopes,by="subjectid",all.x = TRUE,all.y = FALSE)
+cluster$bmislope <- as.numeric(as.character(cluster$bmislope))
+# compare BMI slopes in the cluster groups
+kruskal.test(cluster$bmislope ~ cluster$cluster)
+plot(cluster$bmislope ~ cluster$cluster)
+cluster$bmislope_neg <- ifelse(cluster$bmislope<0,1,0)
+fisher.test(cluster$bmislope_neg,cluster$cluster)
+table(cluster$bmislope_neg,cluster$cluster)
+# now test whether FPC1 is related to bmi slope
+lm4 <- lm(cluster$bmislope~cluster$FPC1)
+plot(cluster$bmislope~cluster$FPC1)
+lm4a <- lm(cluster$bmislope~cluster$FPC2)
+plot(cluster$bmislope~cluster$FPC2)
+lm4b <- lm(cluster$bmislope~cluster$FPC1 + cluster$FPC2)
+
+# who is doing poorly
+cluster$allneg <- ifelse(cluster$a1cslope_neg==1 & cluster$fvcslope_neg==1 & cluster$fev1slope_neg==1,1,0)
+
+# admits - can't adjust for CFTR because we don't have dates
+admitkeep <- c("subjectid","Total PEX (column G + column H)")
+admit <- admit[admitkeep]
+cluster <- merge(cluster,admit,by="subjectid",all.x = TRUE,all.y = FALSE)
+# compare exacerbations in the cluster groups
+kruskal.test(cluster$`Total PEX (column G + column H)` ~ cluster$cluster)
+plot(cluster$`Total PEX (column G + column H)` ~ cluster$cluster)
+cluster$lowadmit <- ifelse(cluster$`Total PEX (column G + column H)`<5,1,0)
+fisher.test(cluster$lowadmit,cluster$cluster)
+table(cluster$bmislope_neg,cluster$cluster)
+# now test whether FPC1 is related to exacerbations
+lm5 <- lm(cluster$`Total PEX (column G + column H)`~cluster$FPC1)
+plot(cluster$`Total PEX (column G + column H)`~cluster$FPC1)
+lm5a <- lm(cluster$`Total PEX (column G + column H)`~cluster$FPC2)
+lm5b  <- lm(cluster$`Total PEX (column G + column H)`~ cluster$FPC1 + cluster$FPC2)
+
+# merge in the cgm summary variables
+cgmsummary <- read.csv("H:\\Endocrinology\\Chan\\Functional data analysis\\cgmanalysis summary files\\REDCap Upload.csv")
+cgmsummary$subjectid <- cgmsummary$subject_id
+cgmsummary$subject_id <- NULL
+cgmsummary$subjectid <- stri_pad(cgmsummary$subjectid,width = 3,pad="0")
+cgmsummary[cgmsummary$subjectid=="40.1",]$subjectid <- "040.1"
+alldata <- merge(cluster,cgmsummary,by="subjectid",all.x = T, all.y = F)
+lm6 <- lm(alldata$a1cslope~alldata$cv)
+lm7 <- lm(alldata$fvcslope~alldata$cv)
+lm8 <- lm(alldata$fev1slope~alldata$cv)
+lm9 <- lm(alldata$bmislope~alldata$cv)
+lm10 <- lm(alldata$`Total PEX (column G + column H)`~alldata$cv)
+
+lm11 <- lm(alldata$a1cslope~alldata$average_sensor)
+lm12 <- lm(alldata$fvcslope~alldata$average_sensor)
+lm13 <- lm(alldata$fev1slope~alldata$average_sensor)
+lm14 <- lm(alldata$bmislope~alldata$average_sensor)
+lm15 <- lm(alldata$`Total PEX (column G + column H)`~alldata$average_sensor)
+
+lm16 <- lm(alldata$a1cslope~alldata$r_mage)
+lm17 <- lm(alldata$fvcslope~alldata$r_mage)
+lm18 <- lm(alldata$fev1slope~alldata$r_mage)
+lm19 <- lm(alldata$bmislope~alldata$r_mage)
+lm20 <- lm(alldata$`Total PEX (column G + column H)`~alldata$r_mage)
+
+lm21 <- lm(alldata$a1cslope~alldata$percent_time_over_200)
+lm22 <- lm(alldata$fvcslope~alldata$percent_time_over_200)
+lm23 <- lm(alldata$fev1slope~alldata$percent_time_over_200)
+lm24 <- lm(alldata$bmislope~alldata$percent_time_over_200)
+lm25 <- lm(alldata$`Total PEX (column G + column H)`~alldata$percent_time_over_200)
+
+lm26 <- lm(alldata$a1cslope~alldata$percent_time_under_70)
+lm27 <- lm(alldata$fvcslope~alldata$percent_time_under_70)
+lm28 <- lm(alldata$fev1slope~alldata$percent_time_under_70)
+lm29 <- lm(alldata$bmislope~alldata$percent_time_under_70)
+lm30 <- lm(alldata$`Total PEX (column G + column H)`~alldata$percent_time_under_70)
+
+alldata$allneg <- ifelse(alldata$a1cslope_neg==1 & alldata$fvcslope_neg==1 & alldata$fev1slope_neg==1,1,0)
+glm1 <- glm(alldata$allneg ~ alldata$FPC1)
+
+```
+
+## Background
+
+## Methods
+
+## Results
+
+

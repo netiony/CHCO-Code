@@ -1,0 +1,196 @@
+---
+title: "Prediction of liver fat in PCOS"
+author: "Laura Pyle"
+date:  "`r format(Sys.time(), '%d %B %Y')`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+source('C:/Users/pylell/Documents/GitHub/Functions/01_functions.R')
+
+library(tidyr)
+library(magrittr)
+library(dplyr)
+library(data.table)
+library(knitr)
+library(pander)
+library(pROC)
+library(OptimalCutpoints)
+library(caret)
+library(rms)
+
+set.seed(3654)
+
+# read  data
+pred <- read.csv("H:\\Endocrinology\\Green\\PCOS liver fat prediction\\Data\\NAFLD prediction score data.csv")
+# replace "." with "NA"
+pred[pred=="."] <- NA
+# remove missing observations
+pred <- pred %>% drop_na(HS,liver.fat.perc,bmi.perc,Waist_cm,HOMA,HDL,TG,ALT,Free.Testosterone,SHBG)
+N <- nrow(distinct(pred,ID))
+
+# calculate testosterone and TG in European units
+# testosterone was ng/dL, convert to nmol/L
+pred$test_nmol <- pred$Free.Testosterone*28.818444
+# TG was mg/dL to mmol/L
+pred$tg_mmol <- pred$TG*88.495575
+
+#install.packages("ElemStatLearn", dependencies=T)
+library(ElemStatLearn)
+library(rpart)
+library(rms)
+
+# fit full logistic regression model 
+f <- lrm(HS ~ bmi.perc + Waist_cm + HOMA + HDL + TG + ALT + Free.Testosterone + SHBG, data=pred)
+print(f,latex=TRUE)
+s <- f$stats
+gamma.hat <- (s['Model L.R.'] - s['d.f.'])/s['Model L.R.']
+# see p. 279 of Harrel book - gamma hat means this model will validate on new data
+# about 25% worse than on this dataset
+
+# validate full logistic regression model
+f <- update(f,x=TRUE,y=TRUE)
+vfull <- validate(f, B=200, bw=TRUE)
+print(vfull)
+
+newf <- glm(HS ~ bmi.perc + Waist_cm + HOMA + HDL + TG + ALT + Free.Testosterone + SHBG, data=pred,family=binomial(link="logit"))
+tab1<-mod_tablog(newf)
+# OR and 95% CI
+newf_or <- exp(cbind(OR = coef(newf), confint(newf)))
+
+# backwards stepdown
+fastbw(f)
+# validate stepwise model
+r <- lrm(HS ~ ALT, data=pred)
+r <- update(r,x=TRUE,y=TRUE)
+v <- validate(r, B=200, bw=TRUE)
+print(v)
+
+# fit reduced model 
+r <- glm(HS ~  ALT, data=pred,family=binomial(link="logit"))
+tab2<-mod_tablog(r)
+
+# try a reduced model with different significance level for variables to stay
+v5 <- validate(f, bw=TRUE, sls=0.5, type='individual', B=200)
+print(v5)
+
+fred5 <- glm(HS ~ bmi.perc + Waist_cm + ALT + SHBG, data=pred,family=binomial(link="logit"))
+tab3 <- mod_tablog(fred5)
+
+dd <- datadist(pred)
+options(datadist="dd")
+f5 <- lrm(HS ~ bmi.perc + Waist_cm + ALT + SHBG, data=pred)
+# 1st one works
+nom <- nomogram(f5, fun=plogis, funlabel = "Probability", lp=FALSE, verbose=TRUE)
+plot(nom,fun.side=c(3,1,3,1,3,1,3,1,3,1), cex.axis = .6,col.grid= gray(c(0.8, 0.95)))
+
+# find the cutoff of the predicted probabilities that maximizes the Youden index
+# get predicted probabilities
+pred$prob <- predict(fred5,type="response",data.frame=pred)
+roc <- roc(HS ~ prob, data=pred)
+plot.roc(roc, legacy.axes=TRUE, xlim=c(1,0), ylim=c(0,1))
+coords(roc, "b", ret=c("t","specificity","sensitivity"), best.method="youden") # default
+
+# find cutoff that maximizes sensitivity
+opt.cutoff.Youd <- optimal.cutpoints(X="prob",status="HS",data=pred,method="Youden",tag.healthy = "0")
+opt.cutoff.sens <- optimal.cutpoints(X="prob",status="HS",data=pred,method="MaxSe",tag.healthy = "0")
+maxSe <- opt.cutoff.sens$MaxSe
+
+# find cutoff of total points that maximizes Youden Index
+nom2 <- nomogram(f5, verbose=TRUE)
+pred$lp <- fred5$linear.predictors
+pred$pts <- pred$lp*11.85339
+
+# confusion matrix
+pred$prediction <- ifelse(pred$prob>=0.4399669,1,0)
+conf <- confusionMatrix(as.factor(pred$prediction),as.factor(pred$HS),positive='1')
+
+# find cutoff for 90% NPV
+opt.cutoff.NPV <- optimal.cutpoints(X="prob",status="HS",data=pred,method="ValueNPV",tag.healthy = "0",
+                                    control=control.cutpoints(valueNPV=0.9))
+pred$prediction2 <- ifelse(pred$prob>=0.1532,1,0)
+conf2 <- confusionMatrix(as.factor(pred$prediction2),as.factor(pred$HS),positive='1')
+
+# checking model parameters once testosterone and TG converted
+full_euro <- glm(HS ~ bmi.perc + Waist_cm + HOMA + HDL + tg_mmol + ALT + test_nmol + SHBG, data=pred,family=binomial(link="logit"))
+tab_full_euro <-mod_tablog(full_euro)
+
+
+
+```
+
+# Background
+
+The purpose of this analysis is to determine which variables best predict hepatic steatosis (HS) in adolescent girls with PCOS.  Candidate variables included BMI %ile, waist circumference, HOMA, HDL, TG, ALT, free testosterone, and SHBG.
+
+# Methods
+
+A logistic regression model with the outcome of HS and all candidate predictor variables was fit.  Next, backwards stepdown elimination with total residual AIC as the stopping criteria was used to identify variables that best predict HS.  The bootstrap (with 200 bootstrapped samples) was used to validate the model and to correct the over-optimism of the model.  A bootstrap validation was also performed on the full model to compare the results to the reduced model.  Finally, an intermediate model using $\alpha$=0.5 as the criterion to remain in the model was compared to the full and reduced model.
+
+# Results
+
+There were `r N` subjects included in this analysis.
+
+The results of the full logistic model are shown below.
+
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(tab1)
+```
+
+Backwards stepdown elimination was used to identify a reduced model, described below:
+
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(tab2)
+```
+
+The reduced model was validated using 200 bootstrapped samples:
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(v[1:11,1:5])
+```
+
+For comparison, the full logistic regression model was also validated using 200 bootstrapped samples:
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(vfull[1:11,1:5])
+```
+
+Based on the table above, the reduced model results in better out of sample prediction.  An intermediate model using $\alpha$=0.5 as the criterion to remain in the model was compared to the full and reduced model:  
+
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(tab3)
+```
+
+The intermediate model was validated using 200 bootstrapped samples:
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(v5[1:11,1:5])
+```
+
+The intermediate model has the best out of sample prediction of the three models.
+
+The intermediate model was used to create a nomogram, which is a way to obtain the predicted probability of an outcome (in this case, HS) for an individual based on their covariate values.  To use the nomogram, draw a vertical line between the individual's value of each covariate and the point axis to obtain the number of points for each covariate.  Sum the points for the individual covariates to get the total points.  Draw a vertical line from the total points to the probability axis to get the predicted probability of HS for the individual.
+
+Predicted probabilities of HS were obtained from the intermediate model.  ROC analysis was used to identify the cutoff of the probability of HS that maximized the Youden Index.  The ROC plot is shown below, along with the optimal cutoff and corresponding sensitivity and specificity.  The AUC for this model is `r roc$auc`.
+
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+plot.roc(roc, legacy.axes=TRUE, xlim=c(1,0), ylim=c(0,1))
+kable(coords(roc, "b", ret=c("t","specificity","sensitivity"), best.method="youden")) # default
+```
+
+The output below provides additional information regarding the performance of the predictive model, using this specified cutoff.
+
+```{r,  echo=FALSE}
+conf
+```
+
+ROC analysis was then used to identify the cutoff of the probability of HS that maximized sensitivity.  This cutoff and associated performance of this predictive model is shown below.
+
+```{r,  echo=FALSE}
+summary(opt.cutoff.sens)
+```
+
+ROC analysis was then used to identify the cutoff of the probability of HS that maximized resulted in 90% NPV.  This cutoff and associated performance of this predictive model is shown below.
+
+```{r,  echo=FALSE}
+summary(opt.cutoff.NPV)
+```
