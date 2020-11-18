@@ -1,0 +1,419 @@
+---
+title: "NEPTUNE analysis"
+author: "Laura Pyle"
+date: "September 20, 2018"
+output: word_document
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyr)
+library(magrittr)
+library(dplyr)
+library(lubridate)
+library(zoo) 
+library(M3)
+library(data.table)
+library(Table1)
+library(devtools)
+library(Hmisc)
+library(knitr)
+#library(kableExtra)
+library(psycho)
+#library(tidyverse)
+
+####################################################################################################
+#Data Manipulation #
+####################################################################################################
+
+setwd("H:\\Endocrinology\\Bjornstad\\NEPTUNE\\Data")
+nameFile <- ".\\Copy of NEPTUNE SGLT Ancillary Data  Export 11MAY2018_working_locked.csv"
+
+# read the data
+#alldata <- read.csv(nameFile)
+alldata <- read.csv(nameFile,na.strings = c("N",'',' ','               '))
+table(alldata$SteroidsPre)
+
+# are the primary outcomes constant within a patient?
+#table(alldata$SGLTID,alldata$PAT_RemissionComp_Ever)
+#table(alldata$SGLTID,alldata$PAT_RemissionPartComp_Ever)
+#table(alldata$SGLTID,alldata$PAT_Composite)
+# I thought this was going to be a survival analysis but it looks like outcomes are constant
+
+# Groups of interest are PAT_Ped (<18 vs >=18), PAT_Cohort (disease group)
+#table(alldata$PAT_Ped)
+#table(alldata$PAT_Cohort)
+# Exclude those with "other disease" except those with IgA nephropathy (PAT_IgA)
+levels(alldata$PAT_Cohort)=c("1 - MN","2 - MCD","3 - Other", "4 - FSGS","5 - IgA")
+alldata$PAT_Cohort[alldata$PAT_Cohort=="3 - Other" & alldata$PAT_IgA=="1: Yes"] <- "5 - IgA"
+final <- alldata[alldata$PAT_Cohort != "3 - Other",]
+final$PAT_Cohort <- factor(final$PAT_Cohort)
+
+# do I need to add in the ERCB dataset for all analyses?
+# no, this is a separate analysis
+
+# are there patients in this dataset that should be excluded?
+# exclude those with diabetic nephropathy?
+final <- final[is.na(final$ExclusionCondSpecify),]
+
+# use only baseline visits.  mRNA data come from biopsy visit, but those data are included in the 
+# baseline record also
+final <- final[final$visitnum=='2: V02- Baseline',]
+
+# looking at race
+# RaceBlack is yes for some multiracial, also all Black/African American
+#table(final$PAT_Race)
+#table(final$PAT_RaceBlack)
+#table(final$PAT_Hispanic)
+#table(final$PAT_Race,final$PAT_RaceBlack)
+#table(final$PAT_Race,final$PAT_Hispanic,final$PAT_RaceBlack)
+
+# recode race/ethnicity
+# Whites
+final$Race_eth[final$PAT_Race=='5: White/Caucasian' 
+               & final$PAT_Hispanic=="2: Not Hispanic or Latino"] <- 'Non-Hispanic White'
+# Asians
+final$Race_eth[final$PAT_Race=='2: Asian/Asian American' 
+               & final$PAT_Hispanic=="2: Not Hispanic or Latino"] <- 'Asian'
+# Blacks
+final$Race_eth[final$PAT_Race=='3: Black/African American' 
+               & final$PAT_Hispanic=="2: Not Hispanic or Latino"] <- 'Non-Hispanic Black'
+# Others
+final$Race_eth[is.na(final$Race_eth)] <- "Other"
+
+# need to check that race is correct
+# table(final$Race_eth)
+# View(final[c("Race_eth","PAT_Race","PAT_RaceBlack","PAT_Hispanic")])
+
+# convert follow-up variables to yes/no
+final$Stroke[!is.na(final$PAT_Stroke_FUTimeToFirst)] <- '1: Yes'
+final$Stroke[is.na(final$PAT_Stroke_FUTimeToFirst)] <- '0: No'
+final$HF[!is.na(final$PAT_HF_FUTimeToFirst)] <- '1: Yes'
+final$HF[is.na(final$PAT_HF_FUTimeToFirst)] <- '0: No'
+levels(final$SteroidsPre) <- c("1: Yes ","0: No")
+final$SteroidsPre[is.na(final$SteroidsPre)] <- '0: No'
+levels(final$ACEARBPre) <- c("1: Yes ","0: No")
+final$ACEARBPre[is.na(final$ACEARBPre)] <- '0: No'
+levels(final$CNIpre) <- c("1: Yes ","0: No")
+final$CNIpre[is.na(final$CNIpre)] <- '0: No'
+levels(final$CTXPre) <- c("1: Yes ","0: No")
+final$CTXPre[is.na(final$CTXPre)] <- '0: No'
+levels(final$MMFpre) <- c("1: Yes ","0: No")
+final$MMFpre[is.na(final$MMFpre)] <- '0: No'
+
+levels(final$ImmunosupressionV) <- c("1: Yes ","0: No")
+final$ImmunosupressionV[is.na(final$ImmunosupressionV)] <- '0: No'
+levels(final$SteroidV) <- c("1: Yes ","0: No")
+final$SteroidV[is.na(final$SteroidV)] <- '0: No'
+levels(final$CTXV) <- c("1: Yes ","0: No")
+final$CTXV[is.na(final$CTXV)] <- '0: No'
+levels(final$CNIV) <- c("1: Yes ","0: No")
+final$CNIV[is.na(final$CNIV)] <- '0: No'
+levels(final$RituxV) <- c("1: Yes ","0: No")
+final$RituxV[is.na(final$RituxV)] <- '0: No'
+levels(final$MMFV) <- c("1: Yes ","0: No")
+final$MMFV[is.na(final$MMFV)] <- '0: No'
+levels(final$OtherIStV) <- c("1: Yes ","0: No")
+final$OtherIStV[is.na(final$OtherIStV)] <- '0: No'
+levels(final$RAASblockV) <- c("1: Yes ","0: No")
+final$RAASblockV[is.na(final$RAASblockV)] <- '0: No'
+levels(final$DiureticV) <- c("1: Yes ","0: No")
+final$DiureticV[is.na(final$DiureticV)] <- '0: No'
+
+# convert to numeric
+final$Weight <- as.numeric(as.character(final$Weight))
+final$Height <- as.numeric(as.character(final$Height))
+final$BP_SitSys <- as.numeric(as.character(final$BP_SitSys))
+final$BP_SitDias <- as.numeric(as.character(final$BP_SitDias))
+final$BP_StandSys <- as.numeric(as.character(final$BP_StandSys))
+final$BP_StandDias <- as.numeric(as.character(final$BP_StandDias))
+final$Hematocrit <- as.numeric(as.character(final$Hematocrit))
+final$eGFR <- as.numeric(as.character(final$eGFR))
+final$UPCR <- as.numeric(as.character(final$UPCR))
+final$UACR <- as.numeric(as.character(final$UACR))
+final$A1c <- as.numeric(as.character(final$A1c))
+final$Sodium <- as.numeric(as.character(final$Sodium))
+final$Potassium <- as.numeric(as.character(final$Potassium))
+final$UreaNitrogen <- as.numeric(as.character(final$UreaNitrogen))
+final$Glucose <- as.numeric(as.character(final$Glucose))
+final$Albumin <- as.numeric(as.character(final$Albumin))
+final$Calcium <- as.numeric(as.character(final$Calcium))
+final$Phosphorus <- as.numeric(as.character(final$Phosphorus))
+final$Magnesium <- as.numeric(as.character(final$Magnesium))
+
+
+
+####################################################################################################
+# Descriptive Tables #
+# Table 1 - at time of biopsy #
+####################################################################################################
+
+# set factors and levels
+
+# set labels
+label(final$PAT_Ped)='Pediatric'
+label(final$PAT_Cohort)='Disease group'
+label(final$PAT_Agev2)='Age'
+label(final$PAT_Sex)='Sex'
+label(final$BMI)='BMI'
+label(final$Weight)='Wt'
+label(final$Height)='Height'
+label(final$BP_SitSys)='Sitting SBP'
+label(final$BP_SitDias)='Sitting DBP'
+label(final$BP_StandSys)='Standing SBP'
+label(final$BP_StandDias)='Standing DBP'
+label(final$Hematocrit)='Hematocrit'
+label(final$eGFR)='eGFR'
+label(final$UPCR)='UPCR'
+label(final$UACR)="UACR"
+label(final$PAT_CADatBL)='CAD baseline'
+label(final$CAD_FU)='CAD follow-up'
+label(final$PAT_PVDatBL)='PVD baseline'
+label(final$PVD_FU)='PVD follow-up'
+label(final$PAT_StrokeatBL)='Stroke baseline'
+label(final$Stroke)='Stroke follow-up'
+label(final$PAT_HTNatBL)='Hypertension baseline'
+label(final$HTNStatus)='Hypertension status'
+label(final$PAT_DMatBL)='Diabetes baseline'
+label(final$DM_FU)='Diabetes follow-up'
+label(final$PAT_HFatBL)='Heart failure baseline'
+label(final$HF)='Heart failure follow-up'
+label(final$HA_FU)='Heart arrhythmia follow-up'
+label(final$TE_FU)='Thromboembolic event follow-up'
+label(final$PAT_CanceratBL)='Cancer baseline'
+label(final$Cancer_FU)='Cancer follow-up'
+label(final$A1c)='HbA1c (%)'
+label(final$Sodium)='Sodium (mmol/L)'
+label(final$Potassium)='Potassium (mmol/L)'
+label(final$CO2)='CO2 (mmol/L)'
+label(final$UreaNitrogen)='Urea nitrogen (mg/dl)'
+label(final$Glucose)="Glucose (mg/dL)"
+label(final$Albumin)="Albumin (g/dL)"
+label(final$Calcium)='Calcium (mg/dL)'
+label(final$Phosphorus)="Phosphorus (mg/dL)"
+label(final$Magnesium)="Magnesium (mg/dL)"
+label(final$SGLT1_TI)="Log2 SGLT1 TI"
+label(final$SGLT1_GLOM)="Log2 SGLT1 GLOM"
+label(final$SGLT2_TI)="Log2 SGLT2 TI"
+label(final$SGLT2_GLOM)="Log2 SGLT2 GLOM"
+label(final$interstitialfibrosis)="Interstitial fibrosis"
+label(final$SteroidsPre)="Steroid exposure prior to enrollment"
+label(final$ACEARBPre)="ACE/ARB exposure prior to enrollment"
+label(final$CNIpre)="CNI exposure prior to enrollment"
+label(final$CTXPre)="CTX exposure prior to enrollment exposure prior to enrollment"
+label(final$MMFpre)="MMF exposure prior to enrollment"
+label(final$ImmunosupressionV)="On immunosuppressive at V2"
+label(final$SteroidV)="On steroids at V2"
+label(final$CTXV)="On CTX at V2"
+label(final$CNIV)="On CNI at V2"
+label(final$RituxV)="On Rituxan at V2"
+label(final$MMFV)="On MMF at V2"
+label(final$OtherIStV)="On other immunosuppressive at V2"
+label(final$RAASblockV)="On RAAS blocker at V2"
+label(final$DiureticV)="On diuretic at V2"
+
+# can't find
+#label(final$Protein)
+# not sure what to do about medication use
+
+# divide into age groups
+final_ped <- final[final$PAT_Ped=="1: Yes",]
+final_adult <- final[final$PAT_Ped=="0: No",]
+
+Npeds <- nrow(distinct(final_ped,SGLTID))
+Nadult <- nrow(distinct(final_adult,SGLTID))
+
+# NOTE: A1c left out of peds table because only one non-missing value
+
+# Peds descriptive table, by Dx group
+tab1a <- final_table(final_ped,c("PAT_Agev2","PAT_Sex","BMI","Weight","Height","BP_SitSys","BP_SitDias","BP_StandSys","BP_StandDias",
+                                "Hematocrit","eGFR","UPCR","UACR","PAT_CADatBL","CAD_FU","PAT_PVDatBL","PVD_FU","PAT_StrokeatBL","Stroke","PAT_HTNatBL",
+                                "HTNStatus","PAT_DMatBL","DM_FU","PAT_HFatBL","HF","HA_FU","TE_FU","PAT_CanceratBL","Cancer_FU","Sodium",
+                                "Potassium","CO2","UreaNitrogen","Glucose","Albumin","Calcium","Phosphorus","Magnesium","SteroidsPre","ACEARBPre",
+                                "CNIpre","CTXPre","MMFpre","ImmunosupressionV","SteroidV","CTXV","CNIV","RituxV","MMFV","OtherIStV",
+                                "RAASblockV","DiureticV"),
+                    group=final_ped$PAT_Cohort,margin=2,single=0,ron=1)
+                           
+# Adult descriptive table, by DX group
+tab1b <- final_table(final_adult,c("PAT_Agev2","PAT_Sex","BMI","Weight","Height","BP_SitSys","BP_SitDias","BP_StandSys","BP_StandDias",
+                                "Hematocrit","eGFR","UPCR","UACR","PAT_CADatBL","CAD_FU","PAT_PVDatBL","PVD_FU","PAT_StrokeatBL","Stroke","PAT_HTNatBL",
+                                "HTNStatus","PAT_DMatBL","DM_FU","PAT_HFatBL","HF","HA_FU","TE_FU","PAT_CanceratBL","Cancer_FU","A1c","Sodium",
+                                "Potassium","CO2","UreaNitrogen","Glucose","Albumin","Calcium","Phosphorus","Magnesium","SteroidsPre","ACEARBPre",
+                                "CNIpre","CTXPre","MMFpre","ImmunosupressionV","SteroidV","CTXV","CNIV","RituxV","MMFV","OtherIStV",
+                                "RAASblockV","DiureticV"),
+                    group=final_adult$PAT_Cohort,margin=2,single=0,ron=1)
+
+
+####################################################################################################
+# Compare expression of SGLT1 and SGLT2 mRNA across diagnosis categories #
+# Stratify by age group                                                  #
+####################################################################################################
+
+# transcriptome variables by dx group in peds
+tab_primary_peds <- final_table(final_ped,c("SGLT2_TI","SGLT1_TI","SGLT2_GLOM","SGLT1_GLOM"),
+                    group=final_ped$PAT_Cohort,margin=2,single=0,ron=1)
+
+# transcriptome variables by dx group in adults
+tab_primary_adults <- final_table(final_adult,c("SGLT2_TI","SGLT1_TI","SGLT2_GLOM","SGLT1_GLOM"),
+                    group=final_adult$PAT_Cohort,margin=2,single=0,ron=1)
+
+####################################################################################################
+# Examine cross-sectional correlation between mRNA expression and clinical parameters #
+# HbA1c, BP, proteinuria, renal function, uric acid, electrolytes                    #
+# also degree of fibrosis                                                             #
+# overall and by GN disease subtype                                                   #
+# Stratify by age group                                                               #
+####################################################################################################
+
+# NEED TO FIGURE OUT WHAT THIS FUNCTION DOES WITH MISSING DATA
+# GETTING ERROR WITH COR PEDS FGS NOT ENOUGH SUBJECTS BUT THERE SHOULD BE!
+# correlations in peds and adult combining disease subtypes 
+cor_peds <- final_ped[c("SGLT2_TI","SGLT1_TI","SGLT2_GLOM","SGLT1_GLOM","BP_SitSys","BP_SitDias","BP_StandSys","BP_StandDias",
+                        "UPCR","UACR","eGFR","Sodium","Potassium","CO2","UreaNitrogen","Glucose","Albumin","Calcium","Phosphorus","Magnesium",
+                        "interstitialfibrosis")]
+cor_adults <- final_adult[c("SGLT2_TI","SGLT1_TI","SGLT2_GLOM","SGLT1_GLOM","A1c","BP_SitSys","BP_SitDias","BP_StandSys","BP_StandDias",
+                        "UPCR","UACR","eGFR","Sodium","Potassium","CO2","UreaNitrogen","Glucose","Albumin","Calcium","Phosphorus","Magnesium",
+                        "interstitialfibrosis")]
+
+cor_table_peds <- cor_peds %>% correlation(adjust="none",i_am_cheating = TRUE)
+cor_table_adults <- cor_adults %>% correlation(adjust="none",i_am_cheating = TRUE)
+cor_table_peds_short <- summary(cor_table_peds)[,1:4]
+cor_table_adults_short <- summary(cor_table_adults)[,1:4]
+
+# Peds patients, by disease subtype
+cor_peds_mcd <- final_ped[final_ped$PAT_Cohort=="2 - MCD",]
+cor_peds_mcd <- cor_peds_mcd[c("SGLT2_TI","SGLT1_TI","SGLT2_GLOM","SGLT1_GLOM","BP_SitSys","BP_SitDias","BP_StandSys","BP_StandDias",
+                        "UPCR","UACR","eGFR","Sodium","Potassium","CO2","UreaNitrogen","Glucose","Albumin","Calcium","Phosphorus","Magnesium",
+                        "interstitialfibrosis")]
+cor_table_peds_mcd <- cor_peds_mcd %>% correlation(adjust="none",i_am_cheating = TRUE)
+cor_table_peds_mcd_short <- summary(cor_table_peds_mcd)[,1:4]
+
+cor_peds_fsgs <- final_ped[final_ped$PAT_Cohort=="4 - FSGS",]
+cor_peds_fsgs <- cor_peds_fsgs[c("SGLT2_TI","SGLT1_TI","SGLT2_GLOM","SGLT1_GLOM","BP_SitSys","BP_SitDias","BP_StandSys","BP_StandDias",
+                        "UPCR","UACR","eGFR","Sodium","Potassium","CO2","UreaNitrogen","Glucose","Albumin","Calcium","Phosphorus",
+                        "interstitialfibrosis")]
+cor_table_peds_fsgs <- cor_peds_fsgs %>% correlation(adjust="none",i_am_cheating = TRUE)
+cor_table_peds_fsgs_short <- summary(cor_table_peds_fsgs)[,1:4]
+
+
+# Adult patients, by disease subtype
+cor_adults_mn <- final_adult[final_adult$PAT_Cohort=="1 - MN",]
+cor_adults_mn <- cor_adults_mn[c("SGLT2_TI","SGLT1_TI","SGLT2_GLOM","SGLT1_GLOM","BP_SitSys","BP_SitDias","BP_StandSys","BP_StandDias",
+                        "UPCR","UACR","eGFR","Sodium","Potassium","CO2","UreaNitrogen","Glucose","Albumin","Calcium","Phosphorus","Magnesium",
+                        "interstitialfibrosis")]
+cor_table_adults_mn <- cor_adults_mn %>% correlation(adjust="none",i_am_cheating = TRUE)
+cor_table_adults_mn_short <- summary(cor_table_adults_mn)[,1:4]
+
+cor_adults_mcd <- final_adult[final_adult$PAT_Cohort=="2 - MCD",]
+cor_adults_mcd <- cor_adults_mcd[c("SGLT2_TI","SGLT1_TI","SGLT2_GLOM","SGLT1_GLOM","BP_SitSys","BP_SitDias","BP_StandSys","BP_StandDias",
+                        "UPCR","UACR","eGFR","Sodium","Potassium","CO2","UreaNitrogen","Glucose","Albumin","Calcium","Phosphorus","Magnesium",
+                        "interstitialfibrosis")]
+cor_table_adults_mcd <- cor_adults_mcd %>% correlation(adjust="none",i_am_cheating = TRUE)
+cor_table_adults_mcd_short <- summary(cor_table_adults_mcd)[,1:4]
+
+cor_adults_fsgs <- final_adult[final_adult$PAT_Cohort=="4 - FSGS",]
+cor_adults_fsgs <- cor_adults_fsgs[c("SGLT2_TI","SGLT1_TI","SGLT2_GLOM","SGLT1_GLOM","BP_SitSys","BP_SitDias","BP_StandSys","BP_StandDias",
+                        "UPCR","UACR","eGFR","Sodium","Potassium","CO2","UreaNitrogen","Glucose","Albumin","Calcium","Phosphorus","Magnesium",
+                        "interstitialfibrosis")]
+cor_table_adults_fsgs <- cor_adults_fsgs %>% correlation(adjust="none",i_am_cheating = TRUE)
+cor_table_adults_fsgs_short <- summary(cor_table_adults_fsgs)[,1:4]
+
+cor_adults_IgA <- final_adult[final_adult$PAT_Cohort=="5 - IgA",]
+cor_adults_IgA <- cor_adults_IgA[c("SGLT2_TI","SGLT1_TI","SGLT2_GLOM","SGLT1_GLOM","BP_SitSys","BP_SitDias","BP_StandSys","BP_StandDias",
+                        "UPCR","UACR","eGFR","Sodium","Potassium","CO2","UreaNitrogen","Glucose","Albumin","Calcium","Phosphorus",
+                        "interstitialfibrosis")]
+cor_table_adults_IgA <- cor_adults_IgA %>% correlation(adjust="none",i_am_cheating = TRUE)
+cor_table_adults_IgA_short <- summary(cor_table_adults_IgA)[,1:4]
+
+```
+
+# Background
+
+The purpose of this analysis is to compare SGLT2 and SGLT1 mRNA expression in the kidney across GN disease subtypes, in adult and pediatric patients.  We will also examine correlations between mRNA expression and clinical parameters, by disease subtype and overall.
+
+# Methods
+
+The following data cleaning and manipulation steps were performed:
+
+1) Patients with an exclusionary condition listed were excluded from analysis.
+2) Patients with a GN disease subtype of "other" were excluded from analysis, unless they had IgA nephropathy. 
+3) Only the baseline visit was retained for analysis.  The mRNA expression data from the V03 Biopsy visit was merged with the baseline visit data.
+4) A combined race/ethnicity variable was created as: Non-Hispanic White, Asian, Non-Hispanic Black, and Other.
+
+Descriptive statistics reported include mean and standard deviations or medians and percentiles for continuous variables, and frequencies and percentages for categorical variables.  To compare characteristics in the two groups, t-tests/ANOVA or the Mann-Whitney/Wilcoxon test were used for continuous variables and the chi-square test or Fisher's exact test was used for categorical variables.  Pearson's correlation coefficient was calculated between mRNA expression variables and clinical parameters, overall and by disease subtype.  No correction was made for multiple comparisons.  All analyses were performed using R version 3.4.1.
+
+# Results
+
+
+There were `r Npeds` pediatric subjects included in this analysis.  Descriptive statistics for pediatric subjects by GN disease subtype are shown in Table 1a.
+
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(tab1a,caption="Table 1a.  Descriptive statistics for pediatric subjects. Statistics reported are mean ± standard deviation, median (25th, 75th percentiles), or N(%).  A single asterisk indicates that a nonparametric test was used for a continuous variable with significant skewness. Double asterisks indicate that Fisher's exact test was used instead of the chi-square test due to small expected cell value.  NA indicates that the sample size was too small to calculate the statistic.")
+```
+
+There were `r Nadult` adult subjects included in this analysis.  Descriptive statistics for adult subjects by GN disease subtype are shown in Table 1b.
+
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(tab1b,caption="Table 1b.  Descriptive statistics for adult subjects.  Statistics reported are mean ± standard deviation, median (25th, 75th percentiles), or N(%).  A single asterisk indicates that a nonparametric test was used for a continuous variable with significant skewness. Double asterisks indicate that Fisher's exact test was used instead of the chi-square test due to small expected cell value.  NA indicates that the sample size was too small to calculate the statistic.")
+```
+\
+
+Table 2a shows the comparison of mRNA expression by GN disease subtype in pediatric patients.  
+
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(tab_primary_peds,caption="Table 2a.  mRNA expression in pediatric subjects, by disease subtype.  Statistics reported are mean ± standard deviation, median (25th, 75th percentiles), or N(%).  A single asterisk indicates that a nonparametric test was used for a continuous variable with significant skewness. Double asterisks indicate that Fisher's exact test was used instead of the chi-square test due to small expected cell value.  NA indicates that the sample size was too small to calculate the statistic.")
+```
+\
+
+Table 2b shows the comparison of mRNA expression by GN disease subtype in adult patients.
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(tab_primary_adults,caption="Table 2b.  mRNA expression in adult subjects, by disease subtype.  Statistics reported are mean ± standard deviation, median (25th, 75th percentiles), or N(%).  A single asterisk indicates that a nonparametric test was used for a continuous variable with significant skewness. Double asterisks indicate that Fisher's exact test was used instead of the chi-square test due to small expected cell value.  NA indicates that the sample size was too small to calculate the statistic.")
+```
+\
+
+Correlations between mRNA expression and clinical parameters in pediatric patients are shown in Table 3a.
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(cor_table_peds_short,caption="Table 3a.  Correlations between mRNA expression and clinical parameters in pediatric patients.  An asterisk indicates a significant p-value.")
+```
+\
+
+Correlations between mRNA expression and clinical parameters in adult patients are shown in Table 3b.
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(cor_table_adults_short,caption="Table 3b.  Correlations between mRNA expression and clinical parameters in adult patients.  An asterisk indicates a significant p-value.")
+```
+\
+
+Correlations between mRNA expression and clinical parameters in pediatric patients by disease subtype are shown in Tables 4a-b.  Note that there were not enough patients in the MN and IgA groups with non-missing mRNA data to calculate correlations.  If a variable is missing from a correlation table, there were too many missing values to calculate correlations.
+
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(cor_table_peds_mcd_short,caption="Table 4a.  Correlations between mRNA expression and clinical parameters in pediatric patients with MCD. An asterisk indicates a significant p-value.")
+```
+\
+
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(cor_table_peds_fsgs_short,caption="Table 4b. Correlations between mRNA expression and clinical parameters in pediatric patients with FSGS.  An asterisk indicates a significant p-value.")
+```
+\
+
+Correlations between mRNA expression and clinical parameters in adult patients by disease subtype are shown in Tables 5a-d.  If a variable is missing from a correlation table, there were too many missing values to calculate correlations.
+      
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(cor_table_adults_mn_short,caption="Table 5a. Correlations between mRNA expression and clinical parameters in adult patients with MN.  An asterisk indicates a significant p-value.")
+```
+\
+
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(cor_table_adults_mcd_short,caption="Table 5b. Correlations between mRNA expression and clinical parameters in adult patients with MCD.  An asterisk indicates a significant p-value.")
+```
+\
+
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(cor_table_adults_fsgs_short,caption="Table 5c. Correlations between mRNA expression and clinical parameters in adult patients with FSGS.  An asterisk indicates a significant p-value.")
+```
+\
+
+```{r, results='asis',tidy=TRUE, echo=FALSE}
+kable(cor_table_adults_IgA_short,caption="Table 5d. Correlations between mRNA expression and clinical parameters in adult patients with IgA. An asterisk indicates a significant p-value.")
+```
