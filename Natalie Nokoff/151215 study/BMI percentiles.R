@@ -17,4 +17,4 @@ data$bmipct = sds(data$bmi,
               type = "perc")
 data$bmipct <- round(data$bmipct*100,2)
 
-write.csv(data,"E:\\Nokoff\\151215 study\\bmi_perc.csv")
+write.csv(data,"E:\\Nokoff\\151215 study\\bmi_perc.csv",row.names = F)
