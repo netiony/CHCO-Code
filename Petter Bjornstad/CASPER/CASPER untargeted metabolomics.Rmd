@@ -18,7 +18,6 @@ library(haven)
 library(psych)
 library(pheatmap)
 library(pander)
-library(parallel)
 set.seed(1017)
 ```
 
@@ -40,12 +39,14 @@ df <- left_join(df,samples,by = "ID")
 df$group <- factor(df$group,levels = c(1,4),labels = c("T1D","Control"))
 # SAS data
 sas <- read_sas("./Raw data/casperheir_for_laura.sas7bdat")
-# Add NGAL, KIM-1, IL-18, YKL-40, MCP-1, etc.
 df <- left_join(df,by = "ID",
                 sas[,c("ID","kidney_GFR","medullary_GFR","cortex_GFR",
-                       "M_I_kg_GC","M_I_leankg_GC")])
+                       "M_I_kg_GC","M_I_leankg_GC","FOSC_Cortex" ,"FOSC_Medullary","FOSC_Kidney")])
+# Add NGAL, KIM-1, IL-18, YKL-40, MCP-1, etc.
+tubular = read.csv("./Clean data/tubularinjury.csv",stringsAsFactors = F)
+df = left_join(df,tubular[,c("ID","KIM1","NGAL","MCP1","logYKL40","logIL18")],by = "ID")
 # Reorganize
-df <- df %>% dplyr::select(ID:M_I_leankg_GC,everything())
+df <- df %>% dplyr::select(ID:logIL18,everything())
 # Delete SAS data
 rm(sas)
 ```
@@ -65,7 +66,7 @@ missing0 <-
 Removed `r length(missing)` samples missing > 80% of compounds and `r length(missing0)` samples with > 80% of compounds equal to 0. 
 
 ```{r}
-X <- df[,16:ncol(df)]
+X <- df[,24:ncol(df)]
 rownames(X) = df$ID
 ```
 
@@ -73,7 +74,7 @@ rownames(X) = df$ID
 
 ```{r pca,eval=FALSE}
 # 3 PCs
-pca.res <- pca(X, ncomp = 3, center = TRUE, scale = FALSE)
+pca.res <- pca(X, ncomp =2, center = TRUE, scale = FALSE)
 # Plot
 plotIndiv(pca.res,group = df$group,legend = TRUE,ind.names = FALSE,
           title = 'PCA by Group (PCs 1 & 2)',ellipse = T)
@@ -115,9 +116,7 @@ plotIndiv(plsda_true,comp = c(1,2),ellipse = T,legend = T,ind.names = F)
 ```{r permutation testing,cache=TRUE,include=FALSE}
 # Permutation testing
 n_perm <- 1000
-# Parallel
-cl = makeCluster(12,type = "FORK")
-aucs = clusterApply(cl,c(1:n_perm),function(i){
+aucs = lapply(1:n_perm,function(i){
   set.seed(1+i)
   Y <- sample(df$group,replace = F)
   plsda_res <- plsda(X,Y,ncomp = 2)
@@ -127,7 +126,6 @@ aucs = clusterApply(cl,c(1:n_perm),function(i){
   auc2 <- as.numeric(perf_plsda$auc$comp2["AUC.mean"])
   return(c(auc1,auc2))
 })
-stopCluster(cl)
 aucs = as.data.frame(do.call(rbind,aucs))
 ```
 
@@ -218,21 +216,20 @@ obj.cim = cim(plsda_true,col.names = F,row.sideColors = colors,
 # Correlations for the Metabolites by Moderated t test
 
 ```{r}
-vars = c("M_I_kg_GC","M_I_leankg_GC","body_fat",
-         "screen_bmi_percentile","rpf","acr_mean","kidney_oxygenation",
-         "gfr","kidney_GFR","medullary_GFR","cortex_GFR")
-varnames = c("M_I_kg_GC","M_I_leankg_GC","Body fat","BMI %ile","RPF",
-             "Mean ACR","Kidney Oxy.","GFR","Kidney GFR","Medullary GFR",
-             "Cortex GFR")
+vars = c("GIR","GIR_per_kg","M_I_kg_GC","M_I_leankg_GC","body_fat","screen_bmi_percentile","rpf","acr_mean","kidney_oxygenation","gfr","kidney_GFR","medullary_GFR","cortex_GFR","FOSC_Cortex","FOSC_Medullary","FOSC_Kidney","KIM1","NGAL","MCP1","logYKL40","logIL18" )
+varnames = c("GIR","GIR per kg","M_I_kg_GC","M_I_leankg_GC","Body fat","BMI %ile","RPF","Mean ACR","Kidney Oxy.","GFR","Kidney GFR","Medullary GFR","Cortex GFR","Cortex FOSC","Medullary FOSC","Kidney FOSC","KIM1","NGAL","MCP1","logYKL40","logIL18")
 intersection = intersect(top20,top20_pls)
 ```
 
 ### Correlations
 
 ```{r}
-c = corr.test(X[,intersection],df[,vars],method = "spearman")
+c = corr.test(X[,intersection],df[,vars],method = "spearman",adjust = "none")
 rownames(c$r) <- raw_data$Name[match(rownames(c$r),compounds)]
 colnames(c$r) <- varnames
+
+rownames(c$p) <- raw_data$Name[match(rownames(c$p),compounds)]
+colnames(c$p) <- varnames
 
 emphasize.strong.cells(which(c$p < 0.05, arr.ind = TRUE))
 pander(c$r)
@@ -260,4 +257,5 @@ for (r in levels(factor(report$row))) {
                 which(report$row ==  as.numeric(r))[1]]))
 }
 ```
+
 
