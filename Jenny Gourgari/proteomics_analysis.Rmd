@@ -1,0 +1,227 @@
+---
+title: "Proteomics Analysis"
+author: "Tim Vigers & Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo=FALSE, include=FALSE}
+# Load libraries and functions
+library(lubridate)
+library(dplyr)
+library(tableone)
+library(knitr)
+source('C:/Users/pylell/Documents/GitHub/Tim-and-Laura/tim_R_functions.R')
+pathstart <- os.check()
+```
+
+```{r echo=FALSE,include=FALSE}
+# Read in data
+filename <- paste0(pathstart,"som/PEDS/RI Biostatistics Core/Shared/Laura Tim projects/T1D Exchange/Jenny Gourgari/Data_Cleaned/clampdatavisits.csv")
+clampdata <- read.csv(filename)
+filename <- paste0(pathstart,"som/PEDS/RI Biostatistics Core/Shared/Laura Tim projects/T1D Exchange/Jenny Gourgari/Data_Cleaned/experimentcodes.csv")
+codes <- read.csv(filename)
+filename <- paste0(pathstart,"som/PEDS/RI Biostatistics Core/Shared/Laura Tim projects/T1D Exchange/Jenny Gourgari/Data_Cleaned/proteinquant.csv")
+proteins <- read.csv(filename,header = FALSE)
+# Transpose and format protein concentration data
+proteins <- t(proteins)
+proteins[1,1] <- "subjectid"
+colnames(proteins) <- proteins[1,]
+proteins <- proteins[-1,]
+rownames(proteins) <- 1:nrow(proteins)
+proteins <- as.data.frame(proteins)
+# Get protein subjcet ids
+proteins$subjectid <- substr(proteins$subjectid,7,8)
+proteins[,2:ncol(proteins)] <- sapply(proteins[,2:ncol(proteins)],function(x) as.numeric(as.character(x)))
+```
+
+```{r echo=FALSE,include=FALSE}
+# Protein analysis
+# Add subject id, date, etc.
+groups <- codes[,c("MS.ID","ANALYTICID","COLLECTIONDT","SAMPLEGROUP")]
+colnames(groups) <- c("subjectid","analyticid","date","group")
+proteins <- merge(proteins,groups,by = "subjectid")
+proteins$group <- ifelse(proteins$group == "Group 3","Metformin","Placebo")
+# Remove subjects with only 1 observation, format
+paired <- proteins$analyticid[duplicated(proteins$analyticid)]
+proteins <- proteins[which(proteins$analyticid %in% paired),]
+proteins$date <- mdy(proteins$date)
+proteins %>% arrange(analyticid,date)
+# Split into two dataframes - one for each observation
+proteins1 <- proteins[which(duplicated(proteins$analyticid) == T),]
+proteins2 <- proteins[which(duplicated(proteins$analyticid) == F),]
+# Make delta table and percent change table
+nums <- unlist(lapply(proteins, is.numeric))
+nums <- names(nums[which(nums == T)])
+delta <- proteins1[,nums] - proteins2[,nums]
+perc <- (delta/proteins2[,nums]) * 100
+delta$analyticid <- proteins1$analyticid
+delta$group <- proteins1$group
+perc$analyticid <- proteins1$analyticid
+perc$group <- proteins1$group
+# Difference table
+t1 <- CreateTableOne(nums,"group",delta)
+t1.nonnorm <- as.data.frame(print(t1,digits = 3,nonnormal = nums))
+```
+
+Groups were compared using the Wilcoxon rank-sum test. We were unable to link MS ID with clinical data, so it was not clear which participants were matched between the groups. Therefore, groups were treated as independent for this initial analysis. When taking into account multiple comparisons using the false discovery rate (FDR) adjustment, there were were no significant differences between metformin and placebo. 
+
+### Table 1a: Change in protein concentration between metformin and placebo groups, unadjusted p-values.
+
+```{r echo=FALSE}
+kable(t1.nonnorm[,1:3])
+```
+
+### Table 1b: Change in protein concentration between metformin and placebo groups, FDR adjusted p-values.
+
+```{r echo=FALSE}
+t1.nonnorm$p <- as.numeric(as.character(t1.nonnorm$p))
+t1.nonnorm$p <- p.adjust(t1.nonnorm$p)
+kable(t1.nonnorm[,1:3])
+```
+
+```{r echo=FALSE,include=FALSE}
+# Split by group
+met <- proteins[which(proteins$group == "Metformin"),]
+met$visit <- ifelse(duplicated(met$analyticid) == T,2,1)
+# Compare by visit
+t1.met <- CreateTableOne(vars = nums,"visit",data = met,
+                         testNonNormal = wilcox.test,
+                         argsNonNormal = list(paired = TRUE))
+t1.met <- as.data.frame(print(t1.met,nonnorm = nums))
+t1.met$p <- as.numeric(as.character(t1.met$p))
+# Fix NA p-value
+t1.met$p[36] <- round(wilcox.test(met[which(met$visit == 1),36],met[which(met$visit == 2),36],paired = T)$p.value,3)
+```
+
+### Table 2a: Visit 1 compared to visit 2 in the Metformin group, using a paired Wilcoxon test (unadjusted p-values).
+
+```{r echo=FALSE}
+kable(t1.met[1:3])
+```
+
+### Table 2b: Visit 1 compared to visit 2 in the Metformin group, using a paired Wilcoxon test (FDR adjusted p-values).
+
+```{r echo=FALSE}
+# Adjust p values
+t1.met$p <- as.numeric(as.character(t1.met$p))
+t1.met$p <- p.adjust(t1.met$p)
+kable(t1.met[1:3])
+```
+
+```{r echo=FALSE,include=FALSE}
+# Split by group
+plac <- proteins[which(proteins$group == "Placebo"),]
+plac$visit <- ifelse(duplicated(plac$analyticid) == T,2,1)
+# Compare by visit
+t1.plac <- CreateTableOne(vars = nums,"visit",data = plac,
+                         testNonNormal = wilcox.test,
+                         argsNonNormal = list(paired = TRUE))
+t1.plac <- as.data.frame(print(t1.plac,nonnorm = nums))
+t1.plac$p <- as.numeric(as.character(t1.plac$p))
+# Fix NA p-value
+t1.plac$p[70] <- round(wilcox.test(plac[which(plac$visit == 1),70],plac[which(plac$visit == 2),70],paired = T)$p.value,3)
+```
+
+### Table 3a: Visit 1 compared to visit 2 in the placebo group, using a paired Wilcoxon test (unadjusted p-values).
+
+```{r echo=FALSE}
+kable(t1.plac[1:3])
+```
+
+### Table 3b: Visit 1 compared to visit 2 in the placebo group, using a paired Wilcoxon test (FDR adjusted p-values).
+
+```{r echo=FALSE}
+# Adjust p values
+t1.plac$p <- as.numeric(as.character(t1.plac$p))
+t1.plac$p <- p.adjust(t1.plac$p)
+kable(t1.plac[1:3])
+```
+
+```{r echo=FALSE,include=FALSE}
+# Log transform
+met[,nums] <- log(met[,nums])
+# Comparison by group
+t1.met.log <- CreateTableOne(vars = nums,"visit",data = met,
+                             testNormal = t.test,
+                             argsNormal = list(paired = TRUE))
+t1.met.log <- as.data.frame(print(t1.met.log))
+t1.met.log$p <- as.numeric(as.character(t1.met.log$p))
+# Fix NA p-value
+t1.met.log$p[36] <- round(t.test(met[which(met$visit == 1),36],met[which(met$visit == 2),36],paired = T)$p.value,3)
+```
+
+### Table 4a: Log transformed visit 1 compared to visit 2 in the Metformin group, using a paired t-test (unadjusted p-values).
+
+```{r echo=FALSE}
+kable(t1.met.log[1:3])
+```
+
+### Table 4b: Log transformed visit 1 compared to visit 2 in the Metformin group, using a paired t-test (FDR adjusted p-values).
+
+```{r echo=FALSE}
+# Adjust p values
+t1.met.log$p <- as.numeric(as.character(t1.met.log$p))
+t1.met.log$p <- p.adjust(t1.met.log$p)
+kable(t1.met.log[1:3])
+```
+
+```{r echo=FALSE,include=FALSE}
+# Log transform
+plac[,nums] <- log(plac[,nums])
+# Comparison by group
+t1.plac.log <- CreateTableOne(vars = nums,"visit",data = plac,
+                             testNormal = t.test,
+                             argsNormal = list(paired = TRUE))
+t1.plac.log <- as.data.frame(print(t1.plac.log))
+t1.plac.log$p <- as.numeric(as.character(t1.plac.log$p))
+# Fix NA p-value
+t1.plac.log$p[70] <- round(t.test(plac[which(plac$visit == 1),70],plac[which(plac$visit == 2),70],paired = T)$p.value,3)
+```
+
+### Table 5a: Log transformed visit 1 compared to visit 2 in the placebo group, using a paired t-test (unadjusted p-values).
+
+```{r echo=FALSE}
+kable(t1.plac.log[1:3])
+```
+
+### Table 5b: Log transformed visit 1 compared to visit 2 in the placebo group, using a paired t-test (FDR adjusted p-values).
+
+```{r echo=FALSE}
+# Adjust p values
+t1.plac.log$p <- as.numeric(as.character(t1.plac.log$p))
+t1.plac.log$p <- p.adjust(t1.plac.log$p)
+kable(t1.plac.log[1:3])
+```
+
+### Table 6a: Percent change in protein concentration between metformin and placebo groups, unadjusted p-values.
+
+```{r echo=FALSE,include=FALSE}
+# Percentage table
+t1.perc <- CreateTableOne(nums,"group",perc)
+t1.perc.nonnorm <- as.data.frame(print(t1.perc,digits = 3,nonnormal = nums))
+```
+
+```{r echo=FALSE}
+kable(t1.perc.nonnorm[,1:3])
+```
+
+### Table 6b: Percent change in protein concentration between metformin and placebo groups, FDR adjusted p-values.
+```{r eval=FALSE}
+t1.perc.nonnorm$p <- p.adjust(t1.perc.nonnorm$p,"fdr")
+kable(t1.perc.nonnorm[,1:3])
+```
+
+<!-- Notes: -->
+<!-- - 10 placebo, 30 metformin -->
+<!--   - around 80 points, but missing the first 10 -->
+<!-- - H__ is MSID number (codes for experiments) -->
+<!--   - e.g. H10 = MSID number 10 -->
+<!-- - Analytic ID says which person is which -->
+<!-- - Group 4 is placebo -->
+<!-- - Correlate change in protein with change in DXA fat, insulin sensitivity (glucose infusion rate [GIR], etc.), lipids, BMI, A1c -->
+<!--   - matched samples by age, sex, all are tanner stage 5, bmi > 85%, a1c > 8 -->
