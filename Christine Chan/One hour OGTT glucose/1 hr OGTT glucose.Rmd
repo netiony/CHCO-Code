@@ -12,49 +12,84 @@ library(knitr)
 library(rspiro)
 library(dplyr)
 
-# read data
-data <- read.csv("E:\\Christine Chan\\1 hour OGTT in CFRD\\Data_raw\\Longitudinal Modeling to Determine the Viability of 1 Hour Oral Glucose Tolerance Test for Cystic Fibrosis Related Diabetes Screening Data.csv")
+# read in separate data files
 
-# remove PFT data - had been merged incorrectly
-data <-data[, !names(data) %in%  c("FEV1...Pred","FVC...Pred","FEF.25.75...Pred","FVC.Raw","FEV1.Raw","FEF.25.75.Raw",
-                                   "Adjusted.Date.of.OGTT","FName","LName")]
-data$True.Date.of.OGTT <- as.Date(as.character(data$True.Date.of.OGTT),format="%m/%d/%Y")
-data <- data[with(data, order(MRN, True.Date.of.OGTT)),]
-data$Date.of.OGTT <- data$True.Date.of.OGTT
-data$True.Date.of.OGTT <- NULL
+ogtt <- read.csv("E:\\Christine Chan\\1 hour OGTT in CFRD\\Data_raw\\ogtt.csv")
+pft <- read.csv("E:\\Christine Chan\\1 hour OGTT in CFRD\\Data_raw\\pfts.csv")
+a1c <- read.csv("E:\\Christine Chan\\1 hour OGTT in CFRD\\Data_raw\\a1c.csv")
+demo <- read.csv("E:\\Christine Chan\\1 hour OGTT in CFRD\\Data_raw\\demographics.csv")
 
-# get date of first OGTT (i.e., baseline)
-first_ogtt <- data  %>%  group_by(MRN) %>% filter(row_number()==1)
-first_ogtt <- first_ogtt[,c("MRN","Date.of.OGTT")]
-colnames(first_ogtt) <- c("MRN","Date.of.First.OGTT")
+# checking for dups
+t <- ogtt[,c("MRN","FName","LName")]
+t <- unique(t)
+ct <- t %>% group_by(LName,FName) %>% count(unique(MRN))
 
-# read in PFT data
-pfts <- read.csv("E:\\Christine Chan\\1 hour OGTT in CFRD\\Data_raw\\CFRD PFTs.csv")
-pfts$Date.of.OGTT <- NULL
-pfts$Date.of.PFT <- as.Date(as.character(pfts$Date.of.PFT),format="%m/%d/%Y")
+# merge ogtt and demo
+demo$FName <- NULL
+demo$LName <- NULL
+ogtt_demo <- merge(ogtt,demo,by="MRN",all.x = T, all.y = T)
 
-# merge date of first OGTT with PFTs to try and find baseline PFTs
-pfts_first_ogtt <- merge(pfts,first_ogtt,by="MRN",all.x=F,all.y=T)
-# is PFT within 1 month of first OGTT?
-pfts_first_ogtt$datediff <- pfts_first_ogtt$Date.of.First.OGTT - pfts_first_ogtt$Date.of.PFT
-pfts_first_ogtt$within_1_mo <- ifelse(abs(pfts_first_ogtt$datediff)<=30,1,0)
-# for "baseline PFT" we want to keep only those within 1 mo
-baseline_pft <- pfts_first_ogtt[pfts_first_ogtt$within_1_mo==1,]
-# if people have more than 1 PFT within 1 month of first OGTT, keep earlies
-baseline_pft <- baseline_pft[with(baseline_pft, order("MRN", "Date.of.PFT")),]
+# merge ogtt, demo, and A1c
+ogtt_demo$Date <- ogtt_demo$Date.of.OGTT
+ogtt_demo$Date.of.OGTT <- NULL
+a1c$Date.of.OGTT <- NULL
+a1c$Days.Between.A1C.and.OGTT <- NULL
+a1c$Date <- a1c$Date.of.A1C
+a1c$Date.of.A1C  <- NULL
+a1c$FName <- NULL
+a1c$LName <- NULL
+ogtt_demo_a1c <- merge(ogtt_demo,a1c,by=c("MRN","Date"),all.x=T,all.y=T)
 
+# add in PFTs
+pft$Date.of.OGTT <- NULL
+pft$FName <- NULL
+pft$LName <- NULL
+pft$Date <- pft$Date.of.PFT
+pft$Date.of.PFT <- NULL
+alldata <- merge(ogtt_demo_a1c,pft,by=c("MRN","Date"),all.x=T,all.y=T)
 
-data <- merge(data,first_ogtt)
+# merge back all baseline characteristics
+d <- alldata[,c("MRN","FName","LName","Sex","Race","Latino.a.","Mutation.1","Mutation.2")]
+d <- d[!is.na(d$FName),]
+d <- unique(d)
+alldata$FName <- NULL
+alldata$Latino.a. <- NULL
+alldata$LName <- NULL
+alldata$Sex <- NULL
+alldata$Race <- NULL
+alldata$Mutation.1 <- NULL
+alldata$Mutation.2 <- NULL
+alldata <- merge(alldata,d,by="MRN",all.x = T,all.y = T)
 
+# checking for dups
+t <- alldata[,c("MRN","FName","LName")]
+t <- unique(t)
+ct <- t %>% group_by(LName,FName) %>% count(unique(MRN))
 
-# merge by date of OGTT
-test <- merge(data,pfts,by=c("MRN","Date.of.OGTT"),all.x = T, all.y = T)
+# reorder columns
+alldata <- alldata[,c(1,16:22,2:15)]
 
-# keep only MRNs that exist in OGTT data
-keep <- first_ogtt[,"MRN"]
-test <- test[test$MRN %in% keep$MRN,]
+# find first OGTT
+o <- alldata[!is.na(alldata$Age.At.Test..years.),c("MRN","Date")]
+o <- o[order(o$MRN,o$Date),]
+o <- o %>% group_by(MRN) %>% filter(row_number() == 1)
+colnames(o) <- c("MRN","Date of first OGTT")
+alldata <- merge(alldata,o,by="MRN",all.x = T,all.y = T)
+alldata <- alldata[,c(1:8,23,9:22)]
 
+# remove all visits before first OGTT
+alldata$Date <- as.Date(as.character(alldata$Date),format="%m/%d/%Y")
+alldata$`Date of first OGTT` <- as.Date(as.character(alldata$`Date of first OGTT`),format="%m/%d/%Y")
+alldata <- alldata[alldata$Date >= alldata$`Date of first OGTT`,]
 
+# calculate BMI
+alldata$BMI <- alldata$Weight..kg./((alldata$Height..cm./100)^2)
+
+# get predicted spirometry values
+alldata$FVC...Pred <- NULL
+alldata$FEV1...Pred <- NULL
+alldata$FEF.25.75...Pred <- NULL
+a <- pred_GLI(age="Age")
 
 ```
 
