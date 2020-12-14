@@ -1,0 +1,333 @@
+---
+title: "Pima JOS Serum"
+author: "Tim Vigers & Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,dpi = 600,cache = TRUE)
+knitr::opts_knit$set(root.dir = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Pima/Youth vs. adult onset kidney disease")
+library(mixOmics)
+library(readxl)
+library(limma)
+library(knitr)
+library(tidyverse)
+set.seed(1017)
+```
+
+```{r include=FALSE}
+# Import data
+clinical_data = read.csv("./Data_raw/pima_yo.csv",stringsAsFactors=F,na.strings = "")
+jos_ss_datadictionary = read_excel("./Data_raw/jos_ss_datadictionary.xlsx")
+jos_data = read.csv("./Data_raw/jos_ss_yop.csv")
+# Format
+jos_data$DATE = lubridate::dmy(jos_data$DATE)
+jos_data = jos_data %>% arrange(NIH,DATE)
+jos_data = jos_data[duplicated(jos_data$NIH) == F,]
+jos_data$youth21 = clinical_data$youth21[match(jos_data$NIH,clinical_data$NIH)]
+jos_data$youth25 = clinical_data$youth25[match(jos_data$NIH,clinical_data$NIH)]
+jos_data = jos_data %>% select(NIH,youth21,youth25,A1:A550)
+jos_data[,4:ncol(jos_data)] = lapply(jos_data[,4:ncol(jos_data)],log)
+```
+
+# Onset at Age 21
+
+## PCA
+
+```{r}
+X = jos_data %>% select(A1:A550)
+# 3 PCs
+pca.res <- pca(X, ncomp = 3, center = TRUE, scale = FALSE)
+# Plot
+plotIndiv(pca.res,group = jos_data$youth21,legend = TRUE,ind.names = FALSE,
+          title = 'PCA by Group (PCs 1 & 2)',ellipse = T)
+plotIndiv(pca.res,comp = c(1,3),group = jos_data$youth21,legend = TRUE,
+          ind.names = FALSE,title = 'PCA by Group (PCs 1 & 3)',
+          ellipse = T)
+plotIndiv(pca.res,comp = c(2,3),group = jos_data$youth21,legend = TRUE,
+          ind.names = FALSE,title = 'PCA by Group (PCs 2 & 3)',
+          ellipse = T)
+```
+
+## PLS-DA
+
+### PLS-DA Performance
+
+```{r}
+# Group as outcome
+Y <- as.factor(jos_data$youth21)
+# PLS-DA function
+plsda_true <- plsda(X,Y,ncomp = 10)
+# Check error and look at optimal number of components
+perf_plsda_true <- perf(plsda_true,progressBar=FALSE, auc=TRUE,validation = "loo")
+plot(perf_plsda_true,col = color.mixo(5:7), sd = TRUE, legend.position = "horizontal")
+# The performance plot looks a little bit strange, but it appears the 2 components is the best option
+auc_true1 <- as.numeric(perf_plsda_true$auc$comp1["AUC.mean"])
+auc_true2 <- as.numeric(perf_plsda_true$auc$comp2["AUC.mean"])
+auc_true3 <- as.numeric(perf_plsda_true$auc$comp3["AUC.mean"])
+auc_true4 <- as.numeric(perf_plsda_true$auc$comp4["AUC.mean"])
+```
+
+Performance was evaluated for 10 PLS-DA components using leave one out (LOO) cross-validation (CV). Four components resulted in the lowest overall classification error. For component 1, overall error rate was `r round(perf_plsda_true$error.rate.all$overall$centroids.dist[1],3)` with AUC of `r auc_true1`. For component 2, overall error rate was `r round(perf_plsda_true$error.rate.all$overall$centroids.dist[2],3)` with AUC of `r auc_true2`. For component 3, overall error rate was `r round(perf_plsda_true$error.rate.all$overall$centroids.dist[3],3)` with AUC of `r auc_true3`. For component 4, overall error rate was `r round(perf_plsda_true$error.rate.all$overall$centroids.dist[4],3)` with AUC of `r auc_true4`.
+
+```{r}
+plotIndiv(plsda_true,comp = c(1,2),ellipse = T,legend = T,ind.names = F,title = 'PLS-DA by Group (PCs 1 & 2)')
+plotIndiv(plsda_true,comp = c(1,3),ellipse = T,legend = T,ind.names = F,title = 'PLS-DA by Group (PCs 1 & 3)')
+plotIndiv(plsda_true,comp = c(2,3),ellipse = T,legend = T,ind.names = F,title = 'PLS-DA by Group (PCs 2 & 3)')
+```
+
+### Permutation Testing
+
+```{r include=FALSE}
+# Permutation testing
+n_perm <- 100
+aucs = lapply(1:n_perm,function(i){
+  set.seed(1+i)
+  Y <- sample(jos_data$youth21,replace = F)
+  plsda_res <- plsda(X,Y,ncomp = 4)
+  perf_plsda <- perf(plsda_res,progressBar=FALSE, auc=TRUE,
+                     validation = "loo")
+  auc1 <- as.numeric(perf_plsda$auc$comp1["AUC.mean"])
+  auc2 <- as.numeric(perf_plsda$auc$comp2["AUC.mean"])
+  auc3 <- as.numeric(perf_plsda$auc$comp3["AUC.mean"])
+  auc4 <- as.numeric(perf_plsda$auc$comp4["AUC.mean"])
+  return(c(auc1,auc2,auc3,auc4))
+})
+aucs = as.data.frame(do.call(rbind,aucs))
+```
+
+```{r}
+# Plot for each component
+plot1 <- ggplot(aucs,aes(x=V1)) + 
+  geom_histogram(binwidth = 0.01) + 
+  geom_vline(aes(xintercept=auc_true1),color="red") + 
+  theme_bw() + xlab("AUC") + ggtitle("Component 1")
+plot1
+plot2 <- ggplot(aucs,aes(x=V2)) + 
+  geom_histogram(binwidth = 0.01) + 
+  geom_vline(aes(xintercept=auc_true2),color="red") + 
+  theme_bw() + xlab("AUC") + ggtitle("Component 2")
+plot2
+plot3 <- ggplot(aucs,aes(x=V3)) + 
+  geom_histogram(binwidth = 0.01) + 
+  geom_vline(aes(xintercept=auc_true3),color="red") + 
+  theme_bw() + xlab("AUC") + ggtitle("Component 3")
+plot3
+plot4 <- ggplot(aucs,aes(x=V4)) + 
+  geom_histogram(binwidth = 0.01) + 
+  geom_vline(aes(xintercept=auc_true4),color="red") + 
+  theme_bw() + xlab("AUC") + ggtitle("Component 4")
+plot4
+# Permutation p values
+p1 <- (sum(aucs$V1 > auc_true1) + 1) / (length(aucs$V1) + 1)
+p2 <- (sum(aucs$V2 > auc_true2) + 1) / (length(aucs$V2) + 1)
+p3 <- (sum(aucs$V3 > auc_true3) + 1) / (length(aucs$V3) + 1)
+p4 <- (sum(aucs$V3 > auc_true4) + 1) / (length(aucs$V4) + 1)
+```
+
+Group labels were permuted `r n_perm` times. Three component PLS-DA was run for each permutation and AUC was calculated using LOO CV. Red line indicates the AUC calculated for non-permuted data, and the gray histogram represents the null distribution of AUC. So, the permutation-based p value for AUC of component 1 is `r format.pval(p1,eps = 0.001)` and is `r  format.pval(p2,eps = 0.001)` for component 2. The permutation-based p value for AUC of component 3 is `r format.pval(p3,eps = 0.001)` and is `r format.pval(p4,eps = 0.001)` for component 4.
+
+### Lists of top 20 compounds
+
+#### Component 1
+
+```{r}
+var1 <- selectVar(plsda_true,comp = 1)$name
+names <- jos_ss_datadictionary$SomaId[match(var1,jos_ss_datadictionary$somaid_2)]
+kable(head(names,20),col.names = "Compound")
+```
+
+#### Component 2
+
+```{r}
+var2 <- selectVar(plsda_true,comp = 2)$name
+names <- jos_ss_datadictionary$SomaId[match(var2,jos_ss_datadictionary$somaid_2)]
+kable(head(names,20),col.names = "Compound")
+```
+
+#### Component 3
+
+```{r}
+var3 <- selectVar(plsda_true,comp = 3)$name
+names <- jos_ss_datadictionary$SomaId[match(var3,jos_ss_datadictionary$somaid_2)]
+kable(head(names,20),col.names = "Compound")
+```
+
+#### Component 4
+
+```{r}
+var4 <- selectVar(plsda_true,comp = 4)$name
+names <- jos_ss_datadictionary$SomaId[match(var4,jos_ss_datadictionary$somaid_2)]
+kable(head(names,20),col.names = "Compound")
+```
+
+## Moderated t tests
+
+The reference group here is `youth21 = 0`, so negative logFC values indicate that the metabolite was lower in `youth21 = 1`.
+
+```{r message=FALSE}
+# Design matrix - 0 and 1 for CAC progression
+design <- model.matrix(~factor(youth21),jos_data)
+# Linear model - X is "expression" matrix (samples in columns)
+# Log base 2 transformation
+fit <- lmFit(t(X),design)
+fit <- eBayes(fit)
+# Results
+results <- topTable(fit,coef = "factor(youth21)1",number = ncol(X),adjust.method = "fdr")
+n_sig = sum(results$adj.P.Val < 0.05)
+# table
+rownames(results) = jos_ss_datadictionary$SomaId[match(rownames(results),jos_ss_datadictionary$somaid_2)]
+kable(head(results,n_sig),row.names = T,digits = 3)
+```
+
+`r sum(results$adj.P.Val < 0.05)` compounds were significant after FDR p value adjustment.
+
+# Onset at Age 25
+
+## PCA
+
+```{r}
+# Plot
+plotIndiv(pca.res,group = jos_data$youth25,legend = TRUE,ind.names = FALSE,
+          title = 'PCA by Group (PCs 1 & 2)',ellipse = T)
+plotIndiv(pca.res,comp = c(1,3),group = jos_data$youth25,legend = TRUE,
+          ind.names = FALSE,title = 'PCA by Group (PCs 1 & 3)',
+          ellipse = T)
+plotIndiv(pca.res,comp = c(2,3),group = jos_data$youth25,legend = TRUE,
+          ind.names = FALSE,title = 'PCA by Group (PCs 2 & 3)',
+          ellipse = T)
+```
+
+## PLS-DA
+
+### PLS-DA Performance
+
+```{r cache=TRUE}
+# Group as outcome
+Y <- as.factor(jos_data$youth25)
+# PLS-DA function
+plsda_true <- plsda(X,Y,ncomp = 10)
+# Check error and look at optimal number of components
+perf_plsda_true <- perf(plsda_true,progressBar=FALSE, auc=TRUE,validation = "loo")
+plot(perf_plsda_true,col = color.mixo(5:7), sd = TRUE, legend.position = "horizontal")
+# The performance plot looks a little bit strange, but it appears the 2 components is the best option
+auc_true1 <- as.numeric(perf_plsda_true$auc$comp1["AUC.mean"])
+auc_true2 <- as.numeric(perf_plsda_true$auc$comp2["AUC.mean"])
+auc_true3 <- as.numeric(perf_plsda_true$auc$comp3["AUC.mean"])
+auc_true4 <- as.numeric(perf_plsda_true$auc$comp4["AUC.mean"])
+```
+
+Performance was evaluated for 10 PLS-DA components using leave one out (LOO) cross-validation (CV). Four components resulted in the lowest overall classification error. For component 1, overall error rate was `r round(perf_plsda_true$error.rate.all$overall$centroids.dist[1],3)` with AUC of `r auc_true1`. For component 2, overall error rate was `r round(perf_plsda_true$error.rate.all$overall$centroids.dist[2],3)` with AUC of `r auc_true2`. For component 3, overall error rate was `r round(perf_plsda_true$error.rate.all$overall$centroids.dist[3],3)` with AUC of `r auc_true3`. For component 4, overall error rate was `r round(perf_plsda_true$error.rate.all$overall$centroids.dist[4],3)` with AUC of `r auc_true4`.
+
+```{r}
+plotIndiv(plsda_true,comp = c(1,2),ellipse = T,legend = T,ind.names = F,title = 'PLS-DA by Group (PCs 1 & 2)')
+plotIndiv(plsda_true,comp = c(1,3),ellipse = T,legend = T,ind.names = F,title = 'PLS-DA by Group (PCs 1 & 3)')
+plotIndiv(plsda_true,comp = c(2,3),ellipse = T,legend = T,ind.names = F,title = 'PLS-DA by Group (PCs 2 & 3)')
+```
+
+### Permutation Testing
+
+```{r include=FALSE}
+# Permutation testing
+n_perm <- 100
+aucs = lapply(1:n_perm,function(i){
+  set.seed(1+i)
+  Y <- sample(jos_data$youth25,replace = F)
+  plsda_res <- plsda(X,Y,ncomp = 4)
+  perf_plsda <- perf(plsda_res,progressBar=FALSE, auc=TRUE,
+                     validation = "loo")
+  auc1 <- as.numeric(perf_plsda$auc$comp1["AUC.mean"])
+  auc2 <- as.numeric(perf_plsda$auc$comp2["AUC.mean"])
+  auc3 <- as.numeric(perf_plsda$auc$comp3["AUC.mean"])
+  auc4 <- as.numeric(perf_plsda$auc$comp4["AUC.mean"])
+  return(c(auc1,auc2,auc3,auc4))
+})
+aucs = as.data.frame(do.call(rbind,aucs))
+```
+
+```{r}
+# Plot for each component
+plot1 <- ggplot(aucs,aes(x=V1)) + 
+  geom_histogram(binwidth = 0.01) + 
+  geom_vline(aes(xintercept=auc_true1),color="red") + 
+  theme_bw() + xlab("AUC") + ggtitle("Component 1")
+plot1
+plot2 <- ggplot(aucs,aes(x=V2)) + 
+  geom_histogram(binwidth = 0.01) + 
+  geom_vline(aes(xintercept=auc_true2),color="red") + 
+  theme_bw() + xlab("AUC") + ggtitle("Component 2")
+plot2
+plot3 <- ggplot(aucs,aes(x=V3)) + 
+  geom_histogram(binwidth = 0.01) + 
+  geom_vline(aes(xintercept=auc_true3),color="red") + 
+  theme_bw() + xlab("AUC") + ggtitle("Component 3")
+plot3
+plot4 <- ggplot(aucs,aes(x=V4)) + 
+  geom_histogram(binwidth = 0.01) + 
+  geom_vline(aes(xintercept=auc_true4),color="red") + 
+  theme_bw() + xlab("AUC") + ggtitle("Component 4")
+plot4
+# Permutation p values
+p1 <- (sum(aucs$V1 > auc_true1) + 1) / (length(aucs$V1) + 1)
+p2 <- (sum(aucs$V2 > auc_true2) + 1) / (length(aucs$V2) + 1)
+p3 <- (sum(aucs$V3 > auc_true3) + 1) / (length(aucs$V3) + 1)
+p4 <- (sum(aucs$V4 > auc_true4) + 1) / (length(aucs$V4) + 1)
+```
+
+Group labels were permuted `r n_perm` times. Three component PLS-DA was run for each permutation and AUC was calculated using LOO CV. Red line indicates the AUC calculated for non-permuted data, and the gray histogram represents the null distribution of AUC. So, the permutation-based p value for AUC of component 1 is `r format.pval(p1,eps = 0.001)` and is `r  format.pval(p2,eps = 0.001)` for component 2. The permutation-based p value for AUC of component 3 is `r format.pval(p3,eps = 0.001)` and is `r format.pval(p4,eps = 0.001)` for component 4.
+
+### Lists of top 20 compounds
+
+#### Component 1
+
+```{r}
+var1 <- selectVar(plsda_true,comp = 1)$name
+names <- jos_ss_datadictionary$SomaId[match(var1,jos_ss_datadictionary$somaid_2)]
+kable(head(names,20),col.names = "Compound")
+```
+
+#### Component 2
+
+```{r}
+var2 <- selectVar(plsda_true,comp = 2)$name
+names <- jos_ss_datadictionary$SomaId[match(var2,jos_ss_datadictionary$somaid_2)]
+kable(head(names,20),col.names = "Compound")
+```
+
+#### Component 3
+
+```{r}
+var3 <- selectVar(plsda_true,comp = 3)$name
+names <- jos_ss_datadictionary$SomaId[match(var3,jos_ss_datadictionary$somaid_2)]
+kable(head(names,20),col.names = "Compound")
+```
+
+#### Component 4
+
+```{r}
+var4 <- selectVar(plsda_true,comp = 4)$name
+names <- jos_ss_datadictionary$SomaId[match(var4,jos_ss_datadictionary$somaid_2)]
+kable(head(names,20),col.names = "Compound")
+```
+
+## Moderated t tests
+
+The reference group here is `youth25 = 0`, so negative logFC values indicate that the metabolite was lower in `youth25 = 1`.
+
+```{r message=FALSE}
+# Design matrix - 0 and 1 for CAC progression
+design <- model.matrix(~factor(youth25),jos_data)
+# Linear model - X is "expression" matrix (samples in columns)
+# Log base 2 transformation
+fit <- lmFit(t(X),design)
+fit <- eBayes(fit)
+# Results
+results <- topTable(fit,coef = "factor(youth25)1",number = ncol(X),adjust.method = "fdr")
+n_sig = sum(results$adj.P.Val < 0.05)
+# table
+rownames(results) = jos_ss_datadictionary$SomaId[match(rownames(results),jos_ss_datadictionary$somaid_2)]
+kable(head(results,n_sig),row.names = T,digits = 3)
+```
+
+`r sum(results$adj.P.Val < 0.05)` compound was significant after FDR p value adjustment.
