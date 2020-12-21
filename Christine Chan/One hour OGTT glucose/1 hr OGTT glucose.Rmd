@@ -11,6 +11,8 @@ knitr::opts_chunk$set(echo = TRUE)
 library(knitr)
 library(rspiro)
 library(dplyr)
+library(childsds)
+library(tableone)
 
 # read in separate data files
 
@@ -106,13 +108,92 @@ colorder <- c("MRN","FName","LName","Sex","Race","Latino.a.","Mutation.1","Mutat
 alldata <- alldata[,colorder]
 alldata <- alldata[order(alldata$MRN,alldata$Date),]
 
-                               
+# get BMI percentile
+alldata$age <- ifelse(is.na(alldata$Age.at.PFT),alldata$Age.At.Test..years.,alldata$Age.at.PFT)
+alldata$bmip = sds(alldata$BMI,
+              age = alldata$age,
+              sex = alldata$Sex, male = "Male", female =  "Female",
+              ref = cdc.ref,
+              item = "bmi",
+              type = "perc")
+
+# classify CFRD at each visit
+alldata$cfrd_visit <- NA
+alldata$cfrd_visit <- ifelse(is.na(alldata$X2.hour.Glucose),NA,ifelse(alldata$X2.hour.Glucose>=200,1,0))
+
+# find people with CFRD at baseline
+cfrdbase <- alldata[alldata$Date==alldata$`Date of first OGTT` & alldata$cfrd_visit==1,]
+alldata <- alldata[!(alldata$MRN %in% cfrdbase$MRN),]
+
+# create variable for CFRD groups (i.e., those who developed CFRD vs those who did not)
+# and get date of first OGTT with CFRD
+cfrdcheck <- alldata[alldata$cfrd_visit==1,c("MRN","Date","cfrd_visit")]
+cfrdcheck <- cfrdcheck[order(cfrdcheck$MRN,desc(cfrdcheck$cfrd_visit)),]
+cfrdcheck <- cfrdcheck[!is.na(cfrdcheck$MRN),]
+cfrdcheck <- cfrdcheck %>% group_by(MRN) %>% filter(row_number() == 1)                              
+colnames(cfrdcheck) <- c("MRN","Date of CFRD diagnosis","CFRD")      
+alldata <- merge(alldata,cfrdcheck,by="MRN",all.x=T,all.y=T)
+alldata$CFRD <- ifelse(is.na(alldata$CFRD),0,1)
+
+# create variable for time to develop CFRD
+# in those who do not develop CFRD, this is the time between first and last OGTT, and they are censored
+lastogtt <- alldata[!is.na(alldata$Fasting.Glucose) | !is.na(alldata$X1.hour.Glucose) | !is.na(alldata$X2.hour.Glucose),
+                    c("MRN","Date")]
+lastogtt <- lastogtt[order(lastogtt$MRN,desc(lastogtt$Date)),]
+lastogtt <- lastogtt %>% group_by(MRN) %>% filter(row_number() == 1)  
+colnames(lastogtt) <- c("MRN","Date of last OGTT")
+alldata <- merge(alldata,lastogtt,by="MRN",all.x = T,all.y=T)
+
+# for analyses about prediction of CFRD, we need to exclude those who only have one OGTT
+# can use alldata for mixed models of PFTs and BMI
+oneogtt <- alldata[alldata$`Date of first OGTT`==alldata$`Date of last OGTT`,]
+multogtt <- alldata[!(alldata$MRN %in% oneogtt$MRN),]
+
+# create dataset with baseline only 
+baseline_mult <- multogtt[multogtt$Date==multogtt$`Date of first OGTT`,]
+baseline_all <- alldata[alldata$Date==alldata$`Date of first OGTT`,]
+
+# table of demographics in those with at least one pre-CFRD OGTT
+demovars <- c("Sex","Race","Latino.a.","age")
+# Taking out these clinical variables - if they are to be added to table 1, need to figure out how
+# because they come from PFT visits, not the same date as OGTT
+#              "BMI","FEV1.per.pred","FVC.per.pred","FEF.25.75.per.pred","bmip")
+t1_alldata <- CreateTableOne(data=baseline_all,vars=demovars)
+t1_alldata <-  print(t1_alldata,printToggle = F,varLabels=TRUE,missing=T,showAllLevels = T,test = F)
+
+# table of demographics in those with more than OGTT
+t1_multogtt <- CreateTableOne(data=baseline_mult,vars=demovars)
+t1_multogtt <-  print(t1_multogtt,printToggle = F,varLabels=TRUE,missing=T,showAllLevels = T,test = F)
+
+# compare baseline glucose values in those who developed CFRD and those who did not
+gluctable <- CreateTableOne(baseline_mult,vars=c("X1.hour.Glucose","X2.hour.Glucose"),strata="CFRD")
+gluctable <-  print(gluctable,printToggle = F,varLabels=TRUE,missing=T,showAllLevels = T,test = T)
 
 ```
 
+# Background
+
+# Methods
+
+describe who is excluded
+difference between entire cohort and those with follow-up OGTTs
+
+# Results
 
 ```{r, echo=FALSE}
-kable(hctab,caption = "Table 1a.  Descriptive statistics for healthy controls by Tanner stage.")
+kable(t1_alldata,caption = "Table 1a.  Descriptive statistics for entire cohort.")
 ```
+
 <br>
+
+```{r, echo=FALSE}
+kable(t1_multogtt,caption = "Table 1b.  Descriptive statistics for participants with at least one follow-up OGTT.")
+```
+
+<br>
+
+```{r, echo=FALSE}
+kable(gluctable,caption = "Table 2.  Glucose values from baseline OGTT in those who developed CFRD vs. those who did not, among the participants with at least one follow-up OGTT.")
+```
+
 
