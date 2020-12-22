@@ -1,5 +1,5 @@
 ---
-title: "1 hour OGTT glucose"
+title: "1 hour OGTT glucose in CFRD"
 author: "Laura Pyle"
 date: "`r format(Sys.time(), '%d %B %Y')`"
 output: word_document
@@ -13,6 +13,7 @@ library(rspiro)
 library(dplyr)
 library(childsds)
 library(tableone)
+library(pROC)
 
 # read in separate data files
 
@@ -29,6 +30,7 @@ ct <- t %>% group_by(LName,FName) %>% count(unique(MRN))
 # merge ogtt and demo
 demo$FName <- NULL
 demo$LName <- NULL
+ogtt <- ogtt %>% group_by(MRN,Date.of.OGTT) %>% filter(row_number() == 1)
 ogtt_demo <- merge(ogtt,demo,by="MRN",all.x = T, all.y = T)
 
 # merge ogtt, demo, and A1c
@@ -40,6 +42,7 @@ a1c$Date <- a1c$Date.of.A1C
 a1c$Date.of.A1C  <- NULL
 a1c$FName <- NULL
 a1c$LName <- NULL
+a1c <- a1c %>% group_by(MRN,Date) %>% filter(row_number() == 1)
 ogtt_demo_a1c <- merge(ogtt_demo,a1c,by=c("MRN","Date"),all.x=T,all.y=T)
 
 # add in PFTs
@@ -64,6 +67,7 @@ pft$FEV1.per.pred <- (pft$FEV1.Raw / pft$FEV1.pred)*100
 pft$FVC.per.pred <- (pft$FVC.Raw / pft$FVC.pred)*100
 pft$FEF.25.75.per.pred <- (pft$FEF.25.75.Raw / pft$FEF.25.75.pred)*100
 pft$Sex <- NULL
+pft <- pft %>% group_by(MRN,Date) %>% filter(row_number() == 1)
 alldata <- merge(ogtt_demo_a1c,pft,by=c("MRN","Date"),all.x=T,all.y=T)
 
 # merge back all baseline characteristics
@@ -110,8 +114,9 @@ alldata <- alldata[order(alldata$MRN,alldata$Date),]
 
 # get BMI percentile
 alldata$age <- ifelse(is.na(alldata$Age.at.PFT),alldata$Age.At.Test..years.,alldata$Age.at.PFT)
+alldata$age_bmi <- ifelse(alldata$age>20,20,alldata$age)
 alldata$bmip = sds(alldata$BMI,
-              age = alldata$age,
+              age = alldata$age_bmi,
               sex = alldata$Sex, male = "Male", female =  "Female",
               ref = cdc.ref,
               item = "bmi",
@@ -135,6 +140,11 @@ colnames(cfrdcheck) <- c("MRN","Date of CFRD diagnosis","CFRD")
 alldata <- merge(alldata,cfrdcheck,by="MRN",all.x=T,all.y=T)
 alldata$CFRD <- ifelse(is.na(alldata$CFRD),0,1)
 
+# get baseline age
+baseage <- alldata[alldata$Date==alldata$`Date of first OGTT`,c("MRN","age")]
+colnames(baseage) <- c("MRN","Base_age")
+alldata <- merge(alldata,baseage,by="MRN",all.x=T,all.y=T)
+
 # create variable for time to develop CFRD
 # in those who do not develop CFRD, this is the time between first and last OGTT, and they are censored
 lastogtt <- alldata[!is.na(alldata$Fasting.Glucose) | !is.na(alldata$X1.hour.Glucose) | !is.na(alldata$X2.hour.Glucose),
@@ -148,6 +158,10 @@ alldata <- merge(alldata,lastogtt,by="MRN",all.x = T,all.y=T)
 # can use alldata for mixed models of PFTs and BMI
 oneogtt <- alldata[alldata$`Date of first OGTT`==alldata$`Date of last OGTT`,]
 multogtt <- alldata[!(alldata$MRN %in% oneogtt$MRN),]
+
+# get number of participants in each cohort
+n_alldata <- length(unique(alldata$MRN))
+n_multogtt <- length(unique(multogtt$MRN))
 
 # create dataset with baseline only 
 baseline_mult <- multogtt[multogtt$Date==multogtt$`Date of first OGTT`,]
@@ -169,6 +183,24 @@ t1_multogtt <-  print(t1_multogtt,printToggle = F,varLabels=TRUE,missing=T,showA
 gluctable <- CreateTableOne(baseline_mult,vars=c("X1.hour.Glucose","X2.hour.Glucose"),strata="CFRD")
 gluctable <-  print(gluctable,printToggle = F,varLabels=TRUE,missing=T,showAllLevels = T,test = T)
 
+# logistic regression of 1 hour and 2 hour glucose predicting cfrd
+log1 <- glm(data = multogtt, CFRD~X1.hour.Glucose,family = "binomial")
+or1 <- exp(cbind(OR = coef(log1), confint(log1)))
+
+log1_adj <- glm(data = multogtt, CFRD~X1.hour.Glucose + Base_age + Sex,family = "binomial")
+or1_adj <- exp(cbind(OR = coef(log1_adj), confint(log1_adj)))
+
+log2 <- glm(data = multogtt, CFRD~X2.hour.Glucose,family = "binomial")
+or2 <- exp(cbind(OR = coef(log2), confint(log2)))
+
+log2_adj <- glm(data = multogtt, CFRD~X2.hour.Glucose + Base_age + Sex,family = "binomial")
+or2_adj <- exp(cbind(OR = coef(log2_adj), confint(log2_adj)))
+
+# ROC for 1 hour glucose
+roc1 <- roc(data=multogtt, response = CFRD, predictor=X1.hour.Glucose)
+
+# ROC for 2 hour glucose
+roc2 <- roc(data=multogtt, response = CFRD, predictor=X2.hour.Glucose)
 ```
 
 # Background
@@ -180,20 +212,86 @@ difference between entire cohort and those with follow-up OGTTs
 
 # Results
 
+There were `r n_alldata` participants who had at least one OGTT.  There were `r n_multogtt` participants who had more than one OGTT.
+
+## Table 1a.  Descriptive statistics for entire cohort.
+
 ```{r, echo=FALSE}
-kable(t1_alldata,caption = "Table 1a.  Descriptive statistics for entire cohort.")
+kable(t1_alldata)
 ```
 
 <br>
 
+## Table 1b.  Descriptive statistics for participants with at least one follow-up OGTT.
+
 ```{r, echo=FALSE}
-kable(t1_multogtt,caption = "Table 1b.  Descriptive statistics for participants with at least one follow-up OGTT.")
+kable(t1_multogtt)
 ```
 
 <br>
 
+## Table 2.  Glucose values from baseline OGTT in those who developed CFRD vs. those who did not, among the participants with at least one follow-up OGTT.
+
 ```{r, echo=FALSE}
-kable(gluctable,caption = "Table 2.  Glucose values from baseline OGTT in those who developed CFRD vs. those who did not, among the participants with at least one follow-up OGTT.")
+kable(gluctable)
 ```
 
+<br>
 
+## Table 3a.  Results of logistic regression - baseline 1 hour glucose and CFRD.
+
+```{r, echo=FALSE}
+summary(log1)$coefficients
+
+or1
+```
+
+<br>
+
+## Table 3b.  Results of logistic regression - baseline 1 hour glucose and CFRD, adjusted for baseline age and sex.
+
+```{r, echo=FALSE}
+summary(log1_adj)$coefficients
+
+or1_adj
+```
+
+<br>
+
+## Table 4a.  Results of logistic regression - baseline 2 hour glucose and CFRD.
+
+```{r, echo=FALSE}
+summary(log2)$coefficients
+
+or2
+```
+
+<br>
+
+## Table 4b.  Results of logistic regression - baseline 2 hour glucose and CFRD, adjusted for baseline age and sex.
+
+```{r, echo=FALSE}
+summary(log2_adj)$coefficients
+
+or2_adj
+```
+
+<br>
+
+## ROC analysis for baseline 1 hour glucose.
+
+The AUC for the ROC was `r auc(roc1)`.
+
+```{r, echo=FALSE}
+plot(roc1)
+```
+
+<br>
+
+## ROC analysis for baseline 2 hour glucose.
+
+The AUC for the ROC was `r auc(roc2)`.
+
+```{r, echo=FALSE}
+plot(roc2)
+```
