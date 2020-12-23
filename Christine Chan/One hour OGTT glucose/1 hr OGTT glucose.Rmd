@@ -14,6 +14,13 @@ library(dplyr)
 library(childsds)
 library(tableone)
 library(pROC)
+library(OptimalCutpoints)
+library(sjlabelled)
+library(Hmisc)
+library(pch)
+library(coxphw)
+library(finalfit)
+library(tdROC)
 
 # read in separate data files
 
@@ -145,8 +152,12 @@ baseage <- alldata[alldata$Date==alldata$`Date of first OGTT`,c("MRN","age")]
 colnames(baseage) <- c("MRN","Base_age")
 alldata <- merge(alldata,baseage,by="MRN",all.x=T,all.y=T)
 
-# create variable for time to develop CFRD
-# in those who do not develop CFRD, this is the time between first and last OGTT, and they are censored
+# get baseline 1 hour and 2 hour glucose
+basegluc <- alldata[alldata$Date==alldata$`Date of first OGTT`,c("MRN","X1.hour.Glucose","X2.hour.Glucose")]
+colnames(basegluc) <- c("MRN","Baseline_1hr_glucose","Baseline_2hr_glucose")
+alldata <- merge(alldata,basegluc,by="MRN",all.x=T,all.y=T)
+
+# find date of last OGTT
 lastogtt <- alldata[!is.na(alldata$Fasting.Glucose) | !is.na(alldata$X1.hour.Glucose) | !is.na(alldata$X2.hour.Glucose),
                     c("MRN","Date")]
 lastogtt <- lastogtt[order(lastogtt$MRN,desc(lastogtt$Date)),]
@@ -158,6 +169,13 @@ alldata <- merge(alldata,lastogtt,by="MRN",all.x = T,all.y=T)
 # can use alldata for mixed models of PFTs and BMI
 oneogtt <- alldata[alldata$`Date of first OGTT`==alldata$`Date of last OGTT`,]
 multogtt <- alldata[!(alldata$MRN %in% oneogtt$MRN),]
+
+# have CFRD indicator
+# create variable for follow-up time
+# in those who do not develop CFRD, this is the time between first and last OGTT, and they are censored
+# for those who develop CFRD, this is time between first OGTT and diagnosis of CFRD
+multogtt$Follow_up_time_yrs <- ifelse(multogtt$CFRD==1,(multogtt$`Date of CFRD diagnosis`-multogtt$`Date of first OGTT`)/365.25,
+                           (multogtt$`Date of last OGTT`-multogtt$`Date of first OGTT`)/365.25)
 
 # get number of participants in each cohort
 n_alldata <- length(unique(alldata$MRN))
@@ -176,7 +194,7 @@ t1_alldata <- CreateTableOne(data=baseline_all,vars=demovars)
 t1_alldata <-  print(t1_alldata,printToggle = F,varLabels=TRUE,missing=T,showAllLevels = T,test = F)
 
 # table of demographics in those with more than OGTT
-t1_multogtt <- CreateTableOne(data=baseline_mult,vars=demovars)
+t1_multogtt <- CreateTableOne(data=baseline_mult,vars=c(demovars,"Follow_up_time_yrs"))
 t1_multogtt <-  print(t1_multogtt,printToggle = F,varLabels=TRUE,missing=T,showAllLevels = T,test = F)
 
 # compare baseline glucose values in those who developed CFRD and those who did not
@@ -184,23 +202,60 @@ gluctable <- CreateTableOne(baseline_mult,vars=c("X1.hour.Glucose","X2.hour.Gluc
 gluctable <-  print(gluctable,printToggle = F,varLabels=TRUE,missing=T,showAllLevels = T,test = T)
 
 # logistic regression of 1 hour and 2 hour glucose predicting cfrd
-log1 <- glm(data = multogtt, CFRD~X1.hour.Glucose,family = "binomial")
+log1 <- glm(data = baseline_mult, CFRD~X1.hour.Glucose,family = "binomial")
 or1 <- exp(cbind(OR = coef(log1), confint(log1)))
 
-log1_adj <- glm(data = multogtt, CFRD~X1.hour.Glucose + Base_age + Sex,family = "binomial")
+log1_adj <- glm(data = baseline_mult, CFRD~X1.hour.Glucose + Base_age + Sex,family = "binomial")
 or1_adj <- exp(cbind(OR = coef(log1_adj), confint(log1_adj)))
 
-log2 <- glm(data = multogtt, CFRD~X2.hour.Glucose,family = "binomial")
+log2 <- glm(data = baseline_mult, CFRD~X2.hour.Glucose,family = "binomial")
 or2 <- exp(cbind(OR = coef(log2), confint(log2)))
 
-log2_adj <- glm(data = multogtt, CFRD~X2.hour.Glucose + Base_age + Sex,family = "binomial")
+log2_adj <- glm(data = baseline_mult, CFRD~X2.hour.Glucose + Base_age + Sex,family = "binomial")
 or2_adj <- exp(cbind(OR = coef(log2_adj), confint(log2_adj)))
 
 # ROC for 1 hour glucose
-roc1 <- roc(data=multogtt, response = CFRD, predictor=X1.hour.Glucose)
+baseline_mult$pred_1hr <- predict(log1, type="response", data.frame=baseline_mult)
+roc1 <- roc(data=baseline_mult, response = CFRD, predictor=X1.hour.Glucose)
+coords1 <- coords(roc1, "b", ret=c("t","specificity","sensitivity"), best.method="youden") # default
 
 # ROC for 2 hour glucose
-roc2 <- roc(data=multogtt, response = CFRD, predictor=X2.hour.Glucose)
+baseline_mult$pred_2hr <- predict(log2, type="response", data.frame=baseline_mult)
+roc2 <- roc(data=baseline_mult, response = CFRD, predictor=X2.hour.Glucose)
+coords2 <- coords(roc2, "b", ret=c("t","specificity","sensitivity"), best.method="youden") # default
+
+# CPH model for baseline 1 hour glucose
+cox1hr <- coxph(Surv(Follow_up_time_yrs,CFRD) ~ Baseline_1hr_glucose,data = multogtt)
+# Diagnostics
+d1 <- cox.zph(cox1hr)
+cox1hrt <- multogtt %>% finalfit("Surv(Follow_up_time_yrs,CFRD)","Baseline_1hr_glucose")
+
+
+# CPH model for 2 hour glucose
+cox2hr <- coxph(Surv(Follow_up_time_yrs,CFRD) ~ Baseline_2hr_glucose,data = multogtt)
+# Diagnostics
+d2 <- cox.zph(cox2hr)
+# appears to violate PH
+cox2hrint <- cox.zph(cox2hr,transform = function(Follow_up_time_yrs) log(Follow_up_time_yrs))
+# log transforming time doesn't fix it
+plot(cox2hrint)
+
+# adding time dependent coefficient
+cox2hrtt <- coxph(Surv(Follow_up_time_yrs,CFRD) ~ Baseline_2hr_glucose + tt(Baseline_2hr_glucose),data = multogtt,
+                tt=function(x,t,...) x*t*t*t)
+# check fit of new model
+plot(d2)
+abline(coef(cox2hrtt[1:2],col=2))
+
+# trying piecewise constant hazard model
+pch1 <- pchreg(Surv(Follow_up_time_yrs,CFRD) ~ Baseline_2hr_glucose,breaks = 2,data=multogtt)
+
+# trying weighted Cox regression
+cw1 <- coxphw(Surv(Follow_up_time_yrs,CFRD) ~ Baseline_2hr_glucose,data=multogtt)
+
+# time dependent ROC
+tdroc1 <- tdROC(X=multogtt$Baseline_1hr_glucose,Y=multogtt$Follow_up_time_yrs,delta = multogtt$CFRD,tau=3)
+
 ```
 
 # Background
@@ -280,18 +335,48 @@ or2_adj
 
 ## ROC analysis for baseline 1 hour glucose.
 
-The AUC for the ROC was `r auc(roc1)`.
+The AUC for the ROC was `r round(auc(roc1),4)`.
 
 ```{r, echo=FALSE}
-plot(roc1)
+plot.roc(roc1, legacy.axes=F, xlim=c(1,0), ylim=c(0,1))
+```
+
+The threshold of 1 hour glucose that maximized the Youden index, along with the corresponding sensitivity and specificity, are shown below.
+
+```{r, echo=FALSE}
+kable(coords1)
 ```
 
 <br>
 
 ## ROC analysis for baseline 2 hour glucose.
 
-The AUC for the ROC was `r auc(roc2)`.
+The AUC for the ROC was `r round(auc(roc2),4)`.
 
 ```{r, echo=FALSE}
-plot(roc2)
+plot.roc(roc2, legacy.axes=F, xlim=c(1,0), ylim=c(0,1))
 ```
+
+The threshold of 2 hour glucose that maximized the Youden index, along with the corresponding sensitivity and specificity, are shown below.
+
+```{r, echo=FALSE}
+kable(coords2)
+```
+
+<br>
+
+## Cox proportional hazards model for baseline 1 hour glucose.
+
+```{r, echo=FALSE}
+kable(cox1hrt[,1:4])
+```
+
+<br>
+
+## Weighted Cox proportional hazards model for baseline 2 hour glucose.
+
+```{r, echo=FALSE}
+print(cw1)
+```
+
+<br>
