@@ -16,14 +16,14 @@ library(zoo)
 # and use "Jenny proteome" file results only for people who do not have results in the main datasource
 
 # read in both datasets
-efflux2 <- read.csv("H:/Endocrinology/Nadeau/T1D Exchange metformin and lipids/Data/Efflux data/Copy of Jenny manifest v4 GRP2 march 2019.csv",
+efflux2 <- read.csv("E:/Nadeau/T1D Exchange metformin and lipids/Data/Efflux data/Copy of Jenny manifest v4 GRP2 march 2019.csv",
                     stringsAsFactors = FALSE)
 efflux2 <- efflux2[!is.na(efflux2$cholesterol.efflux),]
 efflux2$analyticid <- efflux2$ANALYTICID
 efflux2$date <- mdy(efflux2$COLLECTIONDT)
 efflux2$efflux.value <- efflux2$cholesterol.efflux
 efflux2 <- select(efflux2,c("analyticid","date","efflux.value"))
-efflux1 <- read.csv("H:/Endocrinology/Nadeau/T1D Exchange metformin and lipids/Data/Efflux data/Jenny proteome efflux for me.csv",
+efflux1 <- read.csv("E:/Nadeau/T1D Exchange metformin and lipids/Data/Efflux data/Jenny proteome efflux for me.csv",
                     stringsAsFactors = FALSE)
 efflux1 <- efflux1[!is.na(efflux1$efflux.value),]
 efflux1$analyticid <- efflux1$ANALYTICID
@@ -48,9 +48,9 @@ alldata$visit <- visits
 
 
 ####  PROTEOMICS DATA ######
-filename <- "H:/Endocrinology/Nadeau/T1D Exchange metformin and lipids/Data/Proteomics data/experimentcodes.csv"
+filename <- "E:/Nadeau/T1D Exchange metformin and lipids/Data/Proteomics data/experimentcodes.csv"
 codes <- read.csv(filename,stringsAsFactors = FALSE)
-filename <-  "H:/Endocrinology/Nadeau/T1D Exchange metformin and lipids/Data/Proteomics data//proteinquant.csv"
+filename <-  "E:/Nadeau/T1D Exchange metformin and lipids/Data/Proteomics data//proteinquant.csv"
 proteins <- read.csv(filename,header = FALSE,stringsAsFactors = FALSE)
 # Transpose and format protein concentration data
 proteins <- t(proteins)
@@ -74,7 +74,7 @@ alldata <- merge(alldata,proteins,by=c("analyticid","date"),all.x=TRUE, all.y=TR
 alldata <- alldata[order(alldata$analyticid, alldata$date),]
 
 ####  CYTOKINE DATA ######
-all <- read.csv("H:/Endocrinology/Nadeau/T1D Exchange metformin and lipids/Data/Preliminary CVD cytokine data/Jenny manifest v4 GRP2 9th Jan 2019.csv",na.strings = c("","NA"," ","error"))
+all <- read.csv("E:/Nadeau/T1D Exchange metformin and lipids/Data/Preliminary CVD cytokine data/Jenny manifest v4 GRP2 9th Jan 2019.csv",na.strings = c("","NA"," ","error"))
 # delete records with missing data
 cytokine <- all[!is.na(all$IFN.g),]
 cytokine$date <- cytokine$COLLECTIONDT
@@ -87,7 +87,7 @@ alldata <- merge(alldata,cytokine,by=c("analyticid","date"),all.x=TRUE, all.y=FA
 alldata <- alldata[order(alldata$analyticid, alldata$date),]
 
 ####  RANDOMIZATION DATA ######
-rand <- read.csv("H:/Endocrinology/Nadeau/T1D Exchange metformin and lipids/Data/Clinical data/metformin vs placebo.csv")
+rand <- read.csv("E:/Nadeau/T1D Exchange metformin and lipids/Data/Clinical data/metformin vs placebo.csv")
 rand$analyticid <- rand$ANALYTICID
 rand <- select(rand,-"ANALYTICID")
 alldata <- merge(alldata,rand,by="analyticid",all.x = TRUE,all.y=TRUE)
@@ -99,7 +99,7 @@ alldata <- alldata[!is.na(alldata$visit),]
 ####  plus demographics: race/ethnicity, Tanner #####
 
 # anthro file - only visit needed is 6 months
-anthro <- read.csv("H:/Endocrinology/Nadeau/T1D Exchange metformin and lipids/Data/Clinical data/031319_BOC031_LabValuesVisits_anthro.csv")
+anthro <- read.csv("E:/Nadeau/T1D Exchange metformin and lipids/Data/Clinical data/031319_BOC031_LabValuesVisits_anthro.csv")
 anthro <- anthro[anthro$Visit %in% c("26 week","26 Week"),]
 anthro$Visit <- rep("6 month",nrow(anthro))
 anthro$analyticid <- anthro$ID
@@ -109,7 +109,7 @@ alldata <- merge(alldata,anthro,by=c("analyticid","visit"),all.x=TRUE, all.y=FAL
 alldata <- alldata[order(alldata$analyticid, alldata$date),]
 
 # a1c data
-a1c <- read.csv("H:/Endocrinology/Nadeau/T1D Exchange metformin and lipids/Data/Clinical data/031319_BOC031_LabValuesVisits_a1c.csv")
+a1c <- read.csv("E:/Nadeau/T1D Exchange metformin and lipids/Data/Clinical data/031319_BOC031_LabValuesVisits_a1c.csv")
 a1c <- a1c[a1c$Visit %in% c("26 week","Screening","26 Week"),]
 a1c$visit[a1c$Visit %in% c("26 week","26 Week")] <- "6 month"
 a1c$visit[a1c$Visit=="Screening"] <- "Baseline"
@@ -119,9 +119,9 @@ alldata <- merge(alldata,a1c,by=c("analyticid","visit"),all.x=TRUE, all.y=FALSE)
 alldata <- alldata[order(alldata$analyticid, alldata$date),]
 
 # labs
-labs <- read.csv("H:/Endocrinology/Nadeau/T1D Exchange metformin and lipids/Data/Clinical data/031319_BOC031_LabValuesVisits_Labs.csv")
+labs <- read.csv("E:/Nadeau/T1D Exchange metformin and lipids/Data/Clinical data/031319_BOC031_LabValuesVisits_Labs.csv")
 # adipo data
-adipo <- read.csv("H:/Endocrinology/Nadeau/T1D Exchange metformin and lipids/Data/Clinical data/030719_BOC031_Analytes_adipokines.csv")
+adipo <- read.csv("E:/Nadeau/T1D Exchange metformin and lipids/Data/Clinical data/030719_BOC031_Analytes_adipokines.csv")
 colnames(adipo) <- c("ID","Visit","Analyte","Value","Units")
 # deduplicate the adipokines
 adipo <- unique(adipo)
@@ -154,14 +154,14 @@ alldata <- merge(alldata,labs_wide,by=c("analyticid","visit"),all.x=TRUE, all.y=
 alldata <- alldata[order(alldata$analyticid, alldata$date),]
 
 # first clinical data pull
-jan <- read.csv("H:/Endocrinology/Nadeau/T1D Exchange metformin and lipids/Data/Clinical data/011518_BOC031_Data Pull.csv")
+jan <- read.csv("E:/Nadeau/T1D Exchange metformin and lipids/Data/Clinical data/011518_BOC031_Data Pull.csv")
 jan$analyticid <- jan$ANALYTICID
 jan <- select(jan,c("analyticid","Age","Gender","Race","Ethnicity"))
 alldata <- merge(alldata,jan,by="analyticid",all.x=TRUE, all.y=FALSE)
 alldata <- alldata[order(alldata$analyticid, alldata$date),]
 
 # second clinical data pull
-oct <- read.csv("H:/Endocrinology/Nadeau/T1D Exchange metformin and lipids/Data/Clinical data/BOC031Data Pull 10_11_18.csv")
+oct <- read.csv("E:/Nadeau/T1D Exchange metformin and lipids/Data/Clinical data/BOC031Data Pull 10_11_18.csv")
 oct <- oct[oct$Visit %in% c("A)baseline","I)26 week"),]
 oct$analyticid <- oct$Analytic.ID
 oct$visit[oct$Visit=="A)baseline"] <- "Baseline"
@@ -238,6 +238,6 @@ label(alldata$Age)="Age"
 label(alldata$Gender)="Gender"
 
 # write final dataset
-write.csv(alldata,file="H:\\Endocrinology\\Nadeau\\T1D Exchange metformin and lipids\\Data\\final_merged_data.csv")
+write.csv(alldata,file="E:\\Nadeau\\T1D Exchange metformin and lipids\\Data\\final_merged_data.csv")
 
 
