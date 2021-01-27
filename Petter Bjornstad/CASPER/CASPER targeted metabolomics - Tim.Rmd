@@ -17,7 +17,7 @@ output: word_document
 library(knitr)
 
 knitr::opts_chunk$set(echo = FALSE,cache = FALSE,dpi = 600)
-#knitr::opts_knit$set(root.dir = "/Users/timvigers/Work/Metabolomics")
+knitr::opts_knit$set(root.dir = "/media/tim/Work/Petter Bjornstad/Metabolomics")
 
 library(readxl)
 library(NormalizeMets)
@@ -30,6 +30,7 @@ library(data.table)
 library(dplyr)
 library(mixOmics)
 library(Hmisc)
+library(boot)
 library("FactoMineR")
 library("factoextra")
 library(tableone)
@@ -46,28 +47,20 @@ library("Hmisc")
 library(mixOmics)
 library(pander)
 library(pheatmap)
-library(limma)
 
-#source("/Users/timvigers/GitHub/General-code/foldchange.r")
-#source("/Users/timvigers/GitHub/General-code/editcolnames.r")
-
-source("C:\\Users\\pylell\\Documents\\GitHub\\General-code\\foldchange.r")
-source("C:\\Users\\pylell\\Documents\\GitHub\\General-code\\editcolnames.r")
-
+source("/home/tim/GitHub/General-code/foldchange.R")
+source("/home/tim/GitHub/General-code/editcolnames.R")
 ```
 
 ```{r}
 # read in Petter's SAS dataset
-#alldata <- read.sas7bdat("./Raw data/casperheir_for_laura.sas7bdat")
-alldata <- read.sas7bdat("E:\\Petter Bjornstad\\CASPER Metabolomics\\Raw data\\casperheir_for_laura.sas7bdat")
+alldata <- read.sas7bdat("./Raw data/casperheir_for_laura.sas7bdat")
 
 # read in NG data - those variables are included in the original dataset, but we want to analyze
 # them separately
-#ng_serum <- read.csv("./Raw data/NG serum.csv")
-ng_serum <- read.csv("E:\\Petter Bjornstad\\CASPER Metabolomics\\Raw data\\NG serum.csv")
+ng_serum <- read.csv("./Raw data/NG serum.csv")
 names_ng_serum <- colnames(ng_serum)
-#ng_urine <- read.csv("./Raw data/NG urine.csv")
-ng_urine <- read.csv("E:\\Petter Bjornstad\\CASPER Metabolomics\\Raw data\\NG urine.csv")
+ng_urine <- read.csv("./Raw data/ng urine.csv")
 names_ng_urine <- colnames(ng_urine)
 names_ng <- unique(c(names_ng_serum,names_ng_urine))
 names_ng <- names_ng[names_ng != "ID"]
@@ -103,15 +96,6 @@ p_adj[p_adj<0.001] <- "<0.001"
 p_adj <- c("",p_adj)
 tab_targeted_group <- cbind(tab_targeted_group,as.matrix(p_adj))
 colnames(tab_targeted_group) <- c("1","4","p","test","adj-p")
-
-# comparison of targeted metabolites adjusted for GFR
-contrast_adj <- model.matrix(~group + gfr, data=alldata)
-ymat <- t(alldata[,targeted])
-fit_group <- lmFit(ymat,contrast_adj)
-fit_group <- eBayes(fit_group)
-# format results
-results <- topTable(fit_group,coef = 2,number = nrow(ymat))
-write.csv(results,"E:\\Petter Bjornstad\\CASPER Metabolomics\\Reports\\targeted_adjusted_GFR.csv")
 
 # create df for NormalizeMets
 metabolite <- as.data.frame(targeted)
@@ -167,8 +151,7 @@ top21 <- selectVar(plsda21,comp=1)
 top21_2 <- selectVar(plsda21,comp=2)
 
 # correlations with continuous variables
-#tubular = read.csv("./Clean data/tubularinjury.csv",stringsAsFactors = F)
-tubular = read.csv("E:\\Petter Bjornstad\\CASPER Metabolomics\\Clean data\\tubularinjury.csv",stringsAsFactors = F)
+tubular = read.csv("./Clean data/tubularinjury.csv",stringsAsFactors = F)
 alldata = left_join(alldata,tubular[,c("ID","KIM1","NGAL","MCP1","logYKL40","logIL18")],by = "ID")
 #	metabolomics - GIR
 #	metabolomics - body composition data 
@@ -286,10 +269,30 @@ Loadings plot of compounds by diabetes status, for component 2 of the PLS-DA
 plotLoadings(plsda21,comp=2)
 ```
 
+```{r cache=TRUE,warning=FALSE}
+# Bootstrap AUC
+plsda_fun = function(data,i){
+  df = data[i, ]
+  pls = plsda(df[,-1],df[,"Y"],ncomp = 2)
+  perf = perf(pls,validation = 'Mfold', folds = 5,progressBar = FALSE, 
+                  nrepeat = 10, dist = 'max.dist',auc=TRUE)
+  auc = cbind(perf$auc$comp1["AUC.mean"],perf$auc$comp2["AUC.mean"])
+  colnames(auc) = c("comp1","comp2")
+  auc
+}
+df_boot = cbind(Y = as.factor(plsda$group),plsda[,c(2:22)])
+# First column in b$t is component 1, second is component 2
+b = boot(df_boot,plsda_fun,1000)
+# CIs
+bci1 = boot.ci(b,index = 1,type = "perc")
+bci2 = boot.ci(b,index = 2,type = "perc")
+```
+
 5-fold cross-validation was used to examine the performance of the sPLS-DA model and statistics for component 1 are shown below: 
 
  Overall Error rate : `r plsda.perf$error.rate$overall[1,1]`
- AUC: `r auc_save[1]`
+ 
+ AUC: `r auc_save[1]` (95% CI: `r paste0(bci1$percent[4],", ",bci1$percent[5])`)
 
 Heat map of correlations between metabolites, GFR, body composition, and renal measures
 
