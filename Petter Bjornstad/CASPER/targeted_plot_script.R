@@ -1,3 +1,6 @@
+library(sas7bdat)
+library(tableone)
+library(NormalizeMets)
 source("/Users/timvigers/GitHub/General-code/foldchange.R")
 source("/Users/timvigers/GitHub/General-code/editcolnames.R")
 setwd("/Users/timvigers/Dropbox/Work/Petter Bjornstad/Metabolomics")
@@ -105,7 +108,17 @@ plsda[,2:22] <- apply(plsda[2:22],2,as.numeric)
 
 # sPLS-DA analysis
 plsda.res = splsda(X = plsda[,c(2:22)], Y=factor(plsda$group,levels = c(1,4),labels = c("T1D","Control")), ncomp = 2)
-plotIndiv(plsda.res,comp = c(1,2),ellipse = T,legend = F,ind.names = F,title = "")
+p = plotIndiv(plsda.res,comp = c(1,2),ellipse = T,legend = T,ind.names = F)
+targeted_plsda = ggplot(p$df,aes(x=x,y=y,color = group)) + 
+  geom_point(color = p$df$col,aes(shape = group)) + 
+  xlab(p$graph$labels$x) + ylab(p$graph$labels$y) +
+  ggtitle("Targeted") +
+  theme_bw() +
+  geom_path(data = p$df.ellipse,aes(x = Col1,y = Col2),inherit.aes = F,color = levels(factor(p$df$col))[1]) +
+  geom_path(data = p$df.ellipse,aes(x = Col3,y = Col4),inherit.aes = F,color = levels(factor(p$df$col))[2]) +
+  theme(axis.text=element_blank(),axis.ticks = element_blank(),
+        legend.position = "none",plot.title = element_text(hjust = 0.5))
+
 plsda.perf = perf(plsda.res, validation = 'Mfold', folds = 5,progressBar = FALSE, 
                   nrepeat = 10, dist = 'max.dist',auc=TRUE)
 auc_save <- plsda.perf$auc$comp1[1]
@@ -149,5 +162,5 @@ colnames(c$r) <- varnames
 
 rownames(c$p) <- rownames(c$r)
 
-targeted_heat = pheatmap(c$r,legend = T)
+targeted_heat = pheatmap(c$r,legend = T,main = "Targeted")
 colnames(c$p) <- varnames
