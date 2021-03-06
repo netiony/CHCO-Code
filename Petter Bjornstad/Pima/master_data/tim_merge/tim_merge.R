@@ -39,3 +39,5 @@ final_merge = full_join(final_merge,data)
 # Check for duplicate columns - none!
 # grep("/.x",colnames(final_merge))
 # grep("/.y",colnames(final_merge))
+# Sort by id then visit name
+final_merge = final_merge %>% arrange(record_id,redcap_event_name)
