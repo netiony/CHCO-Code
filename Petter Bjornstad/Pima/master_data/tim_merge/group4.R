@@ -2462,3 +2462,6 @@ levels(data$s_p3oncoticprsr_mv.factor)=c("Yes","No")
 levels(data$s_pie_mv.factor)=c("Yes","No")
 levels(data$s_pigc_mv.factor)=c("Yes","No")
 levels(data$stanford_labs_complete.factor)=c("Incomplete","Unverified","Complete")
+
+group4 = data 
+rm(data)

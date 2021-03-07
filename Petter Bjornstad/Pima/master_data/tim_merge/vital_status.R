@@ -50,3 +50,6 @@ levels(data$transplant_form_complete.factor)=c("Incomplete","Unverified","Comple
 levels(data$physiciancr.factor)=c("Nelson","Sievers")
 levels(data$death_notice_form_complete.factor)=c("Incomplete","Unverified","Complete")
 levels(data$comment_form_complete.factor)=c("Incomplete","Unverified","Complete")
+
+vital_status = data
+rm(data)

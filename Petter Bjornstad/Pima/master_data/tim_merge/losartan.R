@@ -2687,3 +2687,6 @@ levels(data$number_o_mv.factor)=c("Yes","No")
 levels(data$alb_stat_mv.factor)=c("Yes","No")
 levels(data$comments_mv.factor)=c("Yes","No")
 levels(data$biopsy_complete.factor)=c("Incomplete","Unverified","Complete")
+
+losartan = data
+rm(data)

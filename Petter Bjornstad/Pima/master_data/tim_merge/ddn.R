@@ -3223,3 +3223,6 @@ levels(data$jvn_laser_os_mv.factor)=c("Yes","No")
 levels(data$jvn_notes_mv.factor)=c("Yes","No")
 levels(data$jvn_deck_8_mv.factor)=c("Yes","No")
 levels(data$jvn_retinal_imaging_form_complete.factor)=c("Incomplete","Unverified","Complete")
+
+ddn = data
+rm(data)
