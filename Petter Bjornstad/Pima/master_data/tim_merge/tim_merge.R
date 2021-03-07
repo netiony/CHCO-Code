@@ -1,6 +1,6 @@
 # Load Hmisc here, not the R files from REDCap
 library(Hmisc)
-library(dplyr)
+library(tidyverse)
 # Set github directory based on operating system
 git_dir = ifelse(.Platform$OS.type == "unix",
                   "/Users/timvigers/GitHub/CHCO-Code",
@@ -14,11 +14,22 @@ setwd(home_dir)
 # 1. Vital status: this contains the death and dialysis dates for participants from all protocols.
 source(paste0(git_dir,"/Petter Bjornstad/Pima/master_data/tim_merge/vital_status.R"))
 vital_status = data
+# Combine visit date columns
+vital_status = vital_status %>% unite(visit_date,esrd_start_date,dod,na.rm = T,remove = F)
+vital_status$visit_date = parse_date(vital_status$visit_date)
 # 2. Group 4 – this is the kidney study protocol conducted in a small group of participants with advanced kidney disease. 
 # It includes clearance studies as well as routine home visits.
 source(paste0(git_dir,"/Petter Bjornstad/Pima/master_data/tim_merge/group4.R"))
+group4 = data
+# Combine visit date columns - there are a lot of repeats within a row
+dates = colnames(group4)[grep("f\\d{,2}visitdate$",colnames(group4))]
+group4$visit_date = apply(group4[,dates],1,function(r){
+  d = unique(r[!is.na(r)])
+  ifelse(length(d)>0,d,NA)
+  })
+group4$visit_date = parse_date(group4$visit_date)
 # Combine vital status and group 4
-final_merge = full_join(vital_status,data)
+final_merge = full_join(vital_status,group4)
 # 3. Ficoll – this is the kidney study protocol involving participants with early kidney disease. 
 # Clearance studies were performed at intervals of every 6 months and there were no home visits.
 source(paste0(git_dir,"/Petter Bjornstad/Pima/master_data/tim_merge/ficoll.R"))
@@ -41,3 +52,5 @@ final_merge = full_join(final_merge,data)
 # grep("/.y",colnames(final_merge))
 # Sort by id then visit name
 final_merge = final_merge %>% arrange(record_id,redcap_event_name)
+# Clean up
+rm(data,vital_status,home_dir,git_dir)

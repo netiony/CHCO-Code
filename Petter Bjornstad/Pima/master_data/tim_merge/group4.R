@@ -1076,7 +1076,52 @@ data=read.csv('./Group4UofMRemodel112_DATA_2021-02-04_1617.csv',na.strings = "")
 # label(data$s_pigc_mv)="Missing value verified for: Glomerular Capillary Oncotic Pressure"
 # label(data$stanford_labs_complete)="Complete?"
 #Setting Factors(will create new variable for factors)
-data$redcap_event_name.factor = factor(data$redcap_event_name,levels=c("ss_interval_3_arm_1","ss_interval_2_arm_1","ss_interval_1_arm_1","rc_interval_0_arm_1","rv_interval_07_arm_1","rcrv_interval_1_arm_1","rv_interval_2_arm_1","rv_interval_4_arm_1","rc_interval_6_arm_1","rv_interval_8_arm_1","rv_interval_10_arm_1","rc_interval_12_arm_1","rv_interval_14_arm_1","rv_interval_16_arm_1","rc_interval_18_arm_1","rv_interval_20_arm_1","rv_interval_22_arm_1","rc_interval_24_arm_1","rv_interval_26_arm_1","rv_interval_28_arm_1","rc_interval_30_arm_1","rv_interval_32_arm_1","rv_interval_34_arm_1","rc_interval_36_arm_1","rv_interval_38_arm_1","rv_interval_40_arm_1","rc_interval_42_arm_1","rv_interval_44_arm_1","rv_interval_46_arm_1","rc_interval_48_arm_1","rv_interval_50_arm_1","rv_interval_52_arm_1","rc_interval_54_arm_1","rv_interval_56_arm_1","rv_interval_58_arm_1","rc_interval_60_arm_1","rv_interval_62_arm_1","rv_interval_64_arm_1","rc_interval_66_arm_1","rv_interval_68_arm_1","rv_interval_70_arm_1","rc_interval_72_arm_1","rv_interval_74_arm_1","rv_interval_76_arm_1","rc_interval_78_arm_1","rv_interval_80_arm_1","rv_interval_82_arm_1","rc_interval_84_arm_1","rv_interval_86_arm_1","rv_interval_88_arm_1","rc_interval_90_arm_1","rv_interval_92_arm_1","rv_interval_94_arm_1","rc_interval_96_arm_1","rv_interval_98_arm_1","rv_interval_100_arm_1","rc_interval_102_arm_1","rv_interval_104_arm_1","rv_interval_106_arm_1","rc_interval_108_arm_1","rv_interval_110_arm_1","rv_interval_112_arm_1","rc_interval_114_arm_1","rv_interval_116_arm_1","rv_interval_118_arm_1","rc_interval_120_arm_1","rv_interval_122_arm_1","rv_interval_124_arm_1","rc_interval_126_arm_1","rv_interval_128_arm_1","rv_interval_130_arm_1","rc_interval_132_arm_1","rv_interval_134_arm_1","rv_interval_136_arm_1","rc_interval_138_arm_1","rv_interval_140_arm_1","rv_interval_142_arm_1","rc_interval_144_arm_1","rv_interval_146_arm_1","rv_interval_148_arm_1","rc_interval_150_arm_1","rv_interval_152_arm_1","rv_interval_154_arm_1","rc_interval_156_arm_1","rv_interval_158_arm_1","rv_interval_160_arm_1","rc_interval_162_arm_1","rv_interval_164_arm_1","rv_interval_166_arm_1","rc_interval_168_arm_1"))
+data$redcap_event_name.factor = 
+  factor(data$redcap_event_name,levels=c("ss_interval_3_arm_1","ss_interval_2_arm_1",
+                                         "ss_interval_1_arm_1","rc_interval_0_arm_1",
+                                         "rv_interval_07_arm_1","rcrv_interval_1_arm_1",
+                                         "rv_interval_2_arm_1","rv_interval_4_arm_1",
+                                         "rc_interval_6_arm_1","rv_interval_8_arm_1",
+                                         "rv_interval_10_arm_1","rc_interval_12_arm_1",
+                                         "rv_interval_14_arm_1","rv_interval_16_arm_1",
+                                         "rc_interval_18_arm_1","rv_interval_20_arm_1",
+                                         "rv_interval_22_arm_1","rc_interval_24_arm_1",
+                                         "rv_interval_26_arm_1","rv_interval_28_arm_1",
+                                         "rc_interval_30_arm_1","rv_interval_32_arm_1",
+                                         "rv_interval_34_arm_1","rc_interval_36_arm_1",
+                                         "rv_interval_38_arm_1","rv_interval_40_arm_1",
+                                         "rc_interval_42_arm_1","rv_interval_44_arm_1",
+                                         "rv_interval_46_arm_1","rc_interval_48_arm_1",
+                                         "rv_interval_50_arm_1","rv_interval_52_arm_1",
+                                         "rc_interval_54_arm_1","rv_interval_56_arm_1",
+                                         "rv_interval_58_arm_1","rc_interval_60_arm_1",
+                                         "rv_interval_62_arm_1","rv_interval_64_arm_1",
+                                         "rc_interval_66_arm_1","rv_interval_68_arm_1",
+                                         "rv_interval_70_arm_1","rc_interval_72_arm_1",
+                                         "rv_interval_74_arm_1","rv_interval_76_arm_1",
+                                         "rc_interval_78_arm_1","rv_interval_80_arm_1",
+                                         "rv_interval_82_arm_1","rc_interval_84_arm_1",
+                                         "rv_interval_86_arm_1","rv_interval_88_arm_1",
+                                         "rc_interval_90_arm_1","rv_interval_92_arm_1",
+                                         "rv_interval_94_arm_1","rc_interval_96_arm_1",
+                                         "rv_interval_98_arm_1","rv_interval_100_arm_1",
+                                         "rc_interval_102_arm_1","rv_interval_104_arm_1",
+                                         "rv_interval_106_arm_1","rc_interval_108_arm_1",
+                                         "rv_interval_110_arm_1","rv_interval_112_arm_1",
+                                         "rc_interval_114_arm_1","rv_interval_116_arm_1",
+                                         "rv_interval_118_arm_1","rc_interval_120_arm_1",
+                                         "rv_interval_122_arm_1","rv_interval_124_arm_1",
+                                         "rc_interval_126_arm_1","rv_interval_128_arm_1",
+                                         "rv_interval_130_arm_1","rc_interval_132_arm_1",
+                                         "rv_interval_134_arm_1","rv_interval_136_arm_1",
+                                         "rc_interval_138_arm_1","rv_interval_140_arm_1",
+                                         "rv_interval_142_arm_1","rc_interval_144_arm_1",
+                                         "rv_interval_146_arm_1","rv_interval_148_arm_1",
+                                         "rc_interval_150_arm_1","rv_interval_152_arm_1",
+                                         "rv_interval_154_arm_1","rc_interval_156_arm_1",
+                                         "rv_interval_158_arm_1","rv_interval_160_arm_1",
+                                         "rc_interval_162_arm_1","rv_interval_164_arm_1",
+                                         "rv_interval_166_arm_1","rc_interval_168_arm_1"))
 data$redcap_repeat_instrument.factor = factor(data$redcap_repeat_instrument,levels=c(""))
 data$lastname_mv.factor = factor(data$lastname_mv,levels=c("1","0"))
 data$firstname_mv.factor = factor(data$firstname_mv,levels=c("1","0"))
