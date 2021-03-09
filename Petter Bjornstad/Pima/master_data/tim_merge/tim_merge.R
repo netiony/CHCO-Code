@@ -8,7 +8,7 @@ git_dir = ifelse(.Platform$OS.type == "unix",
 # Set working directory based on operating system
 home_dir = ifelse(.Platform$OS.type == "unix",
                   "/Volumes/som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Pima/Master data/Raw data/",
-                  "B:/Peds Endo/Petter Bjornstad/Pima/Master data/Raw data/")
+                  "B:/Peds Endo/Petter Bjornstad/Pima/Master data/Raw data/") # Laura and Cameron, you may need to fix this as well as the GitHub path above
 setwd(home_dir)
 # Go through in the order of Rob's email:
 # 1. Vital status: this contains the death and dialysis dates for participants from all protocols.
@@ -67,7 +67,14 @@ rm(ddn)
 # Check for duplicate columns - none!
 # grep("/.x",colnames(final_merge))
 # grep("/.y",colnames(final_merge))
+# Format columns
+final_merge$visit_date = parse_date(final_merge$visit_date)
+# Remove columns with all missing
+final_merge[,colSums(is.na(final_merge))==nrow(final_merge)] = NULL
 # Sort by id then visit name
 final_merge = final_merge %>% select(record_id,redcap_event_name,visit_date,everything())
+# Calculate new variables grouped by person
+final_merge = final_merge %>% group_by(record_id) %>%
+  mutate(days_from_earliest = difftime(visit_date,min(visit_date,na.rm = T),units = "days"))
 # Clean up
 rm(home_dir,git_dir)
