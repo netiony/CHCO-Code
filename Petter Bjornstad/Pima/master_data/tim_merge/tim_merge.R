@@ -18,13 +18,10 @@ source(paste0(git_dir,"/Petter Bjornstad/Pima/master_data/tim_merge/vital_status
 # renal replacement therapy, whether the participant received a transplant, 
 # date of death, and cause of death for each participant ever enrolled in any of 
 # the kidney studies.  These can be collapsed into a single record for each person.
-vars = colnames(vital_status)[5:ncol(vital_status)]
-v = vital_status %>% group_by(record_id) %>%
-  summarise(esrd_start_date = esrd_start_date[!is.na(esrd_start_date)],
-            esrd_start_date_est = esrd_start_date_est[!is.na(esrd_start_date_est)],
-            
-            .groups = "keep")
-  
+vital_status = vital_status %>% group_by(record_id) %>%
+  summarise(across(esrd_start_date:death_notice_form_complete.factor,
+                   ~ .x[max(which(!is.na(.x)))]), # Get the last non-missing row for each patient and each variable
+            .groups = "drop")
 # 2. Group 4 – this is the kidney study protocol conducted in a small group of participants with advanced kidney disease. 
 # It includes clearance studies as well as routine home visits.
 source(paste0(git_dir,"/Petter Bjornstad/Pima/master_data/tim_merge/group4.R"))
