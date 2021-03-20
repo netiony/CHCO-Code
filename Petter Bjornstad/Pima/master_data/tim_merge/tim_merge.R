@@ -3,18 +3,25 @@ library(Hmisc)
 library(tidyverse)
 # Set github directory based on operating system
 git_dir = ifelse(.Platform$OS.type == "unix",
-                  "/Users/timvigers/GitHub/CHCO-Code",
+                  "~/GitHub/CHCO-Code",
                   "path/to/Laura/or/Cameron's/GitHub/folder")
 # Set working directory based on operating system
 home_dir = ifelse(.Platform$OS.type == "unix",
-                  "/Volumes/som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Pima/Master data/Raw data/",
+                  "/run/user/1000/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Pima/Master data/Raw data/",
                   "B:/Peds Endo/Petter Bjornstad/Pima/Master data/Raw data/") # Laura and Cameron, you may need to fix this as well as the GitHub path above
 setwd(home_dir)
 # Go through in the order of Rob's email:
 # 1. Vital status: this contains the death and dialysis dates for participants from all protocols.
 source(paste0(git_dir,"/Petter Bjornstad/Pima/master_data/tim_merge/vital_status.R"))
-# Combine visit date columns
-vital_status = vital_status %>% unite(visit_date,esrd_start_date,dod,na.rm = T,remove = F)
+# Get relevant information for each person. Per Rob:
+# the vital status database tracks date of renal replacement therapy, type of 
+# renal replacement therapy, whether the participant received a transplant, 
+# date of death, and cause of death for each participant ever enrolled in any of 
+# the kidney studies.  These can be collapsed into a single record for each person.
+vital_status = vital_status %>% group_by(record_id) %>%
+  summarise(across(esrd_start_date:death_notice_form_complete.factor,
+                   ~ .x[max(which(!is.na(.x)))]), # Get the last non-missing row for each patient and each variable
+            .groups = "drop")
 # 2. Group 4 – this is the kidney study protocol conducted in a small group of participants with advanced kidney disease. 
 # It includes clearance studies as well as routine home visits.
 source(paste0(git_dir,"/Petter Bjornstad/Pima/master_data/tim_merge/group4.R"))
