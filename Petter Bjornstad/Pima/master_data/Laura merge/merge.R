@@ -9,12 +9,24 @@ setwd(code_dir)
 # 1. what did he do with all the factor variables created? keep for now....when we are done, we can decide whether we want to create R and SAS 
 #    versions of the final dataset
 # 2. Do we need to convert dates to date variables? only visit_date for now
-# 3. Why multiple records per pt in vital status - should we collapse these to 1 record?  yes
-# 4. What should the structure of the final dataset be?  1 row per visit, if visits in different protocols have the same date, combine.  
-#    Then vital status fields get appended to every visit? yes
-# 5. Records with missing visit dates in group4 and ficoll? need to eventually ask Rob
-# 6. There are variables that show up in multiple dataframes (e.g., sacaton number), and therefore get .x added, etc.  drop by, 
-#    check whether the x and y are the same
+# 3. Why multiple records per pt in vital status - should we collapse these to 1 record?  yes, confirmed with Rob
+# 4. What should the structure of the final dataset be?  1 row per visit, if visits in different protocols have the same date, DUPLICATE and add a 
+#    variable to indicate protocol. Then vital status fields get appended to every visit.
+
+# New questions for Tim/Rob as of 4/2/21
+# 5. On the last call, Rob said that DDN could have different dates across columns, and that we should use date of clearance.  I am not seeing
+#    any different dates.  Not positive which variable is date of clearance - is it f13prfrmwdclrncdate?  If it is, it is the same as the others.
+#    Rob seemed to indicate on last call that it would probably not match exactly, so not sure I have the right variable.
+# 6. Why do the data dictionaries not match the datasets?  E.g., DDN has 2256 columns but data dictionary has 159
+# 7. 
+
+# Changes from last version
+# 1. Checked visit dates across forms
+# 2. Added protocol variable
+
+## Need to figure out why there are records with no protocol
+## Look like vital status records
+## Do they not match any of the protocol records during the merge?
 
 # read in datasets using provided R code in order of Rob's email
 # use copies of code moved to github directory so they can be edited
@@ -57,10 +69,12 @@ group4$visit_date <- NA
 for (i in 1:nrow(group4)) {
   temp <- group4[i,dates]
   temp <- temp[!is.na(temp)]
-  #group4$datecount <- length(unique(temp))
+  group4$datecount <- length(unique(temp))
   group4[i,"visit_date"] <- ifelse(length(unique(temp))>0,unique(temp),NA)
 }
+# all dates the same
 dates <- NULL
+group4$protocol <- "Group 4"
 
 # Ficoll
 source("FicollUniversityOfMi_R_2021-02-04_1618.r")
@@ -72,10 +86,12 @@ ficoll$visit_date <- NA
 for (i in 1:nrow(ficoll)) {
   temp <- ficoll[i,dates]
   temp <- temp[!is.na(temp)]
-  #ficoll$datecount <- length(unique(temp))
+  ficoll$datecount <- length(unique(temp))
   ficoll[i,"visit_date"] <- ifelse(length(unique(temp))>0,unique(temp),NA)
 }
+# all dates the same
 dates <- NULL
+ficoll$protocol <- "Ficoll"
 
 # Losartan
 source("NelsonPECRBRenoprote_R_2021-02-04_1619.r")
@@ -87,24 +103,29 @@ losartan$visit_date <- NA
 for (i in 1:nrow(losartan)) {
   temp <- losartan[i,dates]
   temp <- temp[!is.na(temp)]
-  #losartan$datecount <- length(unique(temp))
+  losartan$datecount <- length(unique(temp))
   losartan[i,"visit_date"] <- ifelse(length(unique(temp))>0,unique(temp),NA)
 }
+# all dates the same
 dates <- NULL
+losartan$protocol <- "Losartan"
 
 # DDN
 source("Nelson13DKN151Determ_R_2021-02-04_1610.r")
 ddn <- data
 rm(data)
 dates = colnames(ddn)[grep("f\\d{,2}visitdate$",colnames(ddn))]
+dates = c(dates,"f13prfrmwdclrncdate")
 ddn$visit_date <- NA
 for (i in 1:nrow(ddn)) {
   temp <- ddn[i,dates]
   temp <- temp[!is.na(temp)]
-  #ddn$datecount <- length(unique(temp))
+  ddn$datecount <- length(unique(temp))
   ddn[i,"visit_date"] <- ifelse(length(unique(temp))>0,unique(temp),NA)
 }
+# all dates the same
 dates <- NULL
+ddn$protocol <- "DDN"
 
 # merge Group 4 and Ficoll
 # checking for duplicate columns - there are some, but it seems like one or the other is NA
