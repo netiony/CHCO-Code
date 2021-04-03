@@ -18,7 +18,8 @@ setwd(code_dir)
 # 5.  On the last call, Rob said that DDN could have different dates across columns, and that we should use date of clearance.  I am not seeing
 #     any different dates.  Not positive which variable is date of clearance - is it f13prfrmwdclrncdate?  If it is, it is the same as the others.
 #     Rob seemed to indicate on last call that it would probably not match exactly, so not sure I have the right variable.
-# 6.  Why do the data dictionaries not match the datasets?  E.g., DDN has 2256 columns but data dictionary has 159
+# 6.  Why do the data dictionaries not match the datasets?  E.g., DDN has 2256 columns but data dictionary has 159.  As an example:
+#     ficoll$f8calcium does not show up in the ficoll data dictionary.  I searched for calcium and there is smac_ca
 # 7.  There are participants in vital status that do not show up in Ficoll, Losartan, Group 4, or DDN - I assume they should be included?
 # 8.  Ask Tim - my notes aren't great here.  Ficoll and Losartan may share visits, so same data may be duplicated.  We will have 2 records
 #     with the same data, with different protocol indicators
