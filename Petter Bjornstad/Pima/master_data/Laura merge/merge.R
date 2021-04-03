@@ -1,4 +1,5 @@
 library(tidyverse)
+library(stringr)
 
 code_dir = ifelse(.Platform$OS.type == "unix",
                   "",
@@ -14,19 +15,17 @@ setwd(code_dir)
 #    variable to indicate protocol. Then vital status fields get appended to every visit.
 
 # New questions for Tim/Rob as of 4/2/21
-# 5. On the last call, Rob said that DDN could have different dates across columns, and that we should use date of clearance.  I am not seeing
-#    any different dates.  Not positive which variable is date of clearance - is it f13prfrmwdclrncdate?  If it is, it is the same as the others.
-#    Rob seemed to indicate on last call that it would probably not match exactly, so not sure I have the right variable.
-# 6. Why do the data dictionaries not match the datasets?  E.g., DDN has 2256 columns but data dictionary has 159
-# 7. 
-
-# Changes from last version
-# 1. Checked visit dates across forms
-# 2. Added protocol variable
-
-## Need to figure out why there are records with no protocol
-## Look like vital status records
-## Do they not match any of the protocol records during the merge?
+# 5.  On the last call, Rob said that DDN could have different dates across columns, and that we should use date of clearance.  I am not seeing
+#     any different dates.  Not positive which variable is date of clearance - is it f13prfrmwdclrncdate?  If it is, it is the same as the others.
+#     Rob seemed to indicate on last call that it would probably not match exactly, so not sure I have the right variable.
+# 6.  Why do the data dictionaries not match the datasets?  E.g., DDN has 2256 columns but data dictionary has 159
+# 7.  There are participants in vital status that do not show up in Ficoll, Losartan, Group 4, or DDN - I assume they should be included?
+# 8.  Ask Tim - my notes aren't great here.  Ficoll and Losartan may share visits, so same data may be duplicated.  We will have 2 records
+#     with the same data, with different protocol indicators
+# 9.  Losartan protocol has all these xxx_mv variables "missing value for xx variable verified"
+# 10. Structure of the individual datasets.  Each person has many records with different redcap events (interval/arm).  Do these need to be collapsed?
+#     I think this may be the source of some of the missing visit dates but it's hard to verify until we get this figured out.
+# 11. Issue of duplicate variables across protocols with different data isn't an issue now that we are not combining visits across protocols.
 
 # read in datasets using provided R code in order of Rob's email
 # use copies of code moved to github directory so they can be edited
@@ -128,10 +127,6 @@ dates <- NULL
 ddn$protocol <- "DDN"
 
 # merge Group 4 and Ficoll
-# checking for duplicate columns - there are some, but it seems like one or the other is NA
-# final_merge <- merge(group4,ficoll,by=c("record_id","visit_date"),all.x=T,all.y=T)
-# dups = colnames(final_merge)[grep(".x|.y",colnames(final_merge))]
-# write.table(dups,"dupvars.txt")
 final_merge <- merge(group4,ficoll,all.x=T,all.y=T)
 # merge in other datasets
 final_merge <- merge(final_merge,losartan,all.x = T,all.y = T)
@@ -139,8 +134,15 @@ final_merge <- merge(final_merge,ddn,all.x = T,all.y = T)
 
 # finally, merge in vital status data
 colnames(final_merge)[colnames(final_merge) %in% colnames(vital_status)]
-final_merge <- merge(final_merge,vital_status,all.x = T,all.y = T)
+final_merge <- merge(final_merge,vital_status_onerow,by="record_id", all.x = T,all.y = T)
 
-# check for duplicate visit dates - there are lots
-check <- final_merge[,c("record_id","visit_date")]
+# check for duplicate visit dates - there are none within a protocol
+check <- final_merge[,c("record_id","visit_date","protocol")]
 unique <- unique(check)
+
+# check if records with missing visit dates have missed visit form
+missing_date <- final_merge[is.na(final_merge$visit_date),c("record_id","protocol","missed_visitintercurrent_event_form_12_complete")]
+
+# checking for duplicate columns 
+dups =   colnames(final_merge)[grep("\\.x",colnames(final_merge))]
+write.table(dups,"dupvars.txt")
