@@ -27,7 +27,7 @@ setwd(code_dir)
 # 10. Structure of the individual datasets.  Each person has many records with different redcap events (interval/arm).  Do these need to be collapsed?
 #     I think this may be the source of some of the missing visit dates but it's hard to verify until we get this figured out.
 # 11. Issue of duplicate variables across protocols with different data isn't an issue now that we are not combining visits across protocols.
-# 12. Process of keeping track of data files
+# 12. Process of keeping track of data files and changes needed (e.g., email 3/1/21 with updates about conversions)
 
 # read in datasets using provided R code in order of Rob's email
 # use copies of code moved to github directory so they can be edited
