@@ -10,12 +10,17 @@ library(stringr)
 library(Hmisc)
 library(dplyr)
 library(skimr)
+library(tableone)
+library(knitr)
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
 
 knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
 
 # echo data
 # need to fix variable names
-cardiac <- read.csv("E:\\Nadeau\\Nadeau EMERALD\\Echo\\Alex\\Raw data\\EMERALD DATA SUMMARIZED cardiac.csv")
+cardiac <- read.csv("E:\\Nadeau\\Nadeau EMERALD\\Echo\\Alex\\Raw data\\EMERALD DATA SUMMARIZED cardiac.csv",na.strings = c(NA,""))
 names <- colnames(cardiac)
 names <- names[3:352]
 rootnames <- NA
@@ -52,12 +57,12 @@ cardiac$group <- ifelse(cardiac$randomization==1,"Metformin","Placebo")
 
 # merge in group sheet so we have last name and BMI percentile
 # don't need treatment group since that is already in the cardiac sheet
-groups <- read.csv("E:\\Nadeau\\Nadeau EMERALD\\Echo\\Alex\\Raw data\\EMERALD DATA SUMMARIZED groups.csv")
+groups <- read.csv("E:\\Nadeau\\Nadeau EMERALD\\Echo\\Alex\\Raw data\\EMERALD DATA SUMMARIZED groups.csv",na.strings = c(NA,""))
 groups$Group <- NULL
 cardiac <- merge(cardiac,groups,by="Study.ID",all.x = T,all.y = F)
 
 # merge in extra views
-extra <- read.csv("E:\\Nadeau\\Nadeau EMERALD\\Echo\\Alex\\Raw data\\tracedata_combined_strain.csv")
+extra <- read.csv("E:\\Nadeau\\Nadeau EMERALD\\Echo\\Alex\\Raw data\\tracedata_combined_REVISED_strain.csv",na.strings = c(NA,""))
 extra_names <- colnames(extra)
 extra_names <- extra_names[2:61]
 extra_rootnames <- NA
@@ -88,23 +93,79 @@ for (x in extra_rootnames)  {
 extra <- merge(extra,names,by=c("last_name","first_name"))
 #extra[extra$last_name=="O#Dell",]$last_name <- "O'Dell"
 extra[extra$last_name=="Debord",]$last_name <- "DeBord"
+extra[extra$first_name=="Lucus",]$first_name <- "Lucas"
 
-# last names don't match up
-a <- cardiac$last_name
-a <- cbind(a,rep(1,length(a)))
-colnames(a) <- c("last_name","in_cardiac_data")
-b <- extra$last_name
-b <- cbind(b,rep(1,length(b)))
-colnames(b) <- c("last_name","in_extra_views")
-check <- merge(a,b,by="last_name",all.x=T,all.y=T)
+# get rid of spaces
+cardiac$first_name <- gsub(" ", "", cardiac$first_name, fixed = TRUE)
+cardiac$last_name <- gsub(" ", "", cardiac$last_name, fixed = TRUE)
+extra$first_name <- gsub(" ", "", extra$first_name, fixed = TRUE)
+extra$last_name <- gsub(" ", "", extra$last_name, fixed = TRUE)
 
-cardiac <- merge(cardiac,extra,by="last_name",all.x = T,all.y=T)
+# names don't match up
+a <- cardiac[,c("first_name","last_name")]
+a <- cbind(a,rep(1,nrow(a)))
+colnames(a) <- c("first_name","last_name","in_cardiac_data")
+b <- extra[,c("first_name","last_name")]
+b <- cbind(b,rep(1,nrow(b)))
+colnames(b) <- c("first_name","last_name","in_extra_views")
+check <- merge(a,b,by=c("first_name","last_name"),all.x=T,all.y=T)
+
+cardiac <- merge(cardiac,extra,by=c("first_name","last_name"),all.x = T,all.y=T)
 
 labs <- read.csv("E:\\Nadeau\\Nadeau EMERALD\\Echo\\Alex\\Raw data\\EMERALD DATA SUMMARIZED labs.csv")
+keep_labs <- labs[,c("subject_id","bmi_percentile","gender","diabetes_duration","a1c","first_name","last_name")]
+cardiac <- merge(cardiac,keep_labs,by=c("first_name","last_name"),all.x = T, all.y = F)
+
 control <- read.csv("E:\\Nadeau\\Nadeau EMERALD\\Echo\\Alex\\Raw data\\EMERALD DATA SUMMARIZED control echo.csv")
 
 # still not sure if we are using these variables
-trace <- read.csv("E:\\Nadeau\\Nadeau EMERALD\\Echo\\Alex\\Raw data\\tracedata_combined_trace")
+#trace <- read.csv("E:\\Nadeau\\Nadeau EMERALD\\Echo\\Alex\\Raw data\\tracedata_combined_trace")
+
+nonnorm <- c("delta.AV.CO","delta.AV.Diam","delta.AV.SV","delta.AV.Vmax","delta.HR","delta.LA.Diam","delta.LALd.A4c","delta.Lat.A",
+             "delta.LVEF.MOD.A2c","delta.LVLd.A4c","delta.Max.AV.CO","delta.Max.AV.meanPG","delta.Max.AV.SV","delta.Max.AV.Vmean",
+             "delta.Max.Lat.S","delta.Max.LVEDV.MOD.A2C","delta.Max.MV.Dec.T","delta.Max.Sep.A","delta.Max.Sep.E.E","delta.MV.A.Vel",
+             "delta.MV.Dec.T","delta.PA.maxPG","delta.Sep.S","delta.SupineRest.AV.CO.Dopp","delta.SupineRest.AV.maxPG","delta.SupineRest.AV.Vmax",
+             "delta.SupineRest.AV.Vmean","delta.SupineRest.LVESV.MOD.A4C","delta.SupineRest.MV.Dec.Slope","delta.SupineRest.MV.E.Vel",
+             "delta.SupineRest.Sep.A","delta.deltatime_SAX.MV_SC_TRACE")
+
+# unadjusted group differences in delta variables
+c1 <- cardiac[ , grepl( "delta" , names(cardiac))]
+c1 <- c1[,!grepl("TRACE1",names(c1))]
+c1 <- c1[,!grepl("TRACE2",names(c1))]
+c1 <- cbind(cardiac$group,c1)
+colnames(c1) = c("group",colnames(c1[,2:ncol(c1)]))
+t1 <- CreateTableOne(data=c1,vars=colnames(c1[,-1]),strata="group",test = T)
+t1 <- print(t1,varLabels=TRUE,showAllLevels=TRUE,nonnorm=nonnorm)
+
+# unadjusted change within metformin group
+# NEED TO FILTER VARS WITH TOO FEW OBS
+p <- NA
+for (i in 2:ncol(c1)) {
+  temp <- t.test(c1[c1$group=="Metformin",i], mu = 0, alternative = "two.sided")$p.value
+  p <- c(p,temp)
+}
+
+
+
+# first make a long dataset
+c1.long <- c1 %>% pivot_longer(-group, names_to = "variables", values_to = "value")
+c1.long_met <- c1.long[c1.long$group=="Metformin",]
+c1.long_met$group <- NULL
+
+t.test(c1.long$value,mu=0,alternative="two.sided")
+
+onesample.test <- c1.long_met %>%
+  group_by(variables) %>%
+  t.test(c1.long_met$value, mu = 0, alternative = "two.sided") %>%
+  add_significance()
+onesample.test
+
+stat.test <- c1.long %>%
+  group_by(variables) %>%
+  t_test(value ~ group) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+stat.test
 
 ```
 
@@ -113,6 +174,13 @@ trace <- read.csv("E:\\Nadeau\\Nadeau EMERALD\\Echo\\Alex\\Raw data\\tracedata_c
 # Methods
 
 # Results
+
+```{r echo=FALSE}
+# checking distributions
+#for (col in 2:ncol(c1)) {
+#    try(hist(c1[,col],main = names(c1[col])))
+#}
+```
 
 ```{r echo=FALSE}
 kable(t1,caption = "")
