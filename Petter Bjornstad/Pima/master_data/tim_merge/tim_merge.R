@@ -7,8 +7,7 @@ git_dir = ifelse(.Platform$OS.type == "unix",
                   "path/to/Laura/or/Cameron's/GitHub/folder")
 # Set working directory based on operating system
 home_dir = ifelse(.Platform$OS.type == "unix",
-                  "/run/user/1000/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Pima/Master data/Raw data/",
-                  "B:/Peds Endo/Petter Bjornstad/Pima/Master data/Raw data/") # Laura and Cameron, you may need to fix this as well as the GitHub path above
+                  "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Pima/Master data/Raw data") # Laura and Cameron, you may need to fix this as well as the GitHub path above
 setwd(home_dir)
 # Go through in the order of Rob's email:
 # 1. Vital status: this contains the death and dialysis dates for participants from all protocols.
