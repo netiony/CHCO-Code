@@ -25,6 +25,8 @@ library(nlme)
 library(plyr)
 library(dplyr)
 library(emmeans)
+library(survival)
+library(survminer)
 
 # read in separate data files
 
@@ -138,6 +140,9 @@ colorder <- c("MRN","FName","LName","Sex","Race","Latino.a.","Mutation.1","Mutat
 alldata <- alldata[,colorder]
 alldata <- alldata[order(alldata$MRN,alldata$Date),]
 
+# create combined race/ethnicity
+alldata$race_eth <- ifelse(alldata$Latino.a.=="TRUE","Hispanic",alldata$Race)
+
 # get BMI percentile
 alldata$age <- ifelse(is.na(alldata$Age.at.PFT),alldata$Age.At.Test..years.,alldata$Age.at.PFT)
 alldata$age_bmi <- ifelse(alldata$age>20,20,alldata$age)
@@ -184,6 +189,9 @@ alldata <- merge(alldata,basegluc,by="MRN",all.x=T,all.y=T)
 # dichotomize baseline 1 hour glucose
 alldata$Baseline_1hr_glucose_155 <- ifelse(alldata$Baseline_1hr_glucose>=155,1,0)
 
+# dichotomize baseline 2 hour glucose
+alldata$Baseline_2hr_glucose_140 <- ifelse(alldata$Baseline_2hr_glucose>=140,1,0)
+
 # find date of last OGTT
 lastogtt <- alldata[!is.na(alldata$Fasting.Glucose) | !is.na(alldata$X1.hour.Glucose) | !is.na(alldata$X2.hour.Glucose),
                     c("MRN","Date")]
@@ -224,8 +232,12 @@ baseline_all <- alldata[alldata$Date==alldata$`Date of first OGTT`,]
 # create multogtt with time <4 years since there is little data beyond that
 multogtt_reduced <- multogtt[multogtt$time<=4,]
 
+##############
+# DESC STATS #
+##############
+
 # table of demographics in those with at least one pre-CFRD OGTT
-demovars <- c("Sex","Race","Latino.a.","age")
+demovars <- c("Sex","race_eth","age")
 # Taking out these clinical variables - if they are to be added to table 1, need to figure out how
 # because they come from PFT visits, not the same date as OGTT
 #              "BMI","FEV1.per.pred","FVC.per.pred","FEF.25.75.per.pred","bmip")
@@ -239,6 +251,10 @@ t1_multogtt <-  print(t1_multogtt,printToggle = F,varLabels=TRUE,missing=T,showA
 # compare baseline glucose values in those who developed CFRD and those who did not
 gluctable <- CreateTableOne(baseline_mult,vars=c("X1.hour.Glucose","X2.hour.Glucose"),strata="CFRD")
 gluctable <-  print(gluctable,printToggle = F,varLabels=TRUE,missing=T,showAllLevels = T,test = T)
+
+########################
+# LOGISTIC REGRESSIONS #
+########################
 
 # logistic regression of 1 hour and 2 hour glucose predicting cfrd
 log1 <- glm(data = baseline_mult, CFRD~Baseline_1hr_glucose,family = "binomial")
@@ -283,6 +299,10 @@ coords1 <- coords(roc1, "b", ret=c("t","specificity","sensitivity"), best.method
 baseline_mult$pred_2hr <- predict(log2, type="response", data.frame=baseline_mult)
 roc2 <- roc(data=baseline_mult, response = CFRD, predictor=X2.hour.Glucose)
 coords2 <- coords(roc2, "b", ret=c("t","specificity","sensitivity"), best.method="youden") # default
+
+##############
+# COX MODELS #
+##############
 
 # CPH model for baseline 1 hour glucose
 cox1hr <- coxph(Surv(Follow_up_time_yrs,CFRD) ~ Baseline_1hr_glucose,data = baseline_mult)
@@ -384,6 +404,10 @@ survroctab2 <- rbind(survroctab2_row1,survroctab2_row2,survroctab2_row3,survroct
 rownames(survroctab2) <- c("1 year","2 years","3 years","4 years","5 years")
 colnames(survroctab2) <- c("2 hour glucose","Sensitivity","Specificity")
 
+################
+# MIXED MODELS #
+################
+
 # mixed models - BMIp, PFTs
 # first continuous time
 mmcontbmip1 <- lme(bmip ~ Baseline_1hr_glucose + time + Baseline_1hr_glucose*time,
@@ -468,7 +492,22 @@ p2 <- ggplot(data=multogtt, aes(x=time,y=FEV1.per.pred,group=MRN)) + geom_line()
 p3 <- ggplot(data=multogtt, aes(x=time,y=FVC.per.pred,group=MRN)) + geom_line() + facet_grid(. ~ Baseline_1hr_glucose_155)
 p4 <- ggplot(data=multogtt, aes(x=time,y=FEF.25.75.per.pred,group=MRN)) + geom_line() + facet_grid(. ~ Baseline_1hr_glucose_155)
 
+#######################
+# KAPLAN MEIER MODELS #
+#######################
 
+# KM model of baseline glucose >155 and time to CFRD, excluding those with baseline 2 hour glucose >140
+km_no140 <- survfit(Surv(Follow_up_time_yrs,CFRD)~Baseline_1hr_glucose_155,
+                    data=baseline_mult[baseline_mult$Baseline_2hr_glucose<=140,])
+
+# KM model of baseline glucose >155 and time to CFRD, including those with baseline 2 hour glucose >140
+km_inc140 <- survfit(Surv(Follow_up_time_yrs,CFRD)~Baseline_1hr_glucose_155,data=baseline_mult)
+
+# KM model of baseline glucose >155 and time to CFRD, including those with baseline 2 hour glucose >140, limit fup time
+km_inc140_lt7 <- survfit(Surv(Follow_up_time_yrs,CFRD)~Baseline_1hr_glucose_155,data=baseline_mult[baseline_mult$Follow_up_time_yrs<7,])
+
+# KM model of baseline two hour glucose >155 and time to CFRD
+km_2hr <- survfit(Surv(Follow_up_time_yrs,CFRD)~Baseline_2hr_glucose_140,data=baseline_mult)
 
 ```
 
@@ -698,6 +737,83 @@ The table below shows the 2 hour glucose values that maximize the Youden index a
 ```{r, echo=FALSE}
 kable(survroctab2)
 ```
+
+\newpage
+
+## Kaplan-Meier model of baseline one hour glucose >155 and time to CFRD, excluding those with baseline 2 hour glucose >140
+
+The Kaplan-Meier plot for baseline one hour glucose >155 vs. CFRD and log-rank test p-value are below.
+
+```{r, echo=FALSE}
+surv_pvalue(km_no140)
+
+ggsurvplot(km_no140,
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#E7B800", "#2E9FDF"))
+
+```
+
+\newpage
+
+## Kaplan-Meier model of baseline one hour glucose >155 and time to CFRD, including those with baseline 2 hour glucose >140
+
+The Kaplan-Meier plot for baseline one hour glucose >155 vs. CFRD and log-rank test p-value are below.
+
+```{r, echo=FALSE}
+surv_pvalue(km_inc140)
+
+ggsurvplot(km_inc140,
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#E7B800", "#2E9FDF"))
+```
+
+\newpage
+
+## Kaplan-Meier model of baseline one hour glucose >155 and time to CFRD, including those with baseline 2 hour glucose >140, time<7 years
+
+The Kaplan-Meier plot for baseline one hour glucose >155 vs. CFRD and log-rank test p-value are below.
+
+```{r, echo=FALSE}
+surv_pvalue(km_inc140_lt7)
+
+ggsurvplot(km_inc140_lt7,
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#E7B800", "#2E9FDF"))
+```
+
+\newpage
+
+## Kaplan-Meier model of baseline two hour glucose >140 and time to CFRD
+
+The Kaplan-Meier plot for baseline two hour glucose >140 vs. CFRD and log-rank test p-value are below.
+
+```{r, echo=FALSE}
+surv_pvalue(km_2hr)
+
+ggsurvplot(km_2hr,
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#E7B800", "#2E9FDF"))
+```
+
 
 \newpage
 
