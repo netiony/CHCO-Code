@@ -1,9 +1,10 @@
 library(sas7bdat)
 library(tableone)
 library(NormalizeMets)
+library(mixOmics)
 source("/Users/timvigers/GitHub/General-code/foldchange.R")
 source("/Users/timvigers/GitHub/General-code/editcolnames.R")
-setwd("/Users/timvigers/Dropbox/Work/Petter Bjornstad/Metabolomics")
+setwd("/Volumes/som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CASPER Metabolomics")
 # read in Petter's SAS dataset
 alldata <- read.sas7bdat("./Raw data/casperheir_for_laura.sas7bdat")
 
@@ -135,8 +136,8 @@ alldata = left_join(alldata,tubular[,c("ID","KIM1","NGAL","MCP1","logYKL40","log
 #	metabolomics - GIR
 #	metabolomics - body composition data 
 #	metabolomics - renal measures (GFR, RPF, ACR, renal O2)
-corrvars = c("rpf","acr_mean","gfr","kidney_GFR","medullary_GFR","cortex_GFR","FOSC_Cortex","FOSC_Medullary","FOSC_Kidney")
-varnames = c("RPF","Mean ACR","GFR","Whole-kidney RO2:GFR","Medullary RO2:GFR","Cortical RO2:GFR","Cortex FSOC","Medullary FSOC","Kidney FSOC")
+corrvars = c("rpf","acr_mean","gfr")
+varnames = c("RPF","Mean ACR","GFR")
 corrs <- corr.test(alldata[,targeted],alldata[,corrvars],method = "spearman",adjust = "fdr")
 corr_sum <- round(corrs$r,3)
 corr_p <-   round(corrs$p,3)
