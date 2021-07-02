@@ -25,28 +25,27 @@ knitr::opts_knit$set(root.dir = home_dir)
 ```{r incl}
 # Import datasets
 vital_status = read.csv('./NelsonVitalStatusDEC_DATA_2021-02-04_1616.csv',na.strings = "")
-
 g4 = read.csv('./Group4UofMRemodel112_DATA_2021-02-04_1617.csv',na.strings = "")
-g4$protocol = "GROUP4"
-
 ficoll = read.csv('./FicollUniversityOfMi_DATA_2021-02-04_1618.csv',na.strings = "")
-ficoll$protocol = "FICOLL"
-
 ddn = read.csv('./Nelson13DKN151Determ_DATA_2021-02-04_1610.csv',na.strings = "")
-ddn$protocol = "DDN"
-
 losartan = read.csv('./NelsonPECRBRenoprote_DATA_2021-02-04_1619.csv',na.strings = "")
-losartan$protocol = "LCT"
+# List of required variable names
+important_vars = c("record_id","sacaton_no","phx_number","date","dob","date_dx",
+                   "testint","sex","height_cm","weight_kg","bsa","sbp","dbp",
+                   "sbp_6","sbp_6","pulse","pulse_6","medsnow","recent_illness",
+                   "op","op_spec")
+constant_vars = c("sacaton_no","phx_number","dob","date_dx","sex","height_cm")
 ```
 
 ```{r vital status}
 # Collapse rows - get first non-NA element in each column by record ID
-vital_status %>% group_by('record_id') %>% 
+vital_status = vital_status %>% group_by('record_id') %>% 
   mutate(
     esrd_start_date = first(na.omit(esrd_start_date)),
     dod = first(na.omit(dod)),
     codunerlying = first(na.omit(codunerlying))) %>% 
-  ungroup() %>% select(record_id,esrd_start_date,dod,coddrunerlying)
+  fill(coddrunerlying,.direction = "updown") %>% ungroup() %>% 
+  select(record_id,esrd_start_date,dod,coddrunerlying) %>% unique()
 ```
 
 ```{r g4}
@@ -58,16 +57,64 @@ g4$date = lubridate::ymd(sapply(strsplit(g4$date,"_"),function(x){unique(x)[1]})
 int_cols = colnames(g4)[grep("*testintrvl$|*testintvrl$|*testintvl$",colnames(g4))]
 g4 = g4 %>% unite(testint,all_of(int_cols),na.rm = T,remove = F)
 g4$testint = as.numeric(g4$testint)
+# Unite heart rate columns
+heart_cols = colnames(g4)[grep("heartrate$",colnames(g4))]
+g4 = g4 %>% unite(pulse,all_of(heart_cols),na.rm = T,remove = F)
+g4$pulse = as.numeric(sapply(strsplit(g4$pulse,"_"),unique))
+g4$pulse_6 = g4$f6heartrate
+# Calculate average BP (first and second readings)
+## Systolic
+g4$f2sys = rowMeans(g4[,c("f2frstmsrsys","f2scndmsrsys")],na.rm = T)
+g4$f3sys = rowMeans(g4[,c("f3frstmsrsys","f3scndmsrsys")],na.rm = T)
+g4$f4sys = rowMeans(g4[,c("f4frstmsrsys","f4scndmsrsys")],na.rm = T)
+g4$f6sys = rowMeans(g4[,c("f6frstmsrsty","f6scndmsrsys")],na.rm = T)
+g4[,c("f2sys","f3sys","f4sys","f6sys")] = 
+  lapply(g4[,c("f2sys","f3sys","f4sys","f6sys")], function(c){
+    c[which(is.nan(c))] = NA
+    c
+    })
+g4 = g4 %>% unite(sbp,f2sys,f3sys,f4sys,f6sys,na.rm = T,remove = F)
+g4$sbp = as.numeric(sapply(strsplit(g4$sbp,"_"),unique))
+g4$sbp_6 = as.numeric(g4$f6sys)
+## Diastolic
+g4$f2dia = rowMeans(g4[,c("f2frstmsrdia","f2scndmsrdia")],na.rm = T)
+g4$f3dia = rowMeans(g4[,c("f3frstmsrdia","f3scndmsrdia")],na.rm = T)
+g4$f4dia = rowMeans(g4[,c("f4frstmsrdia","f4scndmsrdia")],na.rm = T)
+g4$f6dia = rowMeans(g4[,c("f6frstmsrdia","f6scndmsrdia")],na.rm = T)
+g4[,c("f2dia","f3dia","f4dia","f6dia")] = 
+  lapply(g4[,c("f2dia","f3dia","f4dia","f6dia")], function(c){
+    c[which(is.nan(c))] = NA
+    c
+    })
+g4 = g4 %>% unite(dbp,f2dia,f3dia,f4dia,f6dia,na.rm = T,remove = F)
+g4$dbp = as.numeric(sapply(strsplit(g4$dbp,"_"),function(x){unique(x)[1]}))
+g4$dbp_6 = as.numeric(g4$f6dia)
+
 ```
 
 ```{r}
-# Rename variables
-t = g4 %>% rename(nih = record_id,date_dx = dtdiabonset)
-# Select variables of interest
-t = t %>% select(nih,sacaton_no,phx_number,dob,date_dx,testint,
-                   protocol)
+# Rename and select
+t = g4 %>% rename(date_dx = dtdiabonset,sex = gender,height_cm = height,
+                  weight_kg = f6weight,bsa = f6bsa,medsnow = f4medsnow,
+                  recent_illness = f5rcntillns,op = f5outpat,op_spec = f5outpatspec) %>%
+  select(all_of(important_vars))
 # Fill in missing for non-time varying 
-t = t %>% group_by(nih) %>% fill(sacaton_no,phx_number,dob,date_dx)
+t = t %>% group_by(record_id) %>% fill(all_of(constant_vars),.direction = "downup")
 # Print
 datatable(t)
+```
+
+```{r merge}
+# Merge all datasets together
+final = full_join(t,vital_status)
+# Calculated variables
+final = final %>% 
+  mutate(
+    age,
+    dmdur)
+# Other cleanup
+final = final %>% rename(nih = record_id)
+final[final == ""] = NA
+# Print
+datatable(final)
 ```
