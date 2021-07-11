@@ -15,6 +15,8 @@ output:
 library(stringr)
 library(dplyr)
 library(readxl)
+library(childsds)
+library(nlme)
 
 knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
 
@@ -51,17 +53,32 @@ ins$rpt <- str_detect(ins$Subject.ID,"\\.1")
 ins <- filter(ins,rpt=="FALSE")
 ins$Subject.ID <- NULL
 ins$rpt <- NULL
+ins$Last.Name <- NULL
+ins$First.Name <- NULL
+ins$Reconsented. <- NULL
+ins$DOB <- NULL
+ins$Date.of.Consent <- NULL
+ins$Date.of.Reconsent <- NULL
+ins$Long.Acting.insulin.dose.at.start..units..Lantus.Levemir <- NULL
+ins$Weight..kg. <- NULL
+ins$insulin.dose.at.start..units.kg. <- NULL
+ins$Short.Acting.Insulin.Dose..units. <- NULL
+ins$Insulin.with.steroid.burst <- NULL
+ins$notes.about.insulin <- NULL
+ins$date.of.long.acting.insulin.start <- ifelse(ins$date.of.long.acting.insulin.start=="N/A",NA,ins$date.of.long.acting.insulin.start)
+ins$date.of.long.acting.insulin.start <- ifelse(ins$date.of.long.acting.insulin.start=="N/A (transitioned)",NA,ins$date.of.long.acting.insulin.start)
+ins$date.of.long.acting.insulin.start <- ifelse(ins$date.of.long.acting.insulin.start=="01/26/2016 (ish)","01/26/2016",ins$date.of.long.acting.insulin.start)
 # looks like there are duplicates in the insulin data file
 # find MRNs that are in REDCap and work with those
-#ins_keep <- ins[ins$MRN %in% data$MRN,]
+ins_keep <- ins[ins$MRN %in% data$MRN,]
 #write.csv(ins_keep,"E:\\Christine Chan\\Prospective analysis\\Data clean\\insulin_checking.csv")
-data1 <- merge(data,ins,by="MRN",all.x = T,all.y = F)
 
 # create a new variable called encounter date, which will be used to link all the results in the various sheets
+data1 <- data
 data1$Encounter_date <- as.Date(data1$date_of_visit)
 
 # read in PFTs
-pfts <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data 2020 06 05.xlsx",sheet="PFTs")
+pfts <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="PFTs")
 pfts$Encounter_date <- as.Date(pfts$`Encounter date`)
 pfts$`Encounter date` <- NULL
 pfts$`First Name` <- NULL
@@ -75,7 +92,7 @@ data2 <- merge(data1,pfts_keep,by=c("MRN","Encounter_date"),all.x = T,all.y = T)
 write.csv(data2,'C:\\temp\\data2.csv')
 
 # read in OGTT and A1c data
-ogtt <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data 2020 06 05.xlsx",sheet="OGTTandA1C")
+ogtt <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="OGTTandA1C")
 ogtt$Encounter_date <- as.Date(ogtt$`Date of Test`)
 ogtt$`Date of Test` <- NULL
 ogtt$`Date of Consent` <- NULL
@@ -88,7 +105,7 @@ data3 <- merge(data2,ogtt_keep,by=c("MRN","Encounter_date"),all.x = T,all.y = T)
 write.csv(data3,'C:\\temp\\data3.csv')
 
 # read in sputum data
-sputum <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data 2020 06 05.xlsx",sheet="Sputum")
+sputum <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="Sputum")
 sputum$Encounter_date <- as.Date(sputum$CultureDate)
 sputum$CultureDate <- NULL
 sputum$first_name <- NULL
@@ -101,7 +118,7 @@ data4 <- merge(data3,sputum_keep,by=c("MRN","Encounter_date"),all.x = T,all.y = 
 write.csv(data4,'C:\\temp\\data4.csv')
 
 # read in modulator data
-mods <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data 2020 06 05.xlsx",sheet="Modulators")
+mods <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="Modulators")
 mods$`First Name` <- NULL
 mods$`Last Name` <- NULL
 mods$`Date of Consent` <- NULL
@@ -110,13 +127,133 @@ mods$`Date of Consent` <- NULL
 #mods$check3 <- ifelse(mods$`Earliest Symdeko Date After Consent` < mods$`Earliest Trikafta Date After Consent`,0,1)
 # for all patients Kalydeco < Orkambi < Symdeko < Trikafta
 mods <- unique(mods)
-# keep sputum where MRN matches data4, then merge
+# keep mods where MRN matches data4, then merge
 mods_keep <- mods[mods$MRN %in% data4$MRN,]
 data5 <- merge(data4,mods_keep,by="MRN",all.x = T,all.y = T)
 write.csv(data5,'C:\\temp\\data5.csv')
-# this is weird - why are there so many new records?  should not increase # records at all
-# next, create vars to indicate on each type of modulator at the encounter date
+# could create vars to indicate on each type of modulator at the encounter date, but for now will just create one variable for any modulator
+data5$earliest_mod <- NA
+data5$earliest_mod <- pmin(data5$`Earliest Kalydeco Date`,data5$`Earliest Orkambi Date`,data5$`Earliest Symdeko Date`,data5$`Earliest Trikafta Date`,na.rm = T)
 
+# read in admits
+admits <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="Admits_List")
+admits$`First Name` <- NULL
+admits$`Last Name` <- NULL
+admits$`Date of Consent` <- NULL
+admits <- unique(admits)
+# count number of admits
+admit_sum <- admits %>% select(MRN) %>% group_by(MRN) %>% mutate(admit_num=n())
+admit_sum <- unique(admit_sum)
+admit_pex_sum <- admits[admits$`Reason(s) for Admit`=="Pulmonary Exacerbation",] %>% select(MRN) %>% group_by(MRN) %>% mutate(admit_pex_num=n())
+admit_pex_sum <- unique(admit_pex_sum)
+admit_sum <- merge(admit_sum,admit_pex_sum,by="MRN",all.x = T,all.y = T)
+# keep admits where MRN matches data5, then merge
+admit_sum_keep <- admit_sum[admit_sum$MRN %in% data5$MRN,]
+data6 <- merge(data5,admit_sum_keep,by="MRN",all.x = T,all.y = T)
+data6$admit_num <- ifelse(is.na(data6$admit_num),0,data6$admit_num)
+data6$admit_pex_num <- ifelse(is.na(data6$admit_pex_num),0,data6$admit_pex_num)
+
+# merge in insulin data
+data6 <- merge(data6,ins_keep,by="MRN",all.x = T,all.y = F)
+data6$date.of.long.acting.insulin.start <- as.Date(data6$date.of.long.acting.insulin.start,format = "%m/%d/%Y")
+data6$Date.of.Short.Acting.Insulin.Start <- as.Date(data6$Date.of.Short.Acting.Insulin.Start,format = "%m/%d/%Y")
+
+# create a variable for on insulin at time of encounter
+data6$on_insulin <- ifelse(is.na(data6$date.of.long.acting.insulin.start) & is.na(data6$Date.of.Short.Acting.Insulin.Start),0,
+                           ifelse((!is.na(data6$date.of.long.acting.insulin.start) & data6$Encounter_date >= data6$date.of.long.acting.insulin.start) |
+                             (!is.na(data6$Date.of.Short.Acting.Insulin.Start) & data6$Encounter_date >= data6$Date.of.Short.Acting.Insulin.Start),1,0))
+# create a variable for earliest insulin start (first get rid of the date from REDCap)
+data6$insulin_start_date <- NULL
+data6$insulin_start_date <- pmin(data6$date.of.long.acting.insulin.start,data6$Date.of.Short.Acting.Insulin.Start,na.rm = T)
+
+# drop some variables
+data7 <- data6 %>%  select(-starts_with('exclusion')) %>%  select(-starts_with('stored_blood')) %>% select(-(fam_history_diabetes_notes:respiratory_comments)) %>%  
+              select(-starts_with('day_')) %>%  select(-starts_with('tanner')) %>% select(-(extremities:sensor_exp_date)) 
+  
+# find date of CFRD dx (2 hour glucose > 200, HbA1c >=6.5)
+CFRD <- data7[,c("MRN","Encounter_date","Hbg A1C","poc_a1c","OGTT 2 Hour","lab_ogtt_2_hour_glucose")]
+CFRD$dia_visit <- ifelse(CFRD$`Hbg A1C`>=6.5 | CFRD$poc_a1c >=6.5 | CFRD$`OGTT 2 Hour`>= 200 | CFRD$lab_ogtt_2_hour_glucose >= 200, 1, NA)
+CFRD <- CFRD %>% filter(CFRD$dia_visit==1)
+CFRD_date <- CFRD %>% arrange(MRN,Encounter_date) %>% group_by(MRN) %>% filter(row_number()==1)
+CFRD_date$CFRD_date <- as.Date("")
+CFRD_date$CFRD_date <- CFRD_date$Encounter_date
+CFRD_date <- CFRD_date[,c("MRN","CFRD_date")]
+data8 <- merge(data7,CFRD_date,by="MRN",all.x = T,all.y = T)
+
+# create time variable
+# what is the start date? Date of CGM placement
+# need to take out date of CGM placement and merge back
+cgm_place <- data8[,c("MRN","date_cgm_placement")]
+cgm_place <- cgm_place[!is.na(cgm_place$date_cgm_placement),]
+data8$date_cgm_placement <- NULL
+data8 <- merge(data8,cgm_place,by="MRN",all.x = T, all.y=T)
+data8$date_cgm_placement <- as.Date(data8$date_cgm_placement)
+data8$days <- data8$Encounter_date - data8$date_cgm_placement
+
+# create var for CFRD or not
+data8$has_CFRD <- ifelse(is.na(data8$CFRD_date) | data8$Encounter_date < data8$CFRD_date,0,1) 
+
+# need to consolidate BMI variables - but do we want BMI percentile and/or Zscore?
+data8$height <- ifelse(is.na(data8$height),data8$`Height in cm`,data8$height)
+data8$height_visit_2 <- NULL
+data8$`Height in cm` <- NULL
+data8$average_height <- NULL
+data8$bmi <- NULL
+data8$bmi_percentile_visit_1 <- NULL
+data8$bmi_percentile_visit_2 <- NULL
+data8$bmi_visit_2 <- NULL
+data8$bmi_z_score <- NULL
+data8$bmi_z_score_visit_2 <- NULL
+data8$`BMI absolute` <- NULL
+data8$weight <- ifelse(is.na(data8$weight),data8$`Weight in kg`,data8$weight)
+data8$weight_visit_2 <- NULL
+data8$`Weight in kg` <- NULL
+data8$average_weight <- NULL
+data8$bmi <- data8$weight / ((data8$height/100)**2)
+# need age and sex at every visit
+# first have to take DOB out and merge back in
+dob <- data8[,c("MRN","date_of_birth")]
+dob <- dob[!is.na(dob$date_of_birth),]
+data8$date_of_birth <- NULL
+data8 <- merge(data8,dob,by="MRN",all.x = T, all.y=T)
+data8$date_of_birth <- as.Date(data8$date_of_birth)
+data8$age <- as.numeric(data8$Encounter_date - data8$date_of_birth)/365.25
+gender <- data8[,c("MRN","gender.factor")]
+gender <- gender[!is.na(gender$gender.factor),]
+data8$gender.factor <- NULL
+data8$gender <- NULL
+data8 <- merge(data8,gender,by="MRN",all.x = T, all.y = T)
+
+# calculate percentile and Z-score
+data8$bmi_percentile <- sds(data8$bmi,age=data8$age,sex=data8$gender.factor,male="Male",female="Female",ref=cdc.ref,item = "bmi",type = "perc")
+data8$bmiZ <- sds(data8$bmi,age=data8$age,sex=data8$gender.factor,male="Male",female="Female",ref=cdc.ref,item = "bmi",type = "SDS")
+
+# now PFTs - need to be careful of raw data and percents
+data8$fvc <- ifelse(is.na(data8$fvc),data8$FVC,data8$fvc)
+# I think fev might be both raw data and percent
+data8$fev1_percent <- ifelse(is.na(data8$fev1_percent),data8$FEV1,data8$fev1_percent)
+
+  
+# final datasets - with and without insulin, 1 year, 3 years, all time points
+final_alltime_withins <- data8 
+final_1yr_withins <- data8 %>% filter(days<=365)
+final_3yr_withins <- data8 %>% filter(days<=365*3)
+final_alltime_noins <- data8 %>% filter(on_insulin==0)
+final_1yr_noins <- data8 %>% filter(on_insulin==0) %>% filter(days<=365)
+final_3yr_noins <- data8 %>% filter(on_insulin==0) %>% filter(days<=365*3)
+
+
+
+
+# create baseline predictor variables
+
+# TURN MODELS INTO FUNCTIONS!!!  
+# are CGM variables predictive of BMI and PFT change?
+mod <- lme( ~ days + average_sensor,random=~1|MRN,data = final_alltime_noins,na.action = na.omit)
+sd_mod_anova <- anova.lme(sd_mod, type="marginal")
+# use emmeans 
+sd_mod_means <- emmeans(sd_mod,"gyl_timepoint.factor")
+sd_mod_pairs <-  pairs(sd_mod_means,adjust="tukey")
 
 ```
 
