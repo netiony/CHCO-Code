@@ -7,7 +7,7 @@ output:
     number_sections: yes
     theme: readable
     toc: yes
-    toc_depth: 2
+    toc_depth: 4
     toc_float: yes
 ---
 
@@ -17,44 +17,41 @@ library(dplyr)
 library(readxl)
 library(childsds)
 library(nlme)
+library(rspiro)
+library(emmeans)
+library(lme4)
+library(lmerTest)
+library(knitr)
+library(tableone)
 
 knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
 
 # get REDCap data and exclude HCs
-#source("E:\\Christine Chan\\Prospective analysis\\Data raw\\CGMInHealthyControls-DataForProspectiveAn_R_2021-06-02_0929.r")
-source("Y:\\Prospective analysis\\Data raw\\CGMInHealthyControls-DataForProspectiveAn_R_2021-06-02_0929.r")
-
+source("E:\\Christine Chan\\Prospective analysis\\Data raw\\CGMInHealthyControls-DataForProspectiveAn_R_2021-06-02_0929.r")
 data <- data[data$group_category != 1,]
-write.csv(data$subject_id,"C:\\temp\\IDs.csv",row.names = F)
-
+#write.csv(data$subject_id,"C:\\temp\\IDs.csv",row.names = F)
 # get rid of double data entry
 data$dde2 <- str_detect(data$subject_id,"--2")
 data$orig <- str_detect(data$subject_id,"--")
 data <- filter(data,dde2=="FALSE")
 data <- filter(data,orig=="TRUE")
-
 # keep the first visit
 data$rpt <- str_detect(data$subject_id,"\\.1")
 data <- filter(data,rpt=="FALSE")
-
 # rename and get rid of variables
 data$MRN <- str_trim(data$medical_record_number)
 data$medical_record_number <- NULL
 data$dde <- NULL
 data$rpt <- NULL
-
 # one patient is in twice with different IDs - keep the first
 data <- data[data$subject_id != 138,]
-
 # there are some duplicate MRNs - keep first CGM wear, at least for this analysis
 # later on, we may want to maximize the number of people with fsOGTTs, even though that may shorten the amount of follow up
 data <- data[!is.na(data$date_cgm_placement),]
 data <- data %>% arrange(MRN,date_cgm_placement) %>% group_by(MRN) %>% filter(row_number()==1)
 
 # read in insulin data - will merge later
-#ins <- read.csv("E:\\Christine Chan\\Prospective analysis\\Data raw\\Insulin Start date and prospective data-- Eileen cleanup.csv",
-#                na.strings = c(""," ",NA))
-ins <- read.csv("Y:\\Prospective analysis\\Data raw\\Insulin Start date and prospective data-- Eileen cleanup.csv",
+ins <- read.csv("E:\\Christine Chan\\Prospective analysis\\Data raw\\Insulin Start date and prospective data-- Eileen cleanup.csv",
                 na.strings = c(""," ",NA))
 
 # there can be duplicates in this file - keep the one with earliest date of consent
@@ -92,8 +89,7 @@ data1 <- data
 data1$Encounter_date <- as.Date(data1$date_of_visit)
 
 # read in PFTs
-#pfts <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="PFTs")
-pfts <- read_xlsx("Y:\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="PFTs")
+pfts <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="PFTs")
 pfts$Encounter_date <- as.Date(pfts$`Encounter date`)
 pfts$`Encounter date` <- NULL
 pfts$`First Name` <- NULL
@@ -101,14 +97,36 @@ pfts$`Last Name` <- NULL
 # there seem to be some dups
 pfts$`Date of Consent` <- NULL
 pfts <- unique(pfts)
+# get percent predicted from Elin's data
+dob <- data[,c("MRN","date_of_birth")]
+pfts <- merge(pfts,dob,by="MRN",all.x=T,all.y = F)
+pfts$date_of_birth <- as.Date(pfts$date_of_birth,format="%Y-%m-%d")
+pfts$ht_m <- pfts$`Height in cm`/100
+sex <- data[,c("MRN","gender.factor")]
+pfts <- merge(pfts,sex,by="MRN",all.x = T,all.y = F)
+pfts$sexnum <- ifelse(pfts$gender.factor=="Male",1,2)
+pfts$Age.at.PFT <- as.numeric((pfts$Encounter_date - pfts$date_of_birth)/365.25)
+pfts$FEV1.pred <- pred_GLI(age=pfts$Age.at.PFT,height=pfts$ht_m,gender=pfts$sexnum,param="FEV1")
+pfts$FVC.pred <- pred_GLI(age=pfts$Age.at.PFT,height=pfts$ht_m,gender=pfts$sexnum,param="FVC")
+pfts$FEF.25.75.pred <- pred_GLI(age=pfts$Age.at.PFT,height=pfts$ht_m,gender=pfts$sexnum,param="FEF2575")
+pfts$FEV1.per.pred <- (pfts$FEV1 / pfts$FEV1.pred)*100
+pfts$FVC.per.pred <- (pfts$FVC / pfts$FVC.pred)*100
+pfts$FEF.25.75.per.pred <- (pfts$`FEF25-75` / pfts$FEF.25.75.pred)*100
+# keep only needed vars
+pfts$gender.factor <- NULL
+pfts <- pfts[,c("MRN","Encounter_date","FEV1.per.pred","FVC.per.pred","FEF.25.75.per.pred","Height in cm","Weight in kg")]
 # keep PFTs where MRN matches data1, then merge
 pfts_keep <- pfts[pfts$MRN %in% data1$MRN,]
 data2 <- merge(data1,pfts_keep,by=c("MRN","Encounter_date"),all.x = T,all.y = T)
+# combine PFT vars
+data2$FEV1.per.pred <- ifelse(is.na(data2$FEV1.per.pred),data2$fev1_percent,data2$FEV1.per.pred)
+data2$FVC.per.pred <- ifelse(is.na(data2$FVC.per.pred),data2$fvc,data2$FVC.per.pred)
+data2$fev1_percent <- NULL
+data2$fvc <- NULL
 #write.csv(data2,'C:\\temp\\data2.csv')
 
 # read in OGTT and A1c data
-#ogtt <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="OGTTandA1C")
-ogtt <- read_xlsx("Y:\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="OGTTandA1C")
+ogtt <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="OGTTandA1C")
 ogtt$Encounter_date <- as.Date(ogtt$`Date of Test`)
 ogtt$`Date of Test` <- NULL
 ogtt$`Date of Consent` <- NULL
@@ -121,8 +139,7 @@ data3 <- merge(data2,ogtt_keep,by=c("MRN","Encounter_date"),all.x = T,all.y = T)
 #write.csv(data3,'C:\\temp\\data3.csv')
 
 # read in sputum data
-#sputum <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="Sputum")
-sputum <- read_xlsx("Y:\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="Sputum")
+sputum <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="Sputum")
 sputum$Encounter_date <- as.Date(sputum$CultureDate)
 sputum$CultureDate <- NULL
 sputum$first_name <- NULL
@@ -135,8 +152,7 @@ data4 <- merge(data3,sputum_keep,by=c("MRN","Encounter_date"),all.x = T,all.y = 
 #write.csv(data4,'C:\\temp\\data4.csv')
 
 # read in modulator data
-#mods <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="Modulators")
-mods <- read_xlsx("Y:\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="Modulators")
+mods <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="Modulators")
 mods$`First Name` <- NULL
 mods$`Last Name` <- NULL
 mods$`Date of Consent` <- NULL
@@ -154,8 +170,7 @@ data5$earliest_mod <- NA
 data5$earliest_mod <- pmin(data5$`Earliest Kalydeco Date`,data5$`Earliest Orkambi Date`,data5$`Earliest Symdeko Date`,data5$`Earliest Trikafta Date`,na.rm = T)
 
 # read in admits
-#admits <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="Admits_List")
-admits <- read_xlsx("Y:\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="Admits_List")
+admits <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2021_06_17.xlsx",sheet="Admits_List")
 admits$`First Name` <- NULL
 admits$`Last Name` <- NULL
 admits$`Date of Consent` <- NULL
@@ -194,7 +209,7 @@ data7 <- data6 %>%  select(-starts_with('exclusion')) %>%  select(-starts_with('
                         "abdomen.factor","extremities.factor","neuro.factor","skin.factor","cgm_device.factor","cgm_placement.factor",
                         "demographics_and_anthropometrics_complete.factor","frequent_sampling_ogtt.factor","ogtt_grc_2hr.factor","cgm_data_success_failure.factor",
                         "cgm_data_gaps_filled_in.factor","insulin_post_study.factor","num_days_good_data.factor","total_sensor_readings.factor","cgm_data_complete.factor",
-                        "actiwatch_success_failure.factor","actiwatch_data_complete.factor","Encounter location","actiwatch_serial_number","address","city_sate_zip_code",
+                        "actiwatch_success_failure.factor","actiwatch_data_complete.factor","actiwatch_serial_number","address","city_sate_zip_code",
                         "phone_number","email","agreed_to_future_contact","abdomen_comments","sensor_placement_time","ipro_placement_time","cgm_placement",
                         "cgm_placement_notes","demographics_and_anthropometrics_complete","agreed_to_future_contact.factor","consent","re_consent_for_prospective",
                         "lab_data_complete","cgm_data_success_failure","cgm_data_gaps_filled_in","number_of_gaps_filled_in","total_time_filled_in"   ))
@@ -219,7 +234,7 @@ cgm_place <- cgm_place %>% arrange(MRN,date_cgm_placement) %>% group_by(MRN) %>%
 data8$date_cgm_placement <- NULL
 data8 <- merge(data8,cgm_place,by="MRN",all.x = T, all.y=T)
 data8$date_cgm_placement <- as.Date(data8$date_cgm_placement)
-data8$days <- data8$Encounter_date - data8$date_cgm_placement
+data8$days <- as.numeric(data8$Encounter_date - data8$date_cgm_placement)
 
 # create var for CFRD or not
 data8$has_CFRD <- ifelse(is.na(data8$CFRD_date) | data8$Encounter_date < data8$CFRD_date,0,1) 
@@ -241,6 +256,7 @@ data8$weight_visit_2 <- NULL
 data8$`Weight in kg` <- NULL
 data8$average_weight <- NULL
 data8$bmi <- data8$weight / ((data8$height/100)**2)
+data8$bmi <- ifelse(data8$bmi<10,NA,data8$bmi)
 # need age and sex at every visit
 # first have to take DOB out and merge back in
 dob <- data8[,c("MRN","date_of_birth")]
@@ -259,16 +275,12 @@ data8 <- merge(data8,gender,by="MRN",all.x = T, all.y = T)
 
 # calculate percentile and Z-score
 data8$bmi_percentile <- sds(data8$bmi,age=data8$age,sex=data8$gender.factor,male="Male",female="Female",ref=cdc.ref,item = "bmi",type = "perc")
+data8$bmi_percentile <- data8$bmi_percentile*100
 data8$bmiZ <- sds(data8$bmi,age=data8$age,sex=data8$gender.factor,male="Male",female="Female",ref=cdc.ref,item = "bmi",type = "SDS")
-
-# now PFTs - need to be careful of raw data and percents
-data8$fvc <- ifelse(is.na(data8$fvc),data8$FVC,data8$fvc)
-# I think fev might be both raw data and percent
-data8$fev1_percent <- ifelse(is.na(data8$fev1_percent),data8$FEV1,data8$fev1_percent)
 
 # create baseline predictor variables
 # may need to add other vars, or vars calculated from fsOGTT, but will pick CGM vars for now
-pred <- data8[,c("MRN","date_cgm_placement","average_sensor","standard_deviation","min_sensor","max_sensor","q1_sensor",
+pred <- data8[,c("MRN","average_sensor","standard_deviation","min_sensor","max_sensor","q1_sensor",
                  "median_sensor","q3_sensor","estimated_a1c","excursions_over_120",
                  "min_spent_over_120","percent_time_over_120","excursions_over_140","min_spent_over_140","percent_time_over_140","excursions_over_180","min_spent_over_180",
                  "percent_time_over_180","excursions_over_200","min_spent_over_200","percent_time_over_200","excursions_over_250","min_spent_over_250","percent_time_over_250",
@@ -288,6 +300,64 @@ data8 <- data8 %>% select(-c("average_sensor","standard_deviation","min_sensor",
 pred$nmiss <- apply(is.na(pred), 1, sum) 
 pred <- pred[pred$nmiss != 64,]
 data9 <- merge(data8,pred,by="MRN",all.x = T, all.y = T)
+
+#severity of genotype
+data9$class2 <- ifelse(data9$cf_mutation_2 %in% c('1717-1G->A', '1717-1G-A',  'G542X', 'Q493X', 'R1162X', 'R553X', 'R553x', 'W1089X', 'W1282X', '1078delT', 'R75X',
+                                      '3659delC', '621+1G->T', '621+1G>T', '394delTT', '3120 + 1g->A', '1154InsTC',  '1154insTC', '1213delT',
+                                      '1259insA', '1288insTA', '3791delC', 'E60X', 'K710X', '2184delA', 'CFTRdele2,3', '663delT', 'Glu528',
+                                      '1461ins4', '306insA', 'R709X', 'CFTRdele22-24', '2711delT', '2183AA- >G','2183delAA>G'), "I", 
+                                          ifelse(data9$cf_mutation_2 %in% c('F508', 'F508del', 'F508del ', 'G85E', 'I507', 'I 507', 'N1303K', 'A559T', 'R560T', 'A561E'), 
+                                           "II", 
+                                              ifelse(data9$cf_mutation_2 %in% c('G551D', 'G551S', 'S549N'), "III", 
+                                                  ifelse(data9$cf_mutation_2 %in% c('R334W', 'R347P', 'R117H', 'R117C', 'P67L', 'L206W','l206w','I206w', 'D614G', 'R347H', 'D1152H', '3849+10kbC>T'),"IV", 
+                                                      ifelse(data9$cf_mutation_2 %in% c('A455E', '2789+5G->A', '3849+10CT', '3849+10kbC->T', '711+3A->G', '1898+5G->T',
+                                                      'P574H', '3272-26A->G5','3272-26A->G'), "V" , "")))))   
+data9$severity2 <- ifelse(data9$cf_mutation_2 %in% c('1717-1G->A', '1717-1G-A',  'G542X', 'Q493X', 'R1162X', 'R553X', 'R553x', 'W1089X', 'W1282X', '1078delT', 'R75X',
+                                             '3659delC', '621+1G->T', '621+1G>T', '394delTT', '3120 + 1g->A', '1154InsTC',  '1154insTC', '1213delT',
+                                             '1259insA', '1288insTA', '3791delC', 'E60X', 'K710X', '2184delA', 'CFTRdele2,3', '663delT', 'Glu528',
+                                             '1461ins4', '306insA', 'R709X', 'CFTRdele22-24', '2711delT', '2183AA- >G','2183delAA>G','F508', 'F508del', 'F508del ', 'G85E', 
+                                             'I507', 'I 507', 'N1303K', 'A559T', 'R560T', 'A561E','G551D', 'G551S', 'S549N','1898+1G->A', '2143delT', '2183AA-G',
+                                             '2183delAA->G', '2184insA', 'S434X','2585delT', '3120+1G->A',  '3905insT',  '406-1G->A', '712-1G->T', 'L1245X', 'Q2X', 'R1158X',
+                                             'R851X', 'V520F', 'L1077P', 'S489X', 'F311del', 'W846X', 'M1101K', '2622+1G->A', 'S945L',"Y1092X", "R1066C", "G178R", "2957delT", 
+                                             "CFTRdele1", 'W1204X', "q493x", "W57G", "1585-8G>A", "1717-8G->A","G1244E"), "Severe", 
+               ifelse(data9$cf_mutation_2 %in% c('R334W', 'R347P', 'R117H', 'R117C', 'P67L', 'L206W','l206w','I206w', 'D614G', 'R347H', 'D1152H', '3849+10kbC>T', "D110H", "R1070W",
+                                               'A455E', '2789+5G->A', '3849+10CT', '3849+10kbC->T', '711+3A->G', '1898+5G->T','P574H', '3272-26A->G5','3272-26A->G','3849G->A', 'H199Y', 'H199y',
+                                               'S492F', 'S531P','L1335P', 'R352Q', "D1270N", "2789+2insA", "3849+10kbc->T", "Q98R", "Phe1052Val", 
+                                               "F1052V", "Tyr1014Cys", "Y1014C", "T338I", "5T", "c.2249C>T", "P750L"), "Mild" ,
+                      ifelse(data9$cf_mutation_2 %in% c(  '1262insA', 'I506T', '3363delGT' , 'Q1209P', '3349insT', 'G178R', 'L467P', '317insC', 'I336K',	
+                                                       'ex14a', '3500-2A->G', 'c.3407_3422del16', '3349insT', '1248+1G->A', 'M470V', '1812-1G->A',
+                                                       'del X22-24', 'Q237H', 'Q237H', 'W57G', '1078delA', 'G178R', '2957delT', 'G576A',
+                                                       'other', 'Other', 'Unknown', 'unknown', 'CFTRdele1', '1811+1.6kb A->', 'UNK', "I336K", "M470V", "S1235R", "M470V", "F508C",
+                                                       "R1066H", "P205S"),"Unk","")))
+data9$class1 <- ifelse(data9$cf_mutation_1 %in% c('1717-1G->A', '1717-1G-A',  'G542X', 'Q493X', 'R1162X', 'R553X', 'R553x', 'W1089X', 'W1282X', '1078delT', 'R75X',
+                                             '3659delC', '621+1G->T', '621+1G>T', '394delTT', '3120 + 1g->A', '1154InsTC',  '1154insTC', '1213delT',
+                                             '1259insA', '1288insTA', '3791delC', 'E60X', 'K710X', '2184delA', 'CFTRdele2,3', '663delT', 'Glu528',
+                                             '1461ins4', '306insA', 'R709X', 'CFTRdele22-24', '2711delT', '2183AA- >G','2183delAA>G'), "I", 
+                      ifelse(data9$cf_mutation_1 %in% c('F508', 'F508del', 'F508del ', 'G85E', 'I507', 'I 507', 'N1303K', 'A559T', 'R560T', 'A561E'), "II", 
+                             ifelse(data9$cf_mutation_1 %in% c('G551D', 'G551S', 'S549N'), "III", 
+                                    ifelse(data9$cf_mutation_1 %in% c('R334W', 'R347P', 'R117H', 'R117C', 'P67L', 'L206W','l206w','I206w', 'D614G', 'R347H', 'D1152H', '3849+10kbC>T'), "IV", 
+                                           ifelse(data9$cf_mutation_1 %in% c('A455E', '2789+5G->A', '3849+10CT', '3849+10kbC->T', '711+3A->G', '1898+5G->T',
+                                                                         'P574H', '3272-26A->G5','3272-26A->G'), "V" , "")))))   
+data9$severity1 <- ifelse(data9$cf_mutation_1 %in% c('1717-1G->A', '1717-1G-A',  'G542X', 'Q493X', 'R1162X', 'R553X', 'R553x', 'W1089X', 'W1282X', '1078delT', 'R75X',
+                                                    '3659delC', '621+1G->T', '621+1G>T', '394delTT', '3120 + 1g->A', '1154InsTC',  '1154insTC', '1213delT',
+                                                    '1259insA', '1288insTA', '3791delC', 'E60X', 'K710X', '2184delA', 'CFTRdele2,3', '663delT', 'Glu528',
+                                                    '1461ins4', '306insA', 'R709X', 'CFTRdele22-24', '2711delT', '2183AA- >G','2183delAA>G','F508', 'F508del', 'F508del ', 'G85E', 
+                                                    'I507', 'I 507', 'N1303K', 'A559T', 'R560T', 'A561E','G551D', 'G551S', 'S549N','1898+1G->A', '2143delT', '2183AA-G',
+                                                    '2183delAA->G', '2184insA', 'S434X','2585delT', '3120+1G->A',  '3905insT',  '406-1G->A', '712-1G->T', 'L1245X', 'Q2X', 'R1158X',
+                                                    'R851X', 'V520F', 'L1077P', 'S489X', 'F311del', 'W846X', 'M1101K', '2622+1G->A', 'S945L', 
+                                                    "Y1092X", "R1066C", "G178R", "2957delT", "CFTRdele1", 'W1204X', "q493x", "W57G", "1585-8G>A", "1717-8G->A","G1244E"), "Severe", 
+                           ifelse(data9$cf_mutation_1 %in% c('R334W', 'R347P', 'R117H', 'R117C', 'P67L', 'L206W','l206w','I206w', 'D614G', 'R347H', 'D1152H', '3849+10kbC>T', "D110H", "R1070W",
+                                                           'A455E', '2789+5G->A', '3849+10CT', '3849+10kbC->T', '711+3A->G', '1898+5G->T',
+                                                           'P574H', '3272-26A->G5','3272-26A->G','3849G->A', 'H199Y', 'H199y',  'S492F', 'S531P',
+                                                           'L1335P', 'R352Q', "D1270N", "2789+2insA", "3849+10kbc->T", "Q98R", "Phe1052Val", 
+                                                           "F1052V", "Tyr1014Cys", "Y1014C", "T338I", "5T", "c.2249C>T", "P750L"), "Mild" ,
+                                  ifelse(data9$cf_mutation_1 %in% c(  '1262insA', 'I506T', '3363delGT' , 'Q1209P', '3349insT', 'G178R', 'L467P', '317insC', 'I336K',	
+                                                                    'ex14a', '3500-2A->G', 'c.3407_3422del16', '3349insT', '1248+1G->A', 'M470V', '1812-1G->A',
+                                                                    'del X22-24', 'Q237H', 'Q237H', 'W57G', '1078delA', 'G178R', '2957delT', 'G576A',
+                                                                    'other', 'Other', 'Unknown', 'unknown', 'CFTRdele1', '1811+1.6kb A->', 'UNK', "I336K", "M470V", "S1235R", "M470V", "F508C",
+                                                                    "R1066H", "P205S"), "Unk","")))
+data9$genoRisk <- ifelse(data9$severity1 == "Mild" | data9$severity2 == "Mild", "Low", 
+                  ifelse(data9$severity1 == "Severe" & data9$severity2 == "Severe", "High", ""))
   
 # final datasets - with and without insulin, 1 year, 3 years, all time points
 final_alltime_withins <- data9 
@@ -297,25 +367,1022 @@ final_alltime_noins <- data9 %>% filter(on_insulin==0)
 final_1yr_noins <- data9 %>% filter(on_insulin==0) %>% filter(days<=365)
 final_3yr_noins <- data9 %>% filter(on_insulin==0) %>% filter(days<=365*3)
 dfs <- c("final_alltime_withins","final_1yr_withins","final_3yr_withins","final_alltime_noins","final_1yr_noins","final_3yr_noins")
+```
 
-# are CGM variables predictive of BMI and PFT change?
-mod <- lme(bmiZ ~ days + average_sensor,random=~1|MRN,data = final_alltime_withins,na.action = na.omit)
-mod_anova <- anova.lme(mod, type="marginal")
+```{r plot function}
+model_and_plot = function(outcome_name,ylab,pred,df,pois = F){
+  # Convert to numeric
+  df[,outcome_name] = as.numeric(df[,outcome_name])
+  # Fit a mixed model. 
+  mod <- lme(as.formula(paste0(outcome_name,"~days+",pred)),random=~1|MRN,df,na.action=na.omit)
+  # Means by timepoint
+  #means = as.data.frame(emmeans(mod,~Timepoint))
+  #means$num_time = c(0,3,6)
+  # Plot
+  #p = ggplot(df,aes_string(x = "num_time",y = outcome_name, group = group_var)) +
+  #  geom_line(alpha=0.1) +
+  #  geom_line(data=means,aes(x=num_time,y=as.numeric(emmean),group=1),
+  #          size = 1,inherit.aes = F) +
+  #  theme_bw() +xlab("Timepoint") + ylab(ylab) +
+  #  scale_x_continuous(breaks=c(0,3,6),labels=c("Baseline","3 Month","6 Month"))
+  # Print plot and model results
+  #print(p)
+  print(kable(anova.lme(mod,type="marginal"),digits = 3,caption = "Type III ANOVA"))
+  print(kable(summary(mod)$tTable,digits = 3,caption = "Fixed Effects"))
+}
+```
 
-for (i in 1:length(dfs)) {
-  mod <- lme(bmiZ ~ days + average_sensor,random=~1|MRN,data = final_alltime_withins,na.action = na.omit)
-  mod_anova <- anova.lme(mod, type="marginal")
+```{r plot function ins}
+model_and_plot_ins = function(outcome_name,ylab,group_var,pred,df,pois = F,plot){
+  # Convert to numeric
+  df[,outcome_name] = as.numeric(df[,outcome_name])
+  # Fit a mixed model. 
+  mod <- lme(as.formula(paste0(outcome_name,"~days + on_insulin + ",pred)),random=~1|MRN,df,na.action=na.omit)
+  # Plot
+  p = ggplot(df,aes_string(x = "days",y = outcome_name, group = group_var)) +
+    geom_line(alpha=0.1) +
+    theme_bw() +xlab("Days") + ylab(ylab) 
+  # Print plot and model results
+  if(plot==1){print(p)}
+  print(kable(anova.lme(mod,type="marginal"),digits = 3,caption = "Type III ANOVA"))
+  print(kable(summary(mod)$tTable,digits = 3,caption = "Fixed Effects"))
 }
 
+
 ```
+
+
+```{r}
+t1data <- final_alltime_withins[final_alltime_withins$days==0,]
+t1vars <- c("age","gender.factor","race_ethnicity.factor","genoRisk","bmiZ","bmi_percentile","g_tube_feeds.factor","cf_pancreatic.factor" )
+
+t1 <- CreateTableOne(vars=t1vars, data=t1data)
+t1 <- print(t1,varLabels=TRUE,showAllLevels=TRUE)
+
+```
+
+
 
 # Background
 
+The purpose of this analysis is to use the data from the prospective CF study to examine whether CGM and OGTT/fsOGTT variables are predictive of BMI change, PFT change, CFRD, pulmonary exacerbations, hospitalizations, and time to insulin start.
+
 # Methods
+
+define baseline
+Set one BMI of 8.6 (BMI-Z -16.6) to missing
 
 # Results
 
-```{r echo=FALSE}
-kable(t1,caption = "")
+## Demographics and clinical characteristics at baseline (time of CGM wear)
+
+```{r}
+kable(t1)
 ```
 <br>
+
+## All timepoints included, timepoints on insulin included
+
+### BMI-Z
+
+#### BMI-Z vs. average sensor glucose
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="average_sensor",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="1")
+```
+
+#### BMI-Z vs. SD
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="standard_deviation",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. min_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="min_sensor",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. max_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="max_sensor",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time >120
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_over_120",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time >140
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_over_140",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time >180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_over_180",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time >200
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_over_200",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time >250
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_over_250",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. average excursions >140 per day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="avg_excur_over_140_per_day",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. average excursions >200 per day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="avg_excur_over_200_per_day",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time <54
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_under_54",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time <60
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_under_60",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time <70
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_under_70",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. average AUC>180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="average_auc_180",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. MAGE
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="mean_amp_glycemic_ex",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. CV
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="cov",df=final_alltime_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+### FEV1
+
+#### FEV1 % vs. average glucose
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="average_sensor",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="1")
+```
+
+#### FEV1 % vs. SD
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="standard_deviation",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. min_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="min_sensor",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. max_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="max_sensor",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time >120
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_over_120",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time >140
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_over_140",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time >180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_over_180",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time >200
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_over_200",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time >250
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_over_250",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. average excursions > 140/day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="avg_excur_over_140_per_day",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. average excursions >200/day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="avg_excur_over_200_per_day",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time <54
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_under_54",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time <60
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_under_60",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time <70
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_under_70",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. average AUC>180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="average_auc_180",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. MAGE
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="mean_amp_glycemic_ex",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. CV
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="cov",df=final_alltime_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+### FVC
+
+#### FVC % vs. average glucose
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="average_sensor",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="1")
+```
+
+#### FVC % vs. SD
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="standard_deviation",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. min_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="min_sensor",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. max_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="max_sensor",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time >120
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_over_120",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time >140
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_over_140",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time >180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_over_180",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time >200
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_over_200",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time >250
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_over_250",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. average excursions >140/day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="avg_excur_over_140_per_day",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. average excursions >200/day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="avg_excur_over_200_per_day",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time <54
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_under_54",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time <60
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_under_60",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time <70
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_under_70",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. average AUC>180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="average_auc_180",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. MAGE
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="mean_amp_glycemic_ex",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. CV
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="cov",df=final_alltime_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+## 1 year included, timepoints on insulin included
+
+### BMI-Z
+
+#### BMI-Z vs. average sensor glucose
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="average_sensor",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="1")
+```
+
+#### BMI-Z vs. SD
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="standard_deviation",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. min_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="min_sensor",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. max_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="max_sensor",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time >120
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_over_120",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time >140
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_over_140",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time >180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_over_180",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time >200
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_over_200",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time >250
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_over_250",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. average excursions >140 per day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="avg_excur_over_140_per_day",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. average excursions >200 per day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="avg_excur_over_200_per_day",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time <54
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_under_54",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time <60
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_under_60",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time <70
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_under_70",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. average AUC>180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="average_auc_180",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. MAGE
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="mean_amp_glycemic_ex",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. CV
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="cov",df=final_1yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+### FEV1
+
+#### FEV1 % vs. average glucose
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="average_sensor",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="1")
+```
+
+#### FEV1 % vs. SD
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="standard_deviation",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. min_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="min_sensor",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. max_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="max_sensor",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time >120
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_over_120",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time >140
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_over_140",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time >180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_over_180",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time >200
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_over_200",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time >250
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_over_250",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. average excursions > 140/day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="avg_excur_over_140_per_day",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. average excursions >200/day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="avg_excur_over_200_per_day",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time <54
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_under_54",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time <60
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_under_60",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time <70
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_under_70",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. average AUC>180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="average_auc_180",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. MAGE
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="mean_amp_glycemic_ex",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. CV
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="cov",df=final_1yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+### FVC
+
+#### FVC % vs. average glucose
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="average_sensor",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="1")
+```
+
+#### FVC % vs. SD
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="standard_deviation",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. min_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="min_sensor",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. max_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="max_sensor",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time >120
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_over_120",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time >140
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_over_140",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time >180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_over_180",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time >200
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_over_200",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time >250
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_over_250",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. average excursions >140/day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="avg_excur_over_140_per_day",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. average excursions >200/day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="avg_excur_over_200_per_day",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time <54
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_under_54",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time <60
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_under_60",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time <70
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_under_70",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. average AUC>180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="average_auc_180",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. MAGE
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="mean_amp_glycemic_ex",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. CV
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="cov",df=final_1yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+## 3 years included, timepoints on insulin included
+
+### BMI-Z
+
+#### BMI-Z vs. average sensor glucose
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="average_sensor",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="1")
+```
+
+#### BMI-Z vs. SD
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="standard_deviation",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. min_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="min_sensor",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. max_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="max_sensor",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time >120
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_over_120",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time >140
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_over_140",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time >180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_over_180",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time >200
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_over_200",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time >250
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_over_250",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. average excursions >140 per day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="avg_excur_over_140_per_day",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. average excursions >200 per day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="avg_excur_over_200_per_day",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time <54
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_under_54",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time <60
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_under_60",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. % time <70
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="percent_time_under_70",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. average AUC>180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="average_auc_180",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. MAGE
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="mean_amp_glycemic_ex",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+#### BMI-Z vs. CV
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "bmiZ",pred="cov",df=final_3yr_withins,group_var = "MRN",ylab="BMI-Z",plot="0")
+```
+
+### FEV1
+
+#### FEV1 % vs. average glucose
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="average_sensor",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="1")
+```
+
+#### FEV1 % vs. SD
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="standard_deviation",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. min_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="min_sensor",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. max_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="max_sensor",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time >120
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_over_120",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time >140
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_over_140",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time >180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_over_180",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time >200
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_over_200",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time >250
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_over_250",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. average excursions > 140/day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="avg_excur_over_140_per_day",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. average excursions >200/day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="avg_excur_over_200_per_day",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time <54
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_under_54",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time <60
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_under_60",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. % time <70
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="percent_time_under_70",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. average AUC>180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="average_auc_180",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. MAGE
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="mean_amp_glycemic_ex",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+#### FEV1 % vs. CV
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FEV1.per.pred",pred="cov",df=final_3yr_withins,group_var = "MRN",ylab="FEV1 %",plot="0")
+```
+
+### FVC
+
+#### FVC % vs. average glucose
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="average_sensor",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="1")
+```
+
+#### FVC % vs. SD
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="standard_deviation",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. min_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="min_sensor",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. max_sensor
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="max_sensor",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time >120
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_over_120",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time >140
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_over_140",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time >180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_over_180",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time >200
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_over_200",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time >250
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_over_250",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. average excursions >140/day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="avg_excur_over_140_per_day",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. average excursions >200/day
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="avg_excur_over_200_per_day",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time <54
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_under_54",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time <60
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_under_60",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. % time <70
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="percent_time_under_70",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. average AUC>180
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="average_auc_180",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. MAGE
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="mean_amp_glycemic_ex",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+#### FVC % vs. CV
+
+```{r results='asis'}
+model_and_plot_ins(outcome_name = "FVC.per.pred",pred="cov",df=final_3yr_withins,group_var = "MRN",ylab="FVC %",plot="0")
+```
+
+
+
+
+
