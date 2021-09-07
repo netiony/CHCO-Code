@@ -215,7 +215,7 @@ data7 <- data6 %>%  select(-starts_with('exclusion')) %>%  select(-starts_with('
                         "cgm_placement_notes","demographics_and_anthropometrics_complete","agreed_to_future_contact.factor","consent","re_consent_for_prospective",
                         "lab_data_complete","cgm_data_success_failure","cgm_data_gaps_filled_in","number_of_gaps_filled_in","total_time_filled_in"   ))
  
-# find date of CFRD dx (2 hour glucose > 200, HbA1c >=6.5)
+# find date of CFRD dx (2 hour glucose >= 200, HbA1c >=6.5)
 CFRD <- data7[,c("MRN","Encounter_date","Hbg A1C","poc_a1c","OGTT 2 Hour","lab_ogtt_2_hour_glucose")]
 CFRD$dia_visit <- ifelse(CFRD$`Hbg A1C`>=6.5 | CFRD$poc_a1c >=6.5 | CFRD$`OGTT 2 Hour`>= 200 | CFRD$lab_ogtt_2_hour_glucose >= 200, 1, NA)
 CFRD <- CFRD %>% filter(CFRD$dia_visit==1)
@@ -224,6 +224,18 @@ CFRD_date$CFRD_date <- as.Date("")
 CFRD_date$CFRD_date <- CFRD_date$Encounter_date
 CFRD_date <- CFRD_date[,c("MRN","CFRD_date")]
 data8 <- merge(data7,CFRD_date,by="MRN",all.x = T,all.y = T)
+
+# find date of IGT (2 hour glucose >=140)
+igt <- data7[,c("MRN","Encounter_date","OGTT 2 Hour","lab_ogtt_2_hour_glucose")]
+igt$igt_visit <- ifelse((igt$`OGTT 2 Hour`>= 140 & igt$`OGTT 2 Hour`<200) | (igt$lab_ogtt_2_hour_glucose >= 140 & igt$lab_ogtt_2_hour_glucose <200), 1, NA)
+igt <- igt %>% filter(igt$igt_visit==1)
+igt_date <- igt %>% arrange(MRN,Encounter_date) %>% group_by(MRN) %>% filter(row_number()==1)
+igt_date$igt_date <- as.Date("")
+igt_date$igt_date <- igt_date$Encounter_date
+igt_date <- igt_date[,c("MRN","igt_date")]
+data8 <- merge(data8,igt_date,by="MRN",all.x = T,all.y = T)
+data8$flag_igt_cfrd <- ifelse(!is.na(data8$CFRD_date) & !is.na(data8$igt_date) & data8$igt_date>data8$CFRD_date,1,NA)
+data8$igt_date <- ifelse(is.na(data8$flag_igt_cfrd),data8$igt_date,NA)
 
 # create time variable
 # what is the start date? Date of first CGM placement
@@ -240,6 +252,15 @@ data8$days <- as.numeric(data8$Encounter_date - data8$date_cgm_placement)
 # create var for CFRD or not
 # time dependent
 data8$has_CFRD <- ifelse(is.na(data8$CFRD_date) | data8$Encounter_date < data8$CFRD_date,0,1) 
+data8$has_igt <-  ifelse(is.na(data8$igt_date) | data8$Encounter_date < data8$igt_date,0,1) 
+ever_cfrd <- data8[,c("MRN","has_CFRD")] %>% filter(data8$has_CFRD==1)
+ever_cfrd <- unique(ever_cfrd)
+colnames(ever_cfrd) <- c("MRN","ever_cfrd")
+data8 <- merge(data8,ever_cfrd,by="MRN",all.x = T,all.y = T)
+ever_igt <- data8[,c("MRN","has_igt")] %>% filter(data8$has_igt==1)
+ever_igt <- unique(ever_igt)
+colnames(ever_igt) <- c("MRN","ever_igt")
+data8 <- merge(data8,ever_igt,by="MRN",all.x = T,all.y = T)
 
 # need to consolidate BMI variables - but do we want BMI percentile and/or Zscore?
 data8$height <- ifelse(is.na(data8$height),data8$`Height in cm`,data8$height)
@@ -454,7 +475,6 @@ model_cox = function(timevar,statusvar,pred,df) {
 ```
 
 ```{r}
-
 t1data <- final_alltime_withins[final_alltime_withins$days==0,]
 t1vars <- c("age","gender.factor","race_ethnicity.factor","genoRisk","bmiZ","bmi_percentile","g_tube_feeds.factor","cf_pancreatic.factor","group_category.factor",
             "poc_a1c","fuptime_yrs","average_sensor","standard_deviation","min_sensor","max_sensor","percent_time_over_120","percent_time_over_140",
@@ -480,6 +500,14 @@ t1data$mean_amp_glycemic_ex5 <- t1data$mean_amp_glycemic_ex/5
 t1data$cov5 <- t1data$cov/5
 t1data$lab_ogtt_1_hour_glucose5 <- t1data$lab_ogtt_1_hour_glucose/5
 t1data$lab_ogtt_2_hour_glucose5 <- t1data$lab_ogtt_2_hour_glucose/5
+
+t1data$ever_cfrd <- ifelse(is.na(t1data$ever_cfrd),0,t1data$ever_cfrd)
+t1data$ever_igt <- ifelse(is.na(t1data$ever_igt),0,t1data$ever_igt)
+t1data$ever_cfrd <- as.factor(t1data$ever_cfrd)
+t1data$ever_igt <- as.factor(t1data$ever_igt)
+label(t1data$ever_cfrd)="Developed CFRD during f/up"
+label(t1data$ever_igt)="Developed IGT during f/up"
+
 ```
 
 # Background
@@ -516,6 +544,18 @@ t1 <- print(t1,varLabels=TRUE,showAllLevels=TRUE)
 
 ```{r}
 kable(t1)
+```
+<br>
+
+## Clinical characteristics during follow-up
+
+```{r, include=FALSE, echo=FALSE, results='hide'}
+t2 <- CreateTableOne(vars=c("ever_cfrd","ever_igt"), data=t1data)
+t2 <- print(t2,varLabels=TRUE,showAllLevels=TRUE)
+```
+
+```{r}
+kable(t2)
 ```
 <br>
 
