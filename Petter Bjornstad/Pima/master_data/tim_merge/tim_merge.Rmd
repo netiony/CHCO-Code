@@ -15,7 +15,7 @@ library(haven)
 knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
 home_dir = ifelse(.Platform$OS.type != "unix",
                   "Z:/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Pima/Master data/Raw data",
-                  "/mnt/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Pima/Master data/Raw data")
+                  "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Pima/Master data/Raw data")
 knitr::opts_knit$set(root.dir = home_dir)
 ```
 
@@ -31,7 +31,7 @@ drds = read_sas("drds05may2021.sas7bdat")
 important_vars = 
   c("nih","sacaton","pimc","date","testint","protocol","stratum","dob",
     "date_dx","dod","underly","age","dmdur","sex","ht_cm","wt_kg",
-    "bsa","sbp","dbp","pulse","sbp_6","dbp_6","pulse_6","medsnow","recent_illness","op",
+    "sbp","dbp","pulse","sbp_6","dbp_6","pulse_6","medsnow","recent_illness","op",
     "op_spec","hosp_wo_surg","hosp_wo_surg_spec","hosp_w_surg","hosp_w_surg_spec",
     "med_probs","cad","cancer","cancer_spec","cvd","pvd","htn","seizures","gu_dz",
     "gu_dz_spec","lung_dz","surgery","surgery_spec","other_dz","other_dz_spec",
@@ -41,8 +41,7 @@ important_vars =
     "smac_tbil","smac_alk","scr","hba1a","hba1b","hba1c","hba1o",
     "hbf","p0albumin","p0igg","p3albumin","p3igg","ucr","ualb","acr","u0igg",
     "u3albumin","u3igg","u3use_gfr","u3flow_gfr","u3gfr",
-    "gfr","pah","rpf","p0pia","p3pia","pie","gfrb","pahb","rpfb",
-    "pigc","wbc","rbc","hgb","hct","mcv","mch","mchc","plts","neut","lymph",
+    "gfr","pah","p0pia","p3pia","wbc","rbc","hgb","hct","mcv","mch","mchc","plts","neut","lymph",
     "mono","eos","baso","stop_dt",
     "med_metformin","med_ras","med_htn","med_arb","med_orl","med_lipid","med_ace",
     "med_ins","med_ald","med_statin","med_nsai")
@@ -379,10 +378,12 @@ colnames(drds) = tolower(colnames(drds))
 drds_vars = setdiff(colnames(drds),important_vars)
 drds_vars = 
   drds_vars[-which(drds_vars %in% c("bmi","fc_alb","fc_igg","smoke","alcohol"))]
-important_vars = c(important_vars,drds_vars)
 # Format columns for merge
 drds$date = lubridate::ymd(drds$date)
 drds$dob = as.character(drds$dob)
+drds$nih = as.integer(drds$nih)
+drds$date_dx = lubridate::ymd(as.character(drds$date_dx))
+drds$sex = factor(drds$sex,levels = c(0,1),labels = c("Male","Female"))
 ```
 
 ```{r merge,include=FALSE}
@@ -391,7 +392,6 @@ final = full_join(g4,vital_status,by = "record_id")
 final = full_join(final,ficoll)
 final = full_join(final,ddn)
 final = full_join(final,losartan)
-final = full_join(final,drds)
 # Calculated variables
 final = final %>% 
   rename(
@@ -420,22 +420,43 @@ final = final %>%
     plts = f9platelets,neut = f9neutrophil,lymph = f9lymphocyte,
     mono = f9monocytes,eos = f9eosinophil,baso = f9basophils,
     stop_dt = f13stoppntdt,gfrb = s_gfrb,pahb = s_pahb,rpfb = s_rpfb
-  ) %>%
-  group_by(nih) %>% 
+  ) %>% filter(!is.na(date)) %>% arrange(nih, date)
+final$date_dx = lubridate::ymd(final$date_dx)
+levels(final$sex) = c("Male","Female","Female")
+# Add DRDS
+important_vars = c(important_vars,drds_vars)
+final = full_join(final,drds) %>% select(all_of(important_vars))
+# Conversions
+final$date = lubridate::ymd(final$date)
+# Enzymatic to Jaffe: used the Jaffe colorimetric method for measuring creatinine concentration until August 1, 2011 
+final$smac_scr_jaffe = ifelse(final$date < lubridate::ymd("2011-08-01"),
+                              final$smac_scr,exp((log(final$smac_scr)-0.1703)/1.0328))
+final$smac_scr_enz = ifelse(final$date >= lubridate::ymd("2011-08-01"),
+                              final$smac_scr,exp(0.1703 + 1.0328*log(final$smac_scr)))
+# HbA1c to IFCC traceable HbA1c: IF HBA1C AND DATE NE . AND DATE LT MDY(08,10,2010) THEN IFCC_HBA1C=(0.9255*HBA1C)+0.1336;
+final$hba1c_derived = ifelse(final$date >= lubridate::ymd("2010-08-10"),
+                              final$hba1c,(0.9255*final$hba1c)+0.1336)
+# Hemodynamic calculations 
+final$bsa = 0.007184 * (final$ht_cm^0.725) * (final$wt_kg^0.425)
+final$gfrb = (final$gfr * 1.73)/final$bsa
+final$pahb = (final$pah * 1.73)/final$bsa
+final$extract = cut(final$gfrb,c(-Inf,30,80,Inf),labels = c("0.6","0.7","0.85"),right = F)
+final$extract = as.numeric(as.character(final$extract))
+final$rpf = final$pah/final$extract
+final$rpfb = (final$rpf * 1.73)/final$bsa
+final$ff = round(final$gfr/final$rpf,2)
+final$pie = final$p0pia/(1-final$ff)
+final$pigc = (final$p0pia + final$pie)/2
+# Fill and calculate age etc.
+final = final %>% group_by(nih) %>% 
   fill(all_of(constant_vars),.direction = "downup") %>% ungroup() %>%
   mutate(
-    age = difftime(date,dob,units = "days"),
-    dmdur = difftime(date,date_dx,units = "days")) %>%
-  select(all_of(important_vars)) %>%
-  filter(!is.na(date)) %>%
-  arrange(nih, date)
-# Conversions
-
-# Other cleanup
-final[final == ""] = NA
+    age = as.numeric(difftime(date,dob,units = "days")/365.25),
+    dmdur = as.numeric(difftime(date,date_dx,units = "days")/365.25))
+# Round
+final <- data.frame(lapply(final,function(x) if(is.numeric(x)) round(x, 2) else x))
 # Write
-write.csv(final,file = paste0("./Merged/merge_attempt_",Sys.Date(),".csv"),
-          na = "")
+write.csv(final,file = paste0("./Merged/merge_attempt_",Sys.Date(),".csv"),na = "")
 ```
 
 # Final Dataset Skim
