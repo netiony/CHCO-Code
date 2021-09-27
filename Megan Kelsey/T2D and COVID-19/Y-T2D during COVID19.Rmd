@@ -19,6 +19,9 @@ library(stringr)
 library(dplyr)
 library(tableone)
 library(knitr)
+library(lubridate)
+library(ggplot2)
+library(tscount)
 
 #################
 # READ IN DATA  #
@@ -157,9 +160,49 @@ alldata$yr_dx <- as.factor(as.character(alldata$yr_dx))
 alldata <- alldata %>% filter(!(alldata$site=="Columbia" & alldata$GAD65.Ab==""))
 alldata <- alldata %>% filter(!(alldata$site=="CHLA" & alldata$GAD65.Ab=="POS"))
 
+##################
+# AIM 2 OUTCOMES #
+##################
+
+# DKA is pH<7.3 or bicarb<15
+alldata$dka <- (!is.na(alldata$pH) & alldata$pH<7.3 & is.na(alldata$bicarbonate)) | 
+                (!is.na(alldata$bicarbonate) & alldata$bicarbonate<15 & is.na(alldata$pH)) |
+                  (!is.na(alldata$bicarbonate) & !is.na(alldata$pH) & alldata$pH<7.3 & alldata$bicarbonate<15)
+alldata$dka <- ifelse(is.na(alldata$pH) & is.na(alldata$bicarbonate),NA,alldata$dka)
+
+# HHS is osmolality >=330 AND glucose >600
+alldata$hhs <- ifelse(alldata$Serum.glucose..random.>600 & alldata$Serum.osmolality>=330,TRUE,FALSE)
+
+# metabolic decomp is DKA or HHS or both
+alldata$met_decomp <- alldata$dka | alldata$hhs
+
+#######################
+# DEFINE TIME PERIODS #
+#######################
+
+alldata$day_dx <- 1
+alldata$dx_date <- as.Date(with(alldata, paste(yr_dx, mo_dx, day_dx,sep="-")), "%Y-%m-%d")
+
+# filter out patients not in the correct time period
+alldata <- alldata %>% filter(!(alldata$dx_date>as.Date("2021-02-28")))
+
+alldata$period <- ifelse(alldata$dx_date>as.Date("2018-03-01") & alldata$dx_date<as.Date("2019-02-28"),1,
+                         ifelse(alldata$dx_date>as.Date("2019-03-01") & alldata$dx_date<as.Date("2020-02-29"),2,3))
+alldata$period <- as.factor(alldata$period)
+
+alldata$pandemic <- as.factor(ifelse(alldata$period==3,1,0))
+
+#######################
+# CREATE TIME SERIES  #
+#######################
+
+ts1 <- alldata %>% group_by(dx_date) %>% tally()
+ts2 <- ts1$n
+ts3 <- ts(ts2,start = c(2018,3), end=c(2021,2),frequency=12)
+
 ```
 
-# Outstanding Data cleaning issues
+# Outstanding data cleaning issues
 
 - Children's Mercy recorded "Yes" and "No" for the antibodies tested - does "yes" indicate tested and negative and "no" indicate not tested?
 - 6 records (1 CHLA, 5 JHU with missing ab data)
@@ -177,17 +220,89 @@ if A1c >14, set to 14
 if A1c >14.5, set to 14.5
 same with glucose, all labs (upper and lower limit)
 
+eligibility criterion: 85th percentile BMI, but we don't have height and weight so can't confirm
+define period
+
 # Results
 
 ```{r include=FALSE}
-vars <- colnames(alldata)
-vars <- vars[-1]
+vars <- c()
 
 t1 <- CreateTableOne(data=alldata,vars = vars)
 t1 <- print(t1,nonnormal = c("BMI","HbA1c","Serum.glucose..random.","pH","bicarbonate","Serum.osmolality"))
 ```
 
+## Overall descriptive statistics
+
 ```{r echo=FALSE}
-kable(t1,caption = "Table 1.")
+kable(t1,caption = "Overall descriptive statistics")
 ```
 <br>
+
+```{r include=FALSE}
+t2 <- CreateTableOne(data=alldata,vars = vars,strata = "pandemic")
+t2 <- print(t2,nonnormal = c("BMI","HbA1c","Serum.glucose..random.","pH","bicarbonate","Serum.osmolality"))
+```
+
+## Descriptive statistics before and during pandemic
+
+```{r echo=FALSE}
+kable(t2)
+```
+<br>
+
+## Figure
+
+```{r echo=FALSE}
+ggplot(alldata) + aes(x=dx_date) + geom_bar()
+```
+<br>
+
+## Model diagnostics
+
+```{r echo=FALSE}
+fit_poisson <- tsglm(ts3,distr = "poisson")
+fit_nb <- tsglm(ts3,distr = "nbinom")
+
+acf(residuals(fit_poisson))
+acf(residuals(fit_nb))
+
+pit(fit_poisson, main="PIT Poisson")
+pit(fit_nb, main="PIT NB")
+
+marcal(fit_poisson, main = "Marginal calibration")
+  lines(marcal(fit_nb, plot = FALSE), lty = "dashed")
+  legend("bottomright", legend = c("Pois", "NegBin"), lwd = 1, lty = c("solid", "dashed"))
+# NB model is better
+```
+<br>
+
+```{r echo=FALSE}
+# need to have the final dataset together before I can select the final model
+
+fit_nb1 <- tsglm(ts3,distr = "nbinom",model = list(past_obs=1))
+# AIC 289.1381
+fit_nb2 <- tsglm(ts3,distr = "nbinom",model = list(past_obs=c(1,2)))
+# AIC 290.9304
+
+fit_nb1_log <- tsglm(ts3,distr = "nbinom",model = list(past_obs=1),link = "log")
+# AIC 289.9162 
+fit_nb2_log <- tsglm(ts3,distr = "nbinom",model = list(past_obs=c(1,2)), link="log")
+# AIC 291.7674 
+
+x_pandemic <- c(rep(0,24),rep(1,12))
+fit_nb1p <- tsglm(ts3,distr = "nbinom",model = list(past_obs=1),xreg = x_pandemic)
+# AIC 284.3584
+fit_nb2p <- tsglm(ts3,distr = "nbinom",model = list(past_obs=c(1,2)),xreg = x_pandemic)
+# AIC 286.4812
+
+fit_nb1p_log <- tsglm(ts3,distr = "nbinom",model = list(past_obs=1),xreg = x_pandemic,link="log")
+# AIC 282.9692
+fit_nb2p_log <- tsglm(ts3,distr = "nbinom",model = list(past_obs=c(1,2)),xreg = x_pandemic,link="log")
+# AIC 285.102 
+
+# not sure if it makes sense to test for an intervention effect when the intervention is already a term in the model?
+# otherwise, how do I get p-values?
+interv_test(fit_nb2,tau=24,delta=1,est_interv=TRUE)
+```
+
