@@ -12,8 +12,9 @@ output:
 
 ```{r setup, include=FALSE}
 library(readxl)
-library(knitr)
+library(DT)
 library(tidyverse)
+library(plotly)
 knitr::opts_chunk$set(echo = FALSE)
 home_dir = ifelse(.Platform$OS.type != "unix",
                   "C:/Users/timvigers/Dropbox/Work/Pima/",
@@ -23,43 +24,111 @@ knitr::opts_knit$set(root.dir = home_dir)
 
 ```{r import}
 combined = read_excel("Combined Kidney Data.xls")
+combined$NIH = factor(combined$NIH)
+combined$PROTOCOL = factor(combined$PROTOCOL)
 ```
 
-# 1. Check that DOB is the same across visits for everyone
+# Check that DOB is the same across visits for everyone
 
 ```{r}
 dob = combined %>% group_by(NIH) %>% summarize(n_dobs = length(unique(DOB)))
 multiples = unique(dob$NIH[which(dob$n_dobs != 1)])
 if(length(multiples) > 0){
   combined %>% filter(NIH %in% multiples) %>% group_by(NIH) %>% 
-    count(DOB,PROTOCOL) %>% select(-n) %>% kable()
+    count(DOB,PROTOCOL) %>% select(-n) %>% 
+    datatable(.,extensions = "Buttons",
+              options = list(dom = 'lBfrtip',
+                             buttons = c('copy', 'csv', 'excel')))
 }
 ```
 
 There were `r length(multiples)` participants with multiple DOB values.
 
-# 2. Check that date of diagnosis is the same across visits for everyone
+# Check that date of diagnosis is the same across visits for everyone
 
 ```{r}
 dx = combined %>% group_by(NIH) %>% summarize(n_dx_dates = length(unique(DATE_DX)))
 multiples = unique(dx$NIH[which(dx$n_dx_dates != 1)])
 if(length(multiples) > 0){
   combined %>% filter(NIH %in% multiples) %>% group_by(NIH) %>% 
-    count(DATE_DX,PROTOCOL) %>% select(-n) %>% kable()
+    count(DATE_DX,PROTOCOL) %>% select(-n) %>% 
+    datatable(.,extensions = "Buttons",
+              options = list(dom = 'lBfrtip',
+                             buttons = c('copy', 'csv', 'excel')))
 }
 ```
 
 There were `r length(multiples)` participants with multiple date of diagnosis values.
 
-# 3. Check that sex is the same across visits for everyone
+# Check that sex is the same across visits for everyone
 
 ```{r}
 sex = combined %>% group_by(NIH) %>% summarize(n_sex = length(unique(SEX)))
 multiples = unique(sex$NIH[which(sex$n_sex != 1)])
 if(length(multiples) > 0){
   combined %>% filter(NIH %in% multiples) %>% group_by(NIH) %>% 
-    count(DATE_DX,PROTOCOL) %>% select(-n) %>% kable()
+    count(SEX,PROTOCOL) %>% select(-n) %>% 
+    datatable(.,extensions = "Buttons",
+              options = list(dom = 'lBfrtip',
+                             buttons = c('copy', 'csv', 'excel')))
 }
 ```
 
 There were `r length(multiples)` participants with multiple sex values.
+
+# Check that height is mostly the same across visits for everyone
+
+```{r}
+ht = combined %>% group_by(NIH) %>% summarize(n_ht = length(unique(HT_CM)))
+multiples = unique(ht$NIH[which(ht$n_ht != 1)])
+if(length(multiples) > 0){
+  combined %>% filter(NIH %in% multiples) %>% group_by(NIH) %>% 
+    count(HT_CM,PROTOCOL) %>% select(-n) %>% 
+    datatable(.,extensions = "Buttons",
+              options = list(dom = 'lBfrtip',
+                             buttons = c('copy', 'csv', 'excel')))
+}
+```
+
+There were `r length(multiples)` participants with multiple height values.
+
+# Check for big fluctuations in WT_KG, SBP, DBP, and PULSE 
+
+## WT_KG
+
+```{r warning=FALSE}
+# Plot by protocol (facet wrap is too small)
+plots = lapply(levels(combined$PROTOCOL), function(p){
+  wt_plot = ggplot(combined[combined$PROTOCOL == p,],
+                   aes(x = TESTINT,y = WT_KG,group = NIH)) + 
+    geom_line(alpha = 0.1) + ggtitle(p) +
+    theme_bw() + theme(legend.position = "none")
+  wt_plot
+})
+ggplotly(plots[[1]])
+ggplotly(plots[[2]])
+ggplotly(plots[[3]])
+ggplotly(plots[[4]])
+ggplotly(plots[[5]])
+```
+
+```{r}
+# Check maximum difference between visits by person
+wt = combined %>% arrange(NIH,DATE) %>% group_by(NIH) %>% 
+  mutate(wt_diff = WT_KG - lag(WT_KG),
+         date_diff = as.numeric(DATE - lag(DATE),units = "days"),
+         wt_per_day = wt_diff / date_diff,
+         prev_date = lag(DATE),
+         prev_wt = lag(WT_KG),
+         prev_protocol = lag(PROTOCOL)) %>%
+  filter(abs(wt_per_day) > 0.1) %>%
+  select(NIH,PROTOCOL,prev_protocol,DATE,prev_date,date_diff,
+         WT_KG,prev_wt,wt_diff,wt_per_day) %>%
+  arrange(abs(wt_per_day))
+datatable(wt,extensions = "Buttons",
+          options = list(dom = 'lBfrtip',
+                         buttons = c('copy', 'csv', 'excel'))) %>%
+  formatSignif(c('wt_diff','wt_per_day'),digits = 2)
+```
+
+We calculated change in weight and change in weight per day between all visits for each participant. The above table shows visits with absolute change in weight $\geq$ 0.1 kg/day. Information about the previous visit is in columns with the "prev_" prefix. 
