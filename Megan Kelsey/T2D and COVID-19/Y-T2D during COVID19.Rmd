@@ -58,6 +58,8 @@ jhu$site <- "JHU"
 jhu$X <- NULL
 # remove 2 ppts per Risa
 jhu <- jhu %>% filter(!BMI %in% c(20.16,20.06))
+# missing ZnT8 data
+jhu$ZnT8.Ab <- ifelse(jhu$ZnT8.Ab=="","Not Tested",jhu$ZnT8.Ab)
 
 duke <- read.csv("E:\\Megan Kelsey\\T2D and COVID\\Data raw\\DUKE_T2D_DATA.csv")
 duke$site <- "Duke"
@@ -102,6 +104,11 @@ cnh <- read.csv("E:\\Megan Kelsey\\T2D and COVID\\Data raw\\Children's National_
 cnh$site <- "Children's National"
 # remove 2 ppts with low BMI
 #cnh <- cnh %>% filter(!ptid %in% c(160,238))
+# somehow I missed their ab variables were incorrect
+cnh$GAD65.Ab <- ifelse(cnh$GAD65.Ab=="Y","Negative","Not Tested")
+cnh$Insulin.Ab <- ifelse(cnh$Insulin.Ab=="Y","Negative","Not Tested")
+cnh$ICA.Ab <- ifelse(cnh$ICA.Ab=="Y","Negative","Not Tested")
+cnh$ZnT8.Ab <- ifelse(cnh$ZnT8.Ab=="Y","Negative","Not Tested")
 
 lurie <- read.csv("E:\\Megan Kelsey\\T2D and COVID\\Data raw\\9_28_21_LurieUpload.csv")
 lurie$site <- "Lurie"
@@ -128,6 +135,7 @@ tch$site <- "TCH"
 # exclude 3 patients with BMI percentile <85
 tch <- tch %>% filter(!ptid %in% c("TCH-32","TCH-35","TCH-69"))
 tch$X <- NULL
+tch$ZnT8.Ab <- ifelse(tch$ZnT8.Ab=="Negaative","NEGATIVE",tch$ZnT8.Ab)
 
 ucsf <- read.csv("E:\\Megan Kelsey\\T2D and COVID\\Data raw\\T2D_COVID_UCSF_V2_10252021.csv")
 ucsf$site <- "UCSF"
@@ -269,7 +277,7 @@ alldata$COVID.19.at.diagnosis <- ifelse(alldata$COVID.19.at.diagnosis %in% c("",
 # clean up location
 alldata$Location.Diagnosis <- ifelse(alldata$Location.Diagnosis %in% c(""," "),"UNKNOWN",alldata$Location.Diagnosis)
 alldata$Location.Diagnosis <- ifelse(alldata$Location.Diagnosis %in% c("INPATIENT-FLOOR","INPATIENT-ICU","IP"),"INPATIENT",alldata$Location.Diagnosis)
-alldata$Location.Diagnosis <- ifelse(alldata$Location.Diagnosis %in% c("OP"),"OUTPATIENT",alldata$Location.Diagnosis)
+alldata$Location.Diagnosis <- ifelse(alldata$Location.Diagnosis %in% c("OP","ED AND DISCHARGED"),"OUTPATIENT",alldata$Location.Diagnosis)
 
 # convert to factors
 alldata$mo_dx <- as.factor(as.character(alldata$mo_dx))
@@ -353,13 +361,22 @@ write.csv(bmicheck_utsw,"E:\\Megan Kelsey\\T2D and COVID\\Data clean\\bmicheck_u
 alldata$dka <- (!is.na(alldata$pH) & alldata$pH<7.3 & is.na(alldata$bicarbonate)) | 
                 (!is.na(alldata$bicarbonate) & alldata$bicarbonate<=15 & is.na(alldata$pH)) |
                   (!is.na(alldata$bicarbonate) & !is.na(alldata$pH) & alldata$pH<7.3 & alldata$bicarbonate<=15)
-alldata$dka <- ifelse(is.na(alldata$pH) & is.na(alldata$bicarbonate),NA,alldata$dka)
+#alldata$dka <- ifelse(is.na(alldata$pH) & is.na(alldata$bicarbonate),NA,alldata$dka)
+# if DKA is missing, set to none
+#alldata$dka <- ifelse(is.na(alldata$dka),FALSE,TRUE)
 
 # HHS is osmolality >=330 AND glucose >600
 alldata$hhs <- ifelse(alldata$Serum.glucose..random.>600 & alldata$Serum.osmolality>=330,TRUE,FALSE)
+alldata$hhs <- ifelse(is.na(alldata$hhs),FALSE,alldata$hhs)
 
 # metabolic decomp is DKA or HHS or both
 alldata$met_decomp <- alldata$dka | alldata$hhs
+
+# DKA severity
+# THIS IS NOT CORRECT - THERE ARE SOME PEOPLE WITH DKA MISSING SEVERITY
+alldata$dka_severity <- ifelse(alldata$dka==TRUE & ((is.na(alldata$pH) & alldata$bicarbonate<5) | (is.na(alldata$bicarbonate) & alldata$pH<7.1) | (alldata$pH<7.1 | alldata$bicarbonate<5)),"Severe",
+                          ifelse(alldata$dka==TRUE & ((is.na(alldata$pH) & alldata$bicarbonate<10) | (alldata$pH<7.2 & is.na(alldata$bicarbonate)) | (alldata$pH<7.2 | alldata$bicarbonate<10)),"Moderate",
+                                                           ifelse(alldata$dka==TRUE,"Mild",NA)))
 
 #######################
 # DEFINE TIME PERIODS #
@@ -372,11 +389,11 @@ alldata$dx_date <- as.Date(with(alldata, paste(yr_dx, mo_dx, day_dx,sep="-")), "
 alldata <- alldata %>% filter(!(alldata$dx_date<as.Date("2018-03-01")))
 alldata <- alldata %>% filter(!(alldata$dx_date>as.Date("2021-02-28")))
 
-alldata$period <- ifelse(alldata$dx_date>as.Date("2018-03-01") & alldata$dx_date<as.Date("2019-02-28"),1,
-                         ifelse(alldata$dx_date>as.Date("2019-03-01") & alldata$dx_date<as.Date("2020-02-29"),2,3))
+alldata$period <- ifelse(alldata$dx_date>as.Date("2018-03-01") & alldata$dx_date<=as.Date("2019-02-28"),"3/1/18-2/28/19",
+                         ifelse(alldata$dx_date>=as.Date("2019-03-01") & alldata$dx_date<=as.Date("2020-02-29"),"3/1/19-2/29/20","3/1/20-2/28/21"))
 alldata$period <- as.factor(alldata$period)
 
-alldata$pandemic <- as.factor(ifelse(alldata$period==3,1,0))
+alldata$pandemic <- as.factor(ifelse(alldata$period=="3/1/20-2/28/21",1,0))
 
 #######################
 # CREATE TIME SERIES  #
@@ -388,18 +405,6 @@ ts3 <- ts(ts2,start = c(2018,3), end=c(2021,2),frequency=12)
 
 ```
 
-# Outstanding data cleaning issues
-
-- deleted ab positive patients 
-- missing values for sex
-- 1 record at IU with BMI>300
-- Vanderbilt did not include month of diagnosis and year was coded as 0, -1, -2 so their data were excluded
-- Several sites recorded "yes" for the individual antibodies, probably because the lead-in question was "Was Ab tested" even though the options in the drop-down were "Negative" and "Not Tested."  Do we clarify?
-- 3 patients with diagnosis dates 11/19, 11/19, and 4/19 COVID positive
-- TCH recorded location of diagnosis as "TCH".  How to code "ED and discharged"?
-- if race=Hispanic recoded to missing (ethnicity was Hispanic in all these cases)
-- 57 patients with BMI percentile <85 - exclude?
-
 # Background
 
 # Methods
@@ -409,11 +414,12 @@ lab values above or below limit of detection set to the limit value
 # Results
 
 ```{r include=FALSE}
-vars <- c("site","mo_dx","yr_dx","num_ab_tested","age_dx","Race","Ethnicity","sex","insurance","Location.Diagnosis","COVID.19.at.diagnosis","BMI","bmip","HbA1c",
-          "Serum.glucose..random.","pH","bicarbonate","Serum.osmolality","dka","hhs","met_decomp")
+vars <- c("site","mo_dx","yr_dx","period","num_ab_tested","GAD65.Ab","ICA.Ab","Insulin.Ab","ZnT8.Ab",
+          "age_dx","Race","Ethnicity","sex","insurance","Location.Diagnosis","COVID.19.at.diagnosis","BMI","bmip","HbA1c",
+          "Serum.glucose..random.","pH","bicarbonate","Serum.osmolality","dka","hhs","met_decomp","dka_severity")
 
 t1 <- CreateTableOne(data=alldata,vars = vars)
-t1 <- print(t1,nonnormal = c("BMI","bmip","HbA1c","Serum.glucose..random.","pH","bicarbonate","Serum.osmolality"))
+t1 <- print(t1,nonnormal = c("BMI","bmip","HbA1c","Serum.glucose..random.","pH","bicarbonate","Serum.osmolality"),showAllLevels=T)
 ```
 
 ## Overall descriptive statistics
@@ -424,11 +430,9 @@ kable(t1,caption = "Overall descriptive statistics")
 <br>
 
 ```{r include=FALSE}
-vars <- c("num_ab_tested","age_dx","Race","Ethnicity","sex","insurance","Location.Diagnosis","COVID.19.at.diagnosis","BMI","bmip","HbA1c",
-          "Serum.glucose..random.","pH","bicarbonate","Serum.osmolality","dka","hhs","met_decomp")
 
 t2 <- CreateTableOne(data=alldata,vars = vars,strata = "pandemic")
-t2 <- print(t2,nonnormal = c("BMI","bmip","HbA1c","Serum.glucose..random.","pH","bicarbonate","Serum.osmolality"))
+t2 <- print(t2,nonnormal = c("BMI","bmip","HbA1c","Serum.glucose..random.","pH","bicarbonate","Serum.osmolality"),showAllLevels=T)
 ```
 
 ## Descriptive statistics before and during pandemic
@@ -441,11 +445,12 @@ kable(t2)
 ## Descriptive statistics by site
 
 ```{r include=FALSE}
-vars <- c("num_ab_tested","age_dx","Race","Ethnicity","sex","insurance","Location.Diagnosis","COVID.19.at.diagnosis","BMI","bmip","HbA1c",
-          "Serum.glucose..random.","pH","bicarbonate","Serum.osmolality","dka","hhs","met_decomp")
+vars <- c("mo_dx","yr_dx","period","num_ab_tested","GAD65.Ab","ICA.Ab","Insulin.Ab","ZnT8.Ab",
+          "age_dx","Race","Ethnicity","sex","insurance","Location.Diagnosis","COVID.19.at.diagnosis","BMI","bmip","HbA1c",
+          "Serum.glucose..random.","pH","bicarbonate","Serum.osmolality","dka","hhs","met_decomp","dka_severity")
 
 t3 <- CreateTableOne(data=alldata,vars = vars,strata="site",test = FALSE)
-t3 <- print(t3,nonnormal = c("BMI","bmip","HbA1c","Serum.glucose..random.","pH","bicarbonate","Serum.osmolality"))
+t3 <- print(t3,nonnormal = c("BMI","bmip","HbA1c","Serum.glucose..random.","pH","bicarbonate","Serum.osmolality"),showAllLevels=T)
 ```
 
 ```{r echo=FALSE}
@@ -456,11 +461,12 @@ kable(t3)
 ## Descriptive statistics by year
 
 ```{r include=FALSE}
-vars <- c("num_ab_tested","age_dx","Race","Ethnicity","sex","insurance","Location.Diagnosis","COVID.19.at.diagnosis","BMI","bmip","HbA1c",
-          "Serum.glucose..random.","pH","bicarbonate","Serum.osmolality","dka","hhs","met_decomp")
+vars <- c("site","mo_dx","num_ab_tested","GAD65.Ab","ICA.Ab","Insulin.Ab","ZnT8.Ab",
+          "age_dx","Race","Ethnicity","sex","insurance","Location.Diagnosis","COVID.19.at.diagnosis","BMI","bmip","HbA1c",
+          "Serum.glucose..random.","pH","bicarbonate","Serum.osmolality","dka","hhs","met_decomp","dka_severity")
 
-t4 <- CreateTableOne(data=alldata,vars = vars,strata="yr_dx")
-t4 <- print(t4,nonnormal = c("BMI","bmip","HbA1c","Serum.glucose..random.","pH","bicarbonate","Serum.osmolality"))
+t4 <- CreateTableOne(data=alldata,vars = vars,strata="period")
+t4 <- print(t4,nonnormal = c("BMI","bmip","HbA1c","Serum.glucose..random.","pH","bicarbonate","Serum.osmolality"),showAllLevels=T)
 ```
 
 ```{r echo=FALSE}
@@ -523,16 +529,9 @@ a <- summary(fit_nb1,B=100)
 # although if we are really interested in August, need more pre pandemic data
 
 # remove seasonality
-preds <- cbind(ts3,linearTrend=(seq(along=ts3)*(0.15/36)))
-preds <- preds[,-1]
-fit_nb1 <- tsglm(ts3,distr = "nbinom",model = list(past_obs=1),xreg=preds)
-colnames(fit_nb1$xreg) <- "linearTrend"
-a <- summary(fit_nb1,B=100)
-# test of intervention
-interv_test(fit_nb1,tau=24,delta=1,est_interv=T)
-
 # make sure linear trend is right
-preds <- cbind(ts3,linearTrend=(seq(along=ts3)*(0.15/36))+rep(1,36))
+# beta is dependence on prior value, eta is dependence on covariates (I think), and sigmasq is overdispersion coefficient
+preds <- cbind(ts3,linearTrend=((seq(along=ts3)-1)*(0.15/36))+rep(1,36))
 preds <- preds[,-1]
 fit_nb1 <- tsglm(ts3,distr = "nbinom",model = list(past_obs=1),xreg=preds)
 colnames(fit_nb1$xreg) <- "linearTrend"
