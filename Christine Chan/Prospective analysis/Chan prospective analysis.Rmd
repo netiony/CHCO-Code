@@ -215,12 +215,12 @@ data7 <- data6 %>%  select(-starts_with('exclusion')) %>%  select(-starts_with('
                         "phone_number","email","agreed_to_future_contact","abdomen_comments","sensor_placement_time","ipro_placement_time","cgm_placement",
                         "cgm_placement_notes","demographics_and_anthropometrics_complete","agreed_to_future_contact.factor","consent","re_consent_for_prospective",
                         "lab_data_complete","cgm_data_success_failure","cgm_data_gaps_filled_in","number_of_gaps_filled_in","total_time_filled_in"   ))
- 
+
 # find date of CFRD dx (2 hour glucose >= 200, HbA1c >=6.5)
-CFRD <- data7[,c("MRN","Encounter_date","Hbg A1C","poc_a1c","OGTT 2 Hour","lab_ogtt_2_hour_glucose","poc_fasting_glucose","OGTT Fasting","poc_2_hour_glucose")]
+CFRD <- data7[,c("MRN","Encounter_date","Hbg A1C","poc_a1c","OGTT 2 Hour","lab_ogtt_2_hour_glucose","OGTT Fasting","lab_ogtt_fasting")]
 # include fasting glucose in the definition of CFRD
-CFRD$dia_visit <- ifelse(CFRD$`Hbg A1C`>=6.5 | CFRD$poc_a1c >=6.5 | CFRD$`OGTT 2 Hour`>= 200 | CFRD$lab_ogtt_2_hour_glucose >= 200 | CFRD$poc_2_hour_glucose >=200 
-                         | CFRD$poc_fasting_glucose>=126 | CFRD$`OGTT Fasting`>=126, 1, NA)
+CFRD$dia_visit <- ifelse(CFRD$`Hbg A1C`>=6.5 | CFRD$poc_a1c >=6.5 | CFRD$`OGTT 2 Hour`>= 200 | CFRD$lab_ogtt_2_hour_glucose >= 200  
+                         | CFRD$lab_ogtt_fasting>=126 | CFRD$`OGTT Fasting`>=126, 1, NA)
 # don't include fasting glucose
 #CFRD$dia_visit <- ifelse(CFRD$`Hbg A1C`>=6.5 | CFRD$poc_a1c >=6.5 | CFRD$`OGTT 2 Hour`>= 200 | CFRD$lab_ogtt_2_hour_glucose >= 200, 1, NA)
 CFRD <- CFRD %>% filter(CFRD$dia_visit==1)
@@ -229,6 +229,12 @@ CFRD_date$CFRD_date <- as.Date("")
 CFRD_date$CFRD_date <- CFRD_date$Encounter_date
 CFRD_date <- CFRD_date[,c("MRN","CFRD_date")]
 data8 <- merge(data7,CFRD_date,by="MRN",all.x = T,all.y = T)
+
+# write file of visits where people met criteria for CFRD based on only fasting glucose, not 2 hour or A1c
+cfrd_fasting <- CFRD[CFRD$dia_visit==1,]
+cfrd_fasting <- cfrd_fasting[cfrd_fasting$`OGTT Fasting`>=126 | cfrd_fasting$lab_ogtt_fasting>=126,]
+cfrd_fasting <- cfrd_fasting %>% filter(!is.na(MRN))
+# no one
 
 # create time variable
 # what is the start date? Date of first CGM placement
@@ -296,6 +302,7 @@ base$has_CFRD_base <- base$has_CFRD
 base <- base[,c("MRN","has_CFRD_base")]
 data8 <- merge(data8,base,by="MRN",all.x = T, all.y = T)
 data8$CFRD_after_base <- ifelse(data8$ever_cfrd==1 & data8$has_CFRD_base==0,1,0)
+data8$CFRD_after_base <- ifelse(is.na(data8$CFRD_after_base),0,data8$CFRD_after_base)
 
 # create baseline predictor variables
 # may need to add other vars, or vars calculated from fsOGTT, but will pick CGM vars for now
@@ -406,6 +413,12 @@ data9$igi <- (data9$min_30_insulin - data9$min_0_insulin) / (data9$min_30_glucos
 # final dataset for Christine to review
 write.csv(data9,'E:\\Christine Chan\\Prospective analysis\\Data clean\\final_export_prospective.csv',row.names = F)
 
+# are there visits with POC glucose values but not the usual OGTT glucose values?
+check_poc <- data9[,c("MRN","Encounter_date","OGTT 2 Hour","lab_ogtt_2_hour_glucose","poc_2_hour_glucose","OGTT Fasting","lab_ogtt_fasting","poc_fasting_glucose")]
+check_poc <- check_poc[(!is.na(check_poc$poc_2_hour_glucose) & is.na(check_poc$`OGTT 2 Hour`) & is.na(check_poc$lab_ogtt_2_hour_glucose)) | 
+                         (!is.na(check_poc$poc_fasting_glucose) & is.na(check_poc$`OGTT Fasting`) & is.na(check_poc$lab_ogtt_fasting)),]
+write.csv(check_poc,"E:\\Christine Chan\\Prospective analysis\\Data clean\\checking_POC_glucose.csv",row.names = F)
+
 # final datasets - with and without insulin, 1 year, 3 years, all time points
 final_alltime_withins <- data9 
 final_1yr_withins <- data9 %>% filter(days<=365)
@@ -419,6 +432,16 @@ dfs <- c("final_alltime_withins","final_1yr_withins","final_3yr_withins","final_
 checkogtt <- final_alltime_withins %>% filter(date_of_ogtt>CFRD_date)
 checkogtt <- checkogtt[,c("MRN","Encounter_date" ,"date_of_ogtt","CFRD_date")]
 write.csv(checkogtt,'E:\\Christine Chan\\Prospective analysis\\Data clean\\ogtt_after_cfrd.csv',row.names = F)
+
+# write dataset of CGM placement data, all OGTT variables, insulin start date, baseline insulin status, insulin status after baseline, baseline CFRD, CFRD after baseline
+checkoutcomes <- data9[,c("MRN","date_cgm_placement","Encounter_date","OGTT Fasting","lab_ogtt_fasting","OGTT 2 Hour","lab_ogtt_2_hour_glucose",
+                          "insulin_start_date","on_ins_base","ins_after_base","CFRD_date","has_CFRD_base","CFRD_after_base")]
+write.csv(checkoutcomes,'E:\\Christine Chan\\Prospective analysis\\Data clean\\check_outcomes.csv',row.names = F)
+
+# check missingness of fsOGTT variables in REDCap
+checkfsogtt <- data9[,c("MRN","subject_id","Encounter_date","isi_ins","isi_c_pept","ogtt_auc_2_hour","odi_ins","odi_cpep","odi_ins_and_cpep")]
+write.csv(checkfsogtt,'E:\\Christine Chan\\Prospective analysis\\Data clean\\check_fsogtt.csv',row.names = F)
+
 ```
 
 ```{r plot function}

@@ -1,0 +1,1502 @@
+---
+title: "Hypoglycemia Analysis"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+    fig_height: 8
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(nlme)
+library(emmeans)
+library(patchwork)
+library(ggsignif)
+library(arsenal)
+library(zoo)
+library(vcd)
+library(kableExtra)
+```
+
+```{r}
+getAUCs <- function(data,subject,time,vars){
+  all_return <- NULL
+  
+  for (var in vars){
+    subs <- unique(data[[subject]])
+    return <- NULL
+    for (sub in subs){
+      try({
+        df <- data[data[[subject]] == sub,]
+        ogtt_0 <- df[df[[time]] == 0,var]
+        ogtt_30 <- df[df[[time]] == 30,var]
+        ogtt_60 <- df[df[[time]] == 60,var]
+        ogtt_90 <- df[df[[time]] == 90,var]
+        ogtt_120 <- df[df[[time]] == 120,var]
+        ogtt_auc <- (ogtt_30[[var]] + ogtt_60[[var]] + ogtt_90[[var]])/2 + (ogtt_0[[var]] + ogtt_120[[var]])/4
+        if(length(ogtt_auc) > 0){
+          row <- c(sub,ogtt_auc)
+          return <- rbind(return, row)
+        }
+        
+      })
+      
+    }
+    return <- as.data.frame(return)
+    names(return) <- c(subject,paste0(var,"_auc"))
+    if (is.null(all_return)){
+      all_return <- return
+    }
+    else{
+      all_return <- merge(all_return, return, all = T)
+    }
+    
+    
+  }
+  all_return
+  
+  
+}
+
+```
+
+```{r, warning = F, message = F}
+dat <- read.csv("./data/CGMInHealthyControls_DATA_2021-05-25_0918.csv", na = "-999")
+
+dat$group_category[dat$group_category == "1"] <- "Healthy"
+dat$group_category[dat$group_category == "2"] <- "CF-NGT"
+dat$group_category[dat$group_category == "3"] <- "CF-AG"
+dat$group_category[dat$group_category == "4"] <- "CFRD"
+dat$group_category <- factor(dat$group_category, levels = c("Healthy","CF-NGT","CF-AG","CFRD"))
+
+dat$minute_60_glucose <- dat$lab_ogtt_1_hour_glucose
+dat$minute_120_glucose <- dat$lab_ogtt_2_hour_glucose
+dat$minute_0_glucose <- dat$lab_ogtt_fasting
+
+dat$weight[is.na(dat$weight)] <- dat$weight_visit_2[is.na(dat$weight)]
+dat$height[is.na(dat$height)] <- dat$height_visit_2[is.na(dat$height)]
+dat$bmi[is.na(dat$bmi)] <- dat$bmi_visit_2[is.na(dat$bmi)]
+dat$bmi_z_score[is.na(dat$bmi_z_score)] <- dat$bmi_z_score_visit_2[is.na(dat$bmi_z_score)]
+
+dat$subject_id <- gsub("*--1", "", dat$subject_id)
+dat$subject_id <- gsub("*--2", "", dat$subject_id)
+dat$subject_id <- gsub("*\\.1", "", dat$subject_id)
+dat$subject_id <- gsub("*\\.2", "", dat$subject_id)
+dat <- unique(dat)
+
+dat$age <- as.numeric(dat$age)
+
+dat$gender[dat$gender == 1] <- "Male"
+dat$gender[dat$gender == 2] <- "Female"
+
+dat$race_ethnicity[dat$race_ethnicity == 1] <- "White"
+dat$race_ethnicity[dat$race_ethnicity == 2] <- "Black/African American"
+dat$race_ethnicity[dat$race_ethnicity == 3] <- "Asian"
+dat$race_ethnicity[dat$race_ethnicity == 5] <- "Hispanic"
+dat$race_ethnicity[dat$race_ethnicity == 6] <- "Other/Multiple"
+
+gluc <- dat %>% select(subject_id, date_of_visit, age, gender, race_ethnicity,
+                       starts_with("min"),-starts_with("min_spent"),-contains("sensor"),-contains("active"), - contains("glp"),-contains("gip"))
+gluc <- merge(gluc, dat %>% select(subject_id, date_of_visit, age, starts_with("ucd_")))
+gluc <- unique(gluc)
+gluc <- gluc[!is.na(gluc$min_30_glucose),]
+gluc[] <- lapply(gluc, gsub, pattern="<", replacement = "")
+
+gluc_names <- names(gluc)
+gluc_names <- gsub("min_","",gluc_names)
+gluc_names <- gsub("minute_","",gluc_names)
+gluc_names <- gsub("minus_","-",gluc_names)
+gluc_names <- gsub("ucd_","",gluc_names)
+gluc_names <- gsub("_total","",gluc_names)
+gluc_names <- gsub("glp_1","_glp1",gluc_names)
+gluc_names <- gsub("c_peptide","cpeptide",gluc_names)
+names(gluc) <- gluc_names
+gluc[gluc == -999.99] <- NA
+gluc <- unique(gluc)
+new_gluc <- gluc[0,]
+
+for (sub in unique(gluc$subject_id)){
+  df <- gluc[gluc$subject_id == sub,]
+  if (nrow(df) > 1){
+    df <- df %>% arrange(`0_gip`,desc(date_of_visit))
+    df <- df[1,]
+  }
+  new_gluc <- rbind(new_gluc,df)
+}
+
+
+gluc_wide <- new_gluc %>% select(-date_of_visit)
+gluc <- gluc_wide %>% pivot_longer(cols = -c(subject_id), 
+                                   names_to = c("time", ".value"), names_sep = "_")
+
+#gluc <- gluc[!is.na(gluc$glucose) | !is.na(gluc$glucagon) | !is.na(gluc$insulin)| !is.na(gluc$cpeptide),]
+#gluc <- gluc[!is.na(gluc$glucagon),]
+gluc <- gluc[gluc$time != "-10",]
+gluc$time <- as.factor(as.numeric(gluc$time))
+
+gluc$glucose <- as.numeric(gluc$glucose)
+gluc$insulin <- as.numeric(gluc$insulin)
+gluc$glucagon <- as.numeric(gluc$glucagon)
+gluc$cpeptide <- as.numeric(gluc$cpeptide)
+gluc$gip <- as.numeric(gluc$gip)
+gluc$glp1 <- as.numeric(gluc$glp1)
+
+gluc$gip[gluc$gip < 0] <- NA
+gluc$glp1[gluc$glp1 < 0] <- NA
+
+gluc <- gluc %>% filter(!is.na(time))
+
+aucs <- getAUCs(gluc, "subject_id","time",c("glucose","glucagon","insulin","cpeptide","gip","glp1"))
+
+df_aucs <- merge(aucs,unique(gluc %>% select(subject_id)))
+df_aucs$glucagon_auc <- as.numeric(df_aucs$glucagon_auc)
+df_aucs$glucose_auc <- as.numeric(df_aucs$glucose_auc)
+df_aucs$insulin_auc <- as.numeric(df_aucs$insulin_auc)
+df_aucs$cpeptide_auc <- as.numeric(df_aucs$cpeptide_auc)
+df_aucs$gip_auc <- as.numeric(df_aucs$gip_auc)
+df_aucs$glp1_auc <- as.numeric(df_aucs$glp1_auc)
+
+df_aucs <- df_aucs[!is.na(df_aucs$glucagon_auc) | !is.na(df_aucs$glucose_auc) |!is.na(df_aucs$insulin_auc) |!is.na(df_aucs$cpeptide_auc),]
+
+df_aucs <- unique(df_aucs)
+
+gluc_aucs <- df_aucs
+
+gluc$hypo_60 <- ifelse(gluc$subject_id %in% na.omit(unique(gluc$subject_id[gluc$glucose < 60])),"Yes","No")
+gluc$hypo_70 <- ifelse(gluc$subject_id %in% na.omit(unique(gluc$subject_id[gluc$glucose < 70])),"Yes","No")
+
+
+gluc_aucs <- merge(gluc_aucs,unique(gluc %>% select(subject_id, hypo_60,hypo_70)))
+
+glucose <- gluc_wide %>% select(subject_id, contains("glucose"),-starts_with("-10"))
+glucose <- glucose[complete.cases(glucose),]
+glucose[,2:10] <- sapply(glucose[,2:10], as.numeric)
+glucose$glucose_AUC <- rowSums(glucose[,2:10])
+glucose$glucose_mean <- glucose$glucose_AUC/9
+
+insulin <- gluc_wide %>% select(subject_id, contains("insulin"),-starts_with("-10"))
+insulin <- insulin[complete.cases(insulin),]
+insulin[,2:10] <- sapply(insulin[,2:10], as.numeric)
+insulin$insulin_AUC <- rowSums(insulin[,2:10])
+insulin$insulin_mean <- insulin$insulin_AUC/9
+
+cpeptide <- gluc_wide %>% select(subject_id, contains("cpeptide"),-starts_with("-10"))
+cpeptide <- cpeptide[complete.cases(cpeptide),]
+cpeptide[,2:10] <- sapply(cpeptide[,2:10], as.numeric)
+cpeptide$cpeptide_AUC <- rowSums(cpeptide[,2:10])
+cpeptide$cpeptide_mean <- cpeptide$cpeptide_AUC/9
+
+glucagon <- gluc_wide %>% select(subject_id, contains("glucagon"),-starts_with("-10"))
+glucagon <- glucagon[complete.cases(glucagon),]
+glucagon[,2:10] <- sapply(glucagon[,2:10], as.numeric)
+glucagon$glucagon_AUC <- rowSums(glucagon[,2:10])
+glucagon$glucagon_mean <- glucagon$glucagon_AUC/9
+
+auc_df <- merge(glucose, insulin, all = T)
+auc_df <- merge(auc_df, cpeptide, all = T)
+auc_df <- merge(auc_df, glucagon, all = T)
+
+auc_df$hypo_60 <- ifelse(auc_df$subject_id %in% na.omit(unique(gluc$subject_id[gluc$glucose < 60])),"Yes","No")
+auc_df$hypo_70 <- ifelse(auc_df$subject_id %in% na.omit(unique(gluc$subject_id[gluc$glucose < 70])),"Yes","No")
+
+auc_df$matsuda_ins <- 10000/sqrt(auc_df$`0_glucose`*auc_df$`0_insulin`*auc_df$glucose_mean*auc_df$insulin_mean)
+auc_df$matsuda_cpep <- 20/(auc_df$`0_cpeptide`*auc_df$`0_glucose`)
+auc_df$homa_ir <- auc_df$`0_glucose`*auc_df$`0_insulin`/405
+auc_df$igi <- (auc_df$`30_insulin` - auc_df$`0_insulin`)/(auc_df$`30_glucose` - auc_df$`0_glucose`)
+auc_df$igi[is.infinite(auc_df$igi)] <- NA
+auc_df$cpep_index <- 100*auc_df$`0_cpeptide`/auc_df$`0_glucose`
+auc_df$odi_ins <- auc_df$igi * auc_df$matsuda_ins
+auc_df$odi_cpep <- auc_df$igi * auc_df$matsuda_cpep
+auc_df$cpep_ins0 <- auc_df$`0_cpeptide`/auc_df$`0_insulin`
+auc_df$cpep_auc_30 <- (auc_df$`0_cpeptide`+auc_df$`10_cpeptide`+auc_df$`20_cpeptide`+auc_df$`30_cpeptide`)/4
+auc_df$ins_auc_30 <- (auc_df$`0_insulin`+auc_df$`10_insulin`+auc_df$`20_insulin`+auc_df$`30_insulin`)/4
+auc_df$cpep_ins_auc_30 <- auc_df$cpep_auc_30/auc_df$ins_auc_30
+auc_df$cpep_ins_auc <- auc_df$cpeptide_AUC/auc_df$insulin_AUC
+
+gluc_peak <- NULL
+gluc_nadir <- NULL
+gluc_peak_time <- NULL
+gluc_nadir_time <- NULL
+
+ins_peak <- NULL
+ins_nadir <- NULL
+ins_peak_time <- NULL
+ins_nadir_time <- NULL
+
+cpep_peak <- NULL
+cpep_nadir <- NULL
+cpep_peak_time <- NULL
+cpep_nadir_time <- NULL
+
+gluca_peak <- NULL
+gluca_nadir <- NULL
+gluca_peak_time <- NULL
+gluca_nadir_time <- NULL
+
+for (subject in auc_df$subject_id){
+  sub_df <- auc_df %>% filter(subject_id == subject) %>% select(ends_with("glucose")) 
+  gluc_peak <- c(gluc_peak,max(sub_df))
+  gluc_nadir <- c(gluc_nadir,min(sub_df))
+  gluc_peak_time <- c(gluc_peak_time,
+                      strsplit(names(sub_df)[which(sub_df == max(sub_df))], "_")[[1]][1])
+  gluc_nadir_time <- c(gluc_nadir_time,
+                       strsplit(names(sub_df)[which(sub_df == min(sub_df))], "_")[[1]][1])
+  
+  sub_df <- auc_df %>% filter(subject_id == subject) %>% select(ends_with("insulin")) 
+  ins_peak <- c(ins_peak,max(sub_df))
+  ins_nadir <- c(ins_nadir,min(sub_df))
+  ins_peak_time <- c(ins_peak_time,
+                     strsplit(names(sub_df)[which(sub_df == max(sub_df))], "_")[[1]][1])
+  ins_nadir_time <- c(ins_nadir_time,
+                      strsplit(names(sub_df)[which(sub_df == min(sub_df))], "_")[[1]][1])
+  
+  sub_df <- auc_df %>% filter(subject_id == subject) %>% select(ends_with("cpeptide")) 
+  cpep_peak <- c(cpep_peak,max(sub_df))
+  cpep_nadir <- c(cpep_nadir,min(sub_df))
+  
+  cppt_temp <- strsplit(names(sub_df)[which(sub_df == max(sub_df))], "_")
+  cpnt_temp <- strsplit(names(sub_df)[which(sub_df == min(sub_df))], "_")
+  if(length(cppt_temp) > 0){
+    cpep_peak_time <- c(cpep_peak_time,
+                        cppt_temp[[1]][1])
+  }
+  else {
+    cpep_peak_time <- c(cpep_peak_time,
+                        NA)
+  }
+  if(length(cpnt_temp) > 0){
+    cpep_nadir_time <- c(cpep_nadir_time,
+                         cpnt_temp[[1]][1])
+  }
+  else {
+    cpep_nadir_time <- c(cpep_nadir_time,
+                         NA)
+  }
+  
+  sub_df <- auc_df %>% filter(subject_id == subject) %>% select(ends_with("glucagon")) 
+  gluca_peak <- c(gluca_peak,max(sub_df))
+  gluca_nadir <- c(gluca_nadir,min(sub_df))
+  glucap_temp <- strsplit(names(sub_df)[which(sub_df == max(sub_df))], "_")
+  glucan_temp <- strsplit(names(sub_df)[which(sub_df == min(sub_df))], "_")
+  if(length(glucap_temp) > 0){
+    gluca_peak_time <- c(gluca_peak_time,
+                         glucap_temp[[1]][1])
+  }
+  else {
+    gluca_peak_time <- c(gluca_peak_time,
+                         NA)
+  }
+  if(length(glucan_temp) > 0){
+    gluca_nadir_time <- c(gluca_nadir_time,
+                          glucan_temp[[1]][1])
+  }
+  else {
+    gluca_nadir_time <- c(gluca_nadir_time,
+                          NA)
+  }
+}
+
+auc_df$gluc_peak <- gluc_peak
+auc_df$gluc_nadir <- gluc_nadir
+auc_df$gluc_peak_time <- gluc_peak_time
+auc_df$gluc_nadir_time <- gluc_nadir_time
+auc_df$ins_peak <- ins_peak
+auc_df$ins_nadir <- ins_nadir
+auc_df$ins_peak_time <- ins_peak_time
+auc_df$ins_nadir_time <- ins_nadir_time
+auc_df$cpep_peak <- cpep_peak
+auc_df$cpep_nadir <- cpep_nadir
+auc_df$cpep_peak_time <- cpep_peak_time
+auc_df$cpep_nadir_time <- cpep_nadir_time
+auc_df$gluca_peak <- gluca_peak
+auc_df$gluca_nadir <- gluca_nadir
+auc_df$gluca_peak_time <- gluca_peak_time
+auc_df$gluca_nadir_time <- gluca_nadir_time
+
+keep_ids <- gluc_aucs$subject_id
+
+
+table_dat <- merge(new_gluc,gluc_aucs)
+table_dat <- merge(table_dat, auc_df %>% select(subject_id, 
+                                                matsuda_ins, 
+                                                matsuda_cpep, 
+                                                homa_ir, 
+                                                igi, 
+                                                cpep_index,
+                                                odi_ins,
+                                                odi_cpep,
+                                                cpep_ins_auc_30,
+                                                cpep_ins_auc,
+                                                gluc_peak,
+                                                gluc_nadir,
+                                                gluc_peak_time,
+                                                gluc_nadir_time,
+                                                ins_peak,
+                                                ins_nadir,
+                                                ins_peak_time,
+                                                ins_nadir_time,
+                                                cpep_peak,
+                                                cpep_nadir,
+                                                cpep_peak_time,
+                                                cpep_nadir_time,
+                                                gluca_peak,
+                                                gluca_nadir,
+                                                gluca_peak_time,
+                                                gluca_nadir_time
+), all = T)
+
+cgm <- dat %>% select(subject_id,
+                      date_of_visit,
+                      num_days_good_data,
+                      daytime_avg_sensor_glucose,
+                      percent_time_over_140,
+                      percent_time_over_180,
+                      percent_time_under_70,
+                      percent_time_under_60,
+                      daytime_sd,
+                      cov,
+                      mag) %>% 
+  filter(subject_id %in% keep_ids) %>% 
+  filter(!is.na(num_days_good_data)) %>%
+  unique()
+
+cgm$daytime_avg_sensor_glucose <- round(as.numeric(cgm$daytime_avg_sensor_glucose),4)
+cgm$percent_time_over_140 <- round(as.numeric(cgm$percent_time_over_140),4)
+cgm$percent_time_over_180 <- round(as.numeric(cgm$percent_time_over_180),4)
+cgm$daytime_sd <- round(as.numeric(cgm$daytime_sd),4)
+cgm$cov <- round(as.numeric(cgm$cov),4)
+cgm$mag <- round(as.numeric(cgm$mag),4)
+cgm <- unique(cgm)
+cgm <- cgm[!duplicated(cgm[,1:2]),]
+cgm <- cgm[!duplicated(cgm$subject_id),]
+
+table_dat <- merge(table_dat, cgm %>% select(-date_of_visit), all = T)
+
+
+dat$mutation_severity[dat$cf_mutation_1_class <=3 | dat$cf_mutation_2_class <=3] <-  "Severe"
+dat$mutation_severity[is.na(dat$mutation_severity) & (dat$cf_mutation_1_class == 4 | 
+                                                        dat$cf_mutation_2_class == 4 |
+                                                        dat$cf_mutation_1_class <= 5 | 
+                                                        dat$cf_mutation_2_class <=5)] <-  "Mild"
+dat$mutation_severity[is.na(dat$mutation_severity) & (dat$cf_mutation_1_class == 6 | 
+                                                        dat$cf_mutation_2_class == 6)] <-  "Other"
+
+
+
+dat_demo <- dat %>% select(subject_id, 
+                           date_of_visit,
+                           group_category,
+                           gender, 
+                           race_ethnicity, 
+                           weight, 
+                           height, 
+                           bmi, 
+                           bmi_z_score, 
+                           mutation_severity, 
+                           fev1_percent,
+                           fvc,
+                           poc_a1c,
+                           cf_pancreatic,
+                           cf_insulin_use)
+dat_demo <- dat_demo %>% filter(subject_id %in% keep_ids)
+
+new_demo <- dat_demo[0,]
+for (id in unique(dat_demo$subject_id)){
+  id_df <- dat_demo %>% filter(subject_id == id) %>% arrange(date_of_visit) %>% na.locf(na.rm = FALSE)
+  id_df <- id_df %>% arrange(desc(date_of_visit)) %>% na.locf(na.rm = FALSE)
+  new_demo <- rbind(new_demo,id_df)
+}
+
+dat_demo <- new_demo %>% select(-date_of_visit) %>% unique()
+
+dat_demo <- dat_demo[!duplicated(dat_demo$subject_id),]
+
+table_dat <- merge(table_dat,dat_demo, all = T)
+
+
+table_dat$`0_glucose` <- as.numeric(table_dat$`0_glucose`)
+table_dat$`120_glucose` <- as.numeric(table_dat$`120_glucose`)
+table_dat$`60_glucose` <- as.numeric(table_dat$`60_glucose`)
+
+table_dat$ogtt_category[table_dat$`0_glucose` < 100 & table_dat$`60_glucose` < 155 & table_dat$`120_glucose` < 140] <- "NGT"
+table_dat$ogtt_category[table_dat$`0_glucose` < 100 & table_dat$`60_glucose` > 155 & 
+                          table_dat$`120_glucose` < 140 & table_dat$`60_glucose` < 200] <- "EGI"
+table_dat$ogtt_category[(table_dat$`0_glucose` >= 100 & table_dat$`0_glucose` < 125) | 
+                          (table_dat$`60_glucose` > 199) | 
+                          (table_dat$`120_glucose` > 140 & table_dat$`120_glucose` <= 200)] <- "IFG/IGT/INDET"
+table_dat$ogtt_category[table_dat$`0_glucose` >= 125 | table_dat$`120_glucose` >= 200] <- "CFRD"
+
+cf_groups <- dat %>% select(subject_id,group_category) %>% filter(subject_id %in% keep_ids) %>% na.omit() %>% unique()
+cf_groups$CF <- ifelse(cf_groups$group_category == "Healthy", "No","Yes")
+cf_groups <- cf_groups %>% select(subject_id, CF) %>% unique()
+table_dat <- merge(table_dat,cf_groups)
+
+table_dat$CF_hypo_60[table_dat$CF == "Yes"  & table_dat$hypo_60 == "Yes"] <- "CF/Hypo"
+table_dat$CF_hypo_60[table_dat$CF == "Yes"  & table_dat$hypo_60 == "No"] <- "CF/No-Hypo"
+table_dat$CF_hypo_60[table_dat$CF == "No"  & table_dat$hypo_60 == "Yes"] <- "No-CF/Hypo"
+table_dat$CF_hypo_60[table_dat$CF == "No"  & table_dat$hypo_60 == "No"] <- "No-CF/No-Hypo"
+
+table_dat$CF_hypo_70[table_dat$CF == "Yes"  & table_dat$hypo_70 == "Yes"] <- "CF/Hypo"
+table_dat$CF_hypo_70[table_dat$CF == "Yes"  & table_dat$hypo_70 == "No"] <- "CF/No-Hypo"
+table_dat$CF_hypo_70[table_dat$CF == "No"  & table_dat$hypo_70 == "Yes"] <- "No-CF/Hypo"
+table_dat$CF_hypo_70[table_dat$CF == "No"  & table_dat$hypo_70 == "No"] <- "No-CF/No-Hypo"
+
+table_dat <- table_dat %>% filter(is.na(cf_pancreatic) | cf_pancreatic == 2)
+table_dat$cf_insulin_use[table_dat$cf_insulin_use == 1] <- "Yes"
+table_dat$cf_insulin_use[table_dat$cf_insulin_use == 0] <- "No"
+
+table_dat$delta_glucagon <- as.numeric(table_dat$`180_glucagon`) - as.numeric(table_dat$`150_glucagon`)
+table_dat$delta_glucose <- as.numeric(table_dat$`180_glucose`) - as.numeric(table_dat$`150_glucose`)
+table_dat$delta_insulin <- as.numeric(table_dat$`180_insulin`) - as.numeric(table_dat$`150_insulin`)
+table_dat$delta_cpeptide <- as.numeric(table_dat$`180_cpeptide`) - as.numeric(table_dat$`150_cpeptide`)
+
+gluc <- merge(gluc,table_dat %>% select(subject_id, CF_hypo_60, CF_hypo_70))
+
+auc_df <- merge(auc_df,table_dat %>% select(subject_id, CF_hypo_60, CF_hypo_70))
+
+table_dat$age <- as.numeric(table_dat$age)
+
+```
+
+# Methods
+
+Global tests by group are Kruskal-Wallis (numeric) or Pearson Chi-square tests (count/categorical)
+
+Pairwise-tests are exact wilcoxon rank sum tests with continuity correction (numeric) or chi-square (count/categorical)
+
+p-values have not been adjusted for multiple comparisons
+
+## After removing CF Insulin Use
+
+Results did not change too much after removing participants with CF Insulin use. Some p-values that were close to 0.05 shifted from one side to the other
+
+After removing CF Insulin Use:
+
+- matsuda now significant on ANOVA with Hypo < 60
+- OGTT Category pairwise comparison CF/Hypo60 vs CF/No-Hypo60 now significant
+- HOMA-IR pairwise comparison CF/Hypo60 vs No-CF/No-Hypo60 now significant
+- CGM Avg Glucose pairwise comparison CF/No-Hypo60 vs No-CF/Hypo60 no longer significant
+- CGM Avg Glucose pairwise comparison CF/No-Hypo60 vs No-CF/No-Hypo60 no longer significant
+- CGM MAG CF/No-Hypo60 vs No-CF/Hypo60 now significant
+- Matsuda and Homa-IR pairwise comparisons CF/Hypo70 vs No-CF/No-Hypo70 now significant
+- Delta Glucagon pairwise comparison CF/No-Hypo70 vs No-CF/Hypo70 no longer significant
+- CGM Avg Glucose pairwise comparison CF/No-Hypo70 vs No-CF/Hypo70 no longer significant
+- CGM Avg Glucose pairwise comparison CF/No-Hypo70 vs No-CF/No-Hypo70 no longer significant
+- %time over 140 pairwise comparison CF/Hypo70 vs CF/No-Hypo no longer significant
+
+
+# Table 1 by CF/Hypo < 60
+
+```{r, results='asis', warning = F, message = F}
+control <- tableby.control(numeric.test = "kwt")
+
+tab <- tableby(CF_hypo_60 ~ 
+                 gender + 
+                 age +
+                 race_ethnicity+
+                 weight+
+                 height+
+                 bmi+
+                 bmi_z_score+
+                 mutation_severity+
+                 fev1_percent+
+                 fvc+
+                 poc_a1c+
+                 ogtt_category+
+                 cf_insulin_use +
+                 matsuda_ins +
+                 matsuda_cpep +
+                 homa_ir +
+                 igi +
+                 cpep_index +
+                 odi_ins +
+                 odi_cpep +
+                 cpep_ins_auc_30 +
+                 cpep_ins_auc +
+                 gluc_peak +
+                 gluc_nadir +
+                 gluc_peak_time +
+                 gluc_nadir_time +
+                 glucose_auc +
+                 delta_glucose +
+                 ins_peak +
+                 ins_nadir +
+                 ins_peak_time +
+                 ins_nadir_time +
+                 insulin_auc +
+                 delta_insulin +
+                 cpep_peak +
+                 cpep_nadir +
+                 cpep_peak_time +
+                 cpep_nadir_time +
+                 cpeptide_auc +
+                 delta_cpeptide +
+                 gluca_peak +
+                 gluca_nadir +
+                 gluca_peak_time +
+                 gluca_nadir_time +
+                 glucagon_auc +
+                 delta_glucagon
+               ,
+               data = table_dat,
+               control = control)
+summary(tab)
+```
+
+```{r, warning = F, message = F}
+pairwiseTableby <- function(tab){
+  tbcall <- tab$Call
+  data <- eval(tbcall$data)
+  group_term <- tab$tables[[1]]$y$term
+  group_levels <- head(names(tab$tables[[1]]$y$stats),-1)
+  comps <- combn(group_levels, 2)
+  
+  for(i in seq_len(ncol(comps))){
+    comp_name <- paste(comps[,i], collapse = " vs ")
+    sub_df <- data %>% filter(get(group_term) %in% comps[,i])
+    try({
+      sub_tab <- tableby(eval(tbcall$formula),sub_df, numeric.test = "wt", wilcox.correct = TRUE, wilcox.exact = TRUE)
+      p_list <- lapply(sub_tab$tables[[1]]$tables[[1]], function(x) x$test$p.value)
+      if(exists("results_frame")){
+        results_frame[comp_name] <- unlist(p_list)
+      }
+      else{
+        results_frame <- data.frame(row.names = names(unlist(p_list)))
+        results_frame[comp_name] <- unlist(p_list)
+      }
+    }, silent = TRUE)
+    
+    
+  }
+  results_frame
+}
+ptab <- pairwiseTableby(tab)
+
+kbl(ptab, caption = "Pairwise p-values") %>% 
+  column_spec(2,background = ifelse(ptab$`CF/Hypo vs CF/No-Hypo` < 0.05,"red","white")) %>%
+  column_spec(3,background = na.fill(ifelse(ptab$`CF/Hypo vs No-CF/Hypo`< 0.05,"red","white"),"white)")) %>%
+  column_spec(4,background = na.fill(ifelse(ptab$`CF/Hypo vs No-CF/No-Hypo` < 0.05,"red","white"),"white)"))  %>%
+  column_spec(5,background = na.fill(ifelse(ptab$`CF/No-Hypo vs No-CF/Hypo` < 0.05,"red","white"),"white)"))  %>%
+  column_spec(6,background = na.fill(ifelse(ptab$`CF/No-Hypo vs No-CF/No-Hypo` < 0.05,"red","white"),"white)")) 
+```
+
+# CGM with Hypo < 60
+
+```{r, results='asis', warning = F, message = F}
+cgm_table_dat <- table_dat %>% filter(!is.na(daytime_avg_sensor_glucose))
+
+tab <- tableby(CF_hypo_60 ~ 
+                 daytime_avg_sensor_glucose +
+                 percent_time_over_140 +
+                 percent_time_over_180 +
+                 daytime_sd +
+                 cov +
+                 mag
+               , 
+               data = cgm_table_dat,
+               control = control)
+summary(tab)
+
+ptab <- pairwiseTableby(tab)
+
+kbl(ptab, caption = "Pairwise p-values") %>% 
+  column_spec(2,background = ifelse(ptab$`CF/Hypo vs CF/No-Hypo` < 0.05,"red","white")) %>%
+  column_spec(3,background = na.fill(ifelse(ptab$`CF/Hypo vs No-CF/Hypo`< 0.05,"red","white"),"white)")) %>%
+  column_spec(4,background = na.fill(ifelse(ptab$`CF/Hypo vs No-CF/No-Hypo` < 0.05,"red","white"),"white)"))  %>%
+  column_spec(5,background = na.fill(ifelse(ptab$`CF/No-Hypo vs No-CF/Hypo` < 0.05,"red","white"),"white)"))  %>%
+  column_spec(6,background = na.fill(ifelse(ptab$`CF/No-Hypo vs No-CF/No-Hypo` < 0.05,"red","white"),"white)")) 
+```
+
+# OGTT with Hypo < 60
+
+```{r, warning = F, message = F}
+model <- lme(glucagon ~ time*CF_hypo_60, data = gluc, random = ~1|subject_id, correlation = corAR1(), na.action = na.omit)
+means <- as.data.frame(emmeans(model, ~ time|CF_hypo_60))
+
+p1 <- ggplot(data = means, aes(y = emmean, x = time, group = CF_hypo_60, color = CF_hypo_60)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.4, position = "dodge") +
+  geom_line() +
+  labs(y = "Glucagon", color = "") +
+  theme_light()
+
+model <- lme(glucose ~ time*CF_hypo_60, data = gluc, random = ~1|subject_id, correlation = corAR1(), na.action = na.omit)
+means <- as.data.frame(emmeans(model, ~ time|CF_hypo_60))
+
+p2 <- ggplot(data = means, aes(y = emmean, x = time, group = CF_hypo_60, color = CF_hypo_60)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.4, position = "dodge") +
+  geom_line() +
+  labs(y = "Glucose", color = "") +
+  theme_light()
+
+model <- lme(insulin ~ time*CF_hypo_60, data = gluc, random = ~1|subject_id, correlation = corAR1(), na.action = na.omit)
+means <- as.data.frame(emmeans(model, ~ time|CF_hypo_60))
+
+p3 <- ggplot(data = means, aes(y = emmean, x = time, group = CF_hypo_60, color = CF_hypo_60)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.4, position = "dodge") +
+  geom_line() +
+  labs(y = "Insulin", color = "") +
+  theme_light()
+
+model <- lme(cpeptide ~ time*CF_hypo_60, data = gluc, random = ~1|subject_id, correlation = corAR1(), na.action = na.omit)
+means <- as.data.frame(emmeans(model, ~ time|CF_hypo_60))
+
+p4 <- ggplot(data = means, aes(y = emmean, x = time, group = CF_hypo_60, color = CF_hypo_60)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.4, position = "dodge") +
+  geom_line() +
+  labs(y = "C-Peptide", color = "") +
+  theme_light()
+
+p2+p3+p1+p4+plot_layout(guides = "collect", ncol = 2, nrow = 2) &
+  theme(legend.position='bottom')
+
+png("ogtt_60.png", res = 300, width = 2000, height = 2000)
+p2+p3+p1+p4+plot_layout(guides = "collect", ncol = 2, nrow = 2) &
+  theme(legend.position='bottom')
+dev.off()
+```
+
+# Insulin Resistance with Hypo < 60
+
+```{r, warning = F, message = F}
+p1 <- ggplot(data = table_dat, aes(y = matsuda_ins, x = CF_hypo_60, color = CF_hypo_60)) +
+  geom_boxplot() +
+  labs(y = "Matsuda Index", x = "", color = "") +
+  geom_signif(comparisons = list(c("CF/Hypo","CF/No-Hypo"),c("CF/Hypo","No-CF/No-Hypo")),
+              color = "black",
+              y_position = c(45,50),
+              map_signif_level=function(p)sprintf("p = %.2g", p)) + 
+  theme_light() +
+  guides(color = FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+p2 <- ggplot(data = table_dat, aes(y = homa_ir, x = CF_hypo_60, color = CF_hypo_60)) +
+  geom_boxplot() +
+  labs(y = "HOMA IR", x = "", color = "") +
+  geom_signif(comparisons = list(c("CF/Hypo","CF/No-Hypo")),
+              color = "black",
+              map_signif_level=function(p)sprintf("p = %.2g", p)) + 
+  theme_light() +
+  guides(color = FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+
+p1+p2+plot_layout(guides = "collect", ncol = 2, nrow = 1) &
+  theme(legend.position='bottom')
+
+png("resistance_60.png", height = 2000, width = 3000, res = 300)
+p1+p2+plot_layout(guides = "collect", ncol = 2, nrow = 1) &
+  theme(legend.position='bottom')
+dev.off()
+```
+
+# Table 1 by CF/Hypo < 70
+
+```{r, results='asis', warning = F, message = F}
+tab <- tableby(CF_hypo_70 ~ 
+                 gender + 
+                 age +
+                 race_ethnicity+
+                 weight+
+                 height+
+                 bmi+
+                 bmi_z_score +
+                 mutation_severity +
+                 fev1_percent +
+                 fvc +
+                 poc_a1c+
+                 ogtt_category+
+                 cf_insulin_use +
+                 matsuda_ins +
+                 matsuda_cpep +
+                 homa_ir +
+                 igi +
+                 cpep_index +
+                 odi_ins +
+                 odi_cpep +
+                 gluc_peak +
+                 gluc_nadir +
+                 gluc_peak_time +
+                 gluc_nadir_time +
+                 glucose_auc +
+                 delta_glucose +
+                 ins_peak +
+                 ins_nadir +
+                 ins_peak_time +
+                 ins_nadir_time +
+                 insulin_auc +
+                 delta_insulin +
+                 cpep_peak +
+                 cpep_nadir +
+                 cpep_peak_time +
+                 cpep_nadir_time +
+                 cpeptide_auc +
+                 delta_cpeptide +
+                 gluca_peak +
+                 gluca_nadir +
+                 gluca_peak_time +
+                 gluca_nadir_time +
+                 glucagon_auc +
+                 delta_glucagon
+               ,
+               data = table_dat,
+               control = control)
+summary(tab)
+
+ptab <- pairwiseTableby(tab)
+
+kbl(ptab, caption = "Pairwise p-values") %>% 
+  column_spec(2,background = ifelse(ptab$`CF/Hypo vs CF/No-Hypo` < 0.05,"red","white")) %>%
+  column_spec(3,background = na.fill(ifelse(ptab$`CF/Hypo vs No-CF/Hypo`< 0.05,"red","white"),"white)")) %>%
+  column_spec(4,background = na.fill(ifelse(ptab$`CF/Hypo vs No-CF/No-Hypo` < 0.05,"red","white"),"white)"))  %>%
+  column_spec(5,background = na.fill(ifelse(ptab$`CF/No-Hypo vs No-CF/Hypo` < 0.05,"red","white"),"white)"))  %>%
+  column_spec(6,background = na.fill(ifelse(ptab$`CF/No-Hypo vs No-CF/No-Hypo` < 0.05,"red","white"),"white)")) 
+```
+
+# CGM with Hypo < 70
+
+```{r, results='asis', warning = F, message = F}
+tab <- tableby(CF_hypo_70 ~ 
+                 daytime_avg_sensor_glucose +
+                 percent_time_over_140 +
+                 percent_time_over_180 +
+                 daytime_sd +
+                 cov +
+                 mag
+               , 
+               data = cgm_table_dat,
+               control = control)
+summary(tab)
+
+ptab <- pairwiseTableby(tab)
+
+kbl(ptab, caption = "Pairwise p-values") %>% 
+  column_spec(2,background = ifelse(ptab$`CF/Hypo vs CF/No-Hypo` < 0.05,"red","white")) %>%
+  column_spec(3,background = na.fill(ifelse(ptab$`CF/Hypo vs No-CF/Hypo`< 0.05,"red","white"),"white)")) %>%
+  column_spec(4,background = na.fill(ifelse(ptab$`CF/Hypo vs No-CF/No-Hypo` < 0.05,"red","white"),"white)"))  %>%
+  column_spec(5,background = na.fill(ifelse(ptab$`CF/No-Hypo vs No-CF/Hypo` < 0.05,"red","white"),"white)"))  %>%
+  column_spec(6,background = na.fill(ifelse(ptab$`CF/No-Hypo vs No-CF/No-Hypo` < 0.05,"red","white"),"white)")) 
+```
+
+
+# OGTT with Hypo < 70
+
+```{r, warning = F, message = F}
+model <- lme(glucagon ~ time*CF_hypo_70, data = gluc, random = ~1|subject_id, correlation = corAR1(), na.action = na.omit)
+means <- as.data.frame(emmeans(model, ~ time|CF_hypo_70))
+
+p1 <- ggplot(data = means, aes(y = emmean, x = time, group = CF_hypo_70, color = CF_hypo_70)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.4, position = "dodge") +
+  geom_line() +
+  labs(y = "Glucagon", color = "") +
+  theme_light()
+
+model <- lme(glucose ~ time*CF_hypo_70, data = gluc, random = ~1|subject_id, correlation = corAR1(), na.action = na.omit)
+means <- as.data.frame(emmeans(model, ~ time|CF_hypo_70))
+
+p2 <- ggplot(data = means, aes(y = emmean, x = time, group = CF_hypo_70, color = CF_hypo_70)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.4, position = "dodge") +
+  geom_line() +
+  labs(y = "Glucose", color = "") +
+  theme_light()
+
+model <- lme(insulin ~ time*CF_hypo_70, data = gluc, random = ~1|subject_id, correlation = corAR1(), na.action = na.omit)
+means <- as.data.frame(emmeans(model, ~ time|CF_hypo_70))
+
+p3 <- ggplot(data = means, aes(y = emmean, x = time, group = CF_hypo_70, color = CF_hypo_70)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.4, position = "dodge") +
+  geom_line() +
+  labs(y = "Insulin", color = "") +
+  theme_light()
+
+model <- lme(cpeptide ~ time*CF_hypo_70, data = gluc, random = ~1|subject_id, correlation = corAR1(), na.action = na.omit)
+means <- as.data.frame(emmeans(model, ~ time|CF_hypo_70))
+
+p4 <- ggplot(data = means, aes(y = emmean, x = time, group = CF_hypo_70, color = CF_hypo_70)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.4, position = "dodge") +
+  geom_line() +
+  labs(y = "C-Peptide", color = "") +
+  theme_light()
+
+p2+p3+p1+p4+plot_layout(guides = "collect", ncol = 2, nrow = 2) &
+  theme(legend.position='bottom')
+
+png("ogtt_70.png", res = 300, width = 2000, height = 2000)
+p2+p3+p1+p4+plot_layout(guides = "collect", ncol = 2, nrow = 2) &
+  theme(legend.position='bottom')
+dev.off()
+```
+
+# Insulin Resistance with Hypo < 70
+
+```{r, warning = F, message = F}
+p1 <- ggplot(data = table_dat, aes(y = matsuda_ins, x = CF_hypo_70, color = CF_hypo_70)) +
+  geom_boxplot() +
+  labs(y = "Matsuda Index", x = "", color = "") +
+  geom_signif(comparisons = list(c("CF/Hypo","CF/No-Hypo")),
+              color = "black",
+              test = "wilcox.test",
+              map_signif_level=function(p)sprintf("p = %.2g", p)) + 
+  theme_light() +
+  guides(color = FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+p2 <- ggplot(data = auc_df, aes(y = homa_ir, x = CF_hypo_70, color = CF_hypo_70)) +
+  geom_boxplot() +
+  labs(y = "HOMA IR", x = "", color = "") +
+  geom_signif(comparisons = list(c("CF/Hypo","CF/No-Hypo")),
+              color = "black",
+              test = "wilcox.test",
+              map_signif_level=function(p)sprintf("p = %.2g", p)) + 
+  theme_light() +
+  guides(color = FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+
+p1+p2+plot_layout(guides = "collect", ncol = 2, nrow = 1) &
+  theme(legend.position='bottom')
+
+png("resistance_70.png", height = 2000, width = 3000, res = 300)
+p1+p2+plot_layout(guides = "collect", ncol = 2, nrow = 1) &
+  theme(legend.position='bottom')
+dev.off()
+```
+
+# CGM Figures
+
+```{r fig.height=5, results="asis"}
+outcomes <- c(
+  "daytime_avg_sensor_glucose",
+  "percent_time_over_140",
+  "percent_time_over_180",
+  "daytime_sd",
+  "cov",
+  "mag"
+)
+outcomes_labs <- c(
+  "Avg Glucose (Daytime)",
+  "% Time Over 140",
+  "% Time Over 180",
+  "SD",
+  "COV",
+  "MAG"
+)
+
+for (i in seq_len(length(outcomes))){
+  
+  p70 <- ggplot(data = cgm_table_dat, aes_string(y = outcomes[i], x = "CF_hypo_70")) +
+    labs(y = outcomes_labs[i], x= "") +
+    geom_jitter(alpha = 0.5, width = 0.1) +
+    geom_boxplot(alpha = 0.5, outlier.alpha = 0) +
+    theme_light() +
+    ggtitle("Hypoglycemia by OGTT (< 70)")
+  
+  
+  
+  p60 <- ggplot(data = cgm_table_dat, aes_string(y = outcomes[i], x = "CF_hypo_60")) +
+    labs(y = outcomes_labs[i], x= "") +
+    geom_jitter(alpha = 0.5, width = 0.1) +
+    geom_boxplot(alpha = 0.5, outlier.alpha = 0) +
+    theme_light() +
+    ggtitle("Hypoglycemia by OGTT (< 60)")
+  
+  cat("\n")
+  cat(paste("##",outcomes_labs[i]))
+  cat("\n")
+  print(p70 + p60)
+  cat("\n")
+}
+
+
+```
+
+# CGM Hypoglycemia
+
+```{r,results="asis"}
+tab <- tableby(group_category ~ percent_time_under_70 + percent_time_under_60, data = cgm_table_dat)
+summary(tab)
+
+under_70_cutoff <- 2*2.06
+under_60_cutoff <- 2*0.687
+
+cgm_table_dat$CGM_hypo_60 <- ifelse(cgm_table_dat$percent_time_under_60 > under_60_cutoff, "Yes", "No")
+cgm_table_dat$CGM_hypo_70 <- ifelse(cgm_table_dat$percent_time_under_70 > under_70_cutoff, "Yes", "No")
+```
+
+Hypoglycemia by CGM is defined as a % time under 70 or 60 more than 2 SDs away from average among healthy controls 
+
+<60 cutoff
+
+```{r}
+under_60_cutoff
+```
+
+<70 cutoff
+
+```{r}
+under_70_cutoff
+```
+
+# Hypoglycemia by CGM by group
+
+```{r, results="asis"}
+tab <- tableby(group_category ~ CGM_hypo_60 + CGM_hypo_70, data = cgm_table_dat)
+summary(tab)
+```
+
+# Hypoglycemia Concordance
+
+## 70/70
+
+Hypoglycemia by OGTT with cutoff <70 and by CGM with cutoff < 70
+
+Hypoglycemia by OGTT and by CGM have poor agreement with a Cohen's Kappa of -0.1
+
+
+```{r, results = "asis"}
+tab <- tableby(CGM_hypo_70 ~ hypo_70, data = cgm_table_dat, test = F, total = F)
+summary(tab)
+```
+```{r}
+mat <- matrix( data = c(32,19,14,5), nrow = 2, ncol = 2)
+Kappa(mat)
+```
+
+## 60/60
+
+Hypoglycemia by OGTT with cutoff <60 and by CGM with cutoff < 60
+
+Hypoglycemia by OGTT and by CGM have poor agreement with a Cohen's Kappa of -0.07
+
+
+```{r, results = "asis"}
+tab <- tableby(CGM_hypo_60 ~ hypo_60, data = cgm_table_dat, test = F, total = F)
+summary(tab)
+```
+```{r}
+mat <- matrix( data = c(40,14,13,3), nrow = 2, ncol = 2)
+Kappa(mat)
+```
+
+## 70/60
+
+Hypoglycemia by OGTT with cutoff <70 and by CGM with cutoff < 60
+
+Hypoglycemia by OGTT and by CGM have poor agreement with a Cohen's Kappa of -0.17
+
+
+```{r, results = "asis"}
+tab <- tableby(CGM_hypo_60 ~ hypo_70, data = cgm_table_dat, test = F, total = F)
+summary(tab)
+```
+```{r}
+mat <- matrix( data = c(33,21,13,3), nrow = 2, ncol = 2)
+Kappa(mat)
+```
+
+## 60/70
+
+Hypoglycemia by OGTT with cutoff <60 and by CGM with cutoff < 70
+
+Hypoglycemia by OGTT and by CGM have poor agreement with a Cohen's Kappa of 0.03
+
+
+```{r, results = "asis"}
+tab <- tableby(CGM_hypo_70 ~ hypo_60, data = cgm_table_dat, test = F, total = F)
+summary(tab)
+```
+```{r}
+mat <- matrix( data = c(39,12,14,5), nrow = 2, ncol = 2)
+Kappa(mat)
+```
+
+
+```{r}
+table_dat <- table_dat %>% filter(cf_insulin_use == "No" | is.na(cf_insulin_use))
+gluc <- gluc %>% filter(subject_id %in% table_dat$subject_id)
+```
+
+# Removed CF Insulin Use
+
+## Table 1 by CF/Hypo < 60
+
+```{r, results='asis', warning = F, message = F}
+control <- tableby.control(numeric.test = "kwt")
+
+tab <- tableby(CF_hypo_60 ~ 
+                 gender + 
+                 age +
+                 race_ethnicity+
+                 weight+
+                 height+
+                 bmi+
+                 bmi_z_score+
+                 mutation_severity+
+                 fev1_percent+
+                 fvc+
+                 poc_a1c+
+                 ogtt_category+
+                 matsuda_ins +
+                 matsuda_cpep +
+                 homa_ir +
+                 igi +
+                 cpep_index +
+                 odi_ins +
+                 odi_cpep +
+                 glucose_auc +
+                 insulin_auc +
+                 cpeptide_auc +
+                 glucagon_auc +
+                 delta_glucose +
+                 delta_insulin +
+                 delta_cpeptide +
+                 delta_glucagon
+               ,
+               data = table_dat,
+               control = control)
+summary(tab)
+ptab <- pairwiseTableby(tab)
+
+kbl(ptab, caption = "Pairwise p-values") %>% 
+  column_spec(2,background = ifelse(ptab$`CF/Hypo vs CF/No-Hypo` < 0.05,"red","white")) %>%
+  column_spec(3,background = na.fill(ifelse(ptab$`CF/Hypo vs No-CF/Hypo`< 0.05,"red","white"),"white)")) %>%
+  column_spec(4,background = na.fill(ifelse(ptab$`CF/Hypo vs No-CF/No-Hypo` < 0.05,"red","white"),"white)"))  %>%
+  column_spec(5,background = na.fill(ifelse(ptab$`CF/No-Hypo vs No-CF/Hypo` < 0.05,"red","white"),"white)"))  %>%
+  column_spec(6,background = na.fill(ifelse(ptab$`CF/No-Hypo vs No-CF/No-Hypo` < 0.05,"red","white"),"white)")) 
+```
+
+
+## CGM with Hypo < 60
+
+```{r, results='asis', warning = F, message = F}
+cgm_table_dat <- table_dat %>% filter(!is.na(daytime_avg_sensor_glucose))
+
+tab <- tableby(CF_hypo_60 ~ 
+                 daytime_avg_sensor_glucose +
+                 percent_time_over_140 +
+                 percent_time_over_180 +
+                 daytime_sd +
+                 cov +
+                 mag
+               , 
+               data = cgm_table_dat,
+               control = control)
+summary(tab)
+
+ptab <- pairwiseTableby(tab)
+
+kbl(ptab, caption = "Pairwise p-values") %>% 
+  column_spec(2,background = ifelse(ptab$`CF/Hypo vs CF/No-Hypo` < 0.05,"red","white")) %>%
+  column_spec(3,background = na.fill(ifelse(ptab$`CF/Hypo vs No-CF/Hypo`< 0.05,"red","white"),"white)")) %>%
+  column_spec(4,background = na.fill(ifelse(ptab$`CF/Hypo vs No-CF/No-Hypo` < 0.05,"red","white"),"white)"))  %>%
+  column_spec(5,background = na.fill(ifelse(ptab$`CF/No-Hypo vs No-CF/Hypo` < 0.05,"red","white"),"white)"))  %>%
+  column_spec(6,background = na.fill(ifelse(ptab$`CF/No-Hypo vs No-CF/No-Hypo` < 0.05,"red","white"),"white)")) 
+```
+
+## OGTT with Hypo < 60
+
+```{r, warning = F, message = F}
+model <- lme(glucagon ~ time*CF_hypo_60, data = gluc, random = ~1|subject_id, correlation = corAR1(), na.action = na.omit)
+means <- as.data.frame(emmeans(model, ~ time|CF_hypo_60))
+
+p1 <- ggplot(data = means, aes(y = emmean, x = time, group = CF_hypo_60, color = CF_hypo_60)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.4, position = "dodge") +
+  geom_line() +
+  labs(y = "Glucagon", color = "") +
+  theme_light()
+
+model <- lme(glucose ~ time*CF_hypo_60, data = gluc, random = ~1|subject_id, correlation = corAR1(), na.action = na.omit)
+means <- as.data.frame(emmeans(model, ~ time|CF_hypo_60))
+
+p2 <- ggplot(data = means, aes(y = emmean, x = time, group = CF_hypo_60, color = CF_hypo_60)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.4, position = "dodge") +
+  geom_line() +
+  labs(y = "Glucose", color = "") +
+  theme_light()
+
+model <- lme(insulin ~ time*CF_hypo_60, data = gluc, random = ~1|subject_id, correlation = corAR1(), na.action = na.omit)
+means <- as.data.frame(emmeans(model, ~ time|CF_hypo_60))
+
+p3 <- ggplot(data = means, aes(y = emmean, x = time, group = CF_hypo_60, color = CF_hypo_60)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.4, position = "dodge") +
+  geom_line() +
+  labs(y = "Insulin", color = "") +
+  theme_light()
+
+model <- lme(cpeptide ~ time*CF_hypo_60, data = gluc, random = ~1|subject_id, correlation = corAR1(), na.action = na.omit)
+means <- as.data.frame(emmeans(model, ~ time|CF_hypo_60))
+
+p4 <- ggplot(data = means, aes(y = emmean, x = time, group = CF_hypo_60, color = CF_hypo_60)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.4, position = "dodge") +
+  geom_line() +
+  labs(y = "C-Peptide", color = "") +
+  theme_light()
+
+p2+p3+p1+p4+plot_layout(guides = "collect", ncol = 2, nrow = 2) &
+  theme(legend.position='bottom')
+
+png("ogtt_60_noinsulin.png", res = 300, width = 2000, height = 2000)
+p2+p3+p1+p4+plot_layout(guides = "collect", ncol = 2, nrow = 2) &
+  theme(legend.position='bottom')
+dev.off()
+```
+
+## Insulin Resistance with Hypo < 60
+
+```{r, warning = F, message = F}
+p1 <- ggplot(data = table_dat, aes(y = matsuda_ins, x = CF_hypo_60, color = CF_hypo_60)) +
+  geom_boxplot() +
+  labs(y = "Matsuda Index", x = "", color = "") +
+  geom_signif(comparisons = list(c("CF/Hypo","CF/No-Hypo"),c("CF/Hypo","No-CF/No-Hypo")),
+              color = "black",
+              y_position = c(45,50),
+              map_signif_level=function(p)sprintf("p = %.2g", p)) + 
+  theme_light() +
+  guides(color = FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+p2 <- ggplot(data = table_dat, aes(y = homa_ir, x = CF_hypo_60, color = CF_hypo_60)) +
+  geom_boxplot() +
+  labs(y = "HOMA IR", x = "", color = "") +
+  geom_signif(comparisons = list(c("CF/Hypo","CF/No-Hypo"),c("CF/Hypo","No-CF/No-Hypo")),
+              color = "black",
+              y_position = c(4.5,5),
+              map_signif_level=function(p)sprintf("p = %.2g", p)) + 
+  theme_light() +
+  guides(color = FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+
+p1+p2+plot_layout(guides = "collect", ncol = 2, nrow = 1) &
+  theme(legend.position='bottom')
+
+png("resistance_60_noinsulin.png", height = 2000, width = 3000, res = 300)
+p1+p2+plot_layout(guides = "collect", ncol = 2, nrow = 1) &
+  theme(legend.position='bottom')
+dev.off()
+```
+
+## Table 1 by CF/Hypo < 70
+
+```{r, results='asis', warning = F, message = F}
+tab <- tableby(CF_hypo_70 ~ 
+                 gender + 
+                 age +
+                 race_ethnicity+
+                 weight+
+                 height+
+                 bmi+
+                 bmi_z_score+
+                 mutation_severity+
+                 fev1_percent+
+                 fvc+
+                 poc_a1c+
+                 ogtt_category+
+                 matsuda_ins +
+                 matsuda_cpep +
+                 homa_ir +
+                 igi +
+                 cpep_index +
+                 odi_ins +
+                 odi_cpep +
+                 glucose_auc +
+                 insulin_auc +
+                 cpeptide_auc +
+                 glucagon_auc +
+                 delta_glucose +
+                 delta_insulin +
+                 delta_cpeptide +
+                 delta_glucagon
+               ,
+               data = table_dat,
+               control = control)
+summary(tab)
+
+ptab <- pairwiseTableby(tab)
+
+kbl(ptab, caption = "Pairwise p-values") %>% 
+  column_spec(2,background = ifelse(ptab$`CF/Hypo vs CF/No-Hypo` < 0.05,"red","white")) %>%
+  column_spec(3,background = na.fill(ifelse(ptab$`CF/Hypo vs No-CF/Hypo`< 0.05,"red","white"),"white)")) %>%
+  column_spec(4,background = na.fill(ifelse(ptab$`CF/Hypo vs No-CF/No-Hypo` < 0.05,"red","white"),"white)"))  %>%
+  column_spec(5,background = na.fill(ifelse(ptab$`CF/No-Hypo vs No-CF/Hypo` < 0.05,"red","white"),"white)"))  %>%
+  column_spec(6,background = na.fill(ifelse(ptab$`CF/No-Hypo vs No-CF/No-Hypo` < 0.05,"red","white"),"white)")) 
+```
+
+## CGM with Hypo < 70
+
+```{r, results='asis', warning = F, message = F}
+tab <- tableby(CF_hypo_70 ~ 
+                 daytime_avg_sensor_glucose +
+                 percent_time_over_140 +
+                 percent_time_over_180 +
+                 daytime_sd +
+                 cov +
+                 mag
+               , 
+               data = cgm_table_dat,
+               control = control)
+summary(tab)
+
+ptab <- pairwiseTableby(tab)
+
+kbl(ptab, caption = "Pairwise p-values") %>% 
+  column_spec(2,background = ifelse(ptab$`CF/Hypo vs CF/No-Hypo` < 0.05,"red","white")) %>%
+  column_spec(3,background = na.fill(ifelse(ptab$`CF/Hypo vs No-CF/Hypo`< 0.05,"red","white"),"white)")) %>%
+  column_spec(4,background = na.fill(ifelse(ptab$`CF/Hypo vs No-CF/No-Hypo` < 0.05,"red","white"),"white)"))  %>%
+  column_spec(5,background = na.fill(ifelse(ptab$`CF/No-Hypo vs No-CF/Hypo` < 0.05,"red","white"),"white)"))  %>%
+  column_spec(6,background = na.fill(ifelse(ptab$`CF/No-Hypo vs No-CF/No-Hypo` < 0.05,"red","white"),"white)")) 
+```
+
+
+## OGTT with Hypo < 70
+
+```{r, warning = F, message = F}
+model <- lme(glucagon ~ time*CF_hypo_70, data = gluc, random = ~1|subject_id, correlation = corAR1(), na.action = na.omit)
+means <- as.data.frame(emmeans(model, ~ time|CF_hypo_70))
+
+p1 <- ggplot(data = means, aes(y = emmean, x = time, group = CF_hypo_70, color = CF_hypo_70)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.4, position = "dodge") +
+  geom_line() +
+  labs(y = "Glucagon", color = "") +
+  theme_light()
+
+model <- lme(glucose ~ time*CF_hypo_70, data = gluc, random = ~1|subject_id, correlation = corAR1(), na.action = na.omit)
+means <- as.data.frame(emmeans(model, ~ time|CF_hypo_70))
+
+p2 <- ggplot(data = means, aes(y = emmean, x = time, group = CF_hypo_70, color = CF_hypo_70)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.4, position = "dodge") +
+  geom_line() +
+  labs(y = "Glucose", color = "") +
+  theme_light()
+
+model <- lme(insulin ~ time*CF_hypo_70, data = gluc, random = ~1|subject_id, correlation = corAR1(), na.action = na.omit)
+means <- as.data.frame(emmeans(model, ~ time|CF_hypo_70))
+
+p3 <- ggplot(data = means, aes(y = emmean, x = time, group = CF_hypo_70, color = CF_hypo_70)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.4, position = "dodge") +
+  geom_line() +
+  labs(y = "Insulin", color = "") +
+  theme_light()
+
+model <- lme(cpeptide ~ time*CF_hypo_70, data = gluc, random = ~1|subject_id, correlation = corAR1(), na.action = na.omit)
+means <- as.data.frame(emmeans(model, ~ time|CF_hypo_70))
+
+p4 <- ggplot(data = means, aes(y = emmean, x = time, group = CF_hypo_70, color = CF_hypo_70)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.4, position = "dodge") +
+  geom_line() +
+  labs(y = "C-Peptide", color = "") +
+  theme_light()
+
+p2+p3+p1+p4+plot_layout(guides = "collect", ncol = 2, nrow = 2) &
+  theme(legend.position='bottom')
+
+png("ogtt_70_noinsulin.png", res = 300, width = 2000, height = 2000)
+p2+p3+p1+p4+plot_layout(guides = "collect", ncol = 2, nrow = 2) &
+  theme(legend.position='bottom')
+dev.off()
+```
+
+## Insulin Resistance with Hypo < 70
+
+```{r, warning = F, message = F}
+p1 <- ggplot(data = table_dat, aes(y = matsuda_ins, x = CF_hypo_70, color = CF_hypo_70)) +
+  geom_boxplot() +
+  labs(y = "Matsuda Index", x = "", color = "") +
+  geom_signif(comparisons = list(c("CF/Hypo","CF/No-Hypo"),c("CF/Hypo","No-CF/No-Hypo")),
+              color = "black",
+              y_position = c(45,50),
+              test = "wilcox.test",
+              map_signif_level=function(p)sprintf("p = %.2g", p)) + 
+  theme_light() +
+  guides(color = FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+p2 <- ggplot(data = table_dat, aes(y = homa_ir, x = CF_hypo_70, color = CF_hypo_70)) +
+  geom_boxplot() +
+  labs(y = "HOMA IR", x = "", color = "") +
+  geom_signif(comparisons = list(c("CF/Hypo","CF/No-Hypo"),c("CF/Hypo","No-CF/No-Hypo")),
+              color = "black",
+              y_position = c(4.5,5),
+              test = "wilcox.test",
+              map_signif_level=function(p)sprintf("p = %.2g", p)) + 
+  theme_light() +
+  guides(color = FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+
+p1+p2+plot_layout(guides = "collect", ncol = 2, nrow = 1) &
+  theme(legend.position='bottom')
+
+png("resistance_70_noinsulin.png", height = 2000, width = 3000, res = 300)
+p1+p2+plot_layout(guides = "collect", ncol = 2, nrow = 1) &
+  theme(legend.position='bottom')
+dev.off()
+```
+
+## CGM Figures
+
+```{r fig.height=5, results="asis"}
+outcomes <- c(
+  "daytime_avg_sensor_glucose",
+  "percent_time_over_140",
+  "percent_time_over_180",
+  "daytime_sd",
+  "cov",
+  "mag"
+)
+outcomes_labs <- c(
+  "Avg Glucose (Daytime)",
+  "% Time Over 140",
+  "% Time Over 180",
+  "SD",
+  "COV",
+  "MAG"
+)
+
+for (i in seq_len(length(outcomes))){
+  
+  p70 <- ggplot(data = cgm_table_dat, aes_string(y = outcomes[i], x = "CF_hypo_70")) +
+    labs(y = outcomes_labs[i], x= "") +
+    geom_jitter(alpha = 0.5, width = 0.1) +
+    geom_boxplot(alpha = 0.5, outlier.alpha = 0) +
+    theme_light() +
+    ggtitle("Hypoglycemia by OGTT (< 70)")
+  
+  
+  
+  p60 <- ggplot(data = cgm_table_dat, aes_string(y = outcomes[i], x = "CF_hypo_60")) +
+    labs(y = outcomes_labs[i], x= "") +
+    geom_jitter(alpha = 0.5, width = 0.1) +
+    geom_boxplot(alpha = 0.5, outlier.alpha = 0) +
+    theme_light() +
+    ggtitle("Hypoglycemia by OGTT (< 60)")
+  
+  cat("\n")
+  cat(paste("##",outcomes_labs[i]))
+  cat("\n")
+  print(p70 + p60)
+  cat("\n")
+}
+
+
+```
+
+## CGM Hypoglycemia
+
+```{r,results="asis"}
+tab <- tableby(group_category ~ percent_time_under_70 + percent_time_under_60, data = cgm_table_dat)
+summary(tab)
+
+under_70_cutoff <- 2*2.06
+under_60_cutoff <- 2*0.687
+
+cgm_table_dat$CGM_hypo_60 <- ifelse(cgm_table_dat$percent_time_under_60 > under_60_cutoff, "Yes", "No")
+cgm_table_dat$CGM_hypo_70 <- ifelse(cgm_table_dat$percent_time_under_70 > under_70_cutoff, "Yes", "No")
+```
+
+Hypoglycemia by CGM is defined as a % time under 70 or 60 more than 2 SDs away from average among healthy controls 
+
+<60 cutoff
+
+```{r}
+under_60_cutoff
+```
+
+<70 cutoff
+
+```{r}
+under_70_cutoff
+```
+
+## Hypoglycemia by CGM by group
+
+```{r, results="asis"}
+tab <- tableby(group_category ~ CGM_hypo_60 + CGM_hypo_70, data = cgm_table_dat)
+summary(tab)
+```
+
+## Hypoglycemia Concordance
+
+### 70/70
+
+Hypoglycemia by OGTT with cutoff <70 and by CGM with cutoff < 70
+
+Hypoglycemia by OGTT and by CGM have poor agreement with a Cohen's Kappa of -0.15
+
+
+```{r, results = "asis"}
+tab <- tableby(CGM_hypo_70 ~ hypo_70, data = cgm_table_dat, test = F, total = F)
+summary(tab)
+```
+```{r}
+mat <- matrix( data = c(25,18,12,4), nrow = 2, ncol = 2)
+Kappa(mat)
+```
+
+### 60/60
+
+Hypoglycemia by OGTT with cutoff <60 and by CGM with cutoff < 60
+
+Hypoglycemia by OGTT and by CGM have poor agreement with a Cohen's Kappa of -0.05
+
+
+```{r, results = "asis"}
+tab <- tableby(CGM_hypo_60 ~ hypo_60, data = cgm_table_dat, test = F, total = F)
+summary(tab)
+```
+```{r}
+mat <- matrix( data = c(33,13,10,3), nrow = 2, ncol = 2)
+Kappa(mat)
+```
+
+### 70/60
+
+Hypoglycemia by OGTT with cutoff <70 and by CGM with cutoff < 60
+
+Hypoglycemia by OGTT and by CGM have poor agreement with a Cohen's Kappa of -0.15
+
+
+```{r, results = "asis"}
+tab <- tableby(CGM_hypo_60 ~ hypo_70, data = cgm_table_dat, test = F, total = F)
+summary(tab)
+```
+```{r}
+mat <- matrix( data = c(27,19,10,3), nrow = 2, ncol = 2)
+Kappa(mat)
+```
+
+### 60/70
+
+Hypoglycemia by OGTT with cutoff <60 and by CGM with cutoff < 70
+
+Hypoglycemia by OGTT and by CGM have poor agreement with a Cohen's Kappa of -0.03
+
+
+```{r, results = "asis"}
+tab <- tableby(CGM_hypo_70 ~ hypo_60, data = cgm_table_dat, test = F, total = F)
+summary(tab)
+```
+```{r}
+mat <- matrix( data = c(31,12,12,4), nrow = 2, ncol = 2)
+Kappa(mat)
+```
