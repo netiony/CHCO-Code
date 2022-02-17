@@ -22,9 +22,9 @@ knitr::opts_chunk$set(echo = FALSE)
 if(Sys.info()["sysname"] == "Windows"){
   home_dir = "E:/Petter Bjornstad/CASPER Metabolomics"
 } else if (Sys.info()["sysname"] == "Linux"){
-  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/BDC/Projects"
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CASPER Metabolomics"
 } else if (Sys.info()["sysname"] == "Darwin"){
-  home_dir = "/Volumes/som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CASPER Metabolomics"
+  home_dir = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CASPER Metabolomics"
 }
 knitr::opts_knit$set(root.dir = home_dir)
 
@@ -39,6 +39,7 @@ library(dplyr)
 library(mixOmics)
 library(Hmisc)
 library(boot)
+library(parallel)
 library("FactoMineR")
 library("factoextra")
 library(tableone)
@@ -57,10 +58,10 @@ library(pander)
 library(pheatmap)
 library(limma)
 
-#source("/Users/timvigers/GitHub/General-code/foldchange.R")
-source("C:/Users/pylell/Documents/GitHub/General-code/foldchange.R")
-#source("/Users/timvigers/GitHub/General-code/editcolnames.R")
-source("C:/Users/pylell/Documents/GitHub/General-code/editcolnames.R")
+source("~/GitHub/General-code/foldchange.R")
+#source("C:/Users/pylell/Documents/GitHub/General-code/foldchange.R")
+source("~/GitHub/General-code/editcolnames.R")
+#source("C:/Users/pylell/Documents/GitHub/General-code/editcolnames.R")
 ```
 
 ```{r, include=FALSE}
@@ -219,15 +220,15 @@ mat_data_bsa <- data.matrix(z_bsa[,1:ncol(z_bsa)])
 ```
 
 ```{r}
-c = corr.test(alldata[,targeted],alldata[,corrvars],method = "spearman",adjust = "fdr")
+c = corr.test(alldata[,targeted],alldata[,c(corrvars,corrvars_bsa)],method = "spearman",adjust = "fdr")
 rownames(c$r) <- c("Alanine","Arginine","Cystine","Glutamine","Glycine","Histidine",
                    "Isoleucine","Leucine","Lysine","Methionine","Phenylalanine",
                    "Proline","Serine","Threonine","Tyrosine","Valine","Citrate",
                    "Ketoglutarate","Succinate","Fumarate","Malate")
-colnames(c$r) <- varnames
+colnames(c$r) <- c(varnames,varnames_bsa)
 
 rownames(c$p) <- rownames(c$r)
-colnames(c$p) <- varnames
+colnames(c$p) <- c(varnames,varnames_bsa)
 ```
 
 ```{r}
@@ -327,7 +328,7 @@ plsda_fun = function(data,i){
 }
 df_boot = cbind(Y = as.factor(plsda$group),plsda[,c(2:22)])
 # First column in b$t is component 1, second is component 2
-b = boot(df_boot,plsda_fun,1000,parallel = "multicore",ncpus = 8)
+b = boot(df_boot,plsda_fun,1000,parallel = "multicore",ncpus = round(detectCores()*0.75))
 # CIs
 bci1 = boot.ci(b,index = 1,type = "perc")
 bci2 = boot.ci(b,index = 2,type = "perc")
@@ -348,15 +349,18 @@ heatmap(mat_data,margins = c(8,8))
 
 ```{r plsda,cache=TRUE,warning=FALSE}
 # Permutation testing - takes forever, make sure to cache
-n_perm <- 1
-aucs <- vector(mode="numeric", length=n_perm)
-for (i in 1:n_perm) {
+n_perm <- 1000
+cl = makeCluster(round(detectCores()*0.75),type = "FORK")
+aucs <- parLapply(cl,1:n_perm, function(x){
+  set.seed(1+i)
   Y <- sample(as.factor(plsda$group),replace = F)
   plsda_res <- plsda(plsda[,c(2:22)],Y,ncomp = 1)
   perf_plsda <- perf(plsda_res,progressBar=FALSE, auc=TRUE,
                    validation = "loo")
-  aucs[i] <- as.numeric(perf_plsda$auc$comp1["AUC.mean"])
-}
+  return(as.numeric(perf_plsda$auc$comp1["AUC.mean"]))
+})
+stopCluster(cl)
+aucs = unlist(aucs)
 ggplot(as.data.frame(aucs),aes(x=aucs)) + 
   geom_histogram(binwidth = 0.01) + 
   geom_vline(aes(xintercept=auc_true),color="red") + 

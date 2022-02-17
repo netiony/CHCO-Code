@@ -6,8 +6,6 @@ output: word_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE,dpi = 600)
-knitr::opts_knit$set(root.dir = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CASPER Metabolomics")
 library(arsenal)
 library(skimr)
 library(knitr)
@@ -21,7 +19,17 @@ library(pander)
 library(pheatmap)
 library(pROC)
 library(boot)
+library(parallel)
 library(gridExtra)
+knitr::opts_chunk$set(echo = FALSE)
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "B:/Projects"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CASPER Metabolomics"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  home_dir = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CASPER Metabolomics"
+}
+knitr::opts_knit$set(root.dir = home_dir)
 set.seed(1017)
 ```
 
@@ -45,7 +53,7 @@ df$group <- factor(df$group,levels = c(1,4),labels = c("T1D","Control"))
 # SAS data
 sas <- read_sas("./Raw data/casperheir_for_laura.sas7bdat")
 df <- left_join(df,by = "ID",
-                sas[,c("ID","kidney_GFR","medullary_GFR","cortex_GFR",
+                sas[,c("ID","kidney_GFR","medullary_GFR","cortex_GFR","rpf_bsa","gfr_bsa",
                        "M_I_kg_GC","M_I_leankg_GC","FOSC_Cortex" ,"FOSC_Medullary","FOSC_Kidney")])
 # Add NGAL, KIM-1, IL-18, YKL-40, MCP-1, etc.
 tubular = read.csv("./Clean data/tubularinjury.csv",stringsAsFactors = F)
@@ -71,7 +79,7 @@ missing0 <-
 Removed `r length(missing)` samples missing > 80% of compounds and `r length(missing0)` samples with > 80% of compounds equal to 0. 
 
 ```{r}
-X <- df[,24:ncol(df)]
+X <- df[,(which(colnames(df) == "logIL18")+1):ncol(df)]
 rownames(X) = df$ID
 ```
 
@@ -107,7 +115,7 @@ plsda_fun = function(data,i){
 }
 df_boot = cbind(Y,X)
 # First column in b$t is component 1, second is component 2
-b = boot(df_boot,plsda_fun,10,parallel = "multicore",ncpus = 8)
+b = boot(df_boot,plsda_fun,1000,parallel = "multicore",ncpus = round(detectCores()*0.75))
 # CIs
 bci1 = boot.ci(b,index = 1,type = "perc")
 bci2 = boot.ci(b,index = 2,type = "perc")
@@ -136,8 +144,9 @@ untargeted_plsda
 
 ```{r permutation testing,cache=TRUE,include=FALSE}
 # Permutation testing
-n_perm <- 1
-aucs = lapply(1:n_perm,function(i){
+n_perm <- 1000
+cl = makeCluster(round(detectCores()*0.75),type = "FORK")
+aucs = parLapply(cl,1:n_perm,function(i){
   set.seed(1+i)
   Y <- sample(df$group,replace = F)
   plsda_res <- plsda(X,Y,ncomp = 2)
@@ -147,6 +156,7 @@ aucs = lapply(1:n_perm,function(i){
   auc2 <- as.numeric(perf_plsda$auc$comp2["AUC.mean"])
   return(c(auc1,auc2))
 })
+stopCluster(cl)
 aucs = as.data.frame(do.call(rbind,aucs))
 ```
 
@@ -223,8 +233,8 @@ kable(head(results,20),row.names = F)
 # Correlations for the Metabolites by Moderated t test
 
 ```{r}
-vars = c("rpf","acr_mean","gfr")
-varnames = c("RPF","Mean ACR","GFR")
+vars = c("rpf","acr_mean","gfr","rpf_bsa","gfr_bsa")
+varnames = c("RPF","Mean ACR","GFR","RPF_BSA","GFR_BSA")
 intersection = intersect(top20,top20_pls)
 # Exclude drug metabolites per Petter 
 # ("please remove DMH, imidazol-5-amine, tirazapamine and bis(4-cyanophenyl)methanol from untargeted")
