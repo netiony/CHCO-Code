@@ -2,31 +2,19 @@
 
 # C -> D -> R2Dapp (proxy to R2Royston) -> R2OQuigleyapp -> LR -> R2CSapp -> R2CSadj  
 
-# get R2Dapp from table 2 of Riley paper
-R2Dapp <-  0.427
-# E is number of events
-E <- 846
-# N is sample size
-N <- 20633
-R2OQuigley <- (-(pi^2/6)*R2Dapp) / (((1-(pi^2/6))*R2Dapp)-1) 
-LR <- -E*log(1-R2OQuigley)
-R2CSapp <- 1 - (exp(-LR/N))
+R2CSapp <- 0.02842069
 R2CSadj <- 0.9*R2CSapp
-
-# need to calculate max value of R2CS for studies corresponding to the R2 we're using as estimates
-ln_L_null <- E*log(E/N) + (N - E)*log(1-(E/N))
-max_R2CSapp <- 1 - (exp((2*ln_L_null)/N))
 
 ###############################################################
 # Criterion 1 - sample size to ensure shrinkage factor >= 0.9 #
 ###############################################################
 
 # p is number of candidate predictors
-p_1 <- 20
+p_1 <- 4
 # Svh is shrinkage factor, should be 0.9
 Svh_1 <- 0.9
 # R2_csadj is anticipated value of adjusted Cox-Snell R2 (which needs to be estimated per section 3 of Riley et al)
-R2_csadj_1 <- 0.0945
+R2_csadj_1 <- R2CSadj
 # calculate sample size needed for targeted expected shrinkage
 denom_1 <- (Svh_1 - 1)*(log(1-(R2_csadj_1/Svh_1)))
 n_crit_1 <- p_1/denom_1
@@ -40,30 +28,18 @@ n_crit_1 <- p_1/denom_1
 # Criterion 1 using the new shrinkage factor
 
 # R2_csadj is anticipated value of adjusted Cox-Snell R2 (which needs to be estimated per section 3 of Riley et al)
-R2_csadj_2 <- 0.09
+R2_csadj_2 <- R2CSadj
 # delta is difference between apparent and adjusted R2_Nagelkerke, usually 0.05
 delta_2 <- 0.05
 # R2_csadj_max is max value of adjusted Cox-Snell R2 (see eq 23 of Riley et al)
 # N is expected sample size; E is expected number of events
-#N_2 <- 100
-#E_2 <- 50
-#out_prop_2 <- E_2/N_2
-#ln_L_null_2 <- E_2*log(out_prop_2) + (N_2 - E_2)*log(1-(E_2/N_2))
-#R2_csadj_max_2 <- 1 - (exp((2*ln_L_null_2)/N_2))
-R2_csadj_max_2 <- 0.63
+E_2 <- 108
+N_2 <- 108+554
+out_prop_2 <- E_2/N_2
+ln_L_null_2 <- E_2*log(out_prop_2) + (N_2 - E_2)*log(1-(E_2/N_2))
+R2_csadj_max_2 <- 1 - (exp((2*ln_L_null_2)/N_2))
 # calculate required shrinkage factor
 Svh_req_2 <- R2_csadj_2 / (R2_csadj_2 + (delta_2*R2_csadj_max_2))
-
-############################################################################################
-# Criterion 3 - BINARY OUTCOME - ensure precise estimate of overall risk (model intercept) #
-############################################################################################
-
-# delta_3 is the margin of error, recommend 0.05
-delta_3 <- 0.05
-# phi_3 is true outcome proportion - use 0.5 as this leads to the largest required sample size
-phi_3 <- 0.04
-# calculate required N
-n_crit_3 <- ((1.96/delta_3)^2)*phi_3*(1-phi_3)
 
 #############################################################################
 # Criterion 3 - SURVIVAL OUTCOME - ensure precise estimate of overall risk  #
@@ -75,11 +51,11 @@ n_crit_3 <- ((1.96/delta_3)^2)*phi_3*(1-phi_3)
 # so the width of the CI should be <= 0.1
 
 # lambda_hat is the estimate event rate (number of events per person year)
-lambda_hat_3 <- 0.013
+lambda_hat_3 <- 0.037
 # T is total person years of follow-up at time point of interest
-T_3 <- 3
+T_3 <- 5
 # N_3 is total person years of follow-up in the study
-N_3 <- 1803
+N_3 <- 561.09
 
 # calculate lower and upper bound of 95% CI
 a_3 <- 1.96*sqrt(lambda_hat_3/N_3)
