@@ -2,9 +2,9 @@ library(sas7bdat)
 library(tableone)
 library(NormalizeMets)
 library(mixOmics)
-source("/Users/timvigers/GitHub/General-code/foldchange.R")
-source("/Users/timvigers/GitHub/General-code/editcolnames.R")
-setwd("/Volumes/som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CASPER Metabolomics")
+source("~/GitHub/General-code/foldchange.R")
+source("~/GitHub/General-code/editcolnames.R")
+setwd(home_dir)
 # read in Petter's SAS dataset
 alldata <- read.sas7bdat("./Raw data/casperheir_for_laura.sas7bdat")
 

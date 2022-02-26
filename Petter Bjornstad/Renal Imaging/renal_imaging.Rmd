@@ -11,6 +11,7 @@ output:
 ---
 
 ```{r setup, include=FALSE}
+library(redcapAPI)
 library(arsenal)
 library(tidyverse)
 library(performance)
@@ -19,6 +20,7 @@ library(GGally)
 library(glmnet)
 library(broom)
 library(naniar)
+library(caret)
 knitr::opts_chunk$set(echo = FALSE)
 if(Sys.info()["sysname"] == "Windows"){
   home_dir = "B:/Projects"
@@ -32,81 +34,102 @@ knitr::opts_knit$set(root.dir = home_dir)
 
 ```{r}
 # Import
-df = read.csv("./Data_Clean/analysis_dataset.csv")
-# Outcomes and predictors
-outcomes = c('igfr','igfr_ab','eGFR_schwartz')
-pred = c('hr_mri_sr','hr_mri_rv_sr','hr_mri_la_sr','hr_mri_lv_sr','peak_flow',
-         'rbf_avg','rbf_avg_vein','rbf_peak','rbf_peak_vein','rbv_peak','rbv_peak_vein')
-# Calculate eGFR from Pottel
-# alpha=0.5;
-# if age_current=11 then qcr=0.53;
-# if age_current=12 then qcr=0.57;
-# if age_current=13 then qcr=0.59;
-# if age_current=14 then qcr=0.61;
-# if age_current=15 then do; if gender=0 then qcr=0.64; if gender=1 then qcr=0.72; end;
-# if age_current=16 then do; if gender=0 then qcr=0.67; if gender=1 then qcr=0.78; end;
-# if age_current=17 then do; if gender=0 then qcr=0.69; if gender=1 then qcr=0.82; end;
-# if age_current=18 then do; if gender=0 then qcr=0.69; if gender=1 then qcr=0.85; end;
-# if age_current=19 then do; if gender=0 then qcr=0.70; if gender=1 then qcr=0.88; end;
-# if age_current >=20 then do; if gender=0 then qcr=0.70; if gender=1 then qcr=0.90; end;
+api = read.table("api.txt")
+rcon <- redcapConnection(url="https://redcap.ucdenver.edu/api/", token=api[1,1])
+df = exportRecords(rcon,labels = F)
+# Combine variables
+df$r_rbf_avg = rowSums(df[,c('r_rbf_avg_sr','r_rbf_avg_sup_sr',
+                             'r_rbf_avg_inf_sr','r_rbf_avg_3b_sr')],na.rm = T)
+df$r_rbf_avg[df$r_rbf_avg == 0] = NA
+df$r_rbf_avg_vein = 
+  rowSums(df[,c('r_rbf_avg_vein_sr','r_rbf_avg_vein_sup_sr','r_rbf_avg_vein_inf_sr')],na.rm = T)
+df$r_rbf_avg_vein[df$r_rbf_avg_vein == 0] = NA
+df$l_rbf_avg = 
+  rowSums(df[,c('l_rbf_avg_sr','l_rbf_avg_sup_sr','l_rbf_avg_inf_sr','l_rbf_avg_3b_sr')],na.rm = T)
+df$l_rbf_avg[df$l_rbf_avg == 0] = NA
+df$l_rbf_avg_vein = 
+  rowSums(df[,c('l_rbf_avg_vein_sr','l_rbf_avg_vein_sup_sr','l_rbf_avg_vein_inf_sr')],na.rm = T)
+df$l_rbf_avg_vein[df$l_rbf_avg_vein == 0] = NA
+# This is an indicator of stiffness of the various branches. Sums don’t make sense because if we get the artery at the takeoff, then we won’t have other measurements. Petter and I are unsure of the best approach, but we think perhaps an ‘if’, ‘then’, i.e.:
 # 
+# 1.	If we have the 1st branch, i.e. r_rbf_peak, then use that peak
 # 
-# 
-# f1 = serum_creatinine/qcr;
-# 
-# f2 = 1-alpha;
-# 
-# 
-# 
-# f3 = cystatin_c/0.82;
-# 
-# eGFR_cr = 107.3 / f1;
-# eGFR_comb = 107.3 / ((alpha*f1) + (f2*f3));
-```
+# 2.	If we have the 2nd, 3rd branches, then do an average of them?
+df$r_rbf_peak = ifelse(!is.na(df$r_rbf_peak_sr),df$r_rbf_peak_sr,
+                       rowMeans(df[,c('r_rbf_peak_sup_sr','r_rbf_peak_inf_sr','r_rbf_peak_3b_sr')],
+                                na.rm = T))
 
-# Variable combination code
+df$r_rbf_peak_vein = ifelse(!is.na(df$r_rbf_peak_vein_sr),df$r_rbf_peak_vein_sr,
+                            rowMeans(df[,c('r_rbf_peak_vein_sup_sr','r_rbf_peak_vein_inf_sr')],
+                                     na.rm = T))
 
-<style>
-pre {
-  overflow-x: auto;
-}
-pre code {
-  word-wrap: normal;
-  white-space: pre;
-}
-</style>
+df$l_rbf_peak = ifelse(!is.na(df$l_rbf_peak_sr),df$l_rbf_peak_sr,
+                       rowMeans(df[,c('l_rbf_peak_sup_sr','l_rbf_peak_inf_sr','l_rbf_peak_3b_sr')],
+                                na.rm = T))
 
-```{python eval=FALSE,echo=TRUE}
-# Sums
-r_rbf_avg = df[['r_rbf_avg_sr','r_rbf_avg_sup_sr','r_rbf_avg_inf_sr','r_rbf_avg_3b_sr']].sum(axis=1)
-r_rbf_avg_vein = df[['r_rbf_avg_vein_sr','r_rbf_avg_vein_sup_sr','r_rbf_avg_vein_inf_sr']].sum(axis=1)
-l_rbf_avg = df[['l_rbf_avg_sr','l_rbf_avg_sup_sr','l_rbf_avg_inf_sr','l_rbf_avg_3b_sr']].sum(axis=1)
-l_rbf_avg_vein = df[['l_rbf_avg_vein_sr','l_rbf_avg_vein_sup_sr','l_rbf_avg_vein_inf_sr']].sum(axis=1)
-r_rbf_peak = df[['r_rbf_peak_sr','r_rbf_peak_sup_sr','r_rbf_peak_inf_sr','r_rbf_peak_3b_sr']].sum(axis=1)
-r_rbf_peak_vein = df[['r_rbf_peak_vein_sr','r_rbf_peak_vein_sup_sr','r_rbf_peak_vein_inf_sr']].sum(axis=1)
-l_rbf_peak = df[['l_rbf_peak_sr','l_rbf_peak_sup_sr','l_rbf_peak_inf_sr','l_rbf_peak_3b_sr']].sum(axis=1)
-l_rbf_peak_vein = df[['l_rbf_peak_vein_sr','l_rbf_peak_vein_sup_sr','l_rbf_peak_vein_inf_sr']].sum(axis=1)
-r_rbv_peak = df[['r_rbv_peak_sr','r_rbv_peak_sup_sr','r_rbv_peak_inf_sr','r_rbv_peak_3b_sr']].sum(axis=1)
-r_rbv_peak_vein = df[['r_rbv_peak_vein_sr','r_rbv_peak_vein_sup_sr','r_rbv_peak_vein_inf_sr']].sum(axis=1)
-l_rbv_peak = df[['l_rbv_peak_sr','l_rbv_peak_sup_sr','l_rbv_peak_inf_sr','l_rbv_peak_3b_sr']].sum(axis=1)
-l_rbv_peak_vein = df[['l_rbv_peak_vein_sr','l_rbv_peak_vein_sup_sr','l_rbv_peak_vein_inf_sr']].sum(axis=1)
-peak_flow = df['a2_peak_flow_sr'] - df['a1_peak_flow_sr']
-max_vel = df['a2_max_vel_sr'] - df['a1_max_vel_sr']
-avg_vol = df['a2_avg_flow_sr'] - df['a1_avg_vol_sr']
-# Averages
-final_df['rbf_avg'] = final_df[['r_rbf_avg','l_rbf_avg']].mean(axis=1)
-final_df['rbf_avg_vein'] = final_df[['r_rbf_avg_vein','l_rbf_avg_vein']].mean(axis=1)
-final_df['rbf_peak'] = final_df[['r_rbf_peak','l_rbf_peak']].mean(axis=1)
-final_df['rbf_peak_vein'] = final_df[['r_rbf_peak_vein','l_rbf_peak_vein']].mean(axis=1)
-final_df['rbv_peak'] = final_df[['r_rbv_peak','l_rbv_peak']].mean(axis=1)
-final_df['rbv_peak_vein'] = final_df[['r_rbv_peak_vein','l_rbv_peak_vein']].mean(axis=1)
+df$l_rbf_peak_vein = ifelse(!is.na(df$l_rbf_peak_vein_sr),df$l_rbf_peak_vein_sr,
+                            rowMeans(df[,c('l_rbf_peak_vein_sup_sr','l_rbf_peak_vein_inf_sr')],
+                                     na.rm = T))
+# Same again for rbv peak
+df$r_rbv_peak = ifelse(!is.na(df$r_rbv_peak_sr),df$r_rbv_peak_sr,
+                       rowMeans(df[,c('r_rbv_peak_sup_sr','r_rbv_peak_inf_sr','r_rbv_peak_3b_sr')],
+                                na.rm = T))
+
+df$r_rbv_peak_vein = ifelse(!is.na(df$r_rbv_peak_vein_sr),df$r_rbv_peak_vein_sr,
+                            rowMeans(df[,c('r_rbv_peak_vein_sup_sr','r_rbv_peak_vein_inf_sr')],
+                                     na.rm = T))
+
+df$l_rbv_peak = ifelse(!is.na(df$l_rbv_peak_sr),df$l_rbv_peak_sr,
+                       rowMeans(df[,c('l_rbv_peak_sup_sr','l_rbv_peak_inf_sr','l_rbv_peak_3b_sr')],
+                                na.rm = T))
+
+df$l_rbv_peak_vein = ifelse(!is.na(df$l_rbv_peak_vein_sr),df$l_rbv_peak_vein_sr,
+                            rowMeans(df[,c('l_rbv_peak_vein_sup_sr','l_rbv_peak_vein_inf_sr')],
+                                     na.rm = T))
+df$avg_vol = df[,'a2_avg_flow_sr'] - df[,'a1_avg_vol_sr']
+# Average and sum calculated variables
+df$rbf_avg = rowSums(df[,c('r_rbf_avg','l_rbf_avg')],na.rm = T)
+df$rbf_avg[df$rbf_avg == 0] = NA
+df$rbf_avg_vein = rowSums(df[,c('r_rbf_avg_vein','l_rbf_avg_vein')],na.rm = T)
+df$rbf_avg_vein[df$rbf_avg_vein == 0] = NA
+df$rbf_peak = rowMeans(df[,c('r_rbf_peak','l_rbf_peak')],na.rm = T)
+df$rbf_peak_vein = rowMeans(df[,c('r_rbf_peak_vein','l_rbf_peak_vein')],na.rm = T)
+df$rbv_peak = rowMeans(df[,c('r_rbv_peak','l_rbv_peak')],na.rm = T)
+df$rbv_peak_vein = rowMeans(df[,c('r_rbv_peak_vein','l_rbv_peak_vein')],na.rm = )
+# Outcomes
+# Schwartz
+df$eGFR_schwartz = round(0.413*(df$ht/df$screat),2)
+# Pottel
+df$sex = as.character(df$sex)
+pottel = read.csv("./Data_Clean/pottel_table_1.csv")
+df$qcr = apply(df,1,function(r){
+  age = round(as.numeric(r['age']))
+  if (is.na(age)){
+    qcr = NA
+  } else {
+    if (age > 20){age = 20}
+    if (age < 15){
+      qcr = pottel$Qb_mg_dL[which(age == pottel$Age_years)]
+    } else {
+      sex = as.character(r['sex'])
+      qcr = pottel[which(pottel$Age_years == age & pottel$Sex == sex),'Qb_mg_dL']
+    }
+    return(qcr)
+  }
+})
+df$eGFR_cr = 107.3 / (df$screat/df$qcr)
 ```
 
 # Missing data
 
-```{r}
-vis_miss(df)
-gg_miss_upset(df)
+```{r warning=FALSE}
+# Outcome and predictor lists
+outcomes = c('igfr','igfr_ab','eGFR_schwartz','eGFR_cr')
+pred = c('hr_mri_la_sr','a2_peak_flow_sr','rbf_avg','rbf_avg_vein','rbf_peak',
+         'rbf_peak_vein','rbv_peak','rbv_peak_vein')
+# Missingness
+vis_miss(df[,c(outcomes,pred)])
+gg_miss_upset(df[,c(outcomes,pred)])
 ```
 
 # Outcomes and Predictor Pairs
@@ -123,148 +146,77 @@ ggpairs(df[,c(outcomes,pred)]) +
 
 # ElasticNet
 
-The ElasticNet is similar to the Lasso approach for model selection, but performs better when predictors are highly correlated. To select a model, we used leave one out (LOO) cross validation (CV) to find the tuning parameter $\lambda$ that results in the lowest model error. Because $\lambda$ essentially controls how many variables are selected, common practice is to use either the model with the lowest CV error ($\lambda_{min}$), or the model with the lowest CV error within one standard error of the absolute minimum ($\lambda_{1se}$). In general, the $\lambda_{min}$ model will include more predictors but therefore risks overfitting, while the $\lambda_{1se}$ model is the most parsimonious model that still has an acceptable error level.
-
-In the cross validation plots, the vertical dashed lines indicate these two choices of $\lambda$.
-
-## IGFR
+The ElasticNet is similar to the Lasso approach for model selection, but performs better when predictors are highly correlated. To select a model, we used leave one out (LOO) cross validation (CV) to find the tuning parameter $\lambda$ that results in the lowest model error. Because $\lambda$ essentially controls how many variables are selected, common practice is to use the model with the lowest CV error ($\lambda_{min}$), or a model with CV error within one standard error of the absolute minimum ($\lambda_{1se}$). In general, the $\lambda_{min}$ model will include more predictors but therefore risks overfitting, while a $\lambda_{1se}$ model is a more parsimonious model that still has an acceptable error level.
 
 ```{r}
-# Matrices
-cc = df[,c("igfr",pred)]
-cc = data.matrix(cc[complete.cases(cc),])
-X = cc[,pred]
-Y = cc[,"igfr"]
-# ElasticNet CV
-cv = cv.glmnet(X,Y,nfolds = nrow(X),grouped = F)
-# Get coefficients
-min_coefs = coef(cv, s = "lambda.min")
-min_coefs = rownames(min_coefs)[which(min_coefs != 0)]
-min_coefs = min_coefs[min_coefs != "(Intercept)"]
-se_coefs = coef(cv, s = "lambda.1se")
-se_coefs = rownames(se_coefs)[which(se_coefs != 0)]
-se_coefs = se_coefs[se_coefs != "(Intercept)"]
-if(length(se_coefs)==0){se_coefs = 1}
-# Plot CV
-plot(cv)
+easly_elnet = function(outcome,predictors,data){
+  # LOO CV
+  cv = trainControl(method = "LOOCV")
+  # Model formula
+  f = as.formula(paste0(outcome,"~",paste0(predictors,collapse = "+")))
+  # Matrices
+  m = lm(f,data)$model
+  X = data.matrix(m[,predictors])
+  Y = m[,outcome]
+  # Train
+  elnet = train(x = X,y = Y,method = "glmnet",metric = "RMSE",
+                trControl = cv,na.action = "na.omit")
+  # Best results
+  se = sd(elnet$results$RMSE)/sqrt(length(elnet$results$RMSE))
+  min = min(elnet$results$RMSE)
+  good = which(elnet$results$RMSE <= min+se)
+  params = elnet$results[good,]
+  if(nrow(params)>1){
+    mods = apply(params,1,function(p){
+      a = as.numeric(p['alpha'])
+      l = as.numeric(p['lambda'])
+      mod = glmnet(x = X,y = Y,alpha = a,lambda = l)
+      m = coef(mod)
+      m = as.matrix(m)
+      m = rownames(m)[m != 0]
+      return(m)
+    })
+    invisible(lapply(mods, function(m){
+      print(kable(m,col.names = "Selected"))
+    }))
+  } else {
+    mod = glmnet(x = X,y = Y,alpha = elnet$bestTune$alpha,lambda = elnet$bestTune$lambda)
+    m = coef(mod)
+    m = as.matrix(m)
+    m = rownames(m)[m != 0]
+    print(kable(m,col.names = "Selected"))
+  }
+}
 ```
 
-### $\lambda_{min}$ model
+## igfr
 
-```{r}
-# Re-fit model
-f = as.formula(paste0("igfr~",paste0(min_coefs,collapse = "+")))
-m = lm(f,df)
-# Results
-kable(tidy(m,conf.int = T),digits = 3)
+```{r results='asis'}
+easly_elnet(outcome = "igfr",predictors = pred,data = df)
 ```
 
-Model was fit with `r nobs(m)` observations and $R^2$ was `r round(summary(m)$r.squared,3)`.
+## igfr_ab
 
-### $\lambda_{1se}$ model
-
-```{r}
-# Re-fit model
-f = as.formula(paste0("igfr~",paste0(se_coefs,collapse = "+")))
-m = lm(f,df)
-# Results
-kable(tidy(m,conf.int = T),digits = 3)
+```{r results='asis'}
+easly_elnet(outcome = "igfr_ab",predictors = pred,data = df)
 ```
-
-Model was fit with `r nobs(m)` observations and $R^2$ was `r round(summary(m)$r.squared,3)`.
-
-## IGFR AB
-
-```{r}
-# Matrices
-cc = df[,c("igfr_ab",pred)]
-cc = data.matrix(cc[complete.cases(cc),])
-X = cc[,pred]
-Y = cc[,"igfr_ab"]
-# ElasticNet CV
-cv = cv.glmnet(X,Y,nfolds = nrow(X),grouped = F)
-# Get coefficients
-min_coefs = coef(cv, s = "lambda.min")
-min_coefs = rownames(min_coefs)[which(min_coefs != 0)]
-min_coefs = min_coefs[min_coefs != "(Intercept)"]
-se_coefs = coef(cv, s = "lambda.1se")
-se_coefs = rownames(se_coefs)[which(se_coefs != 0)]
-se_coefs = se_coefs[se_coefs != "(Intercept)"]
-if(length(se_coefs)==0){se_coefs = 1}
-# Plot CV
-plot(cv)
-```
-
-### $\lambda_{min}$ model
-
-```{r}
-# Re-fit model
-f = as.formula(paste0("igfr~",paste0(min_coefs,collapse = "+")))
-m = lm(f,df)
-# Results
-kable(tidy(m,conf.int = T),digits = 3)
-```
-
-Model was fit with `r nobs(m)` observations and $R^2$ was `r round(summary(m)$r.squared,3)`.
-
-### $\lambda_{1se}$ model
-
-```{r}
-# Re-fit model
-f = as.formula(paste0("igfr~",paste0(se_coefs,collapse = "+")))
-m = lm(f,df)
-# Results
-kable(tidy(m,conf.int = T),digits = 3)
-```
-
-Model was fit with `r nobs(m)` observations and $R^2$ was `r round(summary(m)$r.squared,3)`.
 
 ## eGFR (Schwartz)
 
-```{r}
-# Matrices
-cc = df[,c("eGFR_schwartz",pred)]
-cc = data.matrix(cc[complete.cases(cc),])
-X = cc[,pred]
-Y = cc[,"eGFR_schwartz"]
-# ElasticNet CV
-cv = cv.glmnet(X,Y,nfolds = nrow(X),grouped = F)
-# Get coefficients
-min_coefs = coef(cv, s = "lambda.min")
-min_coefs = rownames(min_coefs)[which(min_coefs != 0)]
-min_coefs = min_coefs[min_coefs != "(Intercept)"]
-se_coefs = coef(cv, s = "lambda.1se")
-se_coefs = rownames(se_coefs)[which(se_coefs != 0)]
-se_coefs = se_coefs[se_coefs != "(Intercept)"]
-if(length(se_coefs)==0){se_coefs = 1}
-# Plot CV
-plot(cv)
+```{r results='asis'}
+easly_elnet(outcome = "eGFR_schwartz",predictors = pred,data = df)
 ```
-
-### $\lambda_{min}$ model
-
-```{r}
-# Re-fit model
-f = as.formula(paste0("igfr~",paste0(min_coefs,collapse = "+")))
-m = lm(f,df)
-# Results
-kable(tidy(m,conf.int = T),digits = 3)
-```
-
-Model was fit with `r nobs(m)` observations and $R^2$ was `r round(summary(m)$r.squared,3)`.
-
-### $\lambda_{1se}$ model
-
-```{r}
-# Re-fit model
-f = as.formula(paste0("igfr~",paste0(se_coefs,collapse = "+")))
-m = lm(f,df)
-# Results
-kable(tidy(m,conf.int = T),digits = 3)
-```
-
-Model was fit with `r nobs(m)` observations and $R^2$ was `r round(summary(m)$r.squared,3)`.
 
 ## eGFR (Pottel)
 
-Need information on participant sex.
+```{r results='asis'}
+easly_elnet(outcome = "eGFR_cr",predictors = pred,data = df)
+```
+
+
+```{r}
+# Write data for checking
+write.csv(df[,c(outcomes,pred,colnames(df)[grep("_sr",colnames(df))])],
+          "renal_imaging_data.csv",row.names = F)
+getwd()
+```

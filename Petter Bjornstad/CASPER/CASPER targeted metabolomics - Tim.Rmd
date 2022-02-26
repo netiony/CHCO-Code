@@ -17,7 +17,16 @@ output: word_document
 library(knitr)
 
 knitr::opts_chunk$set(echo = FALSE,cache = FALSE,dpi = 600)
-knitr::opts_knit$set(root.dir = "/Volumes/som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CASPER Metabolomics")
+
+knitr::opts_chunk$set(echo = FALSE)
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "E:/Petter Bjornstad/CASPER Metabolomics"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CASPER Metabolomics"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  home_dir = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CASPER Metabolomics"
+}
+knitr::opts_knit$set(root.dir = home_dir)
 
 library(readxl)
 library(NormalizeMets)
@@ -30,6 +39,7 @@ library(dplyr)
 library(mixOmics)
 library(Hmisc)
 library(boot)
+library(parallel)
 library("FactoMineR")
 library("factoextra")
 library(tableone)
@@ -47,12 +57,16 @@ library(mixOmics)
 library(pander)
 library(pheatmap)
 library(limma)
+library(glmnet)
+library(broom)
 
-source("/Users/timvigers/GitHub/General-code/foldchange.R")
-source("/Users/timvigers/GitHub/General-code/editcolnames.R")
+source("~/GitHub/General-code/foldchange.R")
+#source("C:/Users/pylell/Documents/GitHub/General-code/foldchange.R")
+source("~/GitHub/General-code/editcolnames.R")
+#source("C:/Users/pylell/Documents/GitHub/General-code/editcolnames.R")
 ```
 
-```{r}
+```{r, include=FALSE}
 # read in Petter's SAS dataset
 alldata <- read.sas7bdat("./Raw data/casperheir_for_laura.sas7bdat")
 
@@ -191,18 +205,32 @@ mat_data <- data.matrix(z[,1:ncol(z)])
 #rownames(mat_data) <- rnames
 #par(cex.main=1.5)
 #margins =c(12,20)
+
+corrvars_bsa = c("rpf_bsa","gfr_bsa")
+varnames_bsa = c("RPF_BSA","GFR_BSA")
+corrs_bsa <- corr.test(alldata[,targeted],alldata[,corrvars_bsa],method = "spearman",adjust = "fdr")
+corr_sum_bsa <- round(corrs_bsa$r,3)
+corr_p_bsa <-   round(corrs_bsa$p,3)
+corr_p_char_bsa <- corr_p_bsa
+corr_p_char_bsa[corr_p_bsa>=0.05] <- ""
+corr_p_char_bsa[corr_p_bsa<0.05 & corr_p_bsa>=0.01] <- "*"
+corr_p_char_bsa[!is.na(corr_p_bsa) & corr_p_bsa<0.01] <- "**"
+z_bsa<-corr_sum_bsa
+extra_bsa <- corr_p_char_bsa
+rnames_bsa <- colnames(z_bsa)
+mat_data_bsa <- data.matrix(z_bsa[,1:ncol(z_bsa)])
 ```
 
 ```{r}
-c = corr.test(alldata[,targeted],alldata[,corrvars],method = "spearman",adjust = "fdr")
+c = corr.test(alldata[,targeted],alldata[,c(corrvars,corrvars_bsa)],method = "spearman",adjust = "fdr")
 rownames(c$r) <- c("Alanine","Arginine","Cystine","Glutamine","Glycine","Histidine",
                    "Isoleucine","Leucine","Lysine","Methionine","Phenylalanine",
                    "Proline","Serine","Threonine","Tyrosine","Valine","Citrate",
                    "Ketoglutarate","Succinate","Fumarate","Malate")
-colnames(c$r) <- varnames
+colnames(c$r) <- c(varnames,varnames_bsa)
 
 rownames(c$p) <- rownames(c$r)
-colnames(c$p) <- varnames
+colnames(c$p) <- c(varnames,varnames_bsa)
 ```
 
 ```{r}
@@ -302,7 +330,7 @@ plsda_fun = function(data,i){
 }
 df_boot = cbind(Y = as.factor(plsda$group),plsda[,c(2:22)])
 # First column in b$t is component 1, second is component 2
-b = boot(df_boot,plsda_fun,1000,parallel = "multicore",ncpus = 8)
+b = boot(df_boot,plsda_fun,1000,parallel = "multicore",ncpus = round(detectCores()*0.75))
 # CIs
 bci1 = boot.ci(b,index = 1,type = "perc")
 bci2 = boot.ci(b,index = 2,type = "perc")
@@ -323,15 +351,18 @@ heatmap(mat_data,margins = c(8,8))
 
 ```{r plsda,cache=TRUE,warning=FALSE}
 # Permutation testing - takes forever, make sure to cache
-n_perm <- 1
-aucs <- vector(mode="numeric", length=n_perm)
-for (i in 1:n_perm) {
+n_perm <- 1000
+cl = makeCluster(round(detectCores()*0.75),type = "FORK")
+aucs <- parLapply(cl,1:n_perm, function(x){
+  set.seed(1+i)
   Y <- sample(as.factor(plsda$group),replace = F)
   plsda_res <- plsda(plsda[,c(2:22)],Y,ncomp = 1)
   perf_plsda <- perf(plsda_res,progressBar=FALSE, auc=TRUE,
                    validation = "loo")
-  aucs[i] <- as.numeric(perf_plsda$auc$comp1["AUC.mean"])
-}
+  return(as.numeric(perf_plsda$auc$comp1["AUC.mean"]))
+})
+stopCluster(cl)
+aucs = unlist(aucs)
 ggplot(as.data.frame(aucs),aes(x=aucs)) + 
   geom_histogram(binwidth = 0.01) + 
   geom_vline(aes(xintercept=auc_true),color="red") + 
@@ -351,6 +382,19 @@ P-values for correlations between metabolites, GFR, body composition, and renal 
 ```{r, echo=FALSE}
 kable(corr_p)
 ```
+
+Correlations between metabolites, GFR_BSA, RPF_BSA
+
+```{r, echo=FALSE}
+kable(corr_sum_bsa)
+```
+
+P-values for correlations between metabolites, GFR_BSA, RPF_BSA
+
+```{r, echo=FALSE}
+kable(corr_p_bsa)
+```
+
 
 ## Stratified Correlations
 
@@ -380,4 +424,110 @@ emphasize.strong.cells(which(c$p < 0.05, arr.ind = TRUE))
 pander(round(c$r,2))
 
 kable(round(c$p,2),caption = "P-values for correlations")
+```
+
+# Lasso
+
+```{r}
+Y = alldata[,c(corrvars,corrvars_bsa)]
+rownames(Y) = alldata$ID
+Y = data.matrix(Y[complete.cases(Y),])
+X = data.matrix(alldata[alldata$ID %in% rownames(Y),targeted])
+```
+
+```{r}
+easy_lasso = function(outcome,lambda = "lambda.1se"){
+  y = Y[,outcome]
+  # CV
+  cv = cv.glmnet(X,y,nfolds = nrow(X),grouped = F)
+  # Get selected
+  coefs = coef(cv,s = lambda)
+  coefs = rownames(coefs)[which(coefs != 0)]
+  coefs = coefs[coefs != "(Intercept)"]
+  coefs_id = coefs
+  if(length(coefs_id)>0){
+    # Re-fit
+    f = as.formula(paste0(outcome,"~",paste0(coefs,collapse = "+")))
+    mod = lm(f,data = alldata)
+    res = tidy(mod)
+    res$term[2:nrow(res)] = coefs_id
+  } else {
+    res = "None Selected"
+  }
+  return(res)
+}
+```
+
+## Smallest model
+
+### RPF
+
+```{r}
+rpf_lasso = easy_lasso("rpf")
+kable(rpf_lasso,digits = 3)
+```
+
+### RPF BSA
+
+```{r}
+rpf_bsa_lasso = easy_lasso("rpf_bsa")
+kable(rpf_bsa_lasso,digits = 3)
+```
+
+### Mean ACR
+
+```{r}
+acr_lasso = easy_lasso("acr_mean")
+kable(acr_lasso,digits = 3)
+```
+
+### GFR
+
+```{r}
+gfr_lasso = easy_lasso("gfr")
+kable(gfr_lasso,digits = 3)
+```
+
+### GFR BSA
+
+```{r}
+gfr_bsa_lasso = easy_lasso("gfr_bsa")
+kable(gfr_bsa_lasso,digits = 3)
+```
+
+## Minimum error
+
+### RPF
+
+```{r}
+rpf_lasso = easy_lasso("rpf",lambda = "lambda.min")
+kable(rpf_lasso,digits = 3)
+```
+
+### RPF BSA
+
+```{r}
+rpf_bsa_lasso = easy_lasso("rpf_bsa",lambda = "lambda.min")
+kable(rpf_bsa_lasso,digits = 3)
+```
+
+### Mean ACR
+
+```{r}
+acr_lasso = easy_lasso("acr_mean",lambda = "lambda.min")
+kable(acr_lasso,digits = 3)
+```
+
+### GFR
+
+```{r}
+gfr_lasso = easy_lasso("gfr",lambda = "lambda.min")
+kable(gfr_lasso,digits = 3)
+```
+
+### GFR BSA
+
+```{r}
+gfr_bsa_lasso = easy_lasso("gfr_bsa",lambda = "lambda.min")
+kable(gfr_bsa_lasso,digits = 3)
 ```
