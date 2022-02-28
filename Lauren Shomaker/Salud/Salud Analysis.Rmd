@@ -5,10 +5,11 @@ date:"`r format(Sys.time(), '%d %B %Y')`"
 output: pdf_document
 ---
 
-```{r setup, include=FALSE}
+```{r setup, include=FALSE, echo=FALSE}
 library(haven) # import spss dataset
-library(lme4) # mixed models
-library(multcomp) # contrast statement
+library(knitr)
+library(nlme) # mixed models
+library(emmeans) # contrast statement
 library(tidyverse) # data manipulation
 
 knitr::opts_chunk$set(echo = FALSE)
@@ -26,27 +27,14 @@ knitr::opts_knit$set(root.dir = home_dir)
 HLP_MASTER_DATA <- read_sav("S:/Laura/Peds Endo/Lauren Shomaker/Salud/Data Analysis - Pyle 2020/HLP_MASTER DATA 7.15.20 LP Trim.sav")
 
 ```
-# Aim 1
-we can do
-
 # Aim 2
 Hypothesis: We estimate that the MBI + Lifestyle (SSB) will be more effective than Lifestyle Only (HeLP) for reducing depression symptoms, insulin resistance, and stress.
 
-## Key variables
-
-### Teen Depression
-1.	CES-D survey 
-– continuous (cesdtot)
-- categorical as elevated/non-elevated (cesd_elevated)
-
 ### Insulin Resistance
-1. HOMA-IR (homair, homair_clean- caps at 10.3 ish for 3subj, homairlg - whats this one?)
-2. Fasting insulin (insulin_mclUml, insulin_mclUml_clean - capped at 49.15 for 2 subj)
-3. Fasting Glucose (glucosemgdl)
-4. Other Metabolic outcomes -hba1c (hba1c, hba1c_clean - capped 1 subj 5.7), ALt/AST (AST_UL_clean - capped 2 subj 35, ALT_UL_clean capped 44 for 7 subj), Lipids(tryglyc(tryglycerides_mgdl_clean - missing 1 subj), cholesterol total(cholesteroltot_mgdl), hdl/ldl (hdlc_mgdl_clean - capped at 64.75 2 subj, missing 1, ldlc_mgdl)
+4. Other Metabolic outcomes ALt/AST (AST_UL_clean - capped 2 subj 35, ALT_UL_clean capped 44 for 7 subj), Lipids(tryglyc(tryglycerides_mgdl_clean - missing 1 subj), cholesterol total(cholesteroltot_mgdl), hdl/ldl (hdlc_mgdl_clean - capped at 64.75 2 subj, missing 1, ldlc_mgdl)
 
 ### Stress
-1. Perceived Stress Scale (psssumitem - total score, psselevated - 1 low 2 med 3 high)
+1. Perceived Stress Scale (psssumitem)
 2. Everyday discrimination scale - (edsrawscore - total, sumavg_eds - avg) - both fine
 3.	Psychological Stress Experience - (pserawsum, pserawmean, pserawsumT) - which to use
 4.	Cortisol, changes before to after session each week-6 sessions (cortisol_nmoll_sessionN_before, cortisol_nmoll_sessionN_after)
@@ -56,16 +44,14 @@ b.	Note cortisol was measured end-of-day, after exercise portion of the interven
 # TO ASK ABOUT: 
 ## Variables
 1. homairlg - whats this,
-2. ALT clean capped for 7 subj,
-3. lipids and hdlc missingfor subj 117 6wk,
-4. no advice on what to use for PSE,
-5. change in cortisol need to derive the difference for each session,
+3. lipid and hdlc missingfor subj 117 6wk,
 
 ## Data overall
-1. we have 12 subjects with 3 time points (BL, 6wk, 6mo), 1 subj with 2 (BL, 6wk , subj 117 (has some missing data)), 5 with just bl - which to potentially include/exclude or imputation methods etc?
+1. we have 12 subjects with 3 time points (BL, 6wk, 6mo), 1 subj with 2 (BL, 6wk , subj 117 (has some missing data)), 5 with just bl
 
 
-```{r data exploration}
+```{r data exploration and clean, include=FALSE}
+###### light exploration #################
 #look at what we are working with
 unique(HLP_MASTER_DATA$subjectidno)
 length(unique(HLP_MASTER_DATA$subjectidno)) # 18 total subj
@@ -74,42 +60,205 @@ length(unique(HLP_MASTER_DATA$subjectidno)) # 18 total subj
 a  = HLP_MASTER_DATA %>% select(subjectidno,homair, homairlg) 
 a$testhomair = log(a$homair) # base e doesnt match
 a$testhomair = log10(a$homair) # base 10 matches
+##########################################
+
+#####
+# for some reason no more t-score in the new data set- will pull from the older data set
+HLP_MASTER_DATA_7_14_20_LP_ = read_sav("S:/Laura/Peds Endo/Lauren Shomaker/Salud/Data Analysis - Pyle 2020/Older/HLP_MASTER DATA 7.14.20 LP .sav")
+HLP_MASTER_DATA_7_14_20_LP_ = HLP_MASTER_DATA_7_14_20_LP_ %>% select(subjectidno, interval, pserawsumT)
+####
+
+###### cortisol derivation #####
+hlp_cortisol = HLP_MASTER_DATA %>% mutate(cortisol_change1 = Cortisol_nmoll_session1_after - Cortisol_nmoll_session1_before,
+                                          cortisol_change2 = Cortisol_nmoll_session2_after - Cortisol_nmoll_session2_before,
+                                          cortisol_change3 = Cortisol_nmoll_session3_after - Cortisol_nmoll_session3_before,
+                                          cortisol_change4 = Cortisol_nmoll_session4_after - Cortisol_nmoll_session4_before,
+                                          cortisol_change5 = Cortisol_nmoll_session5_after - Cortisol_nmoll_session5_before,
+                                          cortisol_change6 = Cortisol_nmoll_session6_after - Cortisol_nmoll_session6_before) %>%
+  select(subjectidno, interval, cortisol_change1, cortisol_change2, cortisol_change3, cortisol_change4, cortisol_change5, cortisol_change6)
+
+###### get already cleaned variables from data #################
+analysis = HLP_MASTER_DATA %>% select(subjectidno, interval, groupno, sex, SV2age_calculated,z_score,
+                                      cesdtot, homair, insulin_mcIUmL, glucose_mgdL,
+                                      hba1c, ALT_UL, AST_UL, triglycerides_mgdL, cholesteroltot_mgdL, HDLC_mgdL, LDLC_mgdL,
+                                      psssumitem, EDSrawscore) 
+
+analysis = full_join(analysis, HLP_MASTER_DATA_7_14_20_LP_)
+analysis = full_join(analysis, hlp_cortisol)
+
+# order and factor variables
+analysis = analysis[order(analysis$subjectidno, analysis$interval),]
+analysis$groupno = as.factor(analysis$groupno)
+analysis$interval = as.factor(analysis$interval)
+analysis$sex = as.factor(analysis$sex)
+
+# clean up workspace
+rm(hlp_cortisol); rm(HLP_MASTER_DATA); rm(HLP_MASTER_DATA_7_14_20_LP_)
+###########################################
 ```
-Question answers: 
-1. Homairlg is log10 of homair 
 
 ```{r mixed model}
-# test that mixed models work on this dataset as intended and contrasts
+###### Teen Depression (cesdtot) #########
 
+# simple models
+cesdtot_mod = lme(cesdtot ~ interval+groupno+interval:groupno,
+                   random=~1|subjectidno,
+                   data = analysis)
+
+cesdtot_mod_anova = anova.lme(cesdtot_mod, type="marginal")
+# use emmeans 
+cesdtot_mod_means = emmeans(cesdtot_mod,specs=pairwise ~ factor(interval):groupno, adjust="tukey")
+
+#adjusted for age, bmi, sex
+cesdtot_mod2 = lme(cesdtot ~ interval*groupno +sex+z_score,
+                   random=~1|subjectidno,
+                   data = analysis, na.action = na.omit)
+
+cesdtot_mod_anova2 = anova.lme(cesdtot_mod2, type="marginal")
+# use emmeans 
+cesdtot_mod_means2 = emmeans(cesdtot_mod2,specs=pairwise ~ factor(interval):groupno, adjust="tukey")
+########################################
+
+###### Insulin Resistance (homair) #########
+
+# simple models
+homair_mod = lme(homair ~ interval+groupno+interval:groupno,
+                   random=~1|subjectidno,
+                   data = analysis)
+
+homair_mod_anova = anova.lme(homair_mod, type="marginal")
+# use emmeans 
+homair_mod_means = emmeans(homair_mod,specs=pairwise ~ factor(interval):groupno, adjust="tukey")
+
+#adjusted for age, bmi, sex
+homair_mod2 = lme(homair ~ interval*groupno +sex+z_score,
+                   random=~1|subjectidno,
+                   data = analysis, na.action = na.omit)
+
+homair_mod_anova2 = anova.lme(homair_mod2, type="marginal")
+# use emmeans 
+homair_mod_means2 = emmeans(homair_mod2,specs=pairwise ~ factor(interval):groupno, adjust="tukey")
+########################################
+
+###### Insulin Resistance (fasting insulin) #########
+# simple models
+insulin_mod = lme(insulin_mcIUmL ~ interval+groupno+interval:groupno,
+                   random=~1|subjectidno,
+                   data = analysis)
+
+insulin_mod_anova = anova.lme(insulin_mod, type="marginal")
+# use emmeans 
+insulin_mod_means = emmeans(insulin_mod,specs=pairwise ~ factor(interval):groupno, adjust="tukey")
+
+#adjusted for age, bmi, sex
+insulin_mod2 = lme(insulin_mcIUmL ~ interval*groupno +sex+z_score,
+                   random=~1|subjectidno,
+                   data = analysis, na.action = na.omit)
+
+insulin_mod_anova2 = anova.lme(insulin_mod2, type="marginal")
+# use emmeans 
+insulin_mod_means2 = emmeans(insulin_mod2,specs=pairwise ~ factor(interval):groupno, adjust="tukey")
+########################################
+
+###### Insulin Resistance (glucose) #########
+# simple models
+glucose_mod = lme(glucose_mgdL ~ interval+groupno+interval:groupno,
+                   random=~1|subjectidno,
+                   data = analysis)
+
+glucose_mod_anova = anova.lme(glucose_mod, type="marginal")
+# use emmeans 
+glucose_mod_means = emmeans(glucose_mod,specs=pairwise ~ factor(interval):groupno, adjust="tukey")
+
+#adjusted for age, bmi, sex
+glucose_mod2 = lme(glucose_mgdL ~ interval*groupno +sex+z_score,
+                   random=~1|subjectidno,
+                   data = analysis, na.action = na.omit)
+
+glucose_mod_anova2 = anova.lme(glucose_mod2, type="marginal")
+# use emmeans 
+glucose_mod_means2 = emmeans(glucose_mod2,specs=pairwise ~ factor(interval):groupno, adjust="tukey")
+########################################
+
+###### metabolic outcomes (hba1c) #########
+# simple models
+hba1c_mod = lme(hba1c ~ interval+groupno+interval:groupno,
+                   random=~1|subjectidno,
+                   data = analysis)
+
+hba1c_mod_anova = anova.lme(hba1c_mod, type="marginal")
+# use emmeans 
+hba1c_mod_means = emmeans(hba1c_mod,specs=pairwise ~ factor(interval):groupno, adjust="tukey")
+
+#adjusted for age, bmi, sex
+hba1c_mod2 = lme(hba1c ~ interval*groupno +sex+z_score,
+                   random=~1|subjectidno,
+                   data = analysis, na.action = na.omit)
+
+hba1c_mod_anova2 = anova.lme(hba1c_mod2, type="marginal")
+# use emmeans 
+hba1c_mod_means2 = emmeans(hba1c_mod2,specs=pairwise ~ factor(interval):groupno, adjust="tukey")
+########################################
+
+###### metabolic outcomes (hba1c) #########
+# simple models
+hba1c_mod = lme(hba1c ~ interval+groupno+interval:groupno,
+                   random=~1|subjectidno,
+                   data = analysis)
+
+hba1c_mod_anova = anova.lme(hba1c_mod, type="marginal")
+# use emmeans 
+hba1c_mod_means = emmeans(hba1c_mod,specs=pairwise ~ factor(interval):groupno, adjust="tukey")
+
+#adjusted for age, bmi, sex
+hba1c_mod2 = lme(hba1c ~ interval*groupno +sex+z_score,
+                   random=~1|subjectidno,
+                   data = analysis, na.action = na.omit)
+
+hba1c_mod_anova2 = anova.lme(hba1c_mod2, type="marginal")
+# use emmeans 
+hba1c_mod_means2 = emmeans(hba1c_mod2,specs=pairwise ~ factor(interval):groupno, adjust="tukey")
+########################################
+
+kable(hba1c_mod_anova2,caption="CESDtot anova",format.args = list(scientific = FALSE))
+kable(hba1c_mod_means2$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
 ```
 
-MISC
 
-# Aim 3
-Hypothesis: We anticipate that MBI + Lifestyle (SSB) will be more effective than Lifestyle Only (HELP) in improving mindfulness, eating behavior, sleep quality, physical activity, cortisol and perceived discrimination.
+```{r cesdtot results}
+# teen depression: cesdtot
+kable(cesdtot_mod_anova,caption="CESDtot anova",format.args = list(scientific = FALSE))
+kable(cesdtot_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
+```
+No difference in groups at each time point (p = .82, .84, 1). Similar results when adjusting for covariates
 
-## Key Variables
+```{r homair results}
+# teen depression: cesdtot
+kable(homair_mod_anova,caption="CESDtot anova",format.args = list(scientific = FALSE))
+kable(homair_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
+```
+No difference in groups at each time point (p = .91, .99, .69). Similar results when adjusting for covariates
 
-### Mindfulness
-1.	Mindfulness Attention Awareness Scale (higher scores=better) - (maastotal) 
-2.	Group mood forms of state mindlessness/state anxiety (State-Trait Anxiety Inventory for Children & MAAS; higher scores for both=worse) - (maasstateavg.N.00 - goes to 12 (odd nums pre sessions, evens post)), correspond with cortisol
+```{r insulin results}
+# teen depression: cesdtot
+kable(insulin_mod_anova,caption="CESDtot anova",format.args = list(scientific = FALSE))
+kable(insulin_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
+```
+No difference in groups at each time point (p = .94, .99, .64). Similar results when adjusting for covariates
 
-###	Sleep
-1.	Pittsburgh Sleep Quality Index - (psqi_...) lot of these, which to use?
+```{r glucose results}
+# teen depression: cesdtot
+kable(glucose_mod_anova,caption="CESDtot anova",format.args = list(scientific = FALSE))
+kable(glucose_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
+```
+No difference in groups at each time point (p = .99, .58, .99). Similar results when adjusting for covariates
 
-### Physical Activity
-1.	Actigraph (typically MVPA and total time used)- (totalMVPA, AverageMVPAPerday)
-2.	Physical Activity Questionnaire (physactivityrawsum)
-
-### Stress-Related Eating
-1.	Emotional Eating Scale - (EEStot, EESavg) - either fine
-2.	QEWP - (qewpobe qewpsbe) (0 = no 1 = yes O = objective S = subjective) - which to use?
-3.	Diet Recall (totalkcals) - also measured pct proteins, carbs, fats - use any of this
+```{r hba1c results}
+# teen depression: cesdtot
+kable(hba1c_mod_anova,caption="CESDtot anova",format.args = list(scientific = FALSE))
+kable(hba1c_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
+```
+No difference in groups at each time point (p = .99, .99, .13). Similar results when adjusting for covariates
 
 
-TO ASK ABOUT: 
-6. lots of sleep index variables which to use,
-7. QEWP - which to use, subjective or objective
-8. Diet recall - also have pcts of carbs, fats proteins etc, use any of this in conjunction w total kcals? 
 
-NOTE: Mainly looking at Aim 2 (questions 1-5)
