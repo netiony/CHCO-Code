@@ -1,8 +1,10 @@
 ---
-title: "Salud Data Exploration/Analysis"
+title: "Salud Aim 2 Analysis"
 author: "Casey Sakamoto"
-date:"`r format(Sys.time(), '%d %B %Y')`"
-output: pdf_document
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    df_print: paged
 ---
 
 ```{r setup, include=FALSE, echo=FALSE}
@@ -11,6 +13,7 @@ library(knitr)
 library(nlme) # mixed models
 library(emmeans) # contrast statement
 library(tidyverse) # data manipulation
+library(Hmisc)
 
 knitr::opts_chunk$set(echo = FALSE)
 if(Sys.info()["sysname"] == "Windows"){
@@ -27,27 +30,21 @@ knitr::opts_knit$set(root.dir = home_dir)
 HLP_MASTER_DATA <- read_sav("S:/Laura/Peds Endo/Lauren Shomaker/Salud/Data Analysis - Pyle 2020/HLP_MASTER DATA 7.15.20 LP Trim.sav")
 
 ```
-# Aim 2
-Hypothesis: We estimate that the MBI + Lifestyle (SSB) will be more effective than Lifestyle Only (HeLP) for reducing depression symptoms, insulin resistance, and stress.
 
-### Insulin Resistance
-4. Other Metabolic outcomes ALt/AST ,
-Lipids(tryglyc(tryglycerides_mgdl_clean - missing 1 subj), cholesterol total(cholesteroltot_mgdl), hdl/ldl (hdlc_mgdl ldlc_mgdl)
+# 1. Background
+Aim 2 Hypothesis: We estimate that the MBI + Lifestyle (SSB) will be more effective than Lifestyle Only (HeLP) for reducing depression symptoms, insulin resistance, and stress.Depression, insulin, and stress measures were measured at baseline, 6 week, and 6 month visits.
 
-### Stress
-1. Perceived Stress Scale (psssumitem)
-2. Everyday discrimination scale - (edsrawscore - total, sumavg_eds - avg) - both fine
-3.	Psychological Stress Experience - (pserawsum, pserawmean, pserawsumT) - which to use
-4.	Cortisol, changes before to after session each week-6 sessions (cortisol_nmoll_sessionN_before, cortisol_nmoll_sessionN_after)
-a.	Did we see a pattern/trajectory toward more declining cortisol in SSB (vs. HELP)?
-b.	Note cortisol was measured end-of-day, after exercise portion of the intervention -during evenings (~6pm and again at 6:45/7pm), so imperfect we are aware but was consistently measured this way 
+# 2. Outstanding Data Questions/ Remarks
+- We have 12 subjects with 3 time points (BL, 6wk, 6mo), 1 subj with 2 (BL, 6wk : subj 117 (has some missing data)), 5 with just BL
 
+- Cortisol was measured before and after over 6 sessions. the change in cortisol was derived, and the 6 sessions were used as the time points rather than the 3 time points used for the other measures
 
-3. lipid and hdlc missingfor subj 117 6wk,
+# 3. Methods
+CES-D scores were used to measure teen depression. HOMA-IR, fasting insulin, fasting glucose were used to measure insulin resistance. HBA1C, ALT/AST, triglycerides, total cholesterol, and HDL/LDL were measured for other metabolic outcomes. The Perceived Stress Scale (PSS), Everyday Discrimination Scale (EDS), and Psychological Stress Experience (PSE) were used to measure Stress. The change in cortisol levels before and after sessions (6 total) were also used to measure stress.
 
-## Data overall
-1. we have 12 subjects with 3 time points (BL, 6wk, 6mo), 1 subj with 2 (BL, 6wk , subj 117 (has some missing data)), 5 with just bl
+Groups were compared at each time point by fitting linear mixed models with time, treatment, an interaction term, and random intercepts. T-tests with the Tukey p-value adjustment were performed to evaluate the differences between groups at each time point. Spaghetti plots were added to visualize the outcomes at a subject level.
 
+Model fits and contrast tests are included in the code appendix.
 
 ```{r data exploration and clean, include=FALSE}
 ###### light exploration #################
@@ -88,16 +85,16 @@ analysis = full_join(analysis, hlp_cortisol)
 
 # order and factor variables
 analysis = analysis[order(analysis$subjectidno, analysis$interval),]
-analysis$groupno = as.factor(analysis$groupno)
-analysis$interval = as.factor(analysis$interval)
-analysis$sex = as.factor(analysis$sex)
+analysis$groupno = factor(analysis$groupno, levels = c(0,1), labels = c("HeLP","SSB"))
+analysis$interval = factor(analysis$interval, levels = c(1,2,3), labels = c("Baseline", "6 Week", "6 Month"))
+analysis$sex = factor(analysis$sex, levels = c(0,1), labels = c("Male", "Female"))
 
 # clean up workspace
-rm(hlp_cortisol); rm(HLP_MASTER_DATA); rm(HLP_MASTER_DATA_7_14_20_LP_)
+rm(hlp_cortisol); rm(HLP_MASTER_DATA); rm(HLP_MASTER_DATA_7_14_20_LP_); rm(a)
 ###########################################
 ```
 
-```{r mixed model, echo=FALSE}
+```{r mixed model, include = FALSE}
 ###### Teen Depression (cesdtot) #########
 
 # simple models
@@ -386,60 +383,174 @@ pse_mod_means2 = emmeans(pse_mod2,specs=pairwise ~ factor(interval):groupno, adj
 ########################################
 
 ###### stress outcomes cortisol change #########
-# simple models
-analysis$cortisol_change1
-c1_mod = lme(cortisol_change1 ~ interval+groupno+interval:groupno,
+# grab the cortisol session data
+# note only 13 subjects of the 18 have cortisol data
+analysis_cort = analysis %>% filter(interval=="6 Week") %>% 
+  select(subjectidno, groupno, cortisol_change1:cortisol_change6)%>%
+  pivot_longer(cortisol_change1:cortisol_change6,
+               names_to = "session",
+               names_prefix = "cortisol_change",
+               names_transform = list(session = as.double),
+               values_to = "cortisol")
+  
+
+cortisol_mod = lme(cortisol ~ as.factor(session)*groupno,
                    random=~1|subjectidno,
-                   data = analysis, na.action = na.omit)
+                   data = analysis_cort, na.action = na.omit)
 
-pse_mod_anova = anova.lme(pse_mod, type="marginal")
+cortisol_mod_anova = anova.lme(cortisol_mod, type="marginal")
 # use emmeans 
-pse_mod_means = emmeans(pse_mod,specs=pairwise ~ factor(interval):groupno, adjust="tukey")
+cortisol_mod_means = emmeans(cortisol_mod,specs=pairwise ~ factor(session):groupno, adjust="tukey")
 
-#adjusted for age, bmi, sex
-pse_mod2 = lme(pserawsumT ~ interval*groupno +sex+z_score,
-                   random=~1|subjectidno,
-                   data = analysis, na.action = na.omit)
-
-pse_mod_anova2 = anova.lme(pse_mod2, type="marginal")
-# use emmeans 
-pse_mod_means2 = emmeans(pse_mod2,specs=pairwise ~ factor(interval):groupno, adjust="tukey")
+# #adjusted for age, bmi, sex
+# pse_mod2 = lme(pserawsumT ~ interval*groupno +sex+z_score,
+#                    random=~1|subjectidno,
+#                    data = analysis, na.action = na.omit)
+# 
+# pse_mod_anova2 = anova.lme(pse_mod2, type="marginal")
+# # use emmeans 
+# pse_mod_means2 = emmeans(pse_mod2,specs=pairwise ~ factor(interval):groupno, adjust="tukey")
 ########################################
-
-kable(hba1c_mod_anova2,caption="CESDtot anova",format.args = list(scientific = FALSE))
-kable(pse_mod_means2$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
 ```
 
+# 4. Results
+## Depression Symptoms
+```{r cesd plot}
+ggplot(analysis, aes(x = interval, y = cesdtot, color = groupno, group=subjectidno))+
+    geom_line(size = 1) + labs(y = "CES-D Total")
+```
 
+No difference in groups at each time point (p = .82, .84, 1). Similar results when adjusting for covariates.
+
+## Insulin Resistance/ Other Metabolic Outcomes
+### homa-ir
+```{r homair plot}
+ggplot(analysis, aes(x = interval, y = homair, color = groupno, group=subjectidno))+
+    geom_line(size = 1) + labs(y = "HOMA-IR")
+```
+
+No difference in groups at each time point (p = .91, 1, .69). Similar results when adjusting for covariates.
+
+### Fasting Insulin
+```{r insulin plot}
+ggplot(analysis, aes(x = interval, y = insulin_mcIUmL, color = groupno, group=subjectidno))+
+    geom_line(size = 1) + labs(y = "Fasting Insulin mcIU/mL")
+```
+
+No difference in groups at each time point (p = .94, 1, .64). Similar results when adjusting for covariates.
+
+### Fasting Glucose
+```{r gluc plot}
+ggplot(analysis, aes(x = interval, y = glucose_mgdL, color = groupno, group=subjectidno))+
+    geom_line(size = 1) + labs(y = "Glucose mg/dL")
+```
+
+No difference in groups at each time point (p = .99, .58, .99). Similar results when adjusting for covariates.
+
+### HBA1C
+```{r hba1c plot}
+ggplot(analysis, aes(x = interval, y = hba1c, color = groupno, group=subjectidno))+
+    geom_line(size = 1) + labs(y = "HBA1C")
+```
+
+No difference in groups at each time point (p = 1, 1, .13). Similar results when adjusting for covariates.
+
+### ALT/AST
+```{r altast plot}
+ggplot(analysis, aes(x = interval, y = ALT_UL, color = groupno, group=subjectidno))+
+    geom_line(size = 1) + labs(y = "ALT UL")
+ggplot(analysis, aes(x = interval, y = AST_UL, color = groupno, group=subjectidno))+
+    geom_line(size = 1) + labs(y = "AST UL")
+```
+
+No difference in groups for ALT at each time point (p = .93, .98, 1). Similar results when adjusting for covariates
+No difference in groups for AST at each time point (p = .94, .62, 1). Similar results when adjusting for covariates
+
+### Triglycerides
+```{r trig plot}
+ggplot(analysis, aes(x = interval, y = triglycerides_mgdL, color = groupno, group=subjectidno))+
+    geom_line(size = 1) + labs(y = "Triglycerides mg/dL")
+```
+
+No difference in groups at each time point (p = .96, 1, .86). Similar results when adjusting for covariates.
+
+### Cholesterol
+```{r chol plot}
+ggplot(analysis, aes(x = interval, y = cholesteroltot_mgdL, color = groupno, group=subjectidno))+
+    geom_line(size = 1) + labs(y = "Total Cholesterol mg/dL")
+```
+
+No difference in groups at each time point (p = .99, .99, .83). Similar results when adjusting for covariates.
+
+### LDL/HDL
+```{r ldlhdl plot}
+ggplot(analysis, aes(x = interval, y = LDLC_mgdL, color = groupno, group=subjectidno))+
+    geom_line(size = 1) + labs(y = "LDLC mg/dL")
+ggplot(analysis, aes(x = interval, y = HDLC_mgdL, color = groupno, group=subjectidno))+
+    geom_line(size = 1) + labs(y = "HDLC mg/dL")
+```
+
+No difference in groups for LDL at each time point (p = .96, .83, .91). Similar results when adjusting for covariates.
+No difference in groups for HDL at each time point (p = .46, .26, .48). Similar results when adjusting for covariates.
+
+## Stress
+### PSS
+```{r pss plot}
+ggplot(analysis, aes(x = interval, y = psssumitem, color = groupno, group=subjectidno))+
+    geom_line(size = 1) + labs(y = "Perceived Stress Scale Total")
+```
+
+No difference in groups at each time point (p = .74, .78, 1). Similar results when adjusting for covariates.
+
+### EDS
+```{r eds plot}
+ggplot(analysis, aes(x = interval, y = EDSrawscore, color = groupno, group=subjectidno))+
+    geom_line(size = 1) + labs(y = "Everyday Discrimination Scale Raw Score")
+```
+
+No difference in groups at each time point (p = 1, 1, 1). Similar results when adjusting for covariates.
+
+### PSE
+```{r pse plot}
+ggplot(analysis, aes(x = interval, y = pserawsumT, color = groupno, group=subjectidno))+
+    geom_line(size = 1) + labs(y = "Psychological Stress Experience T-Score")
+```
+
+No difference in groups at each time point (p = 1, .76, 1). Similar results when adjusting for covariates.
+
+## Stress
+```{r cort plot}
+ggplot(analysis_cort, aes(x = session, y = cortisol, color = groupno, group=subjectidno))+
+    geom_line(size = 1)
+```
+
+No difference in groups at each time point (p = .95, 1, .43, 1, 1, .97). Similar results when adjusting for covariates.
+
+# 5. Code Appendix
 ```{r cesdtot results}
 kable(cesdtot_mod_anova,caption="CESDtot anova",format.args = list(scientific = FALSE))
 kable(cesdtot_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
 ```
-No difference in groups at each time point (p = .82, .84, 1). Similar results when adjusting for covariates
 
 ```{r homair results}
 kable(homair_mod_anova,caption="HOMA-IR anova",format.args = list(scientific = FALSE))
 kable(homair_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
 ```
-No difference in groups at each time point (p = .91, .99, .69). Similar results when adjusting for covariates
 
 ```{r insulin results}
 kable(insulin_mod_anova,caption="Insulin anova",format.args = list(scientific = FALSE))
 kable(insulin_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
 ```
-No difference in groups at each time point (p = .94, .99, .64). Similar results when adjusting for covariates
 
 ```{r glucose results}
 kable(glucose_mod_anova,caption="Glucose anova",format.args = list(scientific = FALSE))
 kable(glucose_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
 ```
-No difference in groups at each time point (p = .99, .58, .99). Similar results when adjusting for covariates
 
 ```{r hba1c results}
 kable(hba1c_mod_anova,caption="HBA1C anova",format.args = list(scientific = FALSE))
 kable(hba1c_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
 ```
-No difference in groups at each time point (p = .99, .99, .13). Similar results when adjusting for covariates
 
 ```{r AST/ALT results}
 kable(alt_mod_anova,caption="ALT anova",format.args = list(scientific = FALSE))
@@ -448,20 +559,16 @@ kable(alt_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.arg
 kable(ast_mod_anova,caption="ALT anova",format.args = list(scientific = FALSE))
 kable(ast_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
 ```
-No difference in groups for ALT at each time point (p = .93, .98, .99). Similar results when adjusting for covariates
-No difference in groups for AST at each time point (p = .94, .62, .99). Similar results when adjusting for covariates
 
 ```{r Lipids results}
 kable(lipid_mod_anova,caption="Lipids (triglycerides) anova",format.args = list(scientific = FALSE))
 kable(lipid_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
 ```
-No difference in groups at each time point (p = .96, .99, .86). Similar results when adjusting for covariates.
 
 ```{r Cholesterol results}
 kable(chol_mod_anova,caption="Total Cholesterol anova",format.args = list(scientific = FALSE))
 kable(chol_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
 ```
-No difference in groups at each time point (p = .99, .99, .83). Similar results when adjusting for covariates.
 
 ```{r LDL/HDL results}
 kable(ldl_mod_anova,caption="LDL anova",format.args = list(scientific = FALSE))
@@ -470,23 +577,25 @@ kable(ldl_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.arg
 kable(hdl_mod_anova,caption="HDL anova",format.args = list(scientific = FALSE))
 kable(hdl_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
 ```
-No difference in groups for LDL at each time point (p = .96, .83, .91). Similar results when adjusting for covariates
-No difference in groups for HDL at each time point (p = .46, .26, .48). Similar results when adjusting for covariates
 
 ```{r PSS results}
 kable(pss_mod_anova,caption="Perceived Stress Scale anova",format.args = list(scientific = FALSE))
 kable(pss_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
 ```
-No difference in groups at each time point (p = .74, .78, .99). Similar results when adjusting for covariates.
 
 ```{r EDS results}
 kable(eds_mod_anova,caption="Everyday Discrimination Scale anova",format.args = list(scientific = FALSE))
 kable(eds_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
 ```
-No difference in groups at each time point (p = .99, .99, .99). Similar results when adjusting for covariates.
 
 ```{r PSE results}
 kable(pse_mod_anova,caption="Psychological Stress Experience anova",format.args = list(scientific = FALSE))
 kable(pse_mod_means$contrasts[c(3,8,12),],caption="Time point means.",format.args = list(scientific = FALSE))
 ```
-No difference in groups at each time point (p = .99, .76, .99). Similar results when adjusting for covariates.
+
+```{r cortisol results}
+kable(cortisol_mod_anova,caption="Cortisol anova",format.args = list(scientific = FALSE))
+kable(cortisol_mod_means$contrasts[c(6,17,27, 36, 44, 51),],caption="Time point means.",format.args = list(scientific = FALSE))
+```
+
+
