@@ -38,11 +38,12 @@ data <- data %>% filter(!is.na(Mean.Glucose.Basal))
 # exclude 6377-31 due to bad insulin assay
 data <- data %>% filter(!StudyID=="6377-31")
 
-# remove people with <4 clamp measures (based on insulin and glucose?)
+# allow only 1 time point missing, and must have 10 stage (based on insulin and glucose?)
 data$nmissgluc <- apply(data[,c("Mean.Glucose.Basal","mean.10.glucose","mean.16.glucose","mean.80.glucose")], 1, function(x) sum(is.na(x)))
 data$nmissins <- apply(data[,c("Basal.Insulin","mean.10.insulin","mean.16.insulin","mean.80.insulin")], 1, function(x) sum(is.na(x)))  
-data <- data %>% filter(nmissgluc==0)  
-data <- data %>% filter(nmissins==0)  
+data <- data %>% filter(!is.na(mean.10.glucose) | !is.na(mean.10.insulin))
+data <- data %>% filter(nmissgluc<=1)  
+data <- data %>% filter(nmissins<=1)  
 
 # categorize overnight glucose
 data$Mean.Glucose.Basal.cat <- ifelse(is.na(data$Mean.Glucose.Basal),NA,
@@ -84,11 +85,14 @@ my_order <- c("70 - <90 mg/dL","90 - <110 mg/dL","110 - <130 mg/dL","130 - <150 
 
 # function to calculate predicted value at mean insulin
 # returns dataframe with StudyID and y_hat
+
+# not sure what happened - when I allowed one missing value this function seemed to break
+
 calc_predicted <- function(data, outcome, stage) {
   y_hat <- NULL
   df = data
   stage = stage
-  predmean = df %>% filter(time==stage) %>% summarise(log(mean(Insulin)))
+  insmean = df %>% filter(time==stage) %>% summarise(log(mean(Insulin,na.rm=T)))
   ids = as.factor(unique(df$StudyID))
   for (i in levels(ids)) {
     df_i = df[df$StudyID==i,]
@@ -96,19 +100,33 @@ calc_predicted <- function(data, outcome, stage) {
     X = log(df_i[,"Insulin"])
     # Outcome
     Y = log(df_i[,outcome]+5)
-    # Regression 
-    mod = lm(as.numeric(Y) ~ X)
-    int = coef(mod)[1]
-    slope = coef(mod)[2]
-    y_hat_i <- exp(int + (insmean*slope)) + 5
+    nonmiss = sum(!is.na(Y))
+    if (nonmiss<4) {
+      # Regression 
+      mod = lm(as.numeric(Y) ~ X)
+      int = coef(mod)[1]
+      slope = coef(mod)[2]
+      y_hat_i <- exp(int + (insmean*slope)) + 5
+    } else {y_hat_i <- NA}
     y_hat <- c(y_hat,y_hat_i)
   }
-  y_hat <- data.frame(cbind(unique(df$StudyID),y_hat))
-  colnames(y_hat) <- c("StudyID","y_hat")
+  y_hat <- data.frame(cbind(unlist(unique(df$StudyID)),unlist(y_hat)))
+  y_hat[,2] <- as.numeric(y_hat[,2])
+  colnames(y_hat) <- c("StudyID",paste0("y_hat_",outcome))
   return(y_hat)
 }
 
-test <- calc_predicted(data = long, outcome = "Glucose", stage=10)
+predgluc <- calc_predicted(data = long, outcome = "Glucose", stage=16)
+predglucra <- calc_predicted(data = long, outcome = "GlucoseRa", stage=16)
+predglyc <- calc_predicted(data = long, outcome = "Glycerol", stage=10)
+predglycra <- calc_predicted(data = long, outcome = "GlycerolRa", stage=10)
+predffa <- calc_predicted(data = long, outcome = "FFA", stage=10)
+preds <- merge(predgluc,predglucra,by="StudyID", all.x = T, all.y = T)
+preds <- merge(preds,predglyc,by="StudyID", all.x = T, all.y = T)
+preds <- merge(preds,predglycra,by="StudyID", all.x = T, all.y = T)
+preds <- merge(preds,predffa,by="StudyID", all.x = T, all.y = T)
+data <- merge(data,preds,by="StudyID",all.x = T,all.y = T)
+
 ```
 
 # Descriptive statistics by BMI category
@@ -482,5 +500,57 @@ grouped <- merge(grouped1, grouped2, by=c("Mean.Glucose.Basal.cat","time"), all.
 p <- ggplot(grouped, aes(x=insulin_mean, y=ffa_mean, group=Mean.Glucose.Basal.cat, color=Mean.Glucose.Basal.cat)) +
       geom_line(alpha=0.8, size=3) +
       scale_color_discrete(breaks=c("70 - <90 mg/dL","90 - <110 mg/dL","90 - <110 mg/dL","110 - <130 mg/dL","130 - <150 mg/dl",">150 mg/dl"))
+p
+```
+
+# Figure - IC50 by overnight glucose and BMI
+
+## Glucose
+
+```{r, include=T, warning=FALSE}
+p <- ggplot(data, aes(x=Mean.Glucose.Basal.cat, y=y_hat_Glucose, fill=bmi_twocat)) +
+      geom_boxplot() +
+      scale_x_discrete(limits = function(x) my_order[my_order %in% x]) + 
+      xlab("Overnight glucose") + ylab("Predicted glucose") + theme_classic()
+p
+```
+
+## Glucose Ra
+
+```{r, include=T, warning=FALSE}
+p <- ggplot(data, aes(x=Mean.Glucose.Basal.cat, y=y_hat_GlucoseRa, fill=bmi_twocat)) +
+      geom_boxplot() +
+      scale_x_discrete(limits = function(x) my_order[my_order %in% x]) + 
+      xlab("Overnight glucose") + ylab("Predicted glucose Ra") + theme_classic()
+p
+```
+
+## Glycerol
+
+```{r, include=T, warning=FALSE}
+p <- ggplot(data, aes(x=Mean.Glucose.Basal.cat, y=y_hat_Glycerol, fill=bmi_twocat)) +
+      geom_boxplot() +
+      scale_x_discrete(limits = function(x) my_order[my_order %in% x]) + 
+      xlab("Overnight glucose") + ylab("Predicted glycerol") + theme_classic()
+p
+```
+
+## Glycerol Ra
+
+```{r, include=T, warning=FALSE}
+p <- ggplot(data, aes(x=Mean.Glucose.Basal.cat, y=y_hat_GlycerolRa, fill=bmi_twocat)) +
+      geom_boxplot() +
+      scale_x_discrete(limits = function(x) my_order[my_order %in% x]) + 
+      xlab("Overnight glucose") + ylab("Predicted glycerol Ra") + theme_classic()
+p
+```
+
+## FFA
+
+```{r, include=T, warning=FALSE}
+p <- ggplot(data, aes(x=Mean.Glucose.Basal.cat, y=y_hat_FFA, fill=bmi_twocat)) +
+      geom_boxplot() +
+      scale_x_discrete(limits = function(x) my_order[my_order %in% x]) + 
+      xlab("Overnight glucose") + ylab("Predicted FFA") + theme_classic()
 p
 ```
