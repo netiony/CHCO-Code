@@ -38,6 +38,9 @@ data <- data %>% filter(!is.na(Mean.Glucose.Basal))
 # exclude 6377-31 due to bad insulin assay
 data <- data %>% filter(!StudyID=="6377-31")
 
+# fix one insulin value per Melanie
+data$mean.16.insulin <- ifelse(data$StudyID=="827-110",NA,data$mean.16.insulin)
+
 # allow only 1 time point missing, and must have 10 stage (based on insulin and glucose?)
 data$nmissgluc <- apply(data[,c("Mean.Glucose.Basal","mean.10.glucose","mean.16.glucose","mean.80.glucose")], 1, function(x) sum(is.na(x)))
 data$nmissins <- apply(data[,c("Basal.Insulin","mean.10.insulin","mean.16.insulin","mean.80.insulin")], 1, function(x) sum(is.na(x)))  
@@ -61,6 +64,19 @@ data$Mean.Glucose.Basal.cat <- droplevels(data$Mean.Glucose.Basal.cat)
 data$Mean.Glucose.Basal.cat <- factor(data$Mean.Glucose.Basal.cat, 
                                       c("70 - <90 mg/dL","90 - <110 mg/dL","110 - <130 mg/dL","130 - <150 mg/dl"))
 
+# categorize by whether glycerol Ra 10 is lower than basal glycerol Ra
+data$glycerolRa_10_lt_0 <- ifelse(data$Glycerol.Ra.10<data$Basal.glycerol.RA,"Glycerol Ra 10 < Glycerol Ra 0","Glycerol Ra 10 >= Glycerol Ra 0")
+data$glycerolRa_10_lt_0 <- as.factor(data$glycerolRa_10_lt_0)
+# stratify by median percentage difference between max glucose Ra and glucose Ra 16
+x <- data[,c("StudyID","Basal.glucose.Ra","glucose.Ra.10","glucose.Ra.16","glucose.Ra.80")]
+x$max_glucra <- apply(x[,2:5],1,max)
+x$glucra_diff <- x$max_glucra-x$glucose.Ra.16
+x <- x %>% select(StudyID,glucra_diff)
+data <- merge(data,x,by="StudyID",all.x = T,all.y=T)
+median_diff <- median(x$glucra_diff,na.rm = T)
+data$glucoseRa_diff_cat <- ifelse(data$glucra_diff<median_diff,"Max glucose Ra - glucose Ra 16 < median","Max glucose Ra - glucose Ra 16 >= median")
+data$glucoseRa_diff_cat <- as.factor(data$glucoseRa_diff_cat)
+
 # calculate means by BMI group
 means <- data %>% group_by(bmi_twocat,Mean.Glucose.Basal.cat) %>% summarise_at(vars("Mean.Glucose.Basal","Basal.Insulin",
                                                              "Basal.glucose.Ra","Basal.FFA","Basal.glycerol",
@@ -69,7 +85,8 @@ means <- data %>% group_by(bmi_twocat,Mean.Glucose.Basal.cat) %>% summarise_at(v
 # need to make a long dataset
 for_long <- data %>% select(-c(Sex,Age,FFA.IC50,Glycerol.IC50,Glycerol.Ra.IC50,Race,Ethnicity,Diabetes.duration_years,Approximate.total.daily.insulin,
                                BMI,BMIp,Dexa...Lean.mass,Dexa...fat.mass,Most.recent.HbA1c,Cholesterol,Triglycerides,LDL,bmi_cat,
-                               bmi_twocat,Mean.Glucose.Basal.cat,M.I.80,Glucose.IC50,nmissgluc,nmissins))
+                               bmi_twocat,Mean.Glucose.Basal.cat,M.I.80,Glucose.IC50,nmissgluc,nmissins,
+                               glucoseRa_diff_cat,glycerolRa_10_lt_0,glucra_diff))
 colnames(for_long) <- c("StudyID","Glucose.0","Glucose.10","Glucose.16","Glucose.80","Insulin.0","Insulin.10",
                         "Insulin.16","Insulin.80","GlucoseRa.0","GlucoseRa.10","GlucoseRa.16","GlucoseRa.80","FFA.0",
                         "FFA.10","FFA.16","FFA.80","Glycerol.0","Glycerol.10","Glycerol.16","Glycerol.80","GlycerolRa.0",
@@ -85,9 +102,6 @@ my_order <- c("70 - <90 mg/dL","90 - <110 mg/dL","110 - <130 mg/dL","130 - <150 
 
 # function to calculate predicted value at mean insulin
 # returns dataframe with StudyID and y_hat
-
-# not sure what happened - when I allowed one missing value this function seemed to break
-
 calc_predicted <- function(data, outcome, stage) {
   y_hat <- NULL
   df = data
@@ -101,7 +115,7 @@ calc_predicted <- function(data, outcome, stage) {
     # Outcome
     Y = log(df_i[,outcome]+5)
     nonmiss = sum(!is.na(Y))
-    if (nonmiss<4) {
+    if (nonmiss>0) {
       # Regression 
       mod = lm(as.numeric(Y) ~ X)
       int = coef(mod)[1]
@@ -132,7 +146,7 @@ data <- merge(data,preds,by="StudyID",all.x = T,all.y = T)
 # Descriptive statistics by BMI category
 
 ```{r, include=F, warning=FALSE}
-descdata <- data %>% select(-StudyID)
+descdata <- data %>% select(-StudyID,glucra_diff )
 t1 <- CreateTableOne(data=descdata,vars=colnames(descdata),strata = "bmi_twocat")
 t1 <- print(t1, nonnorm=colnames(select_if(descdata, is.numeric)))
 ```
@@ -150,6 +164,28 @@ t1a <- print(t1a, nonnorm=colnames(select_if(descdata, is.numeric)))
 
 ```{r, include=T, warning=FALSE}
 kable(t1a)
+```
+
+# Descriptive statistics by glycerol Ra category
+
+```{r, include=F, warning=FALSE}
+t1b <- CreateTableOne(data=descdata,vars=colnames(descdata),strata = "glycerolRa_10_lt_0")
+t1b <- print(t1b, nonnorm=colnames(select_if(descdata, is.numeric)))
+```
+
+```{r, include=T, warning=FALSE}
+kable(t1b)
+```
+
+# Descriptive statistics by glucose Ra category
+
+```{r, include=F, warning=FALSE}
+t1c <- CreateTableOne(data=descdata,vars=colnames(descdata),strata = "glucoseRa_diff_cat")
+t1c <- print(t1c, nonnorm=colnames(select_if(descdata, is.numeric)))
+```
+
+```{r, include=T, warning=FALSE}
+kable(t1c)
 ```
 
 # Figure 1 - scatterplots of fasting data
