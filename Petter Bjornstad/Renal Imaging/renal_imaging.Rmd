@@ -21,7 +21,7 @@ library(glmnet)
 library(broom)
 library(naniar)
 library(caret)
-knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(echo = FALSE,fig.height = 10,fig.width = 10)
 if(Sys.info()["sysname"] == "Windows"){
   home_dir = "B:/Projects"
 } else if (Sys.info()["sysname"] == "Linux"){
@@ -37,6 +37,10 @@ knitr::opts_knit$set(root.dir = home_dir)
 api = read.table("api.txt")
 rcon <- redcapConnection(url="https://redcap.ucdenver.edu/api/", token=api[1,1])
 df = exportRecords(rcon,labels = F)
+df$sex = as.factor(df$sex)
+```
+
+```{r echo=TRUE}
 # Combine variables
 df$r_rbf_avg = rowSums(df[,c('r_rbf_avg_sr','r_rbf_avg_sup_sr',
                              'r_rbf_avg_inf_sr','r_rbf_avg_3b_sr')],na.rm = T)
@@ -150,7 +154,7 @@ ggpairs(df[,c(outcomes,pred)]) +
 The ElasticNet is similar to the Lasso approach for model selection, but performs better when predictors are highly correlated. To select a model, we used leave one out (LOO) cross validation (CV) to find the tuning parameter $\lambda$ that results in the lowest model error. Because $\lambda$ essentially controls how many variables are selected, common practice is to use the model with the lowest CV error ($\lambda_{min}$), or a model with CV error within one standard error of the absolute minimum ($\lambda_{1se}$). In general, the $\lambda_{min}$ model will include more predictors but therefore risks overfitting, while a $\lambda_{1se}$ model is a more parsimonious model that still has an acceptable error level.
 
 ```{r}
-easly_elnet = function(outcome,predictors,data){
+easly_elnet = function(outcome,predictors,data,print = 'all'){
   # LOO CV
   cv = trainControl(method = "LOOCV")
   # Model formula
@@ -167,14 +171,26 @@ easly_elnet = function(outcome,predictors,data){
   min = min(elnet$results$RMSE)
   good = which(elnet$results$RMSE <= min+se)
   params = elnet$results[good,]
-  if(nrow(params)>1){
-    mods = apply(params,1,function(p){
-      a = as.numeric(p['alpha'])
-      l = as.numeric(p['lambda'])
-      mod = glmnet(x = X,y = Y,alpha = a,lambda = l)
-      return(mod)
-    })
-    invisible(lapply(mods, function(mod){
+  if(print == "all"){
+    if(nrow(params)>1){
+      mods = apply(params,1,function(p){
+        a = as.numeric(p['alpha'])
+        l = as.numeric(p['lambda'])
+        mod = glmnet(x = X,y = Y,alpha = a,lambda = l)
+        return(mod)
+      })
+      invisible(lapply(mods, function(mod){
+        m = coef(mod)
+        m = as.matrix(m)
+        m = rownames(m)[m != 0]
+        # Refit
+        m = m[m != "(Intercept)"]
+        f = as.formula(paste0(outcome,"~",paste0(m,collapse = "+")))
+        mod = lm(f,data = data)
+        print(kable(tidy(mod)))
+      }))
+    } else {
+      mod = glmnet(x = X,y = Y,alpha = elnet$bestTune$alpha,lambda = elnet$bestTune$lambda)
       m = coef(mod)
       m = as.matrix(m)
       m = rownames(m)[m != 0]
@@ -183,9 +199,21 @@ easly_elnet = function(outcome,predictors,data){
       f = as.formula(paste0(outcome,"~",paste0(m,collapse = "+")))
       mod = lm(f,data = data)
       print(kable(tidy(mod)))
-    }))
-  } else {
-    mod = glmnet(x = X,y = Y,alpha = elnet$bestTune$alpha,lambda = elnet$bestTune$lambda)
+    }
+  } else if (print == "min"){
+    ms = apply(params,1,function(p){
+      a = as.numeric(p['alpha'])
+      l = as.numeric(p['lambda'])
+      mod = glmnet(x = X,y = Y,alpha = a,lambda = l)
+      m = coef(mod)
+      m = as.matrix(m)
+      m = rownames(m)[m != 0]
+      return(m)
+    })
+    m = as.numeric(which.min(sapply(ms,length)))
+    a = params$alpha[m]
+    l = params$lambda[m]
+    mod = glmnet(x = X,y = Y,alpha = a,lambda = l)
     m = coef(mod)
     m = as.matrix(m)
     m = rownames(m)[m != 0]
@@ -194,6 +222,7 @@ easly_elnet = function(outcome,predictors,data){
     f = as.formula(paste0(outcome,"~",paste0(m,collapse = "+")))
     mod = lm(f,data = data)
     print(kable(tidy(mod)))
+    print(kable(performance(mod)))
   }
 }
 ```
@@ -201,25 +230,25 @@ easly_elnet = function(outcome,predictors,data){
 ## igfr
 
 ```{r results='asis'}
-easly_elnet(outcome = "igfr",predictors = pred,data = df)
+easly_elnet(outcome = "igfr",predictors = c(pred,'age','sex'),data = df,print = "min")
 ```
 
 ## igfr_ab
 
 ```{r results='asis'}
-easly_elnet(outcome = "igfr_ab",predictors = pred,data = df)
+easly_elnet(outcome = "igfr_ab",predictors = c(pred,'age','sex'),data = df,print = "min")
 ```
 
 ## eGFR (Schwartz)
 
 ```{r results='asis'}
-easly_elnet(outcome = "eGFR_schwartz",predictors = pred,data = df)
+easly_elnet(outcome = "eGFR_schwartz",predictors = pred,data = df,print = "min")
 ```
 
 ## eGFR (Pottel)
 
 ```{r results='asis'}
-easly_elnet(outcome = "eGFR_cr",predictors = pred,data = df)
+easly_elnet(outcome = "eGFR_cr",predictors = pred,data = df,print = "min")
 ```
 
 
