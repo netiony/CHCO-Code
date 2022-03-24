@@ -13,6 +13,9 @@ output:
 
 ```{r setup, include=FALSE}
 library(dplyr)
+library(tableone)
+library(knitr)
+
 knitr::opts_chunk$set(echo = FALSE)
 if(Sys.info()["sysname"] == "Windows"){
   home_dir = "E:/Petter Bjornstad/eGFR vs mGFR/Data raw"
@@ -82,6 +85,7 @@ crocodile$clamp_acr_baseline <- crocodile$bl_uacr
 crocodile$bl_uacr <- NULL
 crocodile$subject_id <- crocodile$record_id
 crocodile$record_id <- NULL
+crocodile$study <- "CROCODILE"
 
 ############
 #  CASPER  #
@@ -116,6 +120,7 @@ casper$fat_kg <- NULL
 casper$body_fat <- NULL
 casper$hba1c <- casper$clamp_a1c
 casper$clamp_a1c <- NULL
+casper$study <- "CASPER"
 
 ############
 #  COFFEE  #
@@ -160,6 +165,7 @@ coffee$lean_mass <- NULL
 coffee$fat_kg <- NULL
 coffee$body_fat <- NULL
 coffee$cf_clamp_date <- NULL
+coffee$study <- "COFFEE"
 
 ################
 #  RENAL-HEIR  #
@@ -192,6 +198,7 @@ renal_heir$lean_kg <- NULL
 renal_heir$lean_mass <- NULL
 renal_heir$fat_kg <- NULL
 renal_heir$body_fat <- NULL
+renal_heir$study <- "RENAL HEIR"
 
 ############
 #  IMPROVE #
@@ -241,6 +248,7 @@ improve$redcap_repeat_instance <- NULL
 improve$redcap_repeat_instrument <- NULL
 improve$redcap_event_name.x <- NULL
 improve$redcap_event_name.y <- NULL
+improve$study <- "IMPROVE"
 
 ############
 #   PGN    #
@@ -294,6 +302,7 @@ pgn$bl_uacr <- NULL
 pgn$subject_id <- pgn$record_id
 pgn$record_id <- NULL
 pgn$length_of_diabetes <- NA
+pgn$study <- "PGN"
 
 ############
 #   BMT    #
@@ -333,6 +342,9 @@ bmt$subject_id <- bmt$record_id
 bmt$record_id <- NULL
 bmt$length_of_diabetes <- NA
 bmt$hba1c <- NA
+# one person is missing age
+bmt$age[bmt$subject_id==21] <- 8
+bmt$study <- "BMT"
 
 ################
 # COMBINE DATA #
@@ -352,7 +364,6 @@ alldata$qcr[alldata$age==11] <- 0.53
 alldata$qcr[alldata$age==12] <- 0.57
 alldata$qcr[alldata$age==13] <- 0.59
 alldata$qcr[alldata$age==14] <- 0.61
-# in EMERALD, 0=male, 1=female
 # females
 alldata$qcr[alldata$age==15 & alldata$sex_MF=="F"] <- 0.64
 # males
@@ -393,21 +404,11 @@ alldata$eGFR.Zap <- (507.76*exp(0.003*(alldata$clamp_height)))/((alldata$cystati
 # eGFR bedside Schwartz
 alldata$eGFR.bedside_Schwartz <- (41.3*(alldata$clamp_height/100))/alldata$serum_creatinine
 
-# eGFR revised Schwartz - going to hold off on this because it requires BUN and I didn't pull that from REDCap
+# eGFR revised Schwartz - going to hold off because I need to pull BUN from REDCap
 
 # Schwartz-Lyon - not frequently used so do this later?
 
 # eGFR CKiD U25 age and sex-dependent sCR
-# old equation was gfr = 41.3 x (height in m/sCR)
-# here we replace 41.3 with different values of k
-alldata$k_CKiD_scr[alldata$sex_MF=="M" & alldata$age<12] <- 39*(1.008^(alldata$age-12))
-alldata$k_CKiD_scr[alldata$sex_MF=="M" & alldata$age>=12 & alldata$age<18] <- 39*(1.045^(alldata$age-12))
-alldata$k_CKiD_scr[alldata$sex_MF=="M" & alldata$age>=18] <- 50.8
-alldata$k_CKiD_scr[alldata$sex_MF=="F" & alldata$age<12] <- 36.1*(1.008^(alldata$age-12))
-alldata$k_CKiD_scr[alldata$sex_MF=="F" & alldata$age>=12 & alldata$age<18] <- 36.1*(1.023^(alldata$age-12))
-alldata$k_CKiD_scr[alldata$sex_MF=="F" & alldata$age>=18] <- 41.4
-
-# Tim's apply function for above
 alldata$k_CKiD_scr = apply(alldata,1,function(r){
   # Sex and age
   sex = as.character(r["sex_MF"])
@@ -441,12 +442,49 @@ alldata$k_CKiD_scr = apply(alldata,1,function(r){
   }
   return(k)
 })
+alldata$eGFR.CKiD_scr <- alldata$k_CKiD_scr * ((alldata$clamp_height/100)/alldata$serum_creatinine)
 
 # eGFR CKiD U25 age and sex-dependent cystatin-C
-# k * (1/cysC)
+alldata$k_CKiD_cysc = apply(alldata,1,function(r){
+  # Sex and age
+  sex = as.character(r["sex_MF"])
+  age = as.numeric(r["age"])
+  age_cat = cut(age,c(-Inf,12,15,18,Inf),right = F)
+  # Different equations for age and sex
+  if(age_cat == "[-Inf,12)"){
+    if (sex == "M"){
+      k = 87.2*(1.011^(age-15))
+    } else if (sex == "F"){
+      k = 79.9*(1.004^(age-12))
+    }
+  } else if (age_cat == "[12,15)") {
+    if (sex == "M"){
+      k = 87.2*(1.011^(age-15))
+    } else if (sex == "F"){
+      k = 79.9*(0.974^(age-12))
+    }
+  } else if (age_cat == "[15,18)") {
+    if (sex == "M"){
+      k = 87.2*(0.960^(age-15))
+    } else if (sex == "F"){
+      k = 79.9*(0.974^(age-12))
+    }
+  } else if (age_cat == "[18, Inf)") {
+    if (sex == "M"){
+      k = 77.1
+    } else if (sex == "F"){
+      k = 68.3
+    }
+  }
+  return(k)
+})
+alldata$eGFR.CKiD_cysc <- alldata$k_CKiD_cysc * (1/alldata$cystatin_c)
 
+# clean up
+alldata <- alldata %>% select(-c(f1,f2,f3,qcr,k_CKiD_cysc,k_CKiD_scr))
 
-
+# write file for checking
+write.csv(alldata,"./eGFR data check.csv",row.names = F)
 
 ```
 
@@ -458,14 +496,27 @@ alldata$k_CKiD_scr = apply(alldata,1,function(r){
 
 ## Descriptive statistics for all  participants
 
-```{r echo=FALSE}
-kable(t1,caption = "")
+```{r include=F, echo=FALSE}
+descdata <- alldata %>% select(-subject_id)
+t1a <- CreateTableOne(data=descdata,vars=colnames(descdata))
+t1a <- print(t1a,nonnorm=c("age","clamp_weight","clamp_height","length_of_diabetes","fbg","hba1c",
+                           "serum_creatinine","clamp_acr_baseline"))
+```
+
+```{r include=T, echo=FALSE}
+kable(t1a)
 ```
 
 ## Descriptive statistics by group
 
-```{r echo=FALSE}
-kable(,caption = "")
+```{r include=F, echo=FALSE}
+#t1b <- CreateTableOne(data=descdata,vars=colnames(descdata),strata = "")
+#t1b <- print(t1b,nonnorm=c("age","clamp_weight","clamp_height","length_of_diabetes","fbg","hba1c",
+#                          "serum_creatinine","clamp_acr_baseline"))
+```
+
+```{r include=T, echo=FALSE}
+#kable(t1b)
 ```
 
 ## Regressions and scatterplots - all participants
