@@ -18,6 +18,8 @@ library(knitr)
 library(performance)
 library(car)
 library(ggplot2)
+library(Hmisc)
+library(blandr)
 
 knitr::opts_chunk$set(echo = FALSE)
 if(Sys.info()["sysname"] == "Windows"){
@@ -215,6 +217,12 @@ rhgroups <- read.csv("./RENALHEIR-Groups_DATA_2022-03-23_2224.csv")
 renal_heir <- merge(renal_heir,rhgroups,by="subject_id")
 renal_heir$group <- ifelse(renal_heir$group==2, "T2D",
                            ifelse(renal_heir$group==3,"Obese control","Lean control"))
+# fix one creatinine value
+renal_heir$serum_creatinine <- ifelse(renal_heir$serum_creatinine==145,1,renal_heir$serum_creatinine)
+# fix one ACR value
+renal_heir$clamp_acr_baseline <- ifelse(renal_heir$clamp_acr_baseline<0,NA,renal_heir$clamp_acr_baseline)
+# one RH ppt has strange data
+renal_heir <- renal_heir %>% filter(!subject_id=="RH-07-O")
 
 ############
 #  IMPROVE #
@@ -508,10 +516,12 @@ alldata$gfr_bsa <- (alldata$gfr*1.73)/alldata$bsa
 
 # write file for checking
 write.csv(alldata,"./eGFR data check.csv",row.names = F)
+```
 
+```{r, include=FALSE}
 mod_noint <- function(data, predictor) {
   df = data
-  p <- ggplot(data=df, aes_string(x = predictor,y = "gfr_bsa")) + geom_point() +
+  p <- ggplot(data=df, aes_string(x = predictor,y = "gfr_bsa")) + geom_point() + geom_smooth(method="lm") +
        xlab(predictor) + ylab("GFR BSA-adjusted")
   form = as.formula(paste0("gfr ~", predictor))
   mod <- lm(form, data=df)
@@ -522,7 +532,7 @@ mod_noint <- function(data, predictor) {
 
 mod_int <- function(data, predictor) {
   df = data
-  p <- ggplot(data=df, aes_string(x = predictor,y = "gfr_bsa",group="group")) + geom_point() + 
+  p <- ggplot(data=df, aes_string(x = predictor,y = "gfr_bsa",group="group", color="group")) + geom_point() + 
     geom_smooth(method="lm") + theme_bw() +  xlab(predictor) + ylab("GFR BSA-adjusted")
   form = as.formula(paste0("gfr ~", predictor,"*group"))
   mod <- lm(form, data=df)
@@ -530,6 +540,21 @@ mod_int <- function(data, predictor) {
   print(summary(mod))
   print(Anova(mod,type = "III"))
   print(check_model(mod))
+}
+
+# ++++++++++++++++++++++++++++
+# flattenCorrMatrix
+# ++++++++++++++++++++++++++++
+# cormat : matrix of the correlation coefficients
+# pmat : matrix of the correlation p-values
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+    )
 }
 ```
 
@@ -610,11 +635,153 @@ mod_noint(data=alldata,predictor = "eGFR.CKiD_cysc" )
 mod_int(data=alldata,predictor = "eGFR.fas_cr" )
 ```
 
+### FAS combined creatinine and cystatin-C
+
+```{r include=T, echo=FALSE, comment="", warning=F}
+mod_int(data=alldata,predictor = "eGFR.fas_cr_cysc")
+```
+
+### Zappitelli
+
+```{r include=T, echo=FALSE, comment="", warning=F}
+mod_int(data=alldata,predictor = "eGFR.Zap" )
+```
+
+### Bedside Schwartz
+
+```{r include=T, echo=FALSE, comment="", warning=F}
+mod_int(data=alldata,predictor = "eGFR.bedside_Schwartz" )
+```
+
+### CKiD creatinine
+
+```{r include=T, echo=FALSE, comment="", warning=F}
+mod_int(data=alldata,predictor = "eGFR.CKiD_scr" )
+```
+
+### CKiD cystatin-C
+
+```{r include=T, echo=FALSE, comment="", warning=F}
+mod_int(data=alldata,predictor = "eGFR.CKiD_cysc" )
+```
+
 ## Correlation coefficients - all participants
+
+```{r include=T, echo=FALSE, comment="", warning=F}
+corr_all <- rcorr(as.matrix(alldata[, c("gfr_bsa","eGFR.fas_cr","eGFR.fas_cr_cysc","eGFR.Zap","eGFR.bedside_Schwartz",
+                                        "eGFR.CKiD_scr","eGFR.CKiD_cysc")]),type = "spearman")
+corr_all <- flattenCorrMatrix(corr_all$r, corr_all$P)
+corr_all <- corr_all[corr_all$row=="gfr_bsa",]
+
+kable(corr_all,digits = 3)
+```
 
 ## Correlation coefficients - by group
 
+### T1D
+
+```{r include=T, echo=FALSE, comment="", warning=F}
+corr_t1d <- rcorr(as.matrix(alldata[alldata$group=="T1D", c("gfr_bsa","eGFR.fas_cr","eGFR.fas_cr_cysc","eGFR.Zap","eGFR.bedside_Schwartz",
+                                        "eGFR.CKiD_scr","eGFR.CKiD_cysc")]),type = "spearman")
+corr_t1d <- flattenCorrMatrix(corr_t1d$r, corr_t1d$P)
+corr_t1d <- corr_t1d[corr_t1d$row=="gfr_bsa",]
+
+kable(corr_t1d,digits = 3)
+```
+
+### Lean controls
+
+```{r include=T, echo=FALSE, comment="", warning=F}
+corr_lean <- rcorr(as.matrix(alldata[alldata$group=="Lean control", c("gfr_bsa","eGFR.fas_cr","eGFR.fas_cr_cysc","eGFR.Zap","eGFR.bedside_Schwartz",
+                                        "eGFR.CKiD_scr","eGFR.CKiD_cysc")]),type = "spearman")
+corr_lean <- flattenCorrMatrix(corr_lean$r, corr_lean$P)
+corr_lean <- corr_lean[corr_lean$row=="gfr_bsa",]
+
+kable(corr_lean,digits = 3)
+```
+
+### Obese controls
+
+```{r include=T, echo=FALSE, comment="", warning=F}
+corr_obese <- rcorr(as.matrix(alldata[alldata$group=="Obese control", c("gfr_bsa","eGFR.fas_cr","eGFR.fas_cr_cysc","eGFR.Zap","eGFR.bedside_Schwartz",
+                                        "eGFR.CKiD_scr","eGFR.CKiD_cysc")]),type = "spearman")
+corr_obese <- flattenCorrMatrix(corr_obese$r, corr_obese$P)
+corr_obese <- corr_obese[corr_obese$row=="gfr_bsa",]
+
+kable(corr_obese,digits = 3)
+```
+
+### PKD
+
+Measured GFR values are missing.
+
+### BMT
+
+```{r include=T, echo=FALSE, comment="", warning=F}
+corr_BMT <- rcorr(as.matrix(alldata[alldata$group=="BMT", c("gfr_bsa","eGFR.fas_cr","eGFR.fas_cr_cysc","eGFR.Zap","eGFR.bedside_Schwartz",
+                                        "eGFR.CKiD_scr","eGFR.CKiD_cysc")]),type = "spearman")
+corr_BMT <- flattenCorrMatrix(corr_BMT$r, corr_BMT$P)
+corr_BMT <- corr_BMT[corr_BMT$row=="gfr_bsa",]
+
+kable(corr_BMT,digits = 3)
+```
+
 ## Bland-Altman plots - all participants
 
-## Bland-Altman plots - by group (if evidence of interaction from above)
+### FAS creatinine
 
+```{r include=T, echo=FALSE, comment="", warning=F}
+blandr::blandr.output.text(alldata$gfr_bsa,alldata$eGFR.fas_cr, sig.level = 0.95)
+
+blandr::blandr.draw(alldata$gfr_bsa,alldata$eGFR.fas_cr, sig.level = 0.95)
+```
+
+### FAS combined creatinine and cystatin-C
+
+```{r include=T, echo=FALSE, comment="", warning=F}
+blandr::blandr.output.text(alldata$gfr_bsa,alldata$eGFR.fas_cr_cysc, sig.level = 0.95)
+
+blandr::blandr.draw(alldata$gfr_bsa,alldata$eGFR.fas_cr_cysc, sig.level = 0.95)
+```
+
+### Zappitelli
+
+```{r include=T, echo=FALSE, comment="", warning=F}
+blandr::blandr.output.text(alldata$gfr_bsa,alldata$eGFR.Zap, sig.level = 0.95)
+
+blandr::blandr.draw(alldata$gfr_bsa,alldata$eGFR.Zap, sig.level = 0.95)
+```
+
+### Bedside Schwartz
+
+```{r include=T, echo=FALSE, comment="", warning=F}
+blandr::blandr.output.text(alldata$gfr_bsa,alldata$eGFR.bedside_Schwartz, sig.level = 0.95)
+
+blandr::blandr.draw(alldata$gfr_bsa,alldata$eGFR.bedside_Schwartz, sig.level = 0.95)
+```
+
+### CKiD creatinine
+
+```{r include=T, echo=FALSE, comment="", warning=F}
+blandr::blandr.output.text(alldata$gfr_bsa,alldata$eGFR.CKiD_scr, sig.level = 0.95)
+
+blandr::blandr.draw(alldata$gfr_bsa,alldata$eGFR.CKiD_scr, sig.level = 0.95)
+```
+
+### CKiD cystatin-C
+
+```{r include=T, echo=FALSE, comment="", warning=F}
+blandr::blandr.output.text(alldata$gfr_bsa,alldata$eGFR.CKiD_cysc, sig.level = 0.95)
+
+blandr::blandr.draw(alldata$gfr_bsa,alldata$eGFR.CKiD_cysc, sig.level = 0.95)
+```
+
+## Bland-Altman plots - Lean controls
+
+## Bland-Altman plots - Obese controls
+
+## Bland-Altman plots - PKD
+
+Measured GFR values are missing.
+
+## Bland-Altman plots - BMT
