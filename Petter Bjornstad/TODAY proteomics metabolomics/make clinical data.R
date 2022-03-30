@@ -12,5 +12,4 @@ setwd(home_dir)
 comorb <- read.csv("./Clinical data/COMORB.csv")
 
 # Save
-df = as.data.frame(comorb)
-save(comorb,file = "./comorb.Rdata")
+save(comorb,file = "./Clinical data/comorb.Rdata")
