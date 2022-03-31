@@ -10,7 +10,6 @@ if(Sys.info()["sysname"] == "Windows"){
   home_dir = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization"
 }
 setwd(home_dir)
-rm(home_dir)
 # API import
 tokens = read.csv("api_tokens.csv")
 uri = "https://redcap.ucdenver.edu/api/"
@@ -55,6 +54,7 @@ improve = exportRecords(
   )
 )
 improve$study = "IMPROVE"
+rm(home_dir,tokens,uri)
 ###############################################################################
 # Demographic variables
 ###############################################################################
@@ -65,12 +65,12 @@ levels(renalheir$group) = c("T2D","Obese Control","Lean Control")
 renalheir$age_at_diabetes_dx = renalheir$diabetes_age
 # Race
 races = c("American Indian or Alaskan Native","Asian",
-                    "Hawaiian or Pacific Islander","Black or African American",
-                    "White","Unknown","Other")
+          "Hawaiian or Pacific Islander","Black or African American",
+          "White","Unknown","Other")
 renalheir$race = apply(renalheir,1,function(r){
   race = r[paste0("race___",1:7)]
   w = which(race == "Checked")
-  return(paste0(races[w],collapse = "/"))
+  return(paste0(sort(races[w]),collapse = "/"))
 })
 # Ethnicity
 eths = c("Hispanic","Non-Hispanic","Unknown/Not Reported")
@@ -91,7 +91,7 @@ races = c("American Indian or Alaskan Native","Asian",
 penguin$race = apply(penguin,1,function(r){
   race = r[paste0("race___",1:7)]
   w = which(race == "Checked")
-  return(paste0(races[w],collapse = "/"))
+  return(paste0(sort(races[w]),collapse = "/"))
 })
 # Ethnicity
 penguin$ethnicity = apply(penguin,1,function(r){
@@ -110,7 +110,7 @@ crocodile$gender = crocodile$sex
 crocodile$race = apply(crocodile,1,function(r){
   race = r[paste0("race___",1:7)]
   w = which(race == "Checked")
-  return(paste0(races[w],collapse = "/"))
+  return(paste0(sort(races[w]),collapse = "/"))
 })
 # Ethnicity
 crocodile$ethnicity = apply(crocodile,1,function(r){
@@ -122,13 +122,60 @@ crocodile$ethnicity = apply(crocodile,1,function(r){
 crocodile$length_of_diabetes = crocodile$diabetes_duration
 crocodile$age_at_diabetes_dx = crocodile$diabetes_dx_age
 # COFFEE
-
-
-# Check 
-demographic_vars[which(!demographic_vars %in% colnames(crocodile))]
-
-
-
+coffee$group = "T1D"
+# Race
+races = c("American Indian or Alaskan Native","Asian",
+          "Hawaiian or Pacific Islander","Black or African American",
+          "White","Unknown","Other")
+coffee$race = apply(coffee,1,function(r){
+  race = r[paste0("race___",1:7)]
+  w = which(race == "Checked")
+  return(paste0(sort(races[w]),collapse = "/"))
+})
+# Ethnicity
+coffee$ethnicity = apply(coffee,1,function(r){
+  eth = r[paste0("ethnicity___",1:3)]
+  w = which(eth == "Checked")
+  return(paste0(eths[w],collapse = "/"))
+})
+# Diabetes info
+coffee$age_at_diabetes_dx = coffee$diabetes_age
+# CASPER
+casper$group = "T1D"
+# Race
+casper$race = apply(casper,1,function(r){
+  race = r[paste0("race___",1:7)]
+  w = which(race == "Checked")
+  return(paste0(sort(races[w]),collapse = "/"))
+})
+# Ethnicity
+casper$ethnicity = apply(casper,1,function(r){
+  eth = r[paste0("ethnicity___",1:3)]
+  w = which(eth == "Checked")
+  return(paste0(eths[w],collapse = "/"))
+})
+# Diabetes info
+casper$age_at_diabetes_dx = casper$diabetes_age
+# IMPROVE
+improve$group = "T2D"
+# Race
+improve$race = apply(improve,1,function(r){
+  race = r[paste0("race___",1:7)]
+  w = which(race == "Checked")
+  return(paste0(sort(races[w]),collapse = "/"))
+})
+# Ethnicity
+improve$ethnicity = apply(improve,1,function(r){
+  eth = r[paste0("ethnicity___",1:3)]
+  w = which(eth == "Checked")
+  return(paste0(eths[w],collapse = "/"))
+})
+# Diabetes info
+improve$age_at_diabetes_dx = improve$diabetes_age
+# Merge demographics
+demographics = do.call(rbind,list(renalheir[,demographic_vars],penguin[,demographic_vars],
+                                  crocodile[,demographic_vars],coffee[,demographic_vars],
+                                  casper[,demographic_vars],improve[,demographic_vars]))
 ###############################################################################
 # Screening variables
 ###############################################################################
@@ -155,7 +202,7 @@ renalheir$schofield[renalheir$schofield == 0] = NA
 # PENGUIN
 # Rename
 penguin = penguin %>% 
-  rename(subject_id = record_id,screen_height = phys_height,screen_weight = phys_weight,
+  rename(screen_height = phys_height,screen_weight = phys_weight,
          screen_bmi = phys_bmi,waist_circumference = phys_waistcm,
          hip_circumference = phys_hipcm,sys_bp = phys_sysbp,dys_bp = phys_diasbp,
          map = phys_map,pulse = phys_pulse,hba1c = bl_a1c,
@@ -176,7 +223,7 @@ crocodile$insulin_pump = crocodile$diabetes_tx___1
 levels(crocodile$insulin_pump) = c("No","Yes")
 # Rename
 crocodile = crocodile %>% 
-  rename(subject_id = record_id,screen_height = phys_height,screen_weight = phys_weight,
+  rename(screen_height = phys_height,screen_weight = phys_weight,
          screen_bmi = phys_bmi,waist_circumference = phys_waistcm,
          hip_circumference = phys_hipcm,sys_bp = phys_sysbp,dys_bp = phys_diasbp,
          map = phys_map,pulse = phys_pulse,hba1c = bl_a1c,
@@ -189,7 +236,7 @@ crocodile[,screen_vars[which(!screen_vars %in% colnames(crocodile))]] = NA
 # insulin
 coffee$insulin = "No"
 coffee$insulin[which(coffee$diabetes_med___1 == "Checked"|
-                          coffee$diabetes_med___2 == "Checked")] = "Yes"
+                       coffee$diabetes_med___2 == "Checked")] = "Yes"
 coffee$insulin = factor(coffee$insulin,levels = c("No","Yes"))
 # insulin_pump
 coffee$insulin_pump = coffee$diabetes_med___1
@@ -230,7 +277,302 @@ improve$schofield[improve$schofield == 0] = NA
 screening = do.call(rbind,list(renalheir[,screen_vars],penguin[,screen_vars],
                                crocodile[,screen_vars],coffee[,screen_vars],
                                casper[,screen_vars],improve[,screen_vars]))
+###############################################################################
+# DXA variables
+###############################################################################
 
+dxa_vars = c("subject_id","study","dexa_date","body_fat","lean_mass",
+             "trunk_mass","fat_kg","lean_kg","trunk_kg","bone_mineral_density",
+             "body_composition_dxa_complete")
+
+# RENAL-HEIR
+# PENGUIN
+penguin = penguin %>% 
+  rename(dexa_date = dxa_date,body_fat = bodyfat_percent,lean_kg = leanmass_kg,
+         fat_kg = fatmass_kg,lean_mass = leanmass_percent,trunk_mass = trunkmass_percent,
+         trunk_kg = trunkmass_kg,bone_mineral_density = bmd,
+         body_composition_dxa_complete = study_visit_dxa_scan_complete)
+# CROCODILE
+crocodile = crocodile %>%
+  rename(dexa_date = dxa_date,body_fat = bodyfat_percent,lean_kg = leanmass_kg,
+         fat_kg = fatmass_kg,lean_mass = leanmass_percent,trunk_mass = trunkmass_percent,
+         trunk_kg = trunkmass_kg,bone_mineral_density = bmd,
+         body_composition_dxa_complete = study_visit_dxa_scan_complete)
+# COFEE
+coffee[,dxa_vars[3:length(dxa_vars)]] = NA
+# CASPER
+# IMPROVE
+improve = improve %>%
+  rename(dexa_date = bodcomp_date,body_fat = dxa_body_fat,lean_kg = dxa_lean_kg,
+         fat_kg = dxa_fat_kg,lean_mass = dxa_lean_mass,trunk_mass = dxa_trunk_mass,
+         trunk_kg = dxa_trunk_kg,bone_mineral_density = dxa_bmd,
+         body_composition_dxa_complete = dxa_complete)
+# Merge DXA
+dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
+                               crocodile[,dxa_vars],coffee[,dxa_vars],
+                               casper[,dxa_vars],improve[,dxa_vars]))
+###############################################################################
+# Clamp vitals
+###############################################################################
+
+
+
+# RENAL-HEIR
+
+# PENGUIN
+
+# CROCODILE
+
+# COFEE
+
+# CASPER
+
+# IMPROVE
+
+###############################################################################
+# Clamp labs
+###############################################################################
+
+
+
+# RENAL-HEIR
+
+# PENGUIN
+
+# CROCODILE
+
+# COFEE
+
+# CASPER
+
+# IMPROVE
+
+###############################################################################
+# 24 hour urine labs
+###############################################################################
+
+
+
+# RENAL-HEIR
+
+# PENGUIN
+
+# CROCODILE
+
+# COFEE
+
+# CASPER
+
+# IMPROVE
+
+###############################################################################
+# Hyperinsulinemic-euglycemic clamp data
+###############################################################################
+
+
+
+# RENAL-HEIR
+
+# PENGUIN
+
+# CROCODILE
+
+# COFEE
+
+# CASPER
+
+# IMPROVE
+
+###############################################################################
+# FFA data from clamps
+###############################################################################
+
+
+
+# RENAL-HEIR
+
+# PENGUIN
+
+# CROCODILE
+
+# COFEE
+
+# CASPER
+
+# IMPROVE
+
+###############################################################################
+# C-peptide clamp data
+###############################################################################
+
+
+
+# RENAL-HEIR
+
+# PENGUIN
+
+# CROCODILE
+
+# COFEE
+
+# CASPER
+
+# IMPROVE
+
+###############################################################################
+# Insulin clamp data
+###############################################################################
+
+
+
+# RENAL-HEIR
+
+# PENGUIN
+
+# CROCODILE
+
+# COFEE
+
+# CASPER
+
+# IMPROVE
+
+###############################################################################
+# BG clamp data
+###############################################################################
+
+
+
+# RENAL-HEIR
+
+# PENGUIN
+
+# CROCODILE
+
+# COFEE
+
+# CASPER
+
+# IMPROVE
+
+###############################################################################
+# eGFR
+###############################################################################
+
+
+
+# RENAL-HEIR
+
+# PENGUIN
+
+# CROCODILE
+
+# COFEE
+
+# CASPER
+
+# IMPROVE
+
+###############################################################################
+# Kidney function
+###############################################################################
+
+
+
+# RENAL-HEIR
+
+# PENGUIN
+
+# CROCODILE
+
+# COFEE
+
+# CASPER
+
+# IMPROVE
+
+###############################################################################
+# Intraglomerular Hemodynamics
+###############################################################################
+
+
+
+# RENAL-HEIR
+
+# PENGUIN
+
+# CROCODILE
+
+# COFEE
+
+# CASPER
+
+# IMPROVE
+
+###############################################################################
+# Kidney MRI
+###############################################################################
+
+
+
+# RENAL-HEIR
+
+# PENGUIN
+
+# CROCODILE
+
+# COFEE
+
+# CASPER
+
+# IMPROVE
+
+###############################################################################
+# PET/CT
+###############################################################################
+
+
+
+# RENAL-HEIR
+
+# PENGUIN
+
+# CROCODILE
+
+# COFEE
+
+# CASPER
+
+# IMPROVE
+
+###############################################################################
+# Kidney biopsy
+###############################################################################
+
+
+
+# RENAL-HEIR
+
+# PENGUIN
+
+# CROCODILE
+
+# COFEE
+
+# CASPER
+
+# IMPROVE
+
+###############################################################################
+# Merge everything together
+###############################################################################
+
+df = full_join(screening,demographics)
+df = full_join(df,dxa)
+
+###############################################################################
+# Final formatting and calculations
+###############################################################################
 
 
 
