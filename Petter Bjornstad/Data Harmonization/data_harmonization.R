@@ -298,7 +298,7 @@ crocodile = crocodile %>%
          fat_kg = fatmass_kg,lean_mass = leanmass_percent,trunk_mass = trunkmass_percent,
          trunk_kg = trunkmass_kg,bone_mineral_density = bmd,
          body_composition_dxa_complete = study_visit_dxa_scan_complete)
-# COFEE
+# COFFEE
 coffee[,dxa_vars[3:length(dxa_vars)]] = NA
 # CASPER
 # IMPROVE
@@ -315,33 +315,38 @@ dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
 # Clamp vitals
 ###############################################################################
 
-
+clamp_vitals = c("clamp_date","clamp_height","clamp_weight","clamp_sbp",
+                 "clamp_dbp","clamp_map","clamp_pls")
 
 # RENAL-HEIR
-
 # PENGUIN
-
+penguin = penguin %>%
+  rename(clamp_height = clamp_ht,clamp_weight = clamp_wt)
 # CROCODILE
-
-# COFEE
-
+crocodile = crocodile %>% 
+  rename(clamp_height = clamp_ht,clamp_weight = clamp_wt)
+# COFFEE
+coffee$clamp_date = coffee$cf_clamp_date
 # CASPER
-
 # IMPROVE
 
 ###############################################################################
 # Clamp labs
 ###############################################################################
 
-
+clamp_labs = c("cholesterol","hdl","ldl","triglycerides","total_protein",
+               "serum_sodium","cystatin_c","serum_creatinine",
+               "clamp_urine_mab_baseline","clamp_urine_cre_baseline",
+               "clamp_acr_baseline","clamp_urine_sodium","clamp_glucose_bl",
+               "urine_glucose","clamp_urine_mab_250","clamp_urine_cre_250",
+               "clamp_acr_250","clamp_urine_vol")
 
 # RENAL-HEIR
-
 # PENGUIN
-
+  
 # CROCODILE
 
-# COFEE
+# COFFEE
 
 # CASPER
 
@@ -359,7 +364,7 @@ dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
 
 # CROCODILE
 
-# COFEE
+# COFFEE
 
 # CASPER
 
@@ -377,7 +382,7 @@ dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
 
 # CROCODILE
 
-# COFEE
+# COFFEE
 
 # CASPER
 
@@ -387,15 +392,15 @@ dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
 # FFA data from clamps
 ###############################################################################
 
-
-
 # RENAL-HEIR
-
+renalheir_ffa = colnames(renalheir)[grep("ffa_.*\\d{1,}",colnames(renalheir))]
 # PENGUIN
-
+penguin_ffa = colnames(penguin)[grep("ffa_.*\\d{1,}",colnames(penguin))]
+penguin_ffa = sub("minus","minus_",penguin_ffa)
 # CROCODILE
-
-# COFEE
+crocodile_ffa = colnames(crocodile)[grep("ffa_.*\\d{1,}",colnames(crocodile))]
+crocodile_ffa = sub("minus","minus_",crocodile_ffa)
+# COFFEE
 
 # CASPER
 
@@ -413,7 +418,7 @@ dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
 
 # CROCODILE
 
-# COFEE
+# COFFEE
 
 # CASPER
 
@@ -431,7 +436,7 @@ dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
 
 # CROCODILE
 
-# COFEE
+# COFFEE
 
 # CASPER
 
@@ -449,7 +454,7 @@ dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
 
 # CROCODILE
 
-# COFEE
+# COFFEE
 
 # CASPER
 
@@ -467,7 +472,7 @@ dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
 
 # CROCODILE
 
-# COFEE
+# COFFEE
 
 # CASPER
 
@@ -485,7 +490,7 @@ dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
 
 # CROCODILE
 
-# COFEE
+# COFFEE
 
 # CASPER
 
@@ -503,7 +508,7 @@ dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
 
 # CROCODILE
 
-# COFEE
+# COFFEE
 
 # CASPER
 
@@ -521,7 +526,7 @@ dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
 
 # CROCODILE
 
-# COFEE
+# COFFEE
 
 # CASPER
 
@@ -539,7 +544,7 @@ dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
 
 # CROCODILE
 
-# COFEE
+# COFFEE
 
 # CASPER
 
@@ -557,7 +562,7 @@ dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
 
 # CROCODILE
 
-# COFEE
+# COFFEE
 
 # CASPER
 
