@@ -9,6 +9,7 @@ setwd(home_dir)
 
 # read in data - we want to use the fully processed, normalized file ending in "anmlSMP.adat"
 soma <- read_adat("./Somalogic data raw/WUS-22-001_Somalogic_normalized/WUS-22-001_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
+analytes <- getAnalyteInfo(soma)
 
 # read in the files that will link repository ID (column A) to Somalogic ID (column C)
 ids1 <- read.csv("./Somalogic repository link/Omics-Petter Ancillary Samples at Colorado LEAD Center - Wash U.csv")
@@ -32,3 +33,4 @@ soma$Date.Drawn <- as.Date(soma$Date.Drawn,format="%m/%d/%Y")
 
 # Save
 save(soma,file = "./Somalogic data raw/soma.Rdata")
+save(analytes,file = "./Somalogic data raw/analytes.Rdata")
