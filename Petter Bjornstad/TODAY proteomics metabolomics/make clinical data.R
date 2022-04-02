@@ -12,6 +12,8 @@ setwd(home_dir)
 comorb <- read.csv("./Clinical data/COMORB.csv")
 comorb$MIC.OR.MAC <- ifelse(comorb$MAC==1 | comorb$MIC==1,1,
                             ifelse(is.na(comorb$MAC) & is.na(comorb$MIC), NA, 0))
+comorb$releaseid <- comorb$RELEASEID
+comorb$RELEASEID <- NULL
 
 # Save
 save(comorb,file = "./Clinical data/comorb.Rdata")
