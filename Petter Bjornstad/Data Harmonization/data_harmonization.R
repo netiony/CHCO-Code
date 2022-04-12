@@ -16,42 +16,42 @@ uri = "https://redcap.ucdenver.edu/api/"
 renalheir = exportRecords(
   redcapConnection(
     url = uri,token = tokens$Token[tokens$Study == "Renal-HEIR"]
-  )
+  ),labels = F
 )
 renalheir$study = "RENAL-HEIR"
 
 penguin = exportRecords(
   redcapConnection(
     url = uri,token = tokens$Token[tokens$Study == "PENGUIN"]
-  )
+  ),labels = F
 )
 penguin$study = "PENGUIN"
 
 crocodile = exportRecords(
   redcapConnection(
     url = uri,token = tokens$Token[tokens$Study == "CROCODILE"]
-  )
+  ),labels = F
 )
 crocodile$study = "CROCODILE"
 
 coffee = exportRecords(
   redcapConnection(
     url = uri,token = tokens$Token[tokens$Study == "COFFEE"]
-  )
+  ),labels = F
 )
 coffee$study = "COFFEE"
 
 casper = exportRecords(
   redcapConnection(
     url = uri,token = tokens$Token[tokens$Study == "CASPER"]
-  )
+  ),labels = F
 )
 casper$study = "CASPER"
 
 improve = exportRecords(
   redcapConnection(
     url = uri,token = tokens$Token[tokens$Study == "IMPROVE"]
-  )
+  ),labels = F
 )
 improve$study = "IMPROVE"
 rm(home_dir,tokens,uri)
@@ -206,9 +206,10 @@ penguin = penguin %>%
          screen_bmi = phys_bmi,waist_circumference = phys_waistcm,
          hip_circumference = phys_hipcm,sys_bp = phys_sysbp,dys_bp = phys_diasbp,
          map = phys_map,pulse = phys_pulse,hba1c = bl_a1c,
-         screen_serum_creatinine = bl_creatinine_s,screen_urine_mab = u24_mab,
+         screen_serum_creatinine = bl_creatinine_s,
          screen_urine_cre = bl_creatinine_u,screen_urine_acr = bl_uacr,
          screen_pregnant = eligibility_preg)
+penguin$screen_urine_mab = NA
 # Missing
 penguin[,c("insulin","insulin_pump","screen_bmi_percentile",
            "activity_factor","schofield","hemoglobin","screen_hematocrit")] = NA
@@ -227,9 +228,10 @@ crocodile = crocodile %>%
          screen_bmi = phys_bmi,waist_circumference = phys_waistcm,
          hip_circumference = phys_hipcm,sys_bp = phys_sysbp,dys_bp = phys_diasbp,
          map = phys_map,pulse = phys_pulse,hba1c = bl_a1c,
-         screen_serum_creatinine = bl_creatinine_s,screen_urine_mab = u24_mab,
+         screen_serum_creatinine = bl_creatinine_s,
          screen_urine_cre = bl_creatinine_u,screen_urine_acr = bl_uacr,
          screen_pregnant = screen_upt)
+crocodile$screen_urine_mab = NA
 # Missing
 crocodile[,screen_vars[which(!screen_vars %in% colnames(crocodile))]] = NA
 # COFFEE
@@ -315,10 +317,10 @@ dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
 # Clamp vitals
 ###############################################################################
 
-clamp_vitals = c("clamp_date","clamp_height","clamp_weight","clamp_sbp",
-                 "clamp_dbp","clamp_map","clamp_pls")
+clamp_vitals = c("subject_id","study","clamp_date","clamp_height",
+                 "clamp_weight","clamp_sbp","clamp_dbp","clamp_map","clamp_pls")
 
-# RENAL-HEIR
+# RENAL-HEIR - already correct
 # PENGUIN
 penguin = penguin %>%
   rename(clamp_height = clamp_ht,clamp_weight = clamp_wt)
@@ -327,102 +329,130 @@ crocodile = crocodile %>%
   rename(clamp_height = clamp_ht,clamp_weight = clamp_wt)
 # COFFEE
 coffee$clamp_date = coffee$cf_clamp_date
-# CASPER
-# IMPROVE
+# CASPER - already correct
+# IMPROVE - already correct
+
+# Merge 
+# clamp_vitals = do.call(rbind,list(renalheir[,clamp_vitals],penguin[,clamp_vitals],
+#                          crocodile[,clamp_vitals],coffee[,clamp_vitals],
+#                          casper[,clamp_vitals],improve[,clamp_vitals]))
 
 ###############################################################################
 # Clamp labs
 ###############################################################################
 
-clamp_labs = c("cholesterol","hdl","ldl","triglycerides","total_protein",
-               "serum_sodium","cystatin_c","serum_creatinine",
+clamp_labs = c("subject_id","study","cholesterol","hdl","ldl","triglycerides",
+               "total_protein","serum_sodium","cystatin_c","serum_creatinine",
                "clamp_urine_mab_baseline","clamp_urine_cre_baseline",
                "clamp_acr_baseline","clamp_urine_sodium","clamp_glucose_bl",
                "urine_glucose","clamp_urine_mab_250","clamp_urine_cre_250",
                "clamp_acr_250","clamp_urine_vol")
 
-# RENAL-HEIR
+# RENAL-HEIR - already correct
 # PENGUIN
-  
+
 # CROCODILE
 
 # COFFEE
-
-# CASPER
-
-# IMPROVE
+coffee[c("cholesterol","hdl","ldl","triglycerides")] = NA
+coffee$clamp_glucose_bl = coffee$fbg
+# CASPER - already correct
+# IMPROVE- already correct
 
 ###############################################################################
 # 24 hour urine labs
 ###############################################################################
 
-
+# Only available for CROCODILE, PENGUIN, and PANTHER
+urine_labs = c("subject_id","study","u24_labs","u24_na","u24_mab","u24_volume","u24_hours")
 
 # RENAL-HEIR
-
+renalheir[,tail(urine_labs,-2)] = NA
 # PENGUIN
-
+penguin$u24_hours = NA
+penguin$u24_volume = NA
 # CROCODILE
-
+crocodile$u24_hours = NA
+crocodile$u24_volume = NA
 # COFFEE
-
+coffee[,tail(urine_labs,-2)] = NA
 # CASPER
-
+casper[,tail(urine_labs,-2)] = NA
 # IMPROVE
+improve[,tail(urine_labs,-2)] = NA
+
+# Merge 
+urine_labs = do.call(rbind,list(renalheir[,urine_labs],penguin[,urine_labs],
+                         crocodile[,urine_labs],coffee[,urine_labs],
+                         casper[,urine_labs],improve[,urine_labs]))
 
 ###############################################################################
 # Hyperinsulinemic-euglycemic clamp data
 ###############################################################################
 
-
+# Only available for CROCODILE and PENGUIN							
+he_clamp = c("subject_id","study","p1_raw_m","p1_raw_leanm","p1_gc_m",
+             "p1_gc_leanm","p2_raw_m","p2_raw_leanm","p2_gc_m","p2_gc_leanm")
 
 # RENAL-HEIR
-
-# PENGUIN
-
-# CROCODILE
-
+renalheir[,tail(he_clamp,-2)] = NA
 # COFFEE
-
+coffee[,tail(he_clamp,-2)] = NA
 # CASPER
-
+casper[,tail(he_clamp,-2)] = NA
 # IMPROVE
+improve[,tail(he_clamp,-2)] = NA
+
+# Merge 
+he_clamp = do.call(rbind,list(renalheir[,he_clamp],penguin[,he_clamp],
+                                crocodile[,he_clamp],coffee[,he_clamp],
+                                casper[,he_clamp],improve[,he_clamp]))
 
 ###############################################################################
 # FFA data from clamps
 ###############################################################################
 
 # RENAL-HEIR
-renalheir_ffa = colnames(renalheir)[grep("ffa_.*\\d{1,}",colnames(renalheir))]
+renalheir_ffa = renalheir[,c("subject_id","study",colnames(renalheir)[grep("ffa_.*\\d{1,}",colnames(renalheir))])]
 # PENGUIN
-penguin_ffa = colnames(penguin)[grep("ffa_.*\\d{1,}",colnames(penguin))]
-penguin_ffa = sub("minus","minus_",penguin_ffa)
+penguin_ffa = penguin[,c("subject_id","study",colnames(penguin)[grep("ffa_.*\\d{1,}",colnames(penguin))])]
+colnames(penguin_ffa) = sub("minus","minus_",colnames(penguin_ffa))
 # CROCODILE
-crocodile_ffa = colnames(crocodile)[grep("ffa_.*\\d{1,}",colnames(crocodile))]
-crocodile_ffa = sub("minus","minus_",crocodile_ffa)
-# COFFEE
+crocodile_ffa = crocodile[,c("subject_id","study",colnames(crocodile)[grep("ffa_.*\\d{1,}",colnames(crocodile))])]
+colnames(crocodile_ffa) = sub("minus","minus_",colnames(crocodile_ffa))
+# COFFEE - none
+# CASPER - none
 
-# CASPER
+# Merge
+ffa = full_join(renalheir_ffa,penguin_ffa)
+ffa = full_join(ffa,crocodile_ffa)
+# Sort columns
+ffa_cols = colnames(ffa)[3:ncol(ffa)]
+ffa_cols = ffa_cols[order(as.numeric(sub("ffa_","",sub("minus_","-",ffa_cols))))]
+ffa = ffa[,c("subject_id","study",ffa_cols)]
 
-# IMPROVE
+## IMPROVE
+improve_ffa = improve[,c("subject_id","study",colnames(improve)[grep("ffa_.*\\d{1,}",colnames(improve))])]
+colnames(improve_ffa) = sub("neg","minus",colnames(improve_ffa))
+colnames(improve_ffa)[grep("ffa",colnames(improve_ffa))] = 
+  paste0(colnames(improve_ffa)[grep("ffa",colnames(improve_ffa))],"_mmtt")
+# Add IMPROVE
+ffa = full_join(ffa,improve_ffa)
 
 ###############################################################################
 # C-peptide clamp data
 ###############################################################################
 
-
-
 # RENAL-HEIR
-
-# PENGUIN
-
-# CROCODILE
-
-# COFFEE
-
-# CASPER
-
+renalheir_cpep = renalheir[,c("subject_id","study",colnames(renalheir)[grep("cpeptide_.*\\d{1,}",colnames(renalheir))])]
 # IMPROVE
+improve_cpep = improve[,c("subject_id","study",colnames(improve)[grep("cpep_.*\\d{1,}",colnames(improve))])]
+colnames(improve_cpep) = sub("mmtt_","",colnames(improve_cpep))
+colnames(improve_cpep)[3:ncol(improve_cpep)] = 
+  paste0(colnames(improve_cpep)[3:ncol(improve_cpep)],"_mmtt")
+
+# Merge
+cpep = full_join(renalheir_cpep,improve_cpep)
 
 ###############################################################################
 # Insulin clamp data
