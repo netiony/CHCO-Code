@@ -19,6 +19,7 @@ renalheir = exportRecords(
   ),labels = F
 )
 renalheir$study = "RENAL-HEIR"
+renalheir$visit = 1
 
 penguin = exportRecords(
   redcapConnection(
@@ -26,6 +27,7 @@ penguin = exportRecords(
   ),labels = F
 )
 penguin$study = "PENGUIN"
+penguin$visit = 1
 
 crocodile = exportRecords(
   redcapConnection(
@@ -33,6 +35,7 @@ crocodile = exportRecords(
   ),labels = F
 )
 crocodile$study = "CROCODILE"
+crocodile$visit = 1
 
 coffee = exportRecords(
   redcapConnection(
@@ -40,6 +43,7 @@ coffee = exportRecords(
   ),labels = F
 )
 coffee$study = "COFFEE"
+coffee$visit = 1
 
 casper = exportRecords(
   redcapConnection(
@@ -47,6 +51,7 @@ casper = exportRecords(
   ),labels = F
 )
 casper$study = "CASPER"
+casper$visit = 1
 
 improve = exportRecords(
   redcapConnection(
@@ -54,11 +59,13 @@ improve = exportRecords(
   ),labels = F
 )
 improve$study = "IMPROVE"
+improve = improve %>% group_by(subject_id) %>% mutate(visit = row_number()) %>% ungroup()
+
 rm(home_dir,tokens,uri)
 ###############################################################################
 # Demographic variables
 ###############################################################################
-demographic_vars = c("subject_id","study","group","dob","age_current","gender",
+demographic_vars = c("subject_id","study","visit","group","dob","age_current","gender",
                      "race","ethnicity","length_of_diabetes","age_at_diabetes_dx")
 # RENAL HEIR
 levels(renalheir$group) = c("T2D","Obese Control","Lean Control")
@@ -172,14 +179,16 @@ improve$ethnicity = apply(improve,1,function(r){
 })
 # Diabetes info
 improve$age_at_diabetes_dx = improve$diabetes_age
+# Just first visit 
+improve_dem = improve[grep("screening_arm",improve$redcap_event_name),]
 # Merge demographics
 demographics = do.call(rbind,list(renalheir[,demographic_vars],penguin[,demographic_vars],
                                   crocodile[,demographic_vars],coffee[,demographic_vars],
-                                  casper[,demographic_vars],improve[,demographic_vars]))
+                                  casper[,demographic_vars],improve_dem[,demographic_vars]))
 ###############################################################################
 # Screening variables
 ###############################################################################
-screen_vars = c("subject_id","study","insulin","insulin_pump","screen_height",
+screen_vars = c("subject_id","study","visit","insulin","insulin_pump","screen_height",
                 "screen_weight","screen_bmi","screen_bmi_percentile",
                 "waist_circumference","hip_circumference","sys_bp","dys_bp",
                 "map","pulse","activity_factor","schofield","hba1c","hemoglobin",
@@ -275,15 +284,17 @@ improve = improve %>%
   unite(.,activity_factor,activity_factor_female,activity_factor_male,na.rm = T) %>%
   mutate(schofield = rowSums(.[c("schofield_female","schofield_male")],na.rm = T))
 improve$schofield[improve$schofield == 0] = NA
+# Just first visit 
+improve_screen = improve[grep("screening_arm",improve$redcap_event_name),]
 # Merge screening
 screening = do.call(rbind,list(renalheir[,screen_vars],penguin[,screen_vars],
                                crocodile[,screen_vars],coffee[,screen_vars],
-                               casper[,screen_vars],improve[,screen_vars]))
+                               casper[,screen_vars],improve_screen[,screen_vars]))
 ###############################################################################
 # DXA variables
 ###############################################################################
 
-dxa_vars = c("subject_id","study","dexa_date","body_fat","lean_mass",
+dxa_vars = c("subject_id","study","visit","dexa_date","body_fat","lean_mass",
              "trunk_mass","fat_kg","lean_kg","trunk_kg","bone_mineral_density",
              "body_composition_dxa_complete")
 
@@ -301,7 +312,7 @@ crocodile = crocodile %>%
          trunk_kg = trunkmass_kg,bone_mineral_density = bmd,
          body_composition_dxa_complete = study_visit_dxa_scan_complete)
 # COFFEE
-coffee[,dxa_vars[3:length(dxa_vars)]] = NA
+coffee[,dxa_vars[4:length(dxa_vars)]] = NA
 # CASPER
 # IMPROVE
 improve = improve %>%
@@ -317,7 +328,7 @@ dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
 # Clamp vitals
 ###############################################################################
 
-clamp_vitals = c("subject_id","study","clamp_date","clamp_height",
+clamp_vitals = c("subject_id","study","visit","clamp_date","clamp_height",
                  "clamp_weight","clamp_sbp","clamp_dbp","clamp_map","clamp_pls")
 
 # RENAL-HEIR - already correct
@@ -350,7 +361,7 @@ clamp_vitals = do.call(rbind,list(renalheir[,clamp_vitals],penguin[,clamp_vitals
 # Clamp labs
 ###############################################################################
 
-clamp_labs = c("subject_id","study","cholesterol","hdl","ldl","triglycerides",
+clamp_labs = c("subject_id","study","visit","cholesterol","hdl","ldl","triglycerides",
                "total_protein","serum_sodium","cystatin_c","serum_creatinine",
                "clamp_urine_mab_baseline","clamp_urine_cre_baseline",
                "clamp_acr_baseline","clamp_urine_sodium","clamp_glucose_bl",
@@ -394,7 +405,7 @@ clamp_labs = do.call(rbind,list(renalheir[,clamp_labs],penguin[,clamp_labs],
 ###############################################################################
 
 # Only available for CROCODILE, PENGUIN, and PANTHER
-urine_labs = c("subject_id","study","u24_labs","u24_na","u24_mab","u24_volume","u24_hours")
+urine_labs = c("subject_id","study","visit","u24_labs","u24_na","u24_mab","u24_volume","u24_hours")
 
 # RENAL-HEIR
 renalheir[,tail(urine_labs,-2)] = NA
@@ -421,7 +432,7 @@ urine_labs = do.call(rbind,list(renalheir[,urine_labs],penguin[,urine_labs],
 ###############################################################################
 
 # Only available for CROCODILE and PENGUIN							
-he_clamp = c("subject_id","study","p1_raw_m","p1_raw_leanm","p1_gc_m",
+he_clamp = c("subject_id","study","visit","p1_raw_m","p1_raw_leanm","p1_gc_m",
              "p1_gc_leanm","p2_raw_m","p2_raw_leanm","p2_gc_m","p2_gc_leanm")
 
 # RENAL-HEIR
@@ -443,12 +454,12 @@ he_clamp = do.call(rbind,list(renalheir[,he_clamp],penguin[,he_clamp],
 ###############################################################################
 
 # RENAL-HEIR
-renalheir_ffa = renalheir[,c("subject_id","study",colnames(renalheir)[grep("ffa_.*\\d{1,}",colnames(renalheir))])]
+renalheir_ffa = renalheir[,c("subject_id","study","visit",colnames(renalheir)[grep("ffa_.*\\d{1,}",colnames(renalheir))])]
 # PENGUIN
-penguin_ffa = penguin[,c("subject_id","study",colnames(penguin)[grep("ffa_.*\\d{1,}",colnames(penguin))])]
+penguin_ffa = penguin[,c("subject_id","study","visit",colnames(penguin)[grep("ffa_.*\\d{1,}",colnames(penguin))])]
 colnames(penguin_ffa) = sub("minus","minus_",colnames(penguin_ffa))
 # CROCODILE
-crocodile_ffa = crocodile[,c("subject_id","study",colnames(crocodile)[grep("ffa_.*\\d{1,}",colnames(crocodile))])]
+crocodile_ffa = crocodile[,c("subject_id","study","visit",colnames(crocodile)[grep("ffa_.*\\d{1,}",colnames(crocodile))])]
 colnames(crocodile_ffa) = sub("minus","minus_",colnames(crocodile_ffa))
 # COFFEE - none
 # CASPER - none
@@ -457,12 +468,12 @@ colnames(crocodile_ffa) = sub("minus","minus_",colnames(crocodile_ffa))
 ffa = full_join(renalheir_ffa,penguin_ffa)
 ffa = full_join(ffa,crocodile_ffa)
 # Sort columns
-ffa_cols = colnames(ffa)[3:ncol(ffa)]
+ffa_cols = colnames(ffa)[4:ncol(ffa)]
 ffa_cols = ffa_cols[order(as.numeric(sub("ffa_","",sub("minus_","-",ffa_cols))))]
-ffa = ffa[,c("subject_id","study",ffa_cols)]
+ffa = ffa[,c("subject_id","study","visit",ffa_cols)]
 
 # IMPROVE
-improve_ffa = improve[,c("subject_id","study",colnames(improve)[grep("ffa_.*\\d{1,}",colnames(improve))])]
+improve_ffa = improve[,c("subject_id","study","visit",colnames(improve)[grep("ffa_.*\\d{1,}",colnames(improve))])]
 colnames(improve_ffa) = sub("neg","minus",colnames(improve_ffa))
 colnames(improve_ffa)[grep("ffa",colnames(improve_ffa))] = 
   paste0(colnames(improve_ffa)[grep("ffa",colnames(improve_ffa))],"_mmtt")
@@ -474,12 +485,12 @@ ffa = full_join(ffa,improve_ffa)
 ###############################################################################
 
 # RENAL-HEIR
-renalheir_cpep = renalheir[,c("subject_id","study",colnames(renalheir)[grep("cpeptide_.*\\d{1,}",colnames(renalheir))])]
+renalheir_cpep = renalheir[,c("subject_id","study","visit",colnames(renalheir)[grep("cpeptide_.*\\d{1,}",colnames(renalheir))])]
 # IMPROVE
-improve_cpep = improve[,c("subject_id","study",colnames(improve)[grep("cpep_.*\\d{1,}",colnames(improve))])]
+improve_cpep = improve[,c("subject_id","study","visit",colnames(improve)[grep("cpep_.*\\d{1,}",colnames(improve))])]
 colnames(improve_cpep) = sub("mmtt_","",colnames(improve_cpep))
-colnames(improve_cpep)[3:ncol(improve_cpep)] = 
-  paste0(colnames(improve_cpep)[3:ncol(improve_cpep)],"_mmtt")
+colnames(improve_cpep)[4:ncol(improve_cpep)] = 
+  paste0(colnames(improve_cpep)[4:ncol(improve_cpep)],"_mmtt")
 
 # Merge
 cpep = full_join(renalheir_cpep,improve_cpep)
@@ -489,14 +500,14 @@ cpep = full_join(renalheir_cpep,improve_cpep)
 ###############################################################################
 
 # RENAL-HEIR
-renalheir_ins = renalheir[,c("subject_id","study",colnames(renalheir)[grep("insulin_.*\\d{1,}",colnames(renalheir))])]
+renalheir_ins = renalheir[,c("subject_id","study","visit",colnames(renalheir)[grep("insulin_.*\\d{1,}",colnames(renalheir))])]
 renalheir_ins$insulin_type___1 = NULL
 renalheir_ins$insulin_type___2 = NULL
 # PENGUIN
-penguin_ins = penguin[,c("subject_id","study",colnames(penguin)[grep("insulin_.*\\d{1,}",colnames(penguin))])]
+penguin_ins = penguin[,c("subject_id","study","visit",colnames(penguin)[grep("insulin_.*\\d{1,}",colnames(penguin))])]
 colnames(penguin_ins) = sub("minus","minus_",colnames(penguin_ins))
 # CROCODILE
-crocodile_ins = crocodile[,c("subject_id","study",colnames(crocodile)[grep("insulin_.*\\d{1,}",colnames(crocodile))])]
+crocodile_ins = crocodile[,c("subject_id","study","visit",colnames(crocodile)[grep("insulin_.*\\d{1,}",colnames(crocodile))])]
 colnames(crocodile_ins) = sub("minus","minus_",colnames(crocodile_ins))
 # COFFEE - none
 # CASPER - none
@@ -505,12 +516,12 @@ colnames(crocodile_ins) = sub("minus","minus_",colnames(crocodile_ins))
 ins = full_join(renalheir_ins,penguin_ins)
 ins = full_join(ins,crocodile_ins)
 # Sort columns
-ins_cols = colnames(ins)[3:ncol(ins)]
+ins_cols = colnames(ins)[4:ncol(ins)]
 ins_cols = ins_cols[order(as.numeric(sub("insulin_","",sub("minus_","-",ins_cols))))]
-ins = ins[,c("subject_id","study",ins_cols)]
+ins = ins[,c("subject_id","study","visit",ins_cols)]
 
 # IMPROVE
-improve_ins = improve[,c("subject_id","study",colnames(improve)[grep("insulin_.*\\d{1,}",colnames(improve))])]
+improve_ins = improve[,c("subject_id","study","visit",colnames(improve)[grep("insulin_.*\\d{1,}",colnames(improve))])]
 improve_ins$insulin_type___1 = NULL
 improve_ins$insulin_type___2 = NULL
 mmtt = grep("mmtt",colnames(improve_ins))
@@ -527,21 +538,21 @@ ins = full_join(ins,improve_ins)
 ###############################################################################
 
 # RENAL-HEIR
-renalheir_glu = renalheir[,c("subject_id","study",colnames(renalheir)[grep("glucose_.*\\d{1,}",colnames(renalheir))])]
+renalheir_glu = renalheir[,c("subject_id","study","visit",colnames(renalheir)[grep("glucose_.*\\d{1,}",colnames(renalheir))])]
 # PENGUIN
-penguin_glu = penguin[,c("subject_id","study",colnames(penguin)[grep("bg_.*\\d{1,}",colnames(penguin))])]
+penguin_glu = penguin[,c("subject_id","study","visit",colnames(penguin)[grep("bg_.*\\d{1,}",colnames(penguin))])]
 colnames(penguin_glu) = sub("minus","minus_",colnames(penguin_glu))
 colnames(penguin_glu) = sub("bg","glucose",colnames(penguin_glu))
 # CROCODILE
-crocodile_glu = crocodile[,c("subject_id","study",colnames(crocodile)[grep("bg_.*\\d{1,}",colnames(crocodile))])]
+crocodile_glu = crocodile[,c("subject_id","study","visit",colnames(crocodile)[grep("bg_.*\\d{1,}",colnames(crocodile))])]
 colnames(crocodile_glu) = sub("minus","minus_",colnames(crocodile_glu))
 colnames(crocodile_glu) = sub("bg","glucose",colnames(crocodile_glu))
 # COFFEE
-coffee_glu = coffee[,c("subject_id","study",colnames(coffee)[grep("glucose_.*\\d{1,}",colnames(coffee))])]
+coffee_glu = coffee[,c("subject_id","study","visit",colnames(coffee)[grep("glucose_.*\\d{1,}",colnames(coffee))])]
 # CASPER
-casper_glu = casper[,c("subject_id","study",colnames(casper)[grep("glucose_.*\\d{1,}",colnames(casper))])]
+casper_glu = casper[,c("subject_id","study","visit",colnames(casper)[grep("glucose_.*\\d{1,}",colnames(casper))])]
 # IMPROVE
-improve_glu = improve[,c("subject_id","study",colnames(improve)[grep("glucose_.*\\d{1,}",colnames(improve))])]
+improve_glu = improve[,c("subject_id","study","visit",colnames(improve)[grep("glucose_.*\\d{1,}",colnames(improve))])]
 
 # Merge
 glu = full_join(renalheir_glu,penguin_glu)
@@ -554,7 +565,7 @@ glu = full_join(glu,improve_glu)
 # Kidney function
 ###############################################################################
 
-kidney_vars = c("subject_id","study","gfr","gfr_bsa","pah_clear_abs",
+kidney_vars = c("subject_id","study","visit","gfr","gfr_bsa","pah_clear_abs",
                 "pah_clear_bsa","rpf","rpf_bsa","ecv","gfr_ecv_percent","gfr_ecv_std")
 
 # RENAL-HEIR - already correct
@@ -585,7 +596,7 @@ kidney = do.call(rbind,list(renalheir[,kidney_vars],penguin[,kidney_vars],
 # Kidney MRI
 ###############################################################################
 
-kidney_mri = c("subject_id","study","o2_sats","pcasl3d_right","pasl2d_right",
+kidney_mri = c("subject_id","study","visit","o2_sats","pcasl3d_right","pasl2d_right",
                "adc_right","length_right","width_right","depth_right",
                "volume_right","bold_r_bl_cortex","bold_r_bl_medulla",
                "bold_r_bl_kidney","bold_r_pf_cortex","bold_r_pf_medulla",
@@ -629,7 +640,7 @@ kidney_mri = do.call(rbind,list(renalheir[,kidney_mri],penguin[,kidney_mri],
 ###############################################################################
 
 # Only in PENGUIN and CROCODILE, names are consistent in both
-pet_vars = c("subject_id","study","pet_rc_f","pet_rc_k2","pet_rc_vb","pet_rc_k1",
+pet_vars = c("subject_id","study","visit","pet_rc_f","pet_rc_k2","pet_rc_vb","pet_rc_k1",
              "pet_rm_f","pet_rm_k2","pet_rm_vb","pet_rm_k1","pet_lc_f","pet_lc_k2",
              "pet_lc_vb","pet_lc_k1","pet_lm_f","pet_lm_k2","pet_lm_vb","pet_lm_k1")
 
@@ -650,7 +661,7 @@ pet = do.call(rbind,list(renalheir[,pet_vars],penguin[,pet_vars],
 # Kidney biopsy
 ###############################################################################
 
-kidney_biopsy = c("subject_id","study","gloms",
+kidney_biopsy = c("subject_id","study","visit","gloms",
                   paste0("glom_enlarge___",1:7),
                   "gloms_gs","ifta","vessels___1","vessels___2","vessels_other",
                   "fia","glom_tuft_area","glom_volume_wiggins",
@@ -674,21 +685,20 @@ kidney_biopsy = do.call(rbind,list(renalheir[,kidney_biopsy],penguin[,kidney_bio
 ###############################################################################
 # Merge everything together
 ###############################################################################
-
 df = full_join(demographics,screening)
 df = full_join(df,dxa)
-df = full_join(df,clamp_vitals)
-df = full_join(df,clamp_labs)
-df = full_join(df,urine_labs)
-df = full_join(df,he_clamp)
-df = full_join(df,ffa)
-df = full_join(df,cpep)
-df = full_join(df,ins)
-df = full_join(df,glu)
-df = full_join(df,kidney)
-df = full_join(df,kidney_mri)
-df = full_join(df,kidney_biopsy)
-df = full_join(df,pet)
+# df = full_join(df,clamp_vitals)
+# df = full_join(df,clamp_labs)
+# df = full_join(df,urine_labs)
+# df = full_join(df,he_clamp)
+# df = full_join(df,ffa)
+# df = full_join(df,cpep)
+# df = full_join(df,ins)
+# df = full_join(df,glu)
+# df = full_join(df,kidney)
+# df = full_join(df,kidney_mri)
+# df = full_join(df,kidney_biopsy)
+# df = full_join(df,pet)
 
 ###############################################################################
 # Final formatting and calculations
