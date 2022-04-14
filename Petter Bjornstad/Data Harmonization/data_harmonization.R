@@ -324,18 +324,27 @@ clamp_vitals = c("subject_id","study","clamp_date","clamp_height",
 # PENGUIN
 penguin = penguin %>%
   rename(clamp_height = clamp_ht,clamp_weight = clamp_wt)
+penguin$clamp_date = penguin$visit_date
+penguin$clamp_sbp = penguin$sys_bp
+penguin$clamp_dbp = penguin$dys_bp
+penguin$clamp_map = penguin$map
+penguin$clamp_pls = penguin$pulse
 # CROCODILE
 crocodile = crocodile %>% 
   rename(clamp_height = clamp_ht,clamp_weight = clamp_wt)
+crocodile$clamp_date = crocodile$visit_date
+crocodile$clamp_sbp = crocodile$sys_bp
+crocodile$clamp_dbp = crocodile$dys_bp
+crocodile$clamp_map = crocodile$map
+crocodile$clamp_pls = crocodile$pulse
 # COFFEE
 coffee$clamp_date = coffee$cf_clamp_date
 # CASPER - already correct
 # IMPROVE - already correct
-
 # Merge 
-# clamp_vitals = do.call(rbind,list(renalheir[,clamp_vitals],penguin[,clamp_vitals],
-#                          crocodile[,clamp_vitals],coffee[,clamp_vitals],
-#                          casper[,clamp_vitals],improve[,clamp_vitals]))
+clamp_vitals = do.call(rbind,list(renalheir[,clamp_vitals],penguin[,clamp_vitals],
+                         crocodile[,clamp_vitals],coffee[,clamp_vitals],
+                         casper[,clamp_vitals],improve[,clamp_vitals]))
 
 ###############################################################################
 # Clamp labs
@@ -358,6 +367,10 @@ coffee[c("cholesterol","hdl","ldl","triglycerides")] = NA
 coffee$clamp_glucose_bl = coffee$fbg
 # CASPER - already correct
 # IMPROVE- already correct
+# Merge
+clamp_labs = do.call(rbind,list(renalheir[,clamp_labs],penguin[,clamp_labs],
+                                  crocodile[,clamp_labs],coffee[,clamp_labs],
+                                  casper[,clamp_labs],improve[,clamp_labs]))
 
 ###############################################################################
 # 24 hour urine labs
@@ -555,69 +568,94 @@ kidney = do.call(rbind,list(renalheir[,kidney_vars],penguin[,kidney_vars],
 # Kidney MRI
 ###############################################################################
 
-kidney_mri = c("o2_sats","pcasl3d_right","pasl2d_right","adc_right",
-               "length_right","width_right","depth_right","volume_right",
-               "bold_r_bl_cortex","bold_r_bl_medulla","bold_r_bl_kidney",
-               "bold_r_pf_cortex","bold_r_pf_medulla","bold_r_pf_kidney",
-               "pcasl3d_left","pasl2d_left","adc_left","length_left",
-               "width_left","depth_left","volume_left","bold_l_bl_cortex",
-               "bold_l_bl_medulla","bold_l_bl_kidney","bold_l_pf_cortex",
-               "bold_l_pf_medulla","bold_l_pf_kidney")
+kidney_mri = c("subject_id","study","o2_sats","pcasl3d_right","pasl2d_right",
+               "adc_right","length_right","width_right","depth_right",
+               "volume_right","bold_r_bl_cortex","bold_r_bl_medulla",
+               "bold_r_bl_kidney","bold_r_pf_cortex","bold_r_pf_medulla",
+               "bold_r_pf_kidney","pcasl3d_left","pasl2d_left","adc_left",
+               "length_left","width_left","depth_left","volume_left",
+               "bold_l_bl_cortex","bold_l_bl_medulla","bold_l_bl_kidney",
+               "bold_l_pf_cortex","bold_l_pf_medulla","bold_l_pf_kidney")
 
 # RENAL-HEIR
-
+renalheir = renalheir %>% rename(pcasl3d_right = asl_right,pcasl3d_left = asl_left)
+renalheir[,c("adc_right","length_right","width_right",
+             "depth_right","volume_right","adc_left","length_left",
+             "width_left","depth_left","volume_left")] = NA
 # PENGUIN
-
+penguin[,kidney_mri] = NA
 # CROCODILE
-
+crocodile = crocodile %>% rename(o2_sats = o2_sat)
 # COFFEE
-
+coffee = coffee %>% rename(pcasl3d_right = asl_right,pcasl3d_left = asl_left)
+coffee[,c("adc_right","length_right","width_right",
+             "depth_right","volume_right","adc_left","length_left",
+             "width_left","depth_left","volume_left")] = NA
 # CASPER
-
+casper = casper %>% rename(pcasl3d_right = asl_right,pcasl3d_left = asl_left)
+casper[,c("adc_right","length_right","width_right",
+          "depth_right","volume_right","adc_left","length_left",
+          "width_left","depth_left","volume_left")] = NA
 # IMPROVE
+improve = improve %>% rename(pcasl3d_right = asl_right,pcasl3d_left = asl_left)
+improve[,c("adc_right","length_right","width_right",
+          "depth_right","volume_right","adc_left","length_left",
+          "width_left","depth_left","volume_left")] = NA
 
 ###############################################################################
 # PET/CT
 ###############################################################################
 
-
+# Only in PENGUIN and CROCODILE, names are consistent in both
+pet_vars = c("subject_id","study","pet_rc_f","pet_rc_k2","pet_rc_vb","pet_rc_k1",
+             "pet_rm_f","pet_rm_k2","pet_rm_vb","pet_rm_k1","pet_lc_f","pet_lc_k2",
+             "pet_lc_vb","pet_lc_k1","pet_lm_f","pet_lm_k2","pet_lm_vb","pet_lm_k1")
 
 # RENAL-HEIR
-
-# PENGUIN
-
-# CROCODILE
-
+renalheir[,tail(pet_vars,-2)] = NA
 # COFFEE
-
+coffee[,tail(pet_vars,-2)] = NA
 # CASPER
-
+casper[,tail(pet_vars,-2)] = NA
 # IMPROVE
+improve[,tail(pet_vars,-2)] = NA
+# Merge
+pet = do.call(rbind,list(renalheir[,pet_vars],penguin[,pet_vars],
+                         crocodile[,pet_vars],coffee[,pet_vars],
+                         casper[,pet_vars],improve[,pet_vars]))
 
 ###############################################################################
 # Kidney biopsy
 ###############################################################################
 
+kidney_biopsy = c("subject_id","study","gloms",
+                  paste0("glom_enlarge___",1:7),
+                  "gloms_gs","ifta","vessels___1","vessels___2","vessels_other",
+                  "fia","glom_tuft_area","glom_volume_wiggins",
+                  "mes_matrix_area","mes_index","mes_volume_wiggins",
+                  "glom_nuc_count","mes_nuc_count")
 
-
-# RENAL-HEIR
-
+# RENAL-HEIR - correct (names taken from this study)
 # PENGUIN
-
-# CROCODILE
-
+penguin[,tail(kidney_biopsy,-2)] = NA
+# CROCODILE - all correct (glom_enlarge levels match)
 # COFFEE
-
+coffee[,tail(kidney_biopsy,-2)] = NA
 # CASPER
+casper[,tail(kidney_biopsy,-2)] = NA
+# IMPROVE - all correct
 
-# IMPROVE
+kidney_biopsy = do.call(rbind,list(renalheir[,kidney_biopsy],penguin[,kidney_biopsy],
+                                   crocodile[,kidney_biopsy],coffee[,kidney_biopsy],
+                                   casper[,kidney_biopsy],improve[,kidney_biopsy]))
 
 ###############################################################################
 # Merge everything together
 ###############################################################################
 
-df = full_join(screening,demographics)
+df = full_join(demographics,screening)
 df = full_join(df,dxa)
+df = full_join(df,clamp_vitals)
 
 ###############################################################################
 # Final formatting and calculations
