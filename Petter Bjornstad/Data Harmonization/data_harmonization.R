@@ -431,7 +431,7 @@ ffa_cols = colnames(ffa)[3:ncol(ffa)]
 ffa_cols = ffa_cols[order(as.numeric(sub("ffa_","",sub("minus_","-",ffa_cols))))]
 ffa = ffa[,c("subject_id","study",ffa_cols)]
 
-## IMPROVE
+# IMPROVE
 improve_ffa = improve[,c("subject_id","study",colnames(improve)[grep("ffa_.*\\d{1,}",colnames(improve))])]
 colnames(improve_ffa) = sub("neg","minus",colnames(improve_ffa))
 colnames(improve_ffa)[grep("ffa",colnames(improve_ffa))] = 
@@ -458,97 +458,111 @@ cpep = full_join(renalheir_cpep,improve_cpep)
 # Insulin clamp data
 ###############################################################################
 
-
-
 # RENAL-HEIR
-
+renalheir_ins = renalheir[,c("subject_id","study",colnames(renalheir)[grep("insulin_.*\\d{1,}",colnames(renalheir))])]
+renalheir_ins$insulin_type___1 = NULL
+renalheir_ins$insulin_type___2 = NULL
 # PENGUIN
-
+penguin_ins = penguin[,c("subject_id","study",colnames(penguin)[grep("insulin_.*\\d{1,}",colnames(penguin))])]
+colnames(penguin_ins) = sub("minus","minus_",colnames(penguin_ins))
 # CROCODILE
+crocodile_ins = crocodile[,c("subject_id","study",colnames(crocodile)[grep("insulin_.*\\d{1,}",colnames(crocodile))])]
+colnames(crocodile_ins) = sub("minus","minus_",colnames(crocodile_ins))
+# COFFEE - none
+# CASPER - none
 
-# COFFEE
-
-# CASPER
+# Merge
+ins = full_join(renalheir_ins,penguin_ins)
+ins = full_join(ins,crocodile_ins)
+# Sort columns
+ins_cols = colnames(ins)[3:ncol(ins)]
+ins_cols = ins_cols[order(as.numeric(sub("insulin_","",sub("minus_","-",ins_cols))))]
+ins = ins[,c("subject_id","study",ins_cols)]
 
 # IMPROVE
+improve_ins = improve[,c("subject_id","study",colnames(improve)[grep("insulin_.*\\d{1,}",colnames(improve))])]
+improve_ins$insulin_type___1 = NULL
+improve_ins$insulin_type___2 = NULL
+mmtt = grep("mmtt",colnames(improve_ins))
+colnames(improve_ins)[mmtt] = sub("mmtt_","",colnames(improve_ins)[mmtt])
+colnames(improve_ins) = sub("neg","minus",colnames(improve_ins))
+colnames(improve_ins)[mmtt] = 
+  paste0(colnames(improve_ins)[mmtt],"_mmtt")
+# Add IMPROVE
+ins = full_join(ins,improve_ins)
+
 
 ###############################################################################
 # BG clamp data
 ###############################################################################
 
-
-
 # RENAL-HEIR
-
+renalheir_glu = renalheir[,c("subject_id","study",colnames(renalheir)[grep("glucose_.*\\d{1,}",colnames(renalheir))])]
 # PENGUIN
-
+penguin_glu = penguin[,c("subject_id","study",colnames(penguin)[grep("bg_.*\\d{1,}",colnames(penguin))])]
+colnames(penguin_glu) = sub("minus","minus_",colnames(penguin_glu))
+colnames(penguin_glu) = sub("bg","glucose",colnames(penguin_glu))
 # CROCODILE
-
+crocodile_glu = crocodile[,c("subject_id","study",colnames(crocodile)[grep("bg_.*\\d{1,}",colnames(crocodile))])]
+colnames(crocodile_glu) = sub("minus","minus_",colnames(crocodile_glu))
+colnames(crocodile_glu) = sub("bg","glucose",colnames(crocodile_glu))
 # COFFEE
-
+coffee_glu = coffee[,c("subject_id","study",colnames(coffee)[grep("glucose_.*\\d{1,}",colnames(coffee))])]
 # CASPER
-
+casper_glu = casper[,c("subject_id","study",colnames(casper)[grep("glucose_.*\\d{1,}",colnames(casper))])]
 # IMPROVE
+improve_glu = improve[,c("subject_id","study",colnames(improve)[grep("glucose_.*\\d{1,}",colnames(improve))])]
 
-###############################################################################
-# eGFR
-###############################################################################
-
-
-
-# RENAL-HEIR
-
-# PENGUIN
-
-# CROCODILE
-
-# COFFEE
-
-# CASPER
-
-# IMPROVE
+# Merge
+glu = full_join(renalheir_glu,penguin_glu)
+glu = full_join(glu,crocodile_glu)
+glu = full_join(glu,coffee_glu)
+glu = full_join(glu,casper_glu)
+glu = full_join(glu,improve_glu)
 
 ###############################################################################
 # Kidney function
 ###############################################################################
 
+kidney_vars = c("subject_id","study","gfr","gfr_bsa","pah_clear_abs",
+                "pah_clear_bsa","rpf","rpf_bsa","ecv","gfr_ecv_percent","gfr_ecv_std")
 
-
-# RENAL-HEIR
-
+# RENAL-HEIR - already correct
 # PENGUIN
-
+penguin = penguin %>% rename(pah_clear_abs = pah_abs,pah_clear_bsa = pah_bsa,
+                             gfr_ecv_percent = gfr_ecv,gfr_ecv_std = gfr_standard,
+                             rpf = erpf,rpf_bsa = erpf_bsa)
 # CROCODILE
-
+crocodile = crocodile %>% rename(gfr = gfr_raw,pah_clear_abs = pah_raw,
+                                 pah_clear_bsa = pah_bsa,rpf = erpf,
+                                 rpf_bsa = erpfbsa)
+crocodile[,c("ecv","gfr_ecv_percent","gfr_ecv_std")] = NA
 # COFFEE
-
+coffee = coffee %>% rename(gfr = gfr_abs,gfr_bsa = gfr_adj,pah_clear_abs = abs_pah_clear,
+                           rpf = rpf_abs,rpf_bsa = rpf_adj)
 # CASPER
-
+casper = casper %>% rename(pah_clear_abs = abs_pah,pah_clear_bsa = pah_bsa,
+                           gfr_ecv_percent = gfr_ecv,gfr_ecv_std = gfr_standard)
 # IMPROVE
-
-###############################################################################
-# Intraglomerular Hemodynamics
-###############################################################################
-
-
-
-# RENAL-HEIR
-
-# PENGUIN
-
-# CROCODILE
-
-# COFFEE
-
-# CASPER
-
-# IMPROVE
+improve = improve %>% rename(pah_clear_abs = abs_pah,pah_clear_bsa = pah_bsa,
+                             rpf_bsa = erpf_bsa)
+# Merge
+kidney = do.call(rbind,list(renalheir[,kidney_vars],penguin[,kidney_vars],
+                            crocodile[,kidney_vars],coffee[,kidney_vars],
+                            casper[,kidney_vars],improve[,kidney_vars]))
 
 ###############################################################################
 # Kidney MRI
 ###############################################################################
 
-
+kidney_mri = c("o2_sats","pcasl3d_right","pasl2d_right","adc_right",
+               "length_right","width_right","depth_right","volume_right",
+               "bold_r_bl_cortex","bold_r_bl_medulla","bold_r_bl_kidney",
+               "bold_r_pf_cortex","bold_r_pf_medulla","bold_r_pf_kidney",
+               "pcasl3d_left","pasl2d_left","adc_left","length_left",
+               "width_left","depth_left","volume_left","bold_l_bl_cortex",
+               "bold_l_bl_medulla","bold_l_bl_kidney","bold_l_pf_cortex",
+               "bold_l_pf_medulla","bold_l_pf_kidney")
 
 # RENAL-HEIR
 
@@ -609,5 +623,13 @@ df = full_join(df,dxa)
 # Final formatting and calculations
 ###############################################################################
 
+# -99 as missing
+df[df == -99] = NA
+
+# eGFR 
+
+hemodynamics = c("Pglo","Ra","Re","RVR","FF","RBF")
+
+egfr_vars = c("GFR_Schwartz","GFR_FAS","GFR_Zappitelli","GFR_CKIDU25")
 
 
