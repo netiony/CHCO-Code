@@ -1,0 +1,343 @@
+---
+title: "Growth attenuation therapy analysis"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(dplyr)
+library(hrbrthemes)
+library(nlme)
+library(emmeans)
+library(tableone)
+
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+
+knitr::opts_chunk$set(echo = FALSE)
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "E:/Davis/Growth attenuation analysis/Data raw"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/BDC/Projects"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  home_dir = "/Volumes/som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/BDC/Projects"
+}
+setwd(home_dir)
+knitr::opts_knit$set(root.dir = home_dir)
+```
+
+```{r data, include=FALSE}
+source("./GrowthAttenuationThe-DemographicsMedicalH_R_2022-04-10_2011.r")
+demo <- data
+data <- NULL
+
+source("./GrowthAttenuationThe-BoneAge_R_2022-04-10_2017.r")
+bone_age <- data
+data <- NULL
+
+source("./GrowthAttenuationThe-Labs_R_2022-04-10_2014.r")
+labs <- data
+data <- NULL
+
+# merge highest dose of estradiol and sex to bone age
+d <- demo[,c("record_id","estradiol_highestdose","sex","stop_reason")]
+bone_age <- merge(bone_age,d,by="record_id",all.x = T, all.y = F)
+bone_age$estradiol_highestdose <- as.factor(as.character(bone_age$estradiol_highestdose))
+bone_age$sex <- as.factor(as.character(bone_age$sex))
+
+# df with participants having adverse effects excluded
+bone_age_noae <- bone_age %>% filter(stop_reason %in% c(1,3,4,555))
+
+# completers only
+completers <- demo %>% filter(stop_reason==1)
+
+# in progress
+in_progress <- demo %>% filter(is.na(stop_reason))
+
+# participants with AEs
+ppt_ae <- demo %>% filter(stop_reason==2)
+```
+
+# Questions
+
+1) Some data points are prior to start of therapy (as much as 1.4 years prior).  Some people have >1 value prior to start of therapy - should I use the one closest to start of therapy as "baseline", or use all the data?
+2) For the model of predicted adult height vs. dose - I used the highest dose of estradiol.  Is that correct? 
+3) For bone age at initiation - there are several versions of this variable. Which should I use? At the visit closest to and prior to start of therapy?
+4) Calculate delta bone age Z-score and delta PAH using baseline and visit closest to 1 year?
+5) One participant had an average growth velocity of 138 cm/year - is this correct?
+6) We had discussed using a Poisson model with an offset for follow-up time to model the rate of AEs, but it seems like each participant is classified as having the AE or not, and there is no count of AEs per participant. If this is the case, we probably want to use a logistic regression model adjusted for follow-up time, OR a time-to-event model (although I don't know if we have the start date for the "other" AEs?).
+
+# Methods
+
+Linear mixed-effects models were used to model the trajectory of predicted adult height over time. Analyses were performed using R version 4.1.2.
+
+# Baseline descriptive statistics
+
+## All participants
+
+```{r echo=FALSE, include=FALSE}
+demovars <- c("sex.factor","race.factor","ethnicity.factor","language.factor","caregiver.factor",
+              "state.factor","insurance.factor","genetics.factor","birthbraininjury.factor",
+              "tbi.factor","respiratory_status.factor","feeds.factor","cp.factor","seizures.factor",
+              "scoliosis.factor","gross_motor.factor","communication.factor","stop_reason.factor",
+              "gat_start_age","treatment_duration_year","gv_ave","wtgain_calc")
+t1 <- CreateTableOne(vars=demovars,data=demo)
+t1 <- print(t1,printToggle = F,varLabels=TRUE,missing=T,showAllLevels = T)
+```
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+kable(t1)
+```
+
+## Completers
+
+```{r echo=FALSE, include=FALSE}
+t2 <- CreateTableOne(vars=demovars,data=completers)
+t2 <- print(t2,printToggle = F,varLabels=TRUE,missing=T,showAllLevels = T)
+```
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+kable(t2)
+```
+
+## Participants still on therapy
+
+```{r echo=FALSE, include=FALSE}
+t3 <- CreateTableOne(vars=demovars,data=in_progress)
+t3 <- print(t3,printToggle = F,varLabels=TRUE,missing=T,showAllLevels = T)
+```
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+kable(t3)
+```
+
+## Participants who discontinued due to AEs
+
+```{r echo=FALSE, include=FALSE}
+t4 <- CreateTableOne(vars=demovars,data=ppt_ae)
+t4 <- print(t4,printToggle = F,varLabels=TRUE,missing=T,showAllLevels = T)
+```
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+kable(t4)
+```
+
+# Models and plots - all data and participants included
+
+## Spaghetti plot of predicted adult height
+
+### By highest dose of estradiol
+
+```{r echo=FALSE, warning=FALSE}
+# Spaghetti plot of predicted adult height over time
+p1 <- ggplot(data=bone_age, aes(x=time_gat_ba,y=ba_pah_calc,group=record_id, color=estradiol_highestdose)) + geom_line() +
+      theme_ipsum()
+p1
+```
+
+### By sex
+
+```{r echo=FALSE, warning=FALSE}
+# Spaghetti plot of predicted adult height over time
+p2 <- ggplot(data=bone_age, aes(x=time_gat_ba,y=ba_pah_calc,group=record_id, color=sex)) + geom_line() +
+      theme_ipsum()
+p2
+```
+
+## Mixed model of predicted adult height 
+
+### Model summary
+
+```{r echo=FALSE, include=FALSE}
+mod1 <- lme(ba_pah_calc ~ time_gat_ba,random=~1|record_id,data = bone_age,na.action = na.omit)
+# estimation at mean value of time
+mod1_pred <- matrix(predict(ref_grid(mod1)))
+# estimation at baseline
+mod1_pred.0yr <- ref_grid(mod1, at = list(time_gat_ba = 0))
+# estimation at 1 year
+mod1_pred.1yr <- ref_grid(mod1, at = list(time_gat_ba = 1))
+# estimation at 2 years
+mod1_pred.2yr <- ref_grid(mod1, at = list(time_gat_ba = 2))
+```
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+summary(mod1)
+```
+
+### Estimated value of ba_pah_calc at start of treatment
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+summary(mod1_pred.0yr)
+```
+
+### Prediction interval of ba_pah_calc at start of treatment
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+predict(mod1_pred.0yr, interval="prediction")
+```
+
+### Estimated value of ba_pah_calc at 1 year post-treatment
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+summary(mod1_pred.1yr)
+```
+
+### Prediction interval of ba_pah_calc at 1 year post-treatment
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+predict(mod1_pred.1yr, interval="prediction")
+```
+
+### Estimated value of ba_pah_calc at 2 years post-treatment
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+summary(mod1_pred.2yr)
+```
+
+### Prediction interval of ba_pah_calc at 2 years post-treatment
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+predict(mod1_pred.2yr, interval="prediction")
+```
+
+## Mixed model of predicted adult height vs. dose
+
+```{r echo=FALSE, include=FALSE}
+mod2 <- lme(ba_pah_calc ~ time_gat_ba*estradiol_highestdose,random=~1|record_id,data = bone_age,na.action = na.omit)
+mod2_anova <- anova.lme(mod2, type="marginal")
+mod2_means <- emmeans(mod2,"estradiol_highestdose")
+mod2_pairs <-  pairs(mod2_means,adjust="tukey")
+```
+
+### Model summary
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+mod2_anova
+```
+
+### Estimated mean ba_pah_calc in each dose category at mean value of time_gat_ba
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+mod2_means 
+mod2_pairs
+```
+
+# Models and plots - participants with adverse effects excluded (includes participants who have not completed therapy)
+
+## Spaghetti plot of predicted adult height
+
+### By highest dose of estradiol
+
+```{r echo=FALSE, warning=FALSE}
+# Spaghetti plot of predicted adult height over time
+p1 <- ggplot(data=bone_age_noae, aes(x=time_gat_ba,y=ba_pah_calc,group=record_id, color=estradiol_highestdose)) + geom_line() +
+      theme_ipsum()
+p1
+```
+
+### By sex
+
+```{r echo=FALSE, warning=FALSE}
+# Spaghetti plot of predicted adult height over time
+p2 <- ggplot(data=bone_age_noae, aes(x=time_gat_ba,y=ba_pah_calc,group=record_id, color=sex)) + geom_line() +
+      theme_ipsum()
+p2
+```
+
+## Mixed model of predicted adult height 
+
+### Model summary
+
+```{r echo=FALSE, include=FALSE}
+mod1 <- lme(ba_pah_calc ~ time_gat_ba,random=~1|record_id,data = bone_age_noae,na.action = na.omit)
+# estimation at mean value of time
+mod1_pred <- matrix(predict(ref_grid(mod1)))
+# estimation at baseline
+mod1_pred.0yr <- ref_grid(mod1, at = list(time_gat_ba = 0))
+# estimation at 1 year
+mod1_pred.1yr <- ref_grid(mod1, at = list(time_gat_ba = 1))
+# estimation at 2 years
+mod1_pred.2yr <- ref_grid(mod1, at = list(time_gat_ba = 2))
+```
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+summary(mod1)
+```
+
+### Estimated value of ba_pah_calc at start of treatment
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+summary(mod1_pred.0yr)
+```
+
+### Prediction interval of ba_pah_calc at start of treatment
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+predict(mod1_pred.0yr, interval="prediction")
+```
+
+### Estimated value of ba_pah_calc at 1 year post-treatment
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+summary(mod1_pred.1yr)
+```
+
+### Prediction interval of ba_pah_calc at 1 year post-treatment
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+predict(mod1_pred.1yr, interval="prediction")
+```
+
+### Estimated value of ba_pah_calc at 2 years post-treatment
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+summary(mod1_pred.2yr)
+```
+
+### Prediction interval of ba_pah_calc at 2 years post-treatment
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+predict(mod1_pred.2yr, interval="prediction")
+```
+
+## Mixed model of predicted adult height vs. dose
+
+```{r echo=FALSE, include=FALSE}
+mod2 <- lme(ba_pah_calc ~ time_gat_ba*estradiol_highestdose,random=~1|record_id,data = bone_age_noae,na.action = na.omit)
+mod2_anova <- anova.lme(mod2, type="marginal")
+mod2_means <- emmeans(mod2,"estradiol_highestdose")
+mod2_pairs <-  pairs(mod2_means,adjust="tukey")
+```
+
+### Model summary
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+mod2_anova
+```
+
+### Estimated mean ba_pah_calc in each dose category at mean value of time_gat_ba
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+mod2_means 
+mod2_pairs
+```
+
+# Adverse effects
+
+```{r echo=FALSE, include=FALSE}
+aevars <- c("gi_ses.factor","skin_ses.factor","galactorrhea.factor","gynecomastia.factor",
+            "fracturesgat.factor","seizuresgat.factor","other_ses")
+ae_tab <- CreateTableOne(vars=aevars,data=demo)
+ae_tab <- print(ae_tab,printToggle = F,varLabels=TRUE,missing=T,showAllLevels = T)
+```
+
+```{r echo=FALSE, warning=FALSE, comment=""}
+kable(ae_tab)
+```
