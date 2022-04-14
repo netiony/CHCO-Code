@@ -322,8 +322,8 @@ improve = improve %>%
          body_composition_dxa_complete = dxa_complete)
 # Merge DXA
 dxa = do.call(rbind,list(renalheir[,dxa_vars],penguin[,dxa_vars],
-                               crocodile[,dxa_vars],coffee[,dxa_vars],
-                               casper[,dxa_vars],improve[,dxa_vars]))
+                         crocodile[,dxa_vars],coffee[,dxa_vars],
+                         casper[,dxa_vars],improve[,dxa_vars]))
 ###############################################################################
 # Clamp vitals
 ###############################################################################
@@ -354,8 +354,8 @@ coffee$clamp_date = coffee$cf_clamp_date
 # IMPROVE - already correct
 # Merge 
 clamp_vitals = do.call(rbind,list(renalheir[,clamp_vitals],penguin[,clamp_vitals],
-                         crocodile[,clamp_vitals],coffee[,clamp_vitals],
-                         casper[,clamp_vitals],improve[,clamp_vitals]))
+                                  crocodile[,clamp_vitals],coffee[,clamp_vitals],
+                                  casper[,clamp_vitals],improve[,clamp_vitals]))
 
 ###############################################################################
 # Clamp labs
@@ -382,14 +382,14 @@ penguin[,c("clamp_urine_mab_baseline","urine_glucose","clamp_urine_mab_250",
            "clamp_urine_cre_250","clamp_acr_250","clamp_urine_vol")] = NA
 # CROCODILE
 crocodile = crocodile %>% rename(cholesterol = bl_cholesterol,hdl = bl_hdl,
-                             ldl = bl_ldl,triglycerides = bl_triglycerides,
-                             total_protein = bl_tot_protein,serum_sodium = bl_na_s,
-                             serum_creatinine = screen_serum_creatinine,
-                             clamp_urine_cre_baseline = screen_urine_cre,
-                             clamp_acr_baseline = screen_urine_acr,clamp_urine_sodium = bl_na_u,
-                             clamp_glucose_bl = bl_glucose_u)
+                                 ldl = bl_ldl,triglycerides = bl_triglycerides,
+                                 total_protein = bl_tot_protein,serum_sodium = bl_na_s,
+                                 serum_creatinine = screen_serum_creatinine,
+                                 clamp_urine_cre_baseline = screen_urine_cre,
+                                 clamp_acr_baseline = screen_urine_acr,clamp_urine_sodium = bl_na_u,
+                                 clamp_glucose_bl = bl_glucose_u)
 crocodile[,c("clamp_urine_mab_baseline","urine_glucose","clamp_urine_mab_250",
-           "clamp_urine_cre_250","clamp_acr_250","clamp_urine_vol","cystatin_c")] = NA
+             "clamp_urine_cre_250","clamp_acr_250","clamp_urine_vol","cystatin_c")] = NA
 # COFFEE
 coffee[c("cholesterol","hdl","ldl","triglycerides")] = NA
 coffee$clamp_glucose_bl = coffee$fbg
@@ -397,8 +397,8 @@ coffee$clamp_glucose_bl = coffee$fbg
 # IMPROVE- already correct
 # Merge
 clamp_labs = do.call(rbind,list(renalheir[,clamp_labs],penguin[,clamp_labs],
-                                  crocodile[,clamp_labs],coffee[,clamp_labs],
-                                  casper[,clamp_labs],improve[,clamp_labs]))
+                                crocodile[,clamp_labs],coffee[,clamp_labs],
+                                casper[,clamp_labs],improve[,clamp_labs]))
 
 ###############################################################################
 # 24 hour urine labs
@@ -408,7 +408,7 @@ clamp_labs = do.call(rbind,list(renalheir[,clamp_labs],penguin[,clamp_labs],
 urine_labs = c("subject_id","study","visit","u24_labs","u24_na","u24_mab","u24_volume","u24_hours")
 
 # RENAL-HEIR
-renalheir[,tail(urine_labs,-2)] = NA
+renalheir[,tail(urine_labs,-3)] = NA
 # PENGUIN
 penguin$u24_hours = NA
 penguin$u24_volume = NA
@@ -416,16 +416,16 @@ penguin$u24_volume = NA
 crocodile$u24_hours = NA
 crocodile$u24_volume = NA
 # COFFEE
-coffee[,tail(urine_labs,-2)] = NA
+coffee[,tail(urine_labs,-3)] = NA
 # CASPER
-casper[,tail(urine_labs,-2)] = NA
+casper[,tail(urine_labs,-3)] = NA
 # IMPROVE
-improve[,tail(urine_labs,-2)] = NA
+improve[,tail(urine_labs,-3)] = NA
 
 # Merge 
 urine_labs = do.call(rbind,list(renalheir[,urine_labs],penguin[,urine_labs],
-                         crocodile[,urine_labs],coffee[,urine_labs],
-                         casper[,urine_labs],improve[,urine_labs]))
+                                crocodile[,urine_labs],coffee[,urine_labs],
+                                casper[,urine_labs],improve[,urine_labs]))
 
 ###############################################################################
 # Hyperinsulinemic-euglycemic clamp data
@@ -436,18 +436,18 @@ he_clamp = c("subject_id","study","visit","p1_raw_m","p1_raw_leanm","p1_gc_m",
              "p1_gc_leanm","p2_raw_m","p2_raw_leanm","p2_gc_m","p2_gc_leanm")
 
 # RENAL-HEIR
-renalheir[,tail(he_clamp,-2)] = NA
+renalheir[,tail(he_clamp,-3)] = NA
 # COFFEE
-coffee[,tail(he_clamp,-2)] = NA
+coffee[,tail(he_clamp,-3)] = NA
 # CASPER
-casper[,tail(he_clamp,-2)] = NA
+casper[,tail(he_clamp,-3)] = NA
 # IMPROVE
-improve[,tail(he_clamp,-2)] = NA
+improve[,tail(he_clamp,-3)] = NA
 
 # Merge 
 he_clamp = do.call(rbind,list(renalheir[,he_clamp],penguin[,he_clamp],
-                                crocodile[,he_clamp],coffee[,he_clamp],
-                                casper[,he_clamp],improve[,he_clamp]))
+                              crocodile[,he_clamp],coffee[,he_clamp],
+                              casper[,he_clamp],improve[,he_clamp]))
 
 ###############################################################################
 # FFA data from clamps
@@ -611,15 +611,14 @@ renalheir[,c("adc_right","length_right","width_right",
              "depth_right","volume_right","adc_left","length_left",
              "width_left","depth_left","volume_left","pasl2d_right","pasl2d_left")] = NA
 # PENGUIN
-penguin[,kidney_mri] = NA
+penguin[,tail(kidney_mri,-3)] = NA
 # CROCODILE
 crocodile = crocodile %>% rename(o2_sats = o2_sat)
 # COFFEE
 coffee = coffee %>% rename(pcasl3d_right = asl_right,pcasl3d_left = asl_left)
 coffee[,c("adc_right","length_right","width_right",
-             "depth_right","volume_right","adc_left","length_left",
-             "width_left","depth_left","volume_left","pasl2d_right","pasl2d_left")] = NA
-kidney_mri[which(!kidney_mri %in% colnames(coffee))]
+          "depth_right","volume_right","adc_left","length_left",
+          "width_left","depth_left","volume_left","pasl2d_right","pasl2d_left")] = NA
 # CASPER
 casper = casper %>% rename(pcasl3d_right = asl_right,pcasl3d_left = asl_left)
 casper[,c("adc_right","length_right","width_right",
@@ -628,12 +627,12 @@ casper[,c("adc_right","length_right","width_right",
 # IMPROVE
 improve = improve %>% rename(pcasl3d_right = asl_right,pcasl3d_left = asl_left)
 improve[,c("adc_right","length_right","width_right",
-          "depth_right","volume_right","adc_left","length_left",
-          "width_left","depth_left","volume_left","pasl2d_right","pasl2d_left")] = NA
+           "depth_right","volume_right","adc_left","length_left",
+           "width_left","depth_left","volume_left","pasl2d_right","pasl2d_left")] = NA
 # Merge
 kidney_mri = do.call(rbind,list(renalheir[,kidney_mri],penguin[,kidney_mri],
-                            crocodile[,kidney_mri],coffee[,kidney_mri],
-                            casper[,kidney_mri],improve[,kidney_mri]))
+                                crocodile[,kidney_mri],coffee[,kidney_mri],
+                                casper[,kidney_mri],improve[,kidney_mri]))
 
 ###############################################################################
 # PET/CT
@@ -645,13 +644,13 @@ pet_vars = c("subject_id","study","visit","pet_rc_f","pet_rc_k2","pet_rc_vb","pe
              "pet_lc_vb","pet_lc_k1","pet_lm_f","pet_lm_k2","pet_lm_vb","pet_lm_k1")
 
 # RENAL-HEIR
-renalheir[,tail(pet_vars,-2)] = NA
+renalheir[,tail(pet_vars,-3)] = NA
 # COFFEE
-coffee[,tail(pet_vars,-2)] = NA
+coffee[,tail(pet_vars,-3)] = NA
 # CASPER
-casper[,tail(pet_vars,-2)] = NA
+casper[,tail(pet_vars,-3)] = NA
 # IMPROVE
-improve[,tail(pet_vars,-2)] = NA
+improve[,tail(pet_vars,-3)] = NA
 # Merge
 pet = do.call(rbind,list(renalheir[,pet_vars],penguin[,pet_vars],
                          crocodile[,pet_vars],coffee[,pet_vars],
@@ -670,12 +669,12 @@ kidney_biopsy = c("subject_id","study","visit","gloms",
 
 # RENAL-HEIR - correct (names taken from this study)
 # PENGUIN
-penguin[,tail(kidney_biopsy,-2)] = NA
+penguin[,tail(kidney_biopsy,-3)] = NA
 # CROCODILE - all correct (glom_enlarge levels match)
 # COFFEE
-coffee[,tail(kidney_biopsy,-2)] = NA
+coffee[,tail(kidney_biopsy,-3)] = NA
 # CASPER
-casper[,tail(kidney_biopsy,-2)] = NA
+casper[,tail(kidney_biopsy,-3)] = NA
 # IMPROVE - all correct
 
 kidney_biopsy = do.call(rbind,list(renalheir[,kidney_biopsy],penguin[,kidney_biopsy],
@@ -683,22 +682,26 @@ kidney_biopsy = do.call(rbind,list(renalheir[,kidney_biopsy],penguin[,kidney_bio
                                    casper[,kidney_biopsy],improve[,kidney_biopsy]))
 
 ###############################################################################
-# Merge everything together
+# Merge everything together, fill non-changing variables
 ###############################################################################
 df = full_join(demographics,screening)
 df = full_join(df,dxa)
-# df = full_join(df,clamp_vitals)
-# df = full_join(df,clamp_labs)
-# df = full_join(df,urine_labs)
-# df = full_join(df,he_clamp)
-# df = full_join(df,ffa)
-# df = full_join(df,cpep)
-# df = full_join(df,ins)
-# df = full_join(df,glu)
-# df = full_join(df,kidney)
-# df = full_join(df,kidney_mri)
-# df = full_join(df,kidney_biopsy)
-# df = full_join(df,pet)
+df = full_join(df,clamp_vitals)
+df = full_join(df,clamp_labs)
+df = full_join(df,urine_labs)
+df = full_join(df,he_clamp)
+df = full_join(df,ffa)
+df = full_join(df,cpep)
+df = full_join(df,ins)
+df = full_join(df,glu)
+df = full_join(df,kidney)
+df = full_join(df,kidney_mri)
+df = full_join(df,kidney_biopsy)
+df = full_join(df,pet)
+
+# Fill
+fill_vars = c("group","dob","gender","race","ethnicity","age_at_diabetes_dx")
+df = df %>% group_by(subject_id) %>% fill(all_of(fill_vars),.direction = "downup")
 
 ###############################################################################
 # Final formatting and calculations
@@ -713,4 +716,7 @@ hemodynamics = c("Pglo","Ra","Re","RVR","FF","RBF")
 
 egfr_vars = c("GFR_Schwartz","GFR_FAS","GFR_Zappitelli","GFR_CKIDU25")
 
-
+# Sort and write!
+df = df %>% arrange(study,subject_id,visit)
+write.csv(df,file = paste0("./Data Clean/merged_dataset_",Sys.Date(),".csv"),
+          row.names = F,na = "")
