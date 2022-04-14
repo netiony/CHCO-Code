@@ -359,9 +359,26 @@ clamp_labs = c("subject_id","study","cholesterol","hdl","ldl","triglycerides",
 
 # RENAL-HEIR - already correct
 # PENGUIN
-
+penguin = penguin %>% rename(cholesterol = bl_cholesterol,hdl = bl_hdl,
+                             ldl = bl_ldl,triglycerides = bl_triglycerides,
+                             total_protein = bl_tot_protein,serum_sodium = bl_na_s,
+                             cystatin_c = bl_cystatin_c_s,
+                             serum_creatinine = screen_serum_creatinine,
+                             clamp_urine_cre_baseline = screen_urine_cre,
+                             clamp_acr_baseline = screen_urine_acr,clamp_urine_sodium = bl_na_u,
+                             clamp_glucose_bl = bl_glucose_u)
+penguin[,c("clamp_urine_mab_baseline","urine_glucose","clamp_urine_mab_250",
+           "clamp_urine_cre_250","clamp_acr_250","clamp_urine_vol")] = NA
 # CROCODILE
-
+crocodile = crocodile %>% rename(cholesterol = bl_cholesterol,hdl = bl_hdl,
+                             ldl = bl_ldl,triglycerides = bl_triglycerides,
+                             total_protein = bl_tot_protein,serum_sodium = bl_na_s,
+                             serum_creatinine = screen_serum_creatinine,
+                             clamp_urine_cre_baseline = screen_urine_cre,
+                             clamp_acr_baseline = screen_urine_acr,clamp_urine_sodium = bl_na_u,
+                             clamp_glucose_bl = bl_glucose_u)
+crocodile[,c("clamp_urine_mab_baseline","urine_glucose","clamp_urine_mab_250",
+           "clamp_urine_cre_250","clamp_acr_250","clamp_urine_vol","cystatin_c")] = NA
 # COFFEE
 coffee[c("cholesterol","hdl","ldl","triglycerides")] = NA
 coffee$clamp_glucose_bl = coffee$fbg
@@ -581,7 +598,7 @@ kidney_mri = c("subject_id","study","o2_sats","pcasl3d_right","pasl2d_right",
 renalheir = renalheir %>% rename(pcasl3d_right = asl_right,pcasl3d_left = asl_left)
 renalheir[,c("adc_right","length_right","width_right",
              "depth_right","volume_right","adc_left","length_left",
-             "width_left","depth_left","volume_left")] = NA
+             "width_left","depth_left","volume_left","pasl2d_right","pasl2d_left")] = NA
 # PENGUIN
 penguin[,kidney_mri] = NA
 # CROCODILE
@@ -590,17 +607,22 @@ crocodile = crocodile %>% rename(o2_sats = o2_sat)
 coffee = coffee %>% rename(pcasl3d_right = asl_right,pcasl3d_left = asl_left)
 coffee[,c("adc_right","length_right","width_right",
              "depth_right","volume_right","adc_left","length_left",
-             "width_left","depth_left","volume_left")] = NA
+             "width_left","depth_left","volume_left","pasl2d_right","pasl2d_left")] = NA
+kidney_mri[which(!kidney_mri %in% colnames(coffee))]
 # CASPER
 casper = casper %>% rename(pcasl3d_right = asl_right,pcasl3d_left = asl_left)
 casper[,c("adc_right","length_right","width_right",
           "depth_right","volume_right","adc_left","length_left",
-          "width_left","depth_left","volume_left")] = NA
+          "width_left","depth_left","volume_left","pasl2d_right","pasl2d_left")] = NA
 # IMPROVE
 improve = improve %>% rename(pcasl3d_right = asl_right,pcasl3d_left = asl_left)
 improve[,c("adc_right","length_right","width_right",
           "depth_right","volume_right","adc_left","length_left",
-          "width_left","depth_left","volume_left")] = NA
+          "width_left","depth_left","volume_left","pasl2d_right","pasl2d_left")] = NA
+# Merge
+kidney_mri = do.call(rbind,list(renalheir[,kidney_mri],penguin[,kidney_mri],
+                            crocodile[,kidney_mri],coffee[,kidney_mri],
+                            casper[,kidney_mri],improve[,kidney_mri]))
 
 ###############################################################################
 # PET/CT
@@ -656,6 +678,17 @@ kidney_biopsy = do.call(rbind,list(renalheir[,kidney_biopsy],penguin[,kidney_bio
 df = full_join(demographics,screening)
 df = full_join(df,dxa)
 df = full_join(df,clamp_vitals)
+df = full_join(df,clamp_labs)
+df = full_join(df,urine_labs)
+df = full_join(df,he_clamp)
+df = full_join(df,ffa)
+df = full_join(df,cpep)
+df = full_join(df,ins)
+df = full_join(df,glu)
+df = full_join(df,kidney)
+df = full_join(df,kidney_mri)
+df = full_join(df,kidney_biopsy)
+df = full_join(df,pet)
 
 ###############################################################################
 # Final formatting and calculations
