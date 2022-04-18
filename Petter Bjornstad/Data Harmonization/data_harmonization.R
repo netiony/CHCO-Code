@@ -1,6 +1,6 @@
 library(knitr)
 library(redcapAPI)
-library(tidyREDCap)
+library(childsds)
 library(tidyverse)
 if(Sys.info()["sysname"] == "Windows"){
   home_dir = "S:/Laura/Peds Endo/Petter Bjornstad/Data Harmonization"
@@ -189,10 +189,10 @@ demographics = do.call(rbind,list(renalheir[,demographic_vars],penguin[,demograp
 # Screening variables
 ###############################################################################
 screen_vars = c("subject_id","study","visit","insulin","insulin_pump","screen_height",
-                "screen_weight","screen_bmi","screen_bmi_percentile",
+                "screen_weight","screen_bmi",
                 "waist_circumference","hip_circumference","sys_bp","dys_bp",
                 "map","pulse","activity_factor","schofield","hba1c","hemoglobin",
-                "screen_hematocrit","screen_serum_creatinine",
+                "screen_hematocrit","screen_serum_creatinine","screen_bun",
                 "screen_urine_mab","screen_urine_cre","screen_urine_acr",
                 "screen_pregnant","screening_labs_complete")
 # RENAL HEIR
@@ -220,7 +220,7 @@ penguin = penguin %>%
          screen_pregnant = eligibility_preg)
 penguin$screen_urine_mab = NA
 # Missing
-penguin[,c("insulin","insulin_pump","screen_bmi_percentile",
+penguin[,c("insulin","insulin_pump",
            "activity_factor","schofield","hemoglobin","screen_hematocrit")] = NA
 # CROCODILE
 # insulin
@@ -290,6 +290,7 @@ improve_screen = improve[grep("screening_arm",improve$redcap_event_name),]
 screening = do.call(rbind,list(renalheir[,screen_vars],penguin[,screen_vars],
                                crocodile[,screen_vars],coffee[,screen_vars],
                                casper[,screen_vars],improve_screen[,screen_vars]))
+
 ###############################################################################
 # DXA variables
 ###############################################################################
@@ -704,19 +705,49 @@ fill_vars = c("group","dob","gender","race","ethnicity","age_at_diabetes_dx")
 df = df %>% group_by(subject_id) %>% fill(all_of(fill_vars),.direction = "downup")
 
 ###############################################################################
-# Final formatting and calculations
+# Final formatting and calculated fields
 ###############################################################################
 
-# -99 as missing
+# -99 and -999 as missing
 df[df == -99] = NA
+df[df == -999] = NA
 
-# eGFR 
+# BMI percentile
+## Excluding adults
+df$screen_bmi_z = sds(value = df$screen_bmi,
+                                      age = df$age_current,
+                               sex = df$gender,male = "Male", female = "Female",
+                               item = "bmi",type = "SDS",
+                               ref = cdc.ref)
+df$screen_bmi_percentile = sds(value = df$screen_bmi,
+                      age = df$age_current,
+                      sex = df$gender,male = "Male", female = "Female",
+                      item = "bmi",type = "perc",
+                      ref = cdc.ref)
+## Including adults - over 20 treated as age == 20
+df$screen_bmi_z_all = sds(value = df$screen_bmi,
+                      age = ifelse(df$age_current>=20,20,df$age_current),
+                      sex = df$gender,male = "Male", female = "Female",
+                      item = "bmi",type = "SDS",
+                      ref = cdc.ref)
+df$screen_bmi_percentile_all = sds(value = df$screen_bmi,
+                               age = ifelse(df$age_current>=20,20,df$age_current),
+                               sex = df$gender,male = "Male", female = "Female",
+                               item = "bmi",type = "perc",
+                               ref = cdc.ref)
 
-hemodynamics = c("Pglo","Ra","Re","RVR","FF","RBF")
+# Various eGFRs
+df = data.frame(cbind(df,egfr_calc(age = df$age_current,serum_creatinine = df$serum_creatinine,
+              cystatin_c = df$cystatin_c,height = df$clamp_height,sex = df$gender)))
 
-egfr_vars = c("GFR_Schwartz","GFR_FAS","GFR_Zappitelli","GFR_CKIDU25")
-
-# Sort and write!
-df = df %>% arrange(study,subject_id,visit)
-write.csv(df,file = paste0("./Data Clean/merged_dataset_",Sys.Date(),".csv"),
-          row.names = F,na = "")
+# 
+# 
+# # Hemodynamics
+# hemodynamics = c("Pglo","Ra","Re","RVR","FF","RBF")
+# 
+# 
+# 
+# # Sort and write!
+# df = df %>% arrange(study,subject_id,visit)
+# write.csv(df,file = paste0("./Data Clean/merged_dataset_",Sys.Date(),".csv"),
+#           row.names = F,na = "")
