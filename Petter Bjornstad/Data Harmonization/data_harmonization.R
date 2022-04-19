@@ -2,6 +2,8 @@ library(knitr)
 library(redcapAPI)
 library(childsds)
 library(tidyverse)
+source("~/GitHub/shared-resources/Data Cleaning/Calculated Variables/eGFR.R")
+source("~/GitHub/shared-resources/Data Cleaning/Calculated Variables/hemodynamics.R")
 if(Sys.info()["sysname"] == "Windows"){
   home_dir = "S:/Laura/Peds Endo/Petter Bjornstad/Data Harmonization"
 } else if (Sys.info()["sysname"] == "Linux"){
@@ -192,7 +194,7 @@ screen_vars = c("subject_id","study","visit","insulin","insulin_pump","screen_he
                 "screen_weight","screen_bmi",
                 "waist_circumference","hip_circumference","sys_bp","dys_bp",
                 "map","pulse","activity_factor","schofield","hba1c","hemoglobin",
-                "screen_hematocrit","screen_serum_creatinine","screen_bun",
+                "screen_hematocrit","screen_serum_creatinine",
                 "screen_urine_mab","screen_urine_cre","screen_urine_acr",
                 "screen_pregnant","screening_labs_complete")
 # RENAL HEIR
@@ -367,9 +369,11 @@ clamp_labs = c("subject_id","study","visit","cholesterol","hdl","ldl","triglycer
                "clamp_urine_mab_baseline","clamp_urine_cre_baseline",
                "clamp_acr_baseline","clamp_urine_sodium","clamp_glucose_bl",
                "urine_glucose","clamp_urine_mab_250","clamp_urine_cre_250",
-               "clamp_acr_250","clamp_urine_vol")
+               "clamp_acr_250","clamp_urine_vol","hematocrit_minus_10",
+               "hematocrit_minus_5","hematocrit_90","hematocrit_120")
 
-# RENAL-HEIR - already correct
+# RENAL-HEIR
+renalheir$hematocrit_minus_5 = NA
 # PENGUIN
 penguin = penguin %>% rename(cholesterol = bl_cholesterol,hdl = bl_hdl,
                              ldl = bl_ldl,triglycerides = bl_triglycerides,
@@ -380,7 +384,8 @@ penguin = penguin %>% rename(cholesterol = bl_cholesterol,hdl = bl_hdl,
                              clamp_acr_baseline = screen_urine_acr,clamp_urine_sodium = bl_na_u,
                              clamp_glucose_bl = bl_glucose_u)
 penguin[,c("clamp_urine_mab_baseline","urine_glucose","clamp_urine_mab_250",
-           "clamp_urine_cre_250","clamp_acr_250","clamp_urine_vol")] = NA
+           "clamp_urine_cre_250","clamp_acr_250","clamp_urine_vol",
+           "hematocrit_minus_10","hematocrit_minus_5","hematocrit_90","hematocrit_120")] = NA
 # CROCODILE
 crocodile = crocodile %>% rename(cholesterol = bl_cholesterol,hdl = bl_hdl,
                                  ldl = bl_ldl,triglycerides = bl_triglycerides,
@@ -390,12 +395,15 @@ crocodile = crocodile %>% rename(cholesterol = bl_cholesterol,hdl = bl_hdl,
                                  clamp_acr_baseline = screen_urine_acr,clamp_urine_sodium = bl_na_u,
                                  clamp_glucose_bl = bl_glucose_u)
 crocodile[,c("clamp_urine_mab_baseline","urine_glucose","clamp_urine_mab_250",
-             "clamp_urine_cre_250","clamp_acr_250","clamp_urine_vol","cystatin_c")] = NA
+             "clamp_urine_cre_250","clamp_acr_250","clamp_urine_vol","cystatin_c",
+             "hematocrit_minus_10","hematocrit_minus_5","hematocrit_90","hematocrit_120")] = NA
 # COFFEE
-coffee[c("cholesterol","hdl","ldl","triglycerides")] = NA
+coffee[c("cholesterol","hdl","ldl","triglycerides","hematocrit_minus_10")] = NA
 coffee$clamp_glucose_bl = coffee$fbg
-# CASPER - already correct
-# IMPROVE- already correct
+# CASPER 
+casper$hematocrit_minus_10 = NA
+# IMPROVE
+improve$hematocrit_minus_5 = NA
 # Merge
 clamp_labs = do.call(rbind,list(renalheir[,clamp_labs],penguin[,clamp_labs],
                                 crocodile[,clamp_labs],coffee[,clamp_labs],
@@ -740,13 +748,13 @@ df$screen_bmi_percentile_all = sds(value = df$screen_bmi,
 df = data.frame(cbind(df,egfr_calc(age = df$age_current,serum_creatinine = df$serum_creatinine,
               cystatin_c = df$cystatin_c,height = df$clamp_height,sex = df$gender)))
 
-# 
-# 
-# # Hemodynamics
-# hemodynamics = c("Pglo","Ra","Re","RVR","FF","RBF")
-# 
-# 
-# 
+# Hemodynamics
+hemodynamics = c("Pglo","Ra","Re","RVR","FF","RBF")
+
+
+
+
+
 # # Sort and write!
 # df = df %>% arrange(study,subject_id,visit)
 # write.csv(df,file = paste0("./Data Clean/merged_dataset_",Sys.Date(),".csv"),
