@@ -46,6 +46,9 @@ load("./Somalogic data raw/analytes.Rdata")
 # load comorbidity data
 load("./Clinical data/comorb.Rdata")
 
+# load baseline risk factors
+load("./Clinical data/TODAY/baserisk.Rdata")
+
 # take only the baseline soma samples
 # can we just take the earliest or is it possible someone would have a follow-up sample but not baseline?
 # probably can take the first and then check the years to make sure compatible with TODAY
@@ -54,8 +57,15 @@ base <- soma %>% arrange(releaseid,Date.Drawn) %>% group_by(releaseid) %>% filte
 # these 3 release IDs have first sample after end of recruitment, so they must be missing the baseline visit
 base <- base %>% filter(!releaseid %in% c("65-85903","65-47984","65-25901"))
 
-# merge in nephropathy data
+# merge in complication data
 base <- merge(base, comorb, by="releaseid",all.x=T, all.y=F)
+
+# merge in baseline risk factors
+base <- merge(base, baserisk, by="releaseid",all.x=T, all.y=F)
+
+# only keep observations with nonmissing values of covariates
+# otherwise size of contrast matrix will be incorrect
+base <- base %>% filter(!is.na(HbA1c) & !is.na(log_trig) & !is.na(sbp) & !is.na(si_1_ins0))
 
 # identify columns corresponding to proteins
 #is_seq <- function(.x) grepl("^seq\\.[0-9]{4}", .x) # regex for analytes
@@ -74,23 +84,9 @@ base_log <- base %>% modify_if(is_seq(names(.)), log)
 ```
 
 ```{r, include=FALSE}
-# microalbuminuria or macroalbuminuria
-MIC.OR.MAC_contrast <- ifelse(base$MIC.OR.MAC==1,1,0)
-MIC.OR.MAC_contrast <- cbind(rep(1,nrow(base)),MIC.OR.MAC_contrast)
-# moderated t-tests with and without FDR adjustment
-ymat <- t(base_log[,seq])
-fit <- lmFit(ymat,MIC.OR.MAC_contrast)
-fit <- eBayes(fit)
-results_MIC.OR.MAC <- topTable(fit,coef = 2,number = nrow(ymat))
-results_MIC.OR.MAC$AptName <- row.names(results_MIC.OR.MAC)
-results_MIC.OR.MAC <- merge(results_MIC.OR.MAC,analytes,by="AptName",all.x = T, all.y = F)
-results_MIC.OR.MAC <- results_MIC.OR.MAC[order(results_MIC.OR.MAC$P.Value),] 
-ymat <- NULL
-fit <- NULL
-
 # MAC alone
-MAC_contrast <- ifelse(base$MAC==1,1,0)
-MAC_contrast <- cbind(rep(1,nrow(base)),MAC_contrast)
+# Make design matrix
+MAC_contrast <- model.matrix(~MAC+HbA1c+log_trig+sbp+si_1_ins0,base)
 # moderated t-tests with and without FDR adjustment
 ymat <- t(base_log[,seq])
 fit <- lmFit(ymat,MAC_contrast)
@@ -99,6 +95,11 @@ results_MAC <- topTable(fit,coef = 2,number = nrow(ymat))
 results_MAC$AptName <- row.names(results_MAC)
 results_MAC <- merge(results_MAC,analytes,by="AptName",all.x = T, all.y = F)
 results_MAC <- results_MAC[order(results_MAC$P.Value),] 
+
+
+
+
+
 
 # MIC alone
 MIC_contrast <- ifelse(base$MIC==1,1,0)
