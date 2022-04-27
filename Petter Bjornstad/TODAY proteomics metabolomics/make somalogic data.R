@@ -1,3 +1,5 @@
+library(SomaDataIO)
+
 if(Sys.info()["sysname"] == "Windows"){
   home_dir = "E:/Petter Bjornstad/TODAY subaward"
 } else if (Sys.info()["sysname"] == "Linux"){
