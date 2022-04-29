@@ -67,8 +67,9 @@ rm(home_dir,tokens,uri)
 ###############################################################################
 # Demographic variables
 ###############################################################################
-demographic_vars = c("subject_id","study","visit","group","dob","age_current","gender",
-                     "race","ethnicity","length_of_diabetes","age_at_diabetes_dx")
+demographic_vars = c("subject_id","study","co_enroll","co_enroll_id","visit",
+                     "group","dob","age_current","gender","race","ethnicity",
+                     "length_of_diabetes","age_at_diabetes_dx")
 # RENAL HEIR
 levels(renalheir$group) = c("T2D","Obese Control","Lean Control")
 renalheir$age_at_diabetes_dx = renalheir$diabetes_age
@@ -109,7 +110,7 @@ penguin$ethnicity = apply(penguin,1,function(r){
   return(paste0(eths[w],collapse = "/"))
 })
 # Diabetes info
-penguin[,c("length_of_diabetes","age_at_diabetes_dx")] = NA
+penguin[,c("length_of_diabetes","age_at_diabetes_dx","co_enroll","co_enroll_id")] = NA
 # CROCODILE
 crocodile$subject_id = crocodile$record_id
 levels(crocodile$group) = c("T1D","Lean Control")
@@ -130,6 +131,7 @@ crocodile$ethnicity = apply(crocodile,1,function(r){
 # Diabetes info
 crocodile$length_of_diabetes = crocodile$diabetes_duration
 crocodile$age_at_diabetes_dx = crocodile$diabetes_dx_age
+crocodile[,c("co_enroll","co_enroll_id")] = NA
 # COFFEE
 coffee$group = "T1D"
 # Race
@@ -157,6 +159,7 @@ casper$race = apply(casper,1,function(r){
   w = which(race == "Checked")
   return(paste0(sort(races[w]),collapse = "/"))
 })
+coffee[,c("co_enroll","co_enroll_id")] = NA
 # Ethnicity
 casper$ethnicity = apply(casper,1,function(r){
   eth = r[paste0("ethnicity___",1:3)]
@@ -165,6 +168,7 @@ casper$ethnicity = apply(casper,1,function(r){
 })
 # Diabetes info
 casper$age_at_diabetes_dx = casper$diabetes_age
+casper[,c("co_enroll","co_enroll_id")] = NA
 # IMPROVE
 improve$group = "T2D"
 # Race
@@ -187,6 +191,9 @@ improve_dem = improve[grep("screening_arm",improve$redcap_event_name),]
 demographics = do.call(rbind,list(renalheir[,demographic_vars],penguin[,demographic_vars],
                                   crocodile[,demographic_vars],coffee[,demographic_vars],
                                   casper[,demographic_vars],improve_dem[,demographic_vars]))
+# Group Levels
+levels(demographics$group) = c("T1D","T2D","Obese Control","Lean Control","PKD")
+
 ###############################################################################
 # Screening variables
 ###############################################################################
@@ -419,8 +426,7 @@ urine_labs = c("subject_id","study","visit","u24_labs","u24_na","u24_mab","u24_v
 # RENAL-HEIR
 renalheir[,tail(urine_labs,-3)] = NA
 # PENGUIN
-penguin$u24_hours = NA
-penguin$u24_volume = NA
+penguin = penguin %>% rename(u24_volume = u24_vl,u24_hours = u24_hrs)
 # CROCODILE
 crocodile$u24_hours = NA
 crocodile$u24_volume = NA
@@ -751,11 +757,23 @@ df = data.frame(cbind(df,egfr_calc(age = df$age_current,serum_creatinine = df$se
 # Hemodynamics
 hemodynamics = c("Pglo","Ra","Re","RVR","FF","RBF")
 
+hemo = hemodynamics_calc(total_protein = df$total_protein,
+                         gfr = df$gfr,rpf = df$rpf,map = df$map,
+                         hematocrit_minus_10 = df$hematocrit_minus_10,
+                         hematocrit_minus_5 = df$hematocrit_minus_5,
+                         hematocrit_90 = df$hematocrit_90,
+                         hematocrit_120 = df$hematocrit_120,
+                         group = df$group)
 
+hemo = hemo %>% rename(Pglo = Pglo_abs,Ra = Ra_abs,Re = Re_abs,RVR = RVRAbs,
+                       FF = FFabs,RBF = RBFabs)
 
+df = data.frame(cbind(df,hemo[,hemodynamics]))
 
+# Co-enroll "No" values
+df$co_enroll[is.na(df$co_enroll)] = "No"
 
-# # Sort and write!
-# df = df %>% arrange(study,subject_id,visit)
-# write.csv(df,file = paste0("./Data Clean/merged_dataset_",Sys.Date(),".csv"),
-#           row.names = F,na = "")
+# Sort and write!
+df = df %>% arrange(study,subject_id,visit)
+write.csv(df,file = paste0("./Data Clean/merged_dataset_",Sys.Date(),".csv"),
+          row.names = F,na = "")
