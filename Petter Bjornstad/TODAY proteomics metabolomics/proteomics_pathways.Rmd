@@ -1,0 +1,92 @@
+---
+title: "Proteomics Pathways"
+author: "Tim Vigers & Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(readxl)
+library(limma)
+library(WebGestaltR)
+library(knitr)
+knitr::opts_chunk$set(echo = FALSE)
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "B:/Projects"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/BDC/Projects"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  home_dir = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
+}
+knitr::opts_knit$set(root.dir = home_dir)
+```
+
+```{r}
+# Map proteomics ID to sample ID
+lead = read_excel("./Somalogic repository link/Omics-Petter Ancillary Samples at Colorado LEAD Center - Wash U.xlsx") %>% select(releaseid,SAMPLE_ID) %>% rename(current_label = SAMPLE_ID)
+today = read_excel("./Somalogic repository link/Omics-Petter Ancillary Samples at NIDDK-TODAY - Wash U.xlsx") %>% select(releaseid,current_label)
+today2 = read_excel("./Somalogic repository link/Omics-Petter Ancillary Samples at NIDDK-TODAY2 - Wash U.xlsx") %>% select(releaseid,current_label)
+sample_ids = do.call(rbind,list(lead,today,today2))
+colnames(sample_ids) = c("RELEASEID","SampleDescription")
+# Co-morbidities?
+comorb = read.csv("./Clinical data/COMORB.csv")
+comorb = left_join(sample_ids,comorb,by = "RELEASEID")
+# Cleanup
+rm(lead,today,today2,sample_ids)
+# Import proteomics
+load("./Somalogic data raw/soma.Rdata")
+# Just proteins (in columns) - should end up with 7596
+rownames(soma) = soma$SampleDescription
+soma = soma %>% select(seq.10000.28:seq.9999.1)
+# Want samples in columns for leapR
+soma = t(soma)
+# Remove those missing comorb data
+comorb = comorb[comorb$SampleDescription %in% colnames(soma),]
+# Lookup gene names for SomaLogic proteins - some missing
+load("./Somalogic data raw/analytes.Rdata")
+```
+
+# Enrichment
+
+```{r}
+ora = function(limma_fit,p_thresh = 0.05){
+  # Get gene names
+  interest = analytes$UniProt[match(rownames(limma_results),analytes$AptName)]
+  interest = sub("\\|.*","",interest)
+  # WebGestalt
+  WebGestaltR(enrichDatabase = "pathway_Reactome",interestGene = interest,
+              interestGeneType = "uniprotswissprot",referenceGeneFile = refFile,
+              referenceGeneType="genesymbol")
+}
+gsea = function(limma_fit,name = "MAC",cores = 8){
+  # Get genes of interest, sorting limma results by fold change (decreasing)
+  interest = topTable(limma_fit,number = Inf)
+  interest = interest[order(interest$P.Value),]
+  interest = data.frame(cbind(rownames(interest),interest$logFC))
+  interest$X1 = sub("\\|.*","",analytes$UniProt[match(interest$X1,analytes$AptName)])
+  interest$X2 = as.numeric(interest$X2)
+  # Webgestalt
+  WebGestaltR(enrichMethod="GSEA", organism="hsapiens",
+              enrichDatabase="pathway_Reactome", interestGene = interest,
+              interestGeneType="uniprotswissprot", sigMethod="fdr",
+              outputDirectory="./Results/Enrichment",fdrMethod = "BH",
+              projectName = paste0(name,"_GSEA"),
+              nThreads = cores)
+}
+```
+
+## MAC vs. no MAC comparison 
+
+```{r warning=FALSE,message=FALSE}
+m = model.matrix(~MAC,comorb)
+fit = lmFit(soma,m)
+fit <- eBayes(fit)
+gsea(fit)
+```
+
