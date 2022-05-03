@@ -8,6 +8,8 @@ output:
     toc: yes
     toc_depth: 2
     toc_float: yes
+bibliography: "/Users/timvigers/Dropbox/Miscellaneous/references.bib"
+csl: "/Users/timvigers/GitHub/styles/american-medical-association-10th-edition.csl"
 ---
 
 ```{r setup, include=FALSE}
@@ -15,12 +17,13 @@ library(tidyverse)
 library(readxl)
 library(limma)
 library(WebGestaltR)
+library(htmltools)
 library(knitr)
-knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(echo = TRUE,cache = TRUE,results='hide',warning=FALSE,message=FALSE)
 if(Sys.info()["sysname"] == "Windows"){
-  home_dir = "B:/Projects"
+  home_dir = "E:/Petter Bjornstad/TODAY subaward"
 } else if (Sys.info()["sysname"] == "Linux"){
-  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/BDC/Projects"
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
 } else if (Sys.info()["sysname"] == "Darwin"){
   home_dir = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
 }
@@ -37,15 +40,18 @@ colnames(sample_ids) = c("RELEASEID","SampleDescription")
 # Co-morbidities?
 comorb = read.csv("./Clinical data/COMORB.csv")
 comorb = left_join(sample_ids,comorb,by = "RELEASEID")
+# Load baseline risk factors
+load("./Clinical data/TODAY/baserisk.Rdata")
+comorb = left_join(comorb,baserisk,by = c("RELEASEID" = "releaseid"))
 # Cleanup
-rm(lead,today,today2,sample_ids)
+rm(lead,today,today2,sample_ids,baserisk)
 # Import proteomics
 load("./Somalogic data raw/soma.Rdata")
 # Just proteins (in columns) - should end up with 7596
 rownames(soma) = soma$SampleDescription
 soma = soma %>% select(seq.10000.28:seq.9999.1)
-# Want samples in columns for leapR
-soma = t(soma)
+# Want samples in columns for leapR and log transform
+soma = t(log(soma))
 # Remove those missing comorb data
 comorb = comorb[comorb$SampleDescription %in% colnames(soma),]
 # Lookup gene names for SomaLogic proteins - some missing
@@ -54,54 +60,44 @@ load("./Somalogic data raw/analytes.Rdata")
 
 # Enrichment
 
+Enrichment was performed using the GSEA method [@subramanianGeneSetEnrichment2005] as implemented in WebGestaltR [@wangWebGestaltRGeneSet2020], with Reactome pathways [@gillespieReactomePathwayKnowledgebase2022] as the functional database. Genes of interest (based on converting SomaLogic protein IDs to UniProt) were ranked in descending order by logFC between groups divided by the empirical Bayes estimate of standard deviation ($\frac{\beta_g}{\sigma_g}$) as calculated in the `limma` R package [@ritchieLimmaPowersDifferential2015]. Some SomaLogic IDs are associated with more than one UniProt ID, in which case the first UniProt ID was used.
+
 ```{r}
-ora = function(limma_fit,name,p_thresh = 0.05,cores = 8){
-  # Get gene names
-  limma_results = topTable(limma_fit,p.value = p_thresh,adjust.method = "none",number = Inf)
-  interest = sub("\\|.*","",analytes$UniProt[match(rownames(limma_results),analytes$AptName)])
-  # WebGestalt
-  refFile <- system.file("extdata", "referenceGenes.txt", package="WebGestaltR")
-  WebGestaltR(enrichDatabase = "pathway_Reactome",interestGene = interest,
-              interestGeneType = "uniprotswissprot",referenceGeneFile = refFile,
-              outputDirectory="./Results/Enrichment",projectName = paste0(name,"_ORA"),
-              referenceGeneType="genesymbol")
-}
-nta = function(limma_fit,name,p_thresh = 0.05,cores = 8){
-  # Get genes of interest
-  limma_results = topTable(limma_fit,p.value = p_thresh,number = Inf)
-  interest = sub("\\|.*","",analytes$UniProt[match(rownames(limma_results),analytes$AptName)])
-  # Webgestalt
-  WebGestaltR(enrichMethod="NTA", organism="hsapiens",
-              enrichDatabase="network_PPI_BIOGRID", interestGene = interest,
-              interestGeneType="uniprotswissprot", sigMethod="fdr",fdrThr = 0.1,
-              outputDirectory="./Results/Enrichment",fdrMethod = "BH",
-              projectName = paste0(name,"_NTA"),
-              nThreads = cores)
-}
-gsea = function(limma_fit,name = "MAC",cores = 8){
-  # Get genes of interest, sorting limma results by fold change (decreasing)
-  interest = topTable(limma_fit,number = Inf)
-  interest = interest[order(interest$P.Value),]
-  interest = data.frame(cbind(rownames(interest),interest$logFC))
-  interest$X1 = sub("\\|.*","",analytes$UniProt[match(interest$X1,analytes$AptName)])
-  interest$X2 = as.numeric(interest$X2)
+gsea = function(limma_fit,output_name,coef_name,cores = 8){
+  # Get genes of interest, sorting limma results by fold change (decreasing), 
+  # standardized by estimated SD of the gene
+  interest = data.frame(limma_fit$coefficients[,coef_name]/sqrt(limma_fit$s2.post))
+  interest = interest %>% rownames_to_column(.)
+  colnames(interest) = c("V1","V2")
+  interest$V1 = sub("\\|.*","",analytes$UniProt[match(interest$V1,analytes$AptName)])
+  interest$V2 = as.numeric(interest$V2)
   # Webgestalt
   WebGestaltR(enrichMethod="GSEA", organism="hsapiens",
               enrichDatabase="pathway_Reactome", interestGene = interest,
               interestGeneType="uniprotswissprot", sigMethod="fdr",fdrThr = 0.1,
               outputDirectory="./Results/Enrichment",fdrMethod = "BH",
-              projectName = paste0(name,"_GSEA"),
+              projectName = paste0(output_name,"_GSEA"),
               nThreads = cores)
 }
-
 ```
 
-## MAC vs. no MAC comparison
+# MAC
 
-```{r warning=FALSE,message=FALSE}
+## Unadjusted
+
+```{r}
 m = model.matrix(~MAC,comorb)
 fit = lmFit(soma,m)
 fit <- eBayes(fit)
-gsea(fit)
+gsea(fit,output_name = "MAC",coef_name = "MAC")
+```
+
+## Adjusted
+
+```{r}
+m = model.frame(~MAC+HbA1c+log_trig+sbp+si_1_ins0,comorb,na.action = na.pass)
+fit = lmFit(soma[,complete.cases(m)],m[complete.cases(m),])
+fit <- eBayes(fit)
+gsea(fit,output_name = "MAC_adjusted",coef_name = "MAC")
 ```
 
