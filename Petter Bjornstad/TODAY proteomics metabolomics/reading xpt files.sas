@@ -31,6 +31,11 @@ proc cimport infile="E:\Petter Bjornstad\TODAY subaward\Clinical data\TODAY\TODA
 run;
 proc export data=tdata.BASELINE outfile="E:\Petter Bjornstad\TODAY subaward\Clinical data\TODAY\BASELINE.csv" dbms=csv replace; run;
 
+/* TODAY PAT */
+proc cimport infile="E:\Petter Bjornstad\TODAY subaward\Clinical data\TODAY\TODAY Data for Sites\TODAY Repository Datasets\PAT.xpt" data=tdata.PAT ; 
+run;
+proc export data=tdata.PAT outfile="E:\Petter Bjornstad\TODAY subaward\Clinical data\TODAY\PAT.csv" dbms=csv replace; run;
+
 /**********/
 /* TODAY2 */
 /**********/
