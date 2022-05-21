@@ -191,8 +191,6 @@ improve_dem = improve[grep("screening_arm",improve$redcap_event_name),]
 demographics = do.call(rbind,list(renalheir[,demographic_vars],penguin[,demographic_vars],
                                   crocodile[,demographic_vars],coffee[,demographic_vars],
                                   casper[,demographic_vars],improve_dem[,demographic_vars]))
-# Group Levels
-levels(demographics$group) = c("T1D","T2D","Obese Control","Lean Control","PKD")
 
 ###############################################################################
 # Screening variables
