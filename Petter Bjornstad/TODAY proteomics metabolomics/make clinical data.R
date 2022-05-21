@@ -32,6 +32,11 @@ BASELINE <- read.csv("./Clinical data/TODAY/BASELINE.csv")
 PAT <- read.csv("./Clinical data/TODAY/PAT.csv")
 keepPAT <- PAT %>% select(releaseid,age,sex)
 
+# AGEBASE - uncollapsed age at baseline
+AGEBASE <- read.csv("./Clinical data/TODAY/AGEBASE.csv")
+AGEBASE$releaseid <- AGEBASE$RELEASEID
+AGEBASE$RELEASEID <- NULL
+
 # create new dataset of baseline risk factors
 basecbl <- CBL %>% filter(mvisit=="M00")
 baseaddcbl <- ADDCBL %>% filter(mvisit=="M00")
@@ -41,5 +46,8 @@ baserisk$si_1_ins0 <- 1/baserisk$ins0min
 baserisk$log_trig <- log(baserisk$Trig)
 baserisk <- baserisk %>% select(releaseid, HbA1c, log_trig, sbp, uacid, si_1_ins0)
 baserisk <- merge(baserisk,keepPAT,by="releaseid",all.x = T,all.y = F)
+baserisk$age <- NULL
+baserisk <- merge(baserisk,AGEBASE,by="releaseid",all.x = T,all.y = F)
+
 # Save
 save(baserisk,file = "./Clinical data/TODAY/baserisk.Rdata")
