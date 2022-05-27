@@ -7,11 +7,9 @@ salmon index -t data_clean/Ovis_aries_rambouillet.Oar_rambouillet_v1.0.cdna.all.
 for fn in $(find data_raw/tanner_all_new -name "*_R1_001.fastq.gz" -type f | sed 's/_R._001\..*//' | sort | uniq);
 do
 samp=`basename ${fn}`
-samp=${samp%_R1_001.fastq.gz}
-samp=${samp%_R2_001.fastq.gz}
 echo "Processing sample ${samp}"
-salmon quant -i ovis_index -l A \
-         -1 ${fn}/${samp}_R1_001.fastq.gz \
-         -2 ${fn}/${samp}_R2_001.fastq.gz \
-         -p 12 --validateMappings --gcBias -o data_clean/quants/${samp}_quant
-done 
+salmon quant -i data_clean/ovis_index -l A \
+         -1 ${fn}_R1_001.fastq.gz \
+         -2 ${fn}_R2_001.fastq.gz \
+         -p 24 --validateMappings --gcBias -o data_clean/quants/${samp}_quant
+done
