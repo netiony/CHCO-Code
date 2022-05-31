@@ -11,9 +11,20 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
 library(DESeq2)
+library(tximport)
 library(tidyverse)
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE,message = FALSE)
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "B:/Projects"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Vigers/sheep_miRNA"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  home_dir = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Vigers/sheep_miRNA"
+}
+knitr::opts_knit$set(root.dir = home_dir)
+rm(home_dir)
 ```
 
 # Notes
@@ -30,15 +41,28 @@ library(tidyverse)
   
 ```{bash eval=FALSE}
 # bash script
-./GitHub/CHCO-Code/quant_sheep_miRNA.sh
+# Move to base folder
+cd /home/tim/UCD/PEDS/RI\ Biostatistics\ Core/Shared/Shared\ Projects/Vigers/sheep_miRNA
+# Index the sheep transcriptome
+salmon index -t data_clean/Ovis_aries_rambouillet.Oar_rambouillet_v1.0.cdna.all.fa.gz -i data_clean/ovis_index
+# Quantify reads
+for fn in $(find data_raw/tanner_all_new -name "*_R1_001.fastq.gz" -type f | sed 's/_R._001\..*//' | sort | uniq);
+do
+samp=`basename ${fn}`
+echo "Processing sample ${samp}"
+salmon quant -i data_clean/ovis_index -l A \
+         -1 ${fn}_R1_001.fastq.gz \
+         -2 ${fn}_R2_001.fastq.gz \
+         -p 24 --validateMappings --gcBias -o data_clean/quants/${samp}_quant
+done
 ```
 
 ```{r}
 # Combine all quantified files from Salmon
-files = list.files("/mnt/HD1/Tim/sheep_miRNA/data_clean/quants")
-paths = paste0("/mnt/HD1/Tim/sheep_miRNA/data_clean/quants/",files,"/","quant.sf")
+files = list.files("./data_clean/quants")
+paths = paste0("./data_clean/quants/",files,"/","quant.sf")
 df = lapply(paths, function(p){
-  name = sub("_quant","",strsplit(p,"/")[[1]][8])
+  name = sub("_quant","",strsplit(p,"/")[[1]][4])
   d = read.table(p,header = T)
   d = d[,c("Name","TPM")]
   colnames(d)[2] = name
@@ -47,7 +71,7 @@ df = lapply(paths, function(p){
 df = df %>% purrr::reduce(full_join,by = "Name") %>%
   column_to_rownames(.,var = "Name")
 # Sample info
-samples = read.csv("/mnt/HD1/Tim/sheep_miRNA/data_clean/sheep_samples.csv",na.strings = "")
+samples = read.csv("./data_clean/sheep_samples.csv",na.strings = "")
 samples$Sample = toupper(samples$Sample)
 samples$Sample = gsub("-","_",samples$Sample)
 samples$Sample = gsub(" ","_",samples$Sample)
@@ -58,16 +82,102 @@ colnames(df) = sub("_S\\d.*","",colnames(df))
 colnames(df) = sub("^\\d{,2}_","",colnames(df))
 colnames(df) = sub("_\\d{,2}$","",colnames(df))
 colnames(df) = sub("_SHEEP$","_SHEEP_52",colnames(df))
+names(paths) = colnames(df)
 # Remove missing samples
 samples = samples[samples$Sample %in% colnames(df),]
+# Rename groups to work better with R
+samples$Treatment[is.na(samples$Treatment)] = "untreated"
+samples$Days = factor(str_extract(string = samples$Sample, pattern = "[0-9]+D"))
+samples$Size = factor(str_extract(string = samples$Type, pattern = "[0-9]+mm"))
+samples$Group = paste(samples$Treatment,samples$Type,sep = "_")
+samples$Group = sub(", ","_",samples$Group)
+samples$Group = sub("-",".",samples$Group)
+samples$Group = gsub(" ",".",samples$Group)
+samples$Group = factor(samples$Group)
 ```
 
-```{r}
-txi <- tximport(paths, type="salmon",txOut=TRUE)
-ddsTxi <- DESeqDataSetFromTximport(txi,
-                                   colData = samples,
-                                   design = ~ t)
-dds <- DESeq(ddsTxi)
-res <- results(dds)
-res
+# Sample Information
+
+```{r echo=FALSE}
+kable(samples)
 ```
+
+# Analysis
+
+```{r}
+# Import to DESeq2
+txi <- tximport(paths, type="salmon", txOut=TRUE)
+ddsTxi <- DESeqDataSetFromTximport(txi,colData = samples,design = ~ Group)
+# Remove 0 counts for speed
+keep <- rowSums(counts(ddsTxi)) > 1
+ddsTxi <- ddsTxi[keep,]
+# Variance stabilizing transformation
+vsd <- varianceStabilizingTransformation(ddsTxi)
+# Analysis
+dds = DESeq(ddsTxi)
+```
+
+## PCA by treatment
+
+```{r}
+plotPCA(vsd,intgroup = "Group")
+```
+
+Sample 3D_RFS_8W4 appears to be very different from the other samples. 
+
+## Comparisons between groups
+
+### 30 Days
+
+#### 8mm wounds treated w PBS vs. 8mm wounds treated w CNP-miR146a
+
+```{r}
+con = c("Group","PBS_30.day_8mm.wounds","CNP.miR146a_30.day_8mm.wounds")
+res = results(dds,contrast = con,tidy = T)
+kable(res[res$pvalue < 0.05 & !is.na(res$pvalue),],row.names = F)
+```
+
+No transcripts were significantly different between groups after adjusting for multiple comparisons. Two transcripts were significant at a nominal p < 0.05 level.
+
+### 8mm wounds 
+
+#### 0 day wounds vs. 3 day wounds 
+
+```{r}
+# Re-import to DESeq2
+txi <- tximport(paths[samples$Size == "8mm"], type="salmon", txOut=TRUE)
+ddsTxi <- DESeqDataSetFromTximport(txi,colData = samples[samples$Size == "8mm",],design = ~ Days)
+dds = DESeq(ddsTxi)
+# Contrast
+con = c("Days","0D","3D")
+res = results(dds,contrast = con,tidy = T)
+kable(res[res$pvalue < 0.05 & !is.na(res$pvalue),],row.names = F)
+```
+
+No transcripts were significantly different between groups after adjusting for multiple comparisons. Nine transcripts were significant at a nominal p < 0.05 level.
+
+#### 3 day wounds vs 30 day wounds
+
+```{r}
+con = c("Days","3D","30D")
+res = results(dds,contrast = con,tidy = T)
+kable(res[res$pvalue < 0.05 & !is.na(res$pvalue),],row.names = F)
+```
+
+No transcripts were significantly different between groups after adjusting for multiple comparisons. Five transcripts were significant at a nominal p < 0.05 level.
+
+#### 0 day wounds vs 30 day wounds
+
+```{r}
+con = c("Days","0D","30D")
+res = results(dds,contrast = con,tidy = T)
+kable(res[res$pvalue < 0.05 & !is.na(res$pvalue),],row.names = F)
+```
+
+No transcripts were significantly different between groups after adjusting for multiple comparisons or at a nominal p < 0.05 level.
+
+# Questions
+
+1. I don't appear to have FASTQ files for the 30 day, 2mm wounds samples. Did something happen to these samples?
+
+2. Any possible explanations for the 3D_RFS_8W4 sample, which looks so different from the others based on PCA?
