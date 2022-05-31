@@ -1,6 +1,6 @@
 #!/bin/bash
 # Move to base folder
-cd /mnt/HD1/Tim/sheep_miRNA
+cd /home/tim/UCD/PEDS/RI\ Biostatistics\ Core/Shared/Shared\ Projects/Vigers/sheep_miRNA
 # Index the sheep transcriptome
 salmon index -t data_clean/Ovis_aries_rambouillet.Oar_rambouillet_v1.0.cdna.all.fa.gz -i data_clean/ovis_index
 # Quantify reads
