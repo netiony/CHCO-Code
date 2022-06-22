@@ -1,0 +1,204 @@
+---
+title: "Salud Group Comparisons"
+author: "Casey Sakamoto"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: 
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(haven) # import spss dataset
+library(knitr)
+library(nlme) # mixed models
+library(emmeans) # contrast statement
+library(tidyverse) # data manipulation
+library(Hmisc)
+library(table1)
+
+knitr::opts_chunk$set(echo = FALSE)
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "S:/Laura/Peds Endo/Lauren Shomaker/Salud"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Lauren Shomaker/Salud"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  home_dir = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Lauren Shomaker/Salud"
+}
+knitr::opts_knit$set(root.dir = home_dir)
+
+# import data
+## make sure connected to vpn
+HLP_MASTER_DATA <- read_sav("S:/Laura/Peds Endo/Lauren Shomaker/Salud/Data Analysis - Pyle 2020/HLP_MASTER DATA 7.15.20 LP Trim.sav")
+```
+
+```{r data exploration and clean, include=FALSE}
+###### light exploration #################
+#look at what we are working with
+unique(HLP_MASTER_DATA$subjectidno)
+length(unique(HLP_MASTER_DATA$subjectidno)) # 18 total subj
+
+# double check homairlg is a log transform of homair
+a  = HLP_MASTER_DATA %>% select(subjectidno,homair, homairlg) 
+a$testhomair = log(a$homair) # base e doesnt match
+a$testhomair = log10(a$homair) # base 10 matches
+##########################################
+
+#####
+# for some reason no more t-score in the new data set- will pull from the older data set
+HLP_MASTER_DATA_7_14_20_LP_ = read_sav("S:/Laura/Peds Endo/Lauren Shomaker/Salud/Data Analysis - Pyle 2020/Older/HLP_MASTER DATA 7.14.20 LP .sav")
+
+HLP_MASTER_DATA_7_14_20_LP_ = HLP_MASTER_DATA_7_14_20_LP_ %>% select(subjectidno, interval, pserawsumT)
+####
+
+###### cortisol derivation #####
+hlp_cortisol = HLP_MASTER_DATA %>% mutate(cortisol_change1 = Cortisol_nmoll_session1_after - Cortisol_nmoll_session1_before,
+                                          cortisol_change2 = Cortisol_nmoll_session2_after - Cortisol_nmoll_session2_before,
+                                          cortisol_change3 = Cortisol_nmoll_session3_after - Cortisol_nmoll_session3_before,
+                                          cortisol_change4 = Cortisol_nmoll_session4_after - Cortisol_nmoll_session4_before,
+                                          cortisol_change5 = Cortisol_nmoll_session5_after - Cortisol_nmoll_session5_before,
+                                          cortisol_change6 = Cortisol_nmoll_session6_after - Cortisol_nmoll_session6_before,
+                                          staic_change1 = staicstatetot.2.00 - staicstatetot.1.00,
+                                          staic_change2 = staicstatetot.4.00 - staicstatetot.3.00,
+                                          staic_change3 = staicstatetot.6.00 - staicstatetot.5.00,
+                                          staic_change4 = staicstatetot.8.00 - staicstatetot.7.00,
+                                          staic_change5 = staicstatetot.10.00 - staicstatetot.9.00,
+                                          staic_change6 = staicstatetot.12.00 - staicstatetot.11.00,) %>%
+  select(subjectidno, interval, cortisol_change1, cortisol_change2, cortisol_change3, cortisol_change4, cortisol_change5, cortisol_change6, staic_change1, staic_change2, staic_change3, staic_change4, staic_change5, staic_change6)
+
+###### get already cleaned variables from data #################
+analysis = HLP_MASTER_DATA %>% select(subjectidno, interval, groupno, sex, SV2age_calculated,z_score,
+                                      cesdtot, homair, insulin_mcIUmL, glucose_mgdL,
+                                      hba1c, ALT_UL, AST_UL, triglycerides_mgdL, cholesteroltot_mgdL, HDLC_mgdL, LDLC_mgdL,
+                                      psssumitem, EDSrawscore, psqi_globalscores, maastotal, TotalMVPA, inMVPA, physactivityrawsum, EEStot, qewpOBE, qewpSBE, totalkcals:percentfatinkcals ) 
+
+analysis = full_join(analysis, HLP_MASTER_DATA_7_14_20_LP_)
+analysis = full_join(analysis, hlp_cortisol)
+
+# order and factor variables
+analysis = analysis[order(analysis$subjectidno, analysis$interval),]
+analysis$groupno = factor(analysis$groupno, levels = c(0,1), labels = c("HeLP","SSB"))
+analysis$interval = factor(analysis$interval, levels = c(1,2,3), labels = c("Baseline", "6 Week", "6 Month"))
+analysis$sex = factor(analysis$sex, levels = c(0,1), labels = c("Male", "Female"))
+analysis$qewpOBE = factor(analysis$qewpOBE, levels = c(0,1), labels = c("No", "Yes"))
+analysis$qewpSBE = factor(analysis$qewpSBE, levels = c(0,1), labels = c("No", "Yes"))
+
+label(analysis$z_score) = "BMI Z-Score"
+label(analysis$physactivityrawsum) = "NIH toolbox Phys Activity sum"
+# clean up workspace
+rm(hlp_cortisol); rm(HLP_MASTER_DATA); rm(HLP_MASTER_DATA_7_14_20_LP_); rm(a)
+###########################################
+```
+
+```{r functions n tables, include = FALSE}
+# table 1 by time and group 
+#teen depression
+teendep_table1 = table1(~  cesdtot |interval*groupno,
+                         render.continuous=c(.="Median [Q1, Q3]"), data=analysis, overall= F)
+
+#insulin res
+insres_t1 = table1(~ z_score+homair+insulin_mcIUmL+glucose_mgdL+hba1c+ALT_UL+AST_UL+triglycerides_mgdL+cholesteroltot_mgdL+HDLC_mgdL+LDLC_mgdL
+                   |interval*groupno,render.continuous=c(.="Median [Q1, Q3]"), data=analysis, overall= F)
+
+# stress
+stress_t1 = table1(~   psssumitem+EDSrawscore+pserawsumT|interval*groupno,
+                         render.continuous=c(.="Median [Q1, Q3]"), data=analysis, overall= F)
+cortisol_t1 = table1(~  cortisol_change1+cortisol_change2+cortisol_change3+cortisol_change4+cortisol_change5+cortisol_change6|groupno,
+                         render.continuous=c(.="Median [Q1, Q3]"), data=analysis, overall= F)
+# mindfulness
+mind_t1 =  table1(~ maastotal |interval*groupno,
+                         render.continuous=c(.="Median [Q1, Q3]"), data=analysis, overall= F)
+staic_t1 = table1(~ staic_change1+staic_change2+staic_change3+staic_change4+staic_change5+staic_change6|groupno,
+                         render.continuous=c(.="Median [Q1, Q3]"), data=analysis, overall= F)
+
+#sleep
+sleep_t1 = table1(~ psqi_globalscores |interval*groupno,
+                         render.continuous=c(.="Median [Q1, Q3]"), data=analysis, overall= F)
+
+# phys act
+phys_t1 = table1(~ TotalMVPA+inMVPA+physactivityrawsum |interval*groupno,
+                         render.continuous=c(.="Median [Q1, Q3]"), data=analysis, overall= F)
+
+# eating
+eat_t1 = table1(~EEStot+factor(qewpOBE)+factor(qewpSBE)+totalkcals+percentproteinkcals+percentcarbsinkcal+percentfatinkcals  |interval*groupno,
+                         render.continuous=c(.="Median [Q1, Q3]"), data=analysis, overall= F)
+
+outcome_plot = function(outcome_string){
+  
+  p = ggplot(analysis, aes_string(x = "interval", y = outcome_string, color = "groupno", group="subjectidno"))+
+    geom_line(size = 1) + labs(y = outcome_string) + theme_classic()
+  return(p)
+}
+
+```
+
+
+### Teen Depression (CESD Survey)
+```{r teen depression}
+teendep_table1
+
+outcome_plot("cesdtot")
+```
+
+### Insulin Resistance
+```{r ins res}
+insres_t1
+outcome_plot("z_score")
+outcome_plot("homair")
+outcome_plot("insulin_mcIUmL")
+outcome_plot("hba1c")
+outcome_plot("ALT_UL")
+outcome_plot("AST_UL")
+outcome_plot("triglycerides_mgdL")
+outcome_plot("cholesteroltot_mgdL")
+outcome_plot("HDLC_mgdL")
+outcome_plot("LDLC_mgdL")
+```
+
+### Stress and Cortisol Changes
+```{r Stress}
+stress_t1
+cortisol_t1
+
+outcome_plot("psssumitem")
+outcome_plot("EDSrawscore")
+outcome_plot("pserawsumT")
+```
+
+### Mindfulness (MAAS and STAIC Changes)
+```{r mindful}
+mind_t1
+staic_t1
+
+outcome_plot("maastotal")
+
+```
+
+### Sleep
+```{r psqi}
+sleep_t1
+
+outcome_plot("psqi_globalscores")
+```
+
+### Physical Activity
+```{r phys act}
+phys_t1
+
+outcome_plot("TotalMVPA")
+outcome_plot("inMVPA")
+outcome_plot("physactivityrawsum")
+```
+
+### Stress Related Eating
+```{r stress eat}
+eat_t1
+
+outcome_plot("EEStot")
+outcome_plot("totalkcals")
+outcome_plot("percentproteinkcals")
+outcome_plot("percentcarbsinkcal")
+outcome_plot("percentfatinkcals")
+```
