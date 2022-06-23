@@ -44,7 +44,7 @@ baserisk <- merge(BASELINE, basecbl, by="releaseid", all.x=T, ally=T)
 baserisk <- merge(baserisk, baseaddcbl, by="releaseid", all.x=T, ally=T)
 baserisk$si_1_ins0 <- 1/baserisk$ins0min
 baserisk$log_trig <- log(baserisk$Trig)
-baserisk <- baserisk %>% select(releaseid, HbA1c, log_trig, sbp, uacid, si_1_ins0)
+baserisk <- baserisk %>% select(releaseid, HbA1c, log_trig, sbp, uacid, si_1_ins0, UAlbCreat, bmi)
 baserisk <- merge(baserisk,keepPAT,by="releaseid",all.x = T,all.y = F)
 baserisk$age <- NULL
 baserisk <- merge(baserisk,AGEBASE,by="releaseid",all.x = T,all.y = F)
