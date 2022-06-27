@@ -6,7 +6,7 @@ output:
   html_document:
     number_sections: yes
     toc: yes
-    toc_depth: 2
+    toc_depth: 5
     toc_float: yes
 ---
 
@@ -14,6 +14,7 @@ output:
 library(DESeq2)
 library(tximport)
 library(tidyverse)
+library(ggrepel)
 library(knitr)
 knitr::opts_chunk$set(echo = TRUE,message = FALSE)
 if(Sys.info()["sysname"] == "Windows"){
@@ -58,42 +59,13 @@ done
 ```
 
 ```{r}
-# Combine all quantified files from Salmon
-files = list.files("./data_clean/quants")
-paths = paste0("./data_clean/quants/",files,"/","quant.sf")
-df = lapply(paths, function(p){
-  name = sub("_quant","",strsplit(p,"/")[[1]][4])
-  d = read.table(p,header = T)
-  d = d[,c("Name","TPM")]
-  colnames(d)[2] = name
-  return(d)
-})
-df = df %>% purrr::reduce(full_join,by = "Name") %>%
-  column_to_rownames(.,var = "Name")
 # Sample info
-samples = read.csv("./data_clean/sheep_samples.csv",na.strings = "")
-samples$Sample = toupper(samples$Sample)
-samples$Sample = gsub("-","_",samples$Sample)
-samples$Sample = gsub(" ","_",samples$Sample)
-# Match count data names
-colnames(df) = toupper(colnames(df))
-colnames(df) = sub("_MIRNA","",colnames(df))
-colnames(df) = sub("_S\\d.*","",colnames(df))
-colnames(df) = sub("^\\d{,2}_","",colnames(df))
-colnames(df) = sub("_\\d{,2}$","",colnames(df))
-colnames(df) = sub("_SHEEP$","_SHEEP_52",colnames(df))
-names(paths) = colnames(df)
-# Remove missing samples
-samples = samples[samples$Sample %in% colnames(df),]
-# Rename groups to work better with R
-samples$Treatment[is.na(samples$Treatment)] = "untreated"
-samples$Days = factor(str_extract(string = samples$Sample, pattern = "[0-9]+D"))
-samples$Size = factor(str_extract(string = samples$Type, pattern = "[0-9]+mm"))
-samples$Group = paste(samples$Treatment,samples$Type,sep = "_")
-samples$Group = sub(", ","_",samples$Group)
-samples$Group = sub("-",".",samples$Group)
-samples$Group = gsub(" ",".",samples$Group)
-samples$Group = factor(samples$Group)
+samples = read.csv("./data_clean/sheep_samples.csv",na.strings = c("","NA"))
+# Remove those with no data
+missing = samples$Sample[is.na(samples$Path)]
+samples = samples[!is.na(samples$Path),]
+# Data files
+samples$Path = paste0("./data_clean/quants/",samples$Path,"/quant.sf")
 ```
 
 # Sample Information
@@ -106,11 +78,8 @@ kable(samples)
 
 ```{r}
 # Import to DESeq2
-txi <- tximport(paths, type="salmon", txOut=TRUE)
-ddsTxi <- DESeqDataSetFromTximport(txi,colData = samples,design = ~ Group)
-# Remove 0 counts for speed
-keep <- rowSums(counts(ddsTxi)) > 1
-ddsTxi <- ddsTxi[keep,]
+txi <- tximport(samples$Path, type="salmon", txOut=TRUE)
+ddsTxi <- DESeqDataSetFromTximport(txi,colData = samples,design = ~ 1)
 # Variance stabilizing transformation
 vsd <- varianceStabilizingTransformation(ddsTxi)
 # Analysis
@@ -119,65 +88,76 @@ dds = DESeq(ddsTxi)
 
 ## PCA by treatment
 
-```{r}
-plotPCA(vsd,intgroup = "Group")
+```{r warning=FALSE}
+plotPCA(vsd,intgroup = "Sample",ntop = nrow(vsd)) + 
+  geom_label_repel(aes(label = Sample)) +
+  theme_bw() + theme(legend.position = "none")
 ```
 
-Sample 3D_RFS_8W4 appears to be very different from the other samples. 
+Sample 3D-RFS-8W2 and 3D-RFS-2W3 appear to be very different from the other samples based on PCA.
 
 ## Comparisons between groups
 
-### 30 Days
+### 30 Day Samples
 
 #### 8mm wounds treated w PBS vs. 8mm wounds treated w CNP-miR146a
 
 ```{r}
-con = c("Group","PBS_30.day_8mm.wounds","CNP.miR146a_30.day_8mm.wounds")
+# New model design, exclude 2mm wounds
+samples$Days = factor(samples$Days)
+samples$Treatment = factor(samples$Treatment)
+txi <- tximport(samples$Path[samples$Days == "30"], type="salmon", txOut=TRUE)
+# New model design matrix
+ddsTxi <- DESeqDataSetFromTximport(txi,colData = samples[samples$Days == "30",],
+                                   design = ~ Treatment)
+dds = DESeq(ddsTxi)
+# Contrast
+con = c("Treatment","PBS","CNP_miR146a")
 res = results(dds,contrast = con,tidy = T)
-kable(res[res$pvalue < 0.05 & !is.na(res$pvalue),],row.names = F)
+res = res[res$pvalue < 0.05 & !is.na(res$pvalue),]
+kable(res,row.names = F,digits = 3)
 ```
 
-No transcripts were significantly different between groups after adjusting for multiple comparisons. Two transcripts were significant at a nominal p < 0.05 level.
+No transcripts were significantly different between groups after adjusting for multiple comparisons. `r nrow(res)` transcripts were significant at a nominal p < 0.05 level.
 
 ### 8mm wounds 
 
-#### 0 day wounds vs. 3 day wounds 
+#### 0 day wounds vs. 3 day wounds
 
 ```{r}
-# Re-import to DESeq2
-txi <- tximport(paths[samples$Size == "8mm"], type="salmon", txOut=TRUE)
-ddsTxi <- DESeqDataSetFromTximport(txi,colData = samples[samples$Size == "8mm",],design = ~ Days)
+# New model design, exclude 2mm wounds
+txi <- tximport(samples$Path[samples$Size == "8mm"], type="salmon", txOut=TRUE)
+ddsTxi <- DESeqDataSetFromTximport(txi,colData = samples[samples$Size == "8mm",],
+                                   design = ~ Days)
 dds = DESeq(ddsTxi)
 # Contrast
-con = c("Days","0D","3D")
-res = results(dds,contrast = con,tidy = T)
-kable(res[res$pvalue < 0.05 & !is.na(res$pvalue),],row.names = F)
+con = c("Days","0","3")
+res = results(dds,tidy = T)
+res = res[res$pvalue < 0.05 & !is.na(res$pvalue),]
+kable(res,row.names = F,digits = 3)
 ```
 
-No transcripts were significantly different between groups after adjusting for multiple comparisons. Nine transcripts were significant at a nominal p < 0.05 level.
+No transcripts were significantly different between groups after adjusting for multiple comparisons. `r nrow(res)` transcripts were significant at a nominal p < 0.05 level.
 
 #### 3 day wounds vs 30 day wounds
 
 ```{r}
-con = c("Days","3D","30D")
+con = c("Days","3","30")
 res = results(dds,contrast = con,tidy = T)
-kable(res[res$pvalue < 0.05 & !is.na(res$pvalue),],row.names = F)
+res = res[res$pvalue < 0.05 & !is.na(res$pvalue),]
+kable(res,row.names = F,digits = 3)
 ```
 
-No transcripts were significantly different between groups after adjusting for multiple comparisons. Five transcripts were significant at a nominal p < 0.05 level.
+No transcripts were significantly different between groups after adjusting for multiple comparisons. `r nrow(res)` transcripts were significant at a nominal p < 0.05 level.
 
 #### 0 day wounds vs 30 day wounds
 
 ```{r}
-con = c("Days","0D","30D")
+con = c("Days","0","30")
 res = results(dds,contrast = con,tidy = T)
-kable(res[res$pvalue < 0.05 & !is.na(res$pvalue),],row.names = F)
+res = res[res$pvalue < 0.05 & !is.na(res$pvalue),]
+kable(res,row.names = F,digits = 3)
 ```
 
-No transcripts were significantly different between groups after adjusting for multiple comparisons or at a nominal p < 0.05 level.
+No transcripts were significantly different between groups after adjusting for multiple comparisons. `r nrow(res)` transcripts were significant at a nominal p < 0.05 level.
 
-# Questions
-
-1. I don't appear to have FASTQ files for the 30 day, 2mm wounds samples. Did something happen to these samples?
-
-2. Any possible explanations for the 3D_RFS_8W4 sample, which looks so different from the others based on PCA?
