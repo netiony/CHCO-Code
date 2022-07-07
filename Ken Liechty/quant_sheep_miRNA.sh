@@ -10,7 +10,7 @@ cd /home/tim/UCD/PEDS/RI\ Biostatistics\ Core/Shared/Shared\ Projects/Vigers/she
 # Cut adapters
 for file in data_clean/FASTQ/*; do
     samp=$(basename ${file})
-    echo "Processing sample ${samp}"
+    echo "Cutting adapters from sample ${samp}"
     cutadapt -j 24 -a TGGAATTCTCGGGTGCCAAGG data_clean/FASTQ/"$samp" -o data_clean/FASTQ_Trimmed/"$samp"
 done
 # Quantify reads
