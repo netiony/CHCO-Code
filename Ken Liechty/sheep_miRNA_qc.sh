@@ -10,7 +10,7 @@ multiqc data_clean/QC -o data_clean/QC
 # Trim adapters
 cd data_clean/FASTQ
 for fn in $(find . -name "*_R1_001.fastq.gz" -type f | sed 's/_R._001\..*//' | sort | uniq); do
-    trim_galore --length 0 -cores 8 --paired ${fn}_R1_001.fastq.gz ${fn}_R2_001.fastq.gz
+    trim_galore --length 0 -cores 8 --no_report_file --paired ${fn}_R1_001.fastq.gz ${fn}_R2_001.fastq.gz
 done
 # Move to new folder
 cd ~/UCD/PEDS/RI\ Biostatistics\ Core/Shared/Shared\ Projects/Vigers/sheep_miRNA
