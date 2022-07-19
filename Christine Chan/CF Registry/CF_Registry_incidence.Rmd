@@ -1,0 +1,107 @@
+---
+title: "CF_Registry_Incidence"
+author: "Casey Sakamoto"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(Hmisc)
+library(readr)
+library(knitr)
+library(table1)
+
+knitr::opts_chunk$set(echo = FALSE)
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "S://Laura/Peds Endo/Christine Chan/CF registry data"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Christine Chan/CF registry data"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  home_dir = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Christine Chan/CF registry data"
+}
+knitr::opts_knit$set(root.dir = home_dir)
+
+# data upload
+# encounters
+encounters = read_csv("S:/Laura/Peds Endo/Christine Chan/CF registry data/DataDelivery_20220615/DataDelivery_20220615/CFF19_encountersMerged_Del2.csv")
+# modulator dates
+modulator_dates = read_csv("S:/Laura/Peds Endo/Christine Chan/CF registry data/DataDelivery_20220615/DataDelivery_20220615/CFF19_DemogCFDiag_Del2.csv")
+# care eps
+care_eps = read_csv("S:/Laura/Peds Endo/Christine Chan/CF registry data/DataDelivery_20220615/DataDelivery_20220615/CFF19_CareEpisodes_Del2.csv")
+
+setwd("S://Laura/Peds Endo/Christine Chan/CF registry data")
+# load in data 
+#CFF19_Demog <- read_csv("CFF19_DemogCFDiag_Del1.csv")
+CFF19_Annualized <- read_csv("CFF19_Annualized_Del1.csv")
+CFF19_CareEpisodes <- read_csv("CFF19_CareEpisodes_Del1.csv")
+CFF19_encounters <- read_csv("CFF19_encountersMerged_Del1.csv")
+```
+
+```{r incidence by age, include=FALSE}
+CFF19_encounters = CFF19_encounters %>% group_by(eDWID) %>% mutate(visit = row_number()) %>% ungroup()
+
+# idea is to grab the lowest visit number that a subject has cfrd, then they have cfrd for the remainder of the visits
+cfrd_status = CFF19_encounters %>% group_by(eDWID) %>% 
+  filter(cfrd_status == 3) %>%
+  mutate(cfrd_incident = case_when(visit == min(visit) ~ 1,
+                                   TRUE ~ 0),
+         incident_visit = min(visit)) %>% ungroup()
+
+CFF19_encounters = full_join(CFF19_encounters, cfrd_status) %>% group_by(eDWID) %>% fill(incident_visit, .direction = "downup")
+CFF19_encounters = CFF19_encounters %>% group_by(eDWID) %>% 
+  mutate(cfrd_outcome = case_when(visit >= incident_visit ~ 1,
+                                  TRUE ~ 0))
+# prevalence/incidence
+describe(CFF19_encounters$cfrd_outcome)
+describe(CFF19_encounters$cfrd_incident)
+CFF19_encounters = CFF19_encounters %>% mutate(cfrd_incident = ifelse(is.na(cfrd_incident), 0, cfrd_incident))
+# data table with one row per subject year
+cfrd_prevalence = CFF19_encounters %>% select(eDWID, reviewyear, cfrd_outcome, cfrd_incident) %>% distinct()
+cfrd_prevalence = cfrd_prevalence %>% group_by(reviewyear, eDWID) %>% filter(cfrd_incident == max(cfrd_incident))
+
+aim1_prev = cfrd_prevalence %>% group_by(reviewyear) %>% summarise(`CFRD Prevalence` = mean(cfrd_outcome),
+                                                        `CFRD Incidence` = mean(cfrd_incident)*1000)
+aim1_prev = aim1_prev %>% rename(`Review Year` = reviewyear)
+rm(cfrd_status)
+
+age_subj = CFF19_Annualized %>% select(eDWID, ReviewYear, Age_YrEnd) %>% rename(reviewyear = ReviewYear)
+
+cfrd_prevalence = full_join(cfrd_prevalence, age_subj)
+
+cfrd_prevalence = cfrd_prevalence %>% mutate(age_cat = case_when(Age_YrEnd < 10 ~ "< 10",
+                                                   Age_YrEnd < 19 & Age_YrEnd >= 10 ~ "10-18",
+                                                   Age_YrEnd < 30 & Age_YrEnd >= 19 ~ "19-30",
+                                                   Age_YrEnd >= 30 ~ ">30"))
+cfrd_prevalence$age_cat = factor(cfrd_prevalence$age_cat, levels = c("< 10", "10-18", "19-30", ">30"))
+
+```
+
+# Overall
+```{r Aim 1 Prev}
+# by age group and year
+aim1_prev_yr = cfrd_prevalence[complete.cases(cfrd_prevalence), ]
+aim1_prev_yr = aim1_prev_yr %>% group_by(reviewyear, age_cat) %>% summarise(`CFRD Prevalence` = mean(cfrd_outcome),
+                                                        `CFRD Incidence` = mean(cfrd_incident)*1000)
+
+aim1_prev_yr = aim1_prev_yr %>% select(age_cat, reviewyear, `CFRD Prevalence`, `CFRD Incidence`) %>% arrange(age_cat, reviewyear)
+# prev_table1_yr = table1(~ `CFRD Prevalence` + `CFRD Incidence`|reviewyear*age_cat, data = aim1_prev_yr)
+kable(aim1_prev_yr %>% filter(age_cat=="< 10"))
+
+kable(aim1_prev_yr %>% filter(age_cat=="10-18"))
+
+kable(aim1_prev_yr %>% filter(age_cat=="19-30"))
+
+kable(aim1_prev_yr %>% filter(age_cat==">30"))
+```
+
+```{r a1c/ogtt}
+encounters = encounters %>% arrange(eDWID, reviewyear) %>% drop_na(ogttfast_bloodglucose, hgba1c)
+
+
+```
