@@ -16,10 +16,10 @@ setwd(home_dir)
 ####################
 
 # read in NIH samples
-nih_urine <- read.csv("~/Metabolomic data/NIDDK_AA_20220427_20220620_Normalized_AF_urine.csv")
+nih_urine <- read.csv("./Metabolomic data/NIDDK_AA_20220427_20220620_Normalized_AF_urine.csv")
 
 # read in LEAD samples
-lead_urine <- read.csv("~/Metabolomic data/Lead_AA_20220322_20220620_Normalized_AF_urine.csv")
+lead_urine <- read.csv("./Metabolomic data/Lead_AA_20220322_20220620_Normalized_AF_urine.csv")
 
 # merge
 urine <- rbind(nih_urine,lead_urine)
@@ -29,10 +29,10 @@ urine <- rbind(nih_urine,lead_urine)
 ####################
 
 # read in NIH samples
-nih_plasma <- read.csv("~/Metabolomic data/NIDDK_AA_20220427_20220620_Normalized_AF_plasma.csv")
+nih_plasma <- read.csv("./Metabolomic data/NIDDK_AA_20220427_20220620_Normalized_AF_plasma.csv")
 
 # read in LEAD samples
-lead_plasma <- read.csv("~/Metabolomic data/Lead_AA_20220322_20220620_Normalized_AF_plasma.csv")
+lead_plasma <- read.csv("./Metabolomic data/Lead_AA_20220322_20220620_Normalized_AF_plasma.csv")
 
 # merge
 plasma <- rbind(nih_plasma,lead_plasma)
@@ -53,8 +53,8 @@ ids <- rbind(ids1, ids2, ids3)
 ids$SampleDescription <- ids$current_label
 
 # merge to urine
-# not sure this is the correct field
-urine$releaseid <- str_remove(urine$Sample.Name,"_U")
+urine$SampleDescription <- urine$Freezerworks.ID
+urine <- merge(urine,ids,by="SampleDescription",all.x = T, all.y = T)
 
 # merge to plasma
 
