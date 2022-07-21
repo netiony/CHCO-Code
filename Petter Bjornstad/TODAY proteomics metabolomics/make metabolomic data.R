@@ -1,5 +1,6 @@
 library(dplyr)
 library(berryFunctions)
+library(stringr)
 
 if(Sys.info()["sysname"] == "Windows"){
   home_dir = "E:/Petter Bjornstad/TODAY subaward"
@@ -15,57 +16,32 @@ setwd(home_dir)
 ####################
 
 # read in NIH samples
-nih_urine <- read.csv("~/Metabolomic data/NIDDK_AA_20220427_20220526_Normalized_AF_urine_norm_creatinine.csv")
+nih_urine <- read.csv("~/Metabolomic data/NIDDK_AA_20220427_20220620_Normalized_AF_urine.csv")
 
 # read in LEAD samples
-lead_urine <- read.csv("~/Metabolomic data/Lead_AA_20220322_20220510_Normalized_AF_urine_norm_creatinine.csv")
-
-# different number of columns
-a <- as.data.frame(colnames(nih_urine))
-a <- as.data.frame(a[3:nrow(a),])
-colnames(a) <- "a"
-a <- a %>% arrange("a")
-a <- insertRows(a, 31:32 , new = NA)
-b <- as.data.frame(colnames(lead_urine))
-b <- as.data.frame(b[3:nrow(b),])
-colnames(b) <- "b"
-b <- b %>% arrange("b")
-c <- cbind(a,b)
+lead_urine <- read.csv("~/Metabolomic data/Lead_AA_20220322_20220620_Normalized_AF_urine.csv")
 
 # merge
-# urine <- rbind(nih,lead)
-
-# remove Q/C samples
-
+urine <- rbind(nih_urine,lead_urine)
 
 ####################
 # plasma           #
 ####################
 
 # read in NIH samples
-nih_plasma <- read.csv("~/Metabolomic data/NIDDK_AA_20220427_20220526_Normalized_AF_plasma.csv")
+nih_plasma <- read.csv("~/Metabolomic data/NIDDK_AA_20220427_20220620_Normalized_AF_plasma.csv")
 
 # read in LEAD samples
-lead_plasma <- read.csv("~/Metabolomic data/Lead_AA_20220427_20220526_Normalized_AF_plasma.csv")
-
-# different number of columns
-a <- as.data.frame(colnames(nih_urine))
-a <- as.data.frame(a[3:nrow(a),])
-colnames(a) <- "a"
-a <- a %>% arrange("a")
-a <- insertRows(a, 31:32 , new = NA)
-b <- as.data.frame(colnames(lead_urine))
-b <- as.data.frame(b[3:nrow(b),])
-colnames(b) <- "b"
-b <- b %>% arrange("b")
-c <- cbind(a,b)
+lead_plasma <- read.csv("~/Metabolomic data/Lead_AA_20220322_20220620_Normalized_AF_plasma.csv")
 
 # merge
+plasma <- rbind(nih_plasma,lead_plasma)
 
-# remove Q/C samples
+######################
+# link IDs and merge #
+######################
 
-
-# read in the files that will link repository ID (column A) to Somalogic ID (column C)
+# read in the files that will link repository ID to sample ID
 ids1 <- read.csv("./Somalogic repository link/Omics-Petter Ancillary Samples at Colorado LEAD Center - Wash U.csv")
 colnames(ids1) <- c("releaseid","material_type","current_label","MASK.ID","Date.Drawn","visnum","location")
 ids1$bsi_id <- NA
@@ -75,6 +51,17 @@ ids3 <- read.csv("./Somalogic repository link/Omics-Petter Ancillary Samples at 
 ids3$MASK.ID <- NA
 ids <- rbind(ids1, ids2, ids3)
 ids$SampleDescription <- ids$current_label
+
+# merge to urine
+# not sure this is the correct field
+urine$releaseid <- str_remove(urine$Sample.Name,"_U")
+
+# merge to plasma
+
+
+# remove Q/C samples
+
+
 
 # merge IDs with soma
 soma <- merge(soma,ids,by="SampleDescription",all.x = T,all.y = F)
