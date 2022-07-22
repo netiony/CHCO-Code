@@ -22,46 +22,113 @@ renalheir = exportRecords(
 )
 renalheir$study = "RENAL-HEIR"
 renalheir$visit = 1
+# Check for missing
+renalheir[renalheir == -97] = -9997
+renalheir[renalheir == -98] = -9998
+renalheir[renalheir == -99] = -9999
+
+renalheir[renalheir == -997] = -9997
+renalheir[renalheir == -998] = -9998
+renalheir[renalheir == -999] = -9999
+
+write.csv(renalheir,"~/renalheir.csv",na="",row.names = F)
+
 
 penguin = exportRecords(
   redcapConnection(
     url = uri,token = tokens$Token[tokens$Study == "PENGUIN"]
   ),labels = F
 )
-penguin$study = "PENGUIN"
-penguin$visit = 1
+# penguin$study = "PENGUIN"
+# penguin$visit = 1
+
+# Check for missing
+penguin[penguin == -97] = -9997
+penguin[penguin == -98] = -9998
+penguin[penguin == -99] = -9999
+
+penguin[penguin == -997] = -9997
+penguin[penguin == -998] = -9998
+penguin[penguin == -999] = -9999
+
+write.csv(penguin,"~/penguin.csv",na="",row.names = F)
+
 
 crocodile = exportRecords(
   redcapConnection(
     url = uri,token = tokens$Token[tokens$Study == "CROCODILE"]
   ),labels = F
 )
-crocodile$study = "CROCODILE"
-crocodile$visit = 1
+# crocodile$study = "CROCODILE"
+# crocodile$visit = 1
+
+# Check for missing
+crocodile[crocodile == -97] = -9997
+crocodile[crocodile == -98] = -9998
+crocodile[crocodile == -99] = -9999
+
+crocodile[crocodile == -997] = -9997
+crocodile[crocodile == -998] = -9998
+crocodile[crocodile == -999] = -9999
+
+write.csv(crocodile,"~/crocodile.csv",na="",row.names = F)
 
 coffee = exportRecords(
   redcapConnection(
     url = uri,token = tokens$Token[tokens$Study == "COFFEE"]
   ),labels = F
 )
-coffee$study = "COFFEE"
-coffee$visit = 1
+# coffee$study = "COFFEE"
+# coffee$visit = 1
+
+# Check for missing
+coffee[coffee == -97] = -9997
+coffee[coffee == -98] = -9998
+coffee[coffee == -99] = -9999
+
+coffee[coffee == -997] = -9997
+coffee[coffee == -998] = -9998
+coffee[coffee == -999] = -9999
+
+write.csv(coffee,"~/coffee.csv",na="",row.names = F)
 
 casper = exportRecords(
   redcapConnection(
     url = uri,token = tokens$Token[tokens$Study == "CASPER"]
   ),labels = F
 )
-casper$study = "CASPER"
-casper$visit = 1
+# casper$study = "CASPER"
+# casper$visit = 1
+
+# Check for missing
+casper[casper == -97] = -9997
+casper[casper == -98] = -9998
+casper[casper == -99] = -9999
+
+casper[casper == -997] = -9997
+casper[casper == -998] = -9998
+casper[casper == -999] = -9999
+
+write.csv(casper,"~/casper.csv",na="",row.names = F)
 
 improve = exportRecords(
   redcapConnection(
     url = uri,token = tokens$Token[tokens$Study == "IMPROVE"]
   ),labels = F
 )
-improve$study = "IMPROVE"
-improve = improve %>% group_by(subject_id) %>% mutate(visit = row_number()) %>% ungroup()
+# improve$study = "IMPROVE"
+# improve = improve %>% group_by(subject_id) %>% mutate(visit = row_number()) %>% ungroup()
+
+# Check for missing
+improve[improve == -97] = -9997
+improve[improve == -98] = -9998
+improve[improve == -99] = -9999
+
+improve[improve == -997] = -9997
+improve[improve == -998] = -9998
+improve[improve == -999] = -9999
+
+write.csv(improve,"~/improve.csv",na="",row.names = F)
 
 rm(home_dir,tokens,uri)
 ###############################################################################
@@ -419,7 +486,8 @@ clamp_labs = do.call(rbind,list(renalheir[,clamp_labs],penguin[,clamp_labs],
 ###############################################################################
 
 # Only available for CROCODILE, PENGUIN, and PANTHER
-urine_labs = c("subject_id","study","visit","u24_labs","u24_na","u24_mab","u24_volume","u24_hours")
+urine_labs = c("subject_id","study","visit","u24_labs","u24_na","u24_mab",
+               "u24_volume","u24_hours","aer","naer")
 
 # RENAL-HEIR
 renalheir[,tail(urine_labs,-3)] = NA
@@ -428,6 +496,7 @@ penguin = penguin %>% rename(u24_volume = u24_vl,u24_hours = u24_hrs)
 # CROCODILE
 crocodile$u24_hours = NA
 crocodile$u24_volume = NA
+crocodile$aer = (crocodile$u24_mab * crocodile$u24_vl) / 1440
 # COFFEE
 coffee[,tail(urine_labs,-3)] = NA
 # CASPER
