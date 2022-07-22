@@ -53,15 +53,16 @@ ids <- rbind(ids1, ids2, ids3)
 ids$SampleDescription <- ids$current_label
 
 # merge to urine
-urine$SampleDescription <- urine$Freezerworks.ID
-urine <- merge(urine,ids,by="SampleDescription",all.x = T, all.y = T)
+urine$current_label <- urine$Freezerworks.ID
+urine <- merge(urine,ids,by="current_label",all.x = T, all.y = T)
 
 # merge to plasma
-
+plasma$current_label <- plasma$Freezerworks.ID
+plasma <- merge(plasma,ids,by="current_label",all.x = T, all.y = T)
 
 # remove Q/C samples
 
-
+## old code below - from proteomics
 
 # merge IDs with soma
 soma <- merge(soma,ids,by="SampleDescription",all.x = T,all.y = F)
