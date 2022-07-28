@@ -55,6 +55,7 @@ nih_urine <- merge(nih_urine,ids_niddk,by="current_label",all.x = T, all.y = F)
 ids_lead$Sample.Name <- str_sub(ids_lead$MASK.ID, 1, 8)
 ids_lead$Sample.Name <- str_replace(ids_lead$Sample.Name, "-", "_")
 # below is not working...need to append "_U" to urine samples only, then merge lead urine results by Sample.Name
+# it's not working because c works on the whole set of sample.name, not each individual row
 ids_lead$Sample.Name <- ifelse(str_trim(ids_lead$material_type)=="Urine",c(ids_lead$Sample.Name,"_U"),ids_lead$Sample.Name)
 
 # merge to plasma
