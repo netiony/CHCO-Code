@@ -17,9 +17,11 @@ setwd(home_dir)
 
 # read in NIH samples
 nih_urine <- read.csv("./Metabolomic data/NIDDK_AA_20220427_20220620_Normalized_AF_urine.csv")
+nih_urine$site <- "NIH"
 
 # read in LEAD samples
 lead_urine <- read.csv("./Metabolomic data/Lead_AA_20220322_20220620_Normalized_AF_urine.csv")
+lead_urine$site <- "LEAD"
 
 # merge
 urine <- rbind(nih_urine,lead_urine)
@@ -42,23 +44,23 @@ plasma <- rbind(nih_plasma,lead_plasma)
 ######################
 
 # read in the files that will link repository ID to sample ID
-ids1 <- read.csv("./Somalogic repository link/Omics-Petter Ancillary Samples at Colorado LEAD Center - Wash U.csv")
+ids1 <- read.csv("./Somalogic repository link/Omics-Petter Ancillary Samples at Colorado LEAD Center - UT Health San Antonio.csv")
 colnames(ids1) <- c("releaseid","material_type","current_label","MASK.ID","Date.Drawn","visnum","location")
 ids1$bsi_id <- NA
-ids2 <- read.csv("./Somalogic repository link/Omics-Petter Ancillary Samples at NIDDK-TODAY - Wash U.csv")
+ids2 <- read.csv("./Somalogic repository link/Omics-Petter Ancillary Samples at NIDDK-TODAY - UT Health San Antonio.csv")
 ids2$MASK.ID <- NA
-ids3 <- read.csv("./Somalogic repository link/Omics-Petter Ancillary Samples at NIDDK-TODAY2 - Wash U.csv")
+ids3 <- read.csv("./Somalogic repository link/Omics-Petter Ancillary Samples at NIDDK-TODAY2 - UT Health San Antonio.csv")
 ids3$MASK.ID <- NA
 ids <- rbind(ids1, ids2, ids3)
 ids$SampleDescription <- ids$current_label
 
 # merge to urine
 urine$current_label <- urine$Freezerworks.ID
-urine <- merge(urine,ids,by="current_label",all.x = T, all.y = T)
+urine <- merge(urine,ids,by="current_label",all.x = T, all.y = F)
 
 # merge to plasma
 plasma$current_label <- plasma$Freezerworks.ID
-plasma <- merge(plasma,ids,by="current_label",all.x = T, all.y = T)
+plasma <- merge(plasma,ids,by="current_label",all.x = T, all.y = F)
 
 # remove Q/C samples
 
