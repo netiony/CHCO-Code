@@ -51,31 +51,29 @@ ids_niddk <- rbind(ids_niddk_today, ids_niddk_today2)
 # first NIH - merge Freezerworks ID in results file to current label in NIDDK file
 nih_urine$current_label <- nih_urine$Freezerworks.ID
 nih_urine <- merge(nih_urine,ids_niddk,by="current_label",all.x = T, all.y = F)
+nih_urine$SAMPLE_ID <- NA
 # for LEAD, need to merge MASK.ID in ID file to sample name in results file
 ids_lead$Sample.Name <- str_sub(ids_lead$MASK.ID, 1, 8)
 ids_lead$Sample.Name <- str_replace(ids_lead$Sample.Name, "-", "_")
 ids_lead$t <- ifelse(str_trim(ids_lead$material_type)=="Urine","_U","")
-ids_lead$Sample.Name <- paste(ids_lead$Sample.Name,ids_lead$t)
+ids_lead$Sample.Name <- paste0(ids_lead$Sample.Name,ids_lead$t)
 ids_lead$t <- NULL
 lead_urine <- merge(lead_urine,ids_lead,by="Sample.Name",all.x=T, all.y = F)
+lead_urine$current_label <- NA
+# combine NIH and LEAD
+urine <- rbind(nih_urine,lead_urine)
 
 # merge to plasma
-plasma$current_label <- plasma$Freezerworks.ID
-plasma <- merge(plasma,ids,by="current_label",all.x = T, all.y = F)
-
-# remove Q/C samples
-
-## old code below - from proteomics
-
-# merge IDs with soma
-soma <- merge(soma,ids,by="SampleDescription",all.x = T,all.y = F)
-
-# samples without a release ID are QC samples
-soma <- soma %>% filter(!is.na(releaseid))
-
-# fix date drawn
-soma$Date.Drawn <- as.Date(soma$Date.Drawn,format="%m/%d/%Y")
+# first NIH
+nih_plasma$current_label <- nih_plasma$Freezerworks.ID
+nih_plasma <- merge(nih_plasma,ids_niddk,by="current_label",all.x = T, all.y = F)
+nih_plasma$SAMPLE_ID <- NA
+# LEAD
+lead_plasma <- merge(lead_plasma,ids_lead,by="Sample.Name",all.x=T, all.y = F)
+lead_plasma$current_label <- NA
+# combine NIH and LEAD
+plasma <- rbind(nih_plasma,lead_plasma)
 
 # Save
-save(soma,file = "./Somalogic data raw/soma.Rdata")
-save(analytes,file = "./Somalogic data raw/analytes.Rdata")
+save(urine,file = "./Metabolomic data/urine.Rdata")
+save(plasma,file = "./Metabolomic data/plasma.Rdata")
