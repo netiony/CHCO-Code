@@ -29,10 +29,11 @@ lead_urine$site <- "LEAD"
 
 # read in NIH samples
 nih_plasma <- read.csv("./Metabolomic data/NIDDK_AA_20220427_20220620_Normalized_AF_plasma.csv")
+nih_plasma$site <- "NIH"
 
 # read in LEAD samples
 lead_plasma <- read.csv("./Metabolomic data/Lead_AA_20220322_20220620_Normalized_AF_plasma.csv")
-
+lead_plasma$site <- "LEAD"
 
 ######################
 # link IDs and merge #
