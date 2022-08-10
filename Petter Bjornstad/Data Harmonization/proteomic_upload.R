@@ -1,6 +1,6 @@
 library(tidyverse)
 library(SomaDataIO)
-df = read_adat("/Users/timvigers/Documents/Work/Petter Bjornstad/Somalogic data/WUS-22-002_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
+df = read_adat("/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Somalogic data/WUS-22-002_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
 
 df = df %>% filter(SampleType == "Sample") %>% select(SampleDescription,seq.10000.28:seq.9999.1)
 croc = df %>% filter(str_detect(SampleDescription, "CRC"))
