@@ -14,7 +14,10 @@ output:
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(SomaDataIO)
-library(limma)
+library(parallel)
+library(lmerTest)
+library(emmeans)
+library(knitr)
 knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
 knitr::opts_chunk$set(echo = FALSE)
 if(Sys.info()["sysname"] == "Windows"){
@@ -52,20 +55,50 @@ Y = log(Y)
 
 # Limma results
 
-```{r}
+```{r eval=FALSE}
 # Estimate the intra-participant correlation
 design = model.matrix(~0+MAC*timepoint,data = X)
 dupcor = duplicateCorrelation(Y,design,block=soma$releaseid)
 # Fit the random effect model
-fit = lmFit(Y,design,block=soma$releaseid,correlation=dupcor$consensus.correlation)
+fit = lmFit(Y,design)
 fit = eBayes(fit)
+limma_res = topTable(fit,number = nrow(Y),coef = 4)
 ```
 
 # LMM results
 
 ```{r}
-lmm = lapply(rownames(Y), function(p){
-  f = as.formula(paste0(p,"~0+MAC*timepoint+(1|releaseid)"))
-  mod = lmer(f,data = soma)
-})
+mod_fit = function(outcomes = rownames(Y),predictor,df = soma){
+  # Parallel processing
+  cl = makeCluster(detectCores()*0.5,type = "FORK")
+  # Fit all the models, and pull out those with significant interaction term
+  models = parLapply(cl,outcomes, function(p){
+    # Formula and model fit
+    f = as.formula(paste0("log(",p,")","~0+factor(",predictor,")*factor(timepoint)+(1|releaseid)"))
+    mod = suppressMessages(lmer(f,data = df)) # Some singular fit warnings here, but okay to ignore per Laura
+    # Calculate the difference in change over time between two groups
+    contr = (c(0,0,0,1) - c(0,1,0,0)) - (c(0,0,1,0) - c(1,0,0,0))
+    means_f = as.formula(paste0("~",predictor,"+timepoint"))
+    emm.mod = emmeans(mod,specs = means_f,contr = list("Diff. in logFC" = contr))
+    means = data.frame(emm.mod$emmeans)
+    comp = data.frame(emm.mod$contrasts)
+    return(comp)
+  })
+  # Combine the fold change comparisons
+  results = data.frame(do.call(rbind,models))
+  rownames(results) = outcomes
+  results$contrast = NULL
+  colnames(results)[1] = "Diff. in logFC"
+  results$p.value.adj = p.adjust(results$p.value,method = "BH")
+  results = results[order(results$p.value),]
+  # Return
+  return(results)
+}
+```
+
+## MAC
+
+```{r cache=TRUE}
+mac_res = mod_fit(predictor = "MAC")
+kable(mac_res[mac_res$p.value.adj <= 0.05])
 ```
