@@ -51,3 +51,33 @@ baserisk <- merge(baserisk,AGEBASE,by="releaseid",all.x = T,all.y = F)
 
 # Save
 save(baserisk,file = "./Clinical data/TODAY/baserisk.Rdata")
+
+###############################################################
+# create dataset of risk factors at 10 year visit from TODAY2 #
+###############################################################
+
+# CBL
+CBL_TODAY2 <- read.csv("./Clinical data/TODAY2/CBL.csv")
+CBL_TODAY2_KEEP <- CBL_TODAY2 %>% filter(pvisit=="P120") %>% select(releaseid, hba1c, trig)
+
+# INS 
+# insulin was measured at 9 year visit not 10 year
+INS_TODAY2 <- read.csv("./Clinical data/TODAY2/CBL.csv")
+INS_TODAY2_KEEP <- INS_TODAY2 %>% filter(pvisit=="P108") %>% select(releaseid, ins)
+
+# ADDCBL
+#ADDCBL_TODAY2 <- read.csv("./Clinical data/TODAY2/ADDCBL.csv")
+
+# VISIT
+VISIT_TODAY2 <- read.csv("./Clinical data/TODAY2/VISIT.csv")
+VISIT_TODAY2$releaseid <- VISIT_TODAY2$RELEASEID
+VISIT_TODAY2$sbp <- VISIT_TODAY2$SBP
+VISIT_TODAY2_KEEP <- VISIT_TODAY2 %>% filter(PVISIT=="P120") %>% select(releaseid, sbp)
+
+yr10risk <- merge(CBL_TODAY2_KEEP, INS_TODAY2_KEEP, by="releaseid", all.x = T, all.y = T)
+yr10risk <- merge(yr10risk, VISIT_TODAY2_KEEP, by="releaseid", all.x = T, all.y = T)
+yr10risk$si_1_ins0 <- 1/yr10risk$ins
+yr10risk$log_trig <- log(yr10risk$trig)
+
+# Save
+save(yr10risk,file = "./Clinical data/TODAY/yr10risk.Rdata")
