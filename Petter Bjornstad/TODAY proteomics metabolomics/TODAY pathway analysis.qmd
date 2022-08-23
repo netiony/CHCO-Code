@@ -4,8 +4,14 @@ author: "Tim Vigers"
 date: "`r format(Sys.time(), '%d %B %Y')`"
 format:
   html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
     self-contained: true
     code-fold: true
+    fig-width: 8
+    fig-height: 10
+    
 editor: visual
 ---
 
@@ -19,7 +25,7 @@ f = "/Users/timvigers/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenve
 
 # Enrichment
 
-Enrichment analyses were performed on nominally significant proteins using the R package `clusterProfiler` and a gene set ranked by log FC. Entrez gene IDs were used for all annotation. All genes in the `org.Hs.eg.db` were used as background for GO enrichment analysis.
+Enrichment analyses were performed on nominally significant proteins using the R package `clusterProfiler` and a gene set ranked by log FC. Entrez gene IDs were used for all annotation. All genes in the `org.Hs.eg.db` were used as background for GO enrichment analysis. All duplicate gene/protein names were removed from the differentially expressed gene list.
 
 ## TODAY proteomics moderated adjusted linear models
 
@@ -27,13 +33,18 @@ Enrichment analyses were performed on nominally significant proteins using the R
 # Make a funciton for pathway analysis
 # Need a genelist in the format used by clusterProfiler, with names in UniProt form
 pathway_analysis = function(de_genes){
+  # Remove duplicates and fix names
+  de_genes = de_genes[!is.na(names(de_genes))]
+  names(de_genes) = sub("\\|.*","",names(de_genes))
+  de_genes = de_genes[which(!duplicated(names(de_genes)))]
   # GSEA with KEGG
   gseaKEGG = gseKEGG(geneList = de_genes[unique(names(de_genes))],
                      keyType = 'uniprot',pvalueCutoff = 1)
   gsea_upset = upsetplot(gseaKEGG) + ggtitle("GSEA Upset Plot")
   ridge = ridgeplot(gseaKEGG) + ggtitle("GSEA Ridge Plot")
   gseap = gseaplot2(gseaKEGG,geneSetID = 1:nrow(gseaKEGG@result)) + 
-     ggtitle("GSEA Plot")
+    ggtitle("GSEA Plot")
+  gsea_heat = heatplot(gseaKEGG,foldChange=de_genes) + ggtitle("GSEA Heatmap")
   # Convert to gene names (some won't match unfortunately)
   eg = bitr(names(de_genes), fromType="UNIPROT", toType="ENTREZID", OrgDb="org.Hs.eg.db")
   de_genes = de_genes[which(names(de_genes) %in% eg$UNIPROT)]
@@ -54,8 +65,35 @@ pathway_analysis = function(de_genes){
   upset = upsetplot(egop) + ggtitle("GO Enrichment Upset Plot")
   # Return those beautiful plots
   return(list("gsea_upset" = gsea_upset,"ridge" = ridge,"gseap" = gseap,
-              "bar" = bar,"dot" = dot,"cnet" = cnet,"circos" = circos,
-              "heat" = heat,"emap" = emap,"upset" = upset))
+              "gsea_heat" = gsea_heat,"bar" = bar,"dot" = dot,"cnet" = cnet,
+              "circos" = circos,"heat" = heat,"emap" = emap,"upset" = upset))
+}
+# Function for comparing two gene lists
+# de_gene_list is a list of multiple gene sets
+pathway_comparison = function(de_gene_list){
+  # Format names
+  de_gene_list = lapply(de_gene_list, function(l){
+    n = names(l)
+    n = sub("\\|.*","",n)
+    eg = bitr(n, fromType="UNIPROT", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+    n = eg$ENTREZID[match(n,eg$UNIPROT)]
+    n = n[!is.na(n)]
+    dups = n[duplicated(n)]
+    n = n[!n %in% dups]
+    return(n)
+  })
+  # Compare with GO enrichment
+  ck = compareCluster(geneClusters = de_gene_list,
+                      fun='enrichGO', OrgDb='org.Hs.eg.db')
+  # Gene names
+  ckx = setReadable(ck, OrgDb = "org.Hs.eg.db", keyType="ENTREZID")
+  # Plots
+  dot = dotplot(ckx) + ggtitle("Cluster Comparison Dot Plot")
+  net = cnetplot(ckx) + ggtitle("Cluster Comparison Network Plot")
+  xx = pairwise_termsim(ckx)
+  emap = emapplot(xx) + ggtitle("Cluster Comparison Enrichment Map")
+  # Return
+  return(list("dot" = dot,"net" = net,"emap" = emap))
 }
 ```
 
@@ -65,11 +103,11 @@ pathway_analysis = function(de_genes){
 # Prepare gene list
 mac = read_excel(f,sheet = "MAC_moderated_FDR")
 mac = mac[mac$P.Value <= 0.05,]
-de_genes = mac$logFC
-names(de_genes) = mac$UniProt
-de_genes = sort(de_genes, decreasing = TRUE)
+de_genes_mac = mac$logFC
+names(de_genes_mac) = mac$UniProt
+de_genes_mac = sort(de_genes_mac, decreasing = TRUE)
 # Pathway analysis
-mac_p = pathway_analysis(de_genes)
+mac_p = pathway_analysis(de_genes_mac)
 ```
 
 #### Gene ontology (GO) enrichment analysis
@@ -90,4 +128,54 @@ mac_p$upset
 mac_p$gsea_upset
 mac_p$ridge
 mac_p$gseap
+mac_p$gsea_heat
+```
+
+### MIC
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+mic = read_excel(f,sheet = "MIC_moderated_FDR")
+mic = mic[mic$P.Value <= 0.05,]
+de_genes_mic = mic$logFC
+names(de_genes_mic) = mic$UniProt
+de_genes_mic = sort(de_genes_mic, decreasing = TRUE)
+# Pathway analysis
+mic_p = pathway_analysis(de_genes_mic)
+```
+
+#### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+mic_p$bar
+mic_p$dot
+mic_p$cnet
+mic_p$circos
+mic_p$heat
+mic_p$emap
+mic_p$upset
+```
+
+#### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+mic_p$gsea_upset
+mic_p$ridge
+mic_p$gseap
+mac_p$gsea_heat
+```
+
+### MAC vs. MIC
+
+Dot plot does not appear to be working for comparisons at the moment.
+
+```{r warning=FALSE,message=FALSE}
+mac_vs_mic = list("MAC" = de_genes_mac,"MIC" = de_genes_mic)
+mac_vs_mic_p = pathway_comparison(mac_vs_mic)
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+mac_vs_mic_p$dot
+mac_vs_mic_p$net
+mac_vs_mic_p$emap
 ```
