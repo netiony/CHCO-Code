@@ -4,14 +4,7 @@ library(childsds)
 library(tidyverse)
 source("~/GitHub/shared-resources/Data Cleaning/Calculated Variables/eGFR.R")
 source("~/GitHub/shared-resources/Data Cleaning/Calculated Variables/hemodynamics.R")
-if(Sys.info()["sysname"] == "Windows"){
-  home_dir = "S:/Laura/Peds Endo/Petter Bjornstad/Data Harmonization"
-} else if (Sys.info()["sysname"] == "Linux"){
-  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization"
-} else if (Sys.info()["sysname"] == "Darwin"){
-  home_dir = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization"
-}
-setwd(home_dir)
+setwd("/Users/timvigers/Documents/Work/CHCO/Petter Bjornstad/Data Harmonization")
 # API import
 tokens = read.csv("api_tokens.csv")
 uri = "https://redcap.ucdenver.edu/api/"
@@ -63,16 +56,17 @@ improve = exportRecords(
 improve$study = "IMPROVE"
 improve = improve %>% group_by(subject_id) %>% mutate(visit = row_number()) %>% ungroup()
 
-rm(home_dir,tokens,uri)
+rm(tokens,uri)
 ###############################################################################
 # Demographic variables
 ###############################################################################
 demographic_vars = c("subject_id","study","co_enroll","co_enroll_id","visit",
-                     "group","dob","age_current","gender","race","ethnicity",
-                     "length_of_diabetes","age_at_diabetes_dx")
+                     "group","dob","diagnosis_date","gender","race","ethnicity",
+                     "age_current")
 # RENAL HEIR
 levels(renalheir$group) = c("T2D","Obese Control","Lean Control")
 renalheir$age_at_diabetes_dx = renalheir$diabetes_age
+renalheir$diagnosis_date = renalheir$diagnosis
 # Race
 races = c("American Indian or Alaskan Native","Asian",
           "Hawaiian or Pacific Islander","Black or African American",
@@ -109,13 +103,14 @@ penguin$ethnicity = apply(penguin,1,function(r){
   w = which(eth == "Checked")
   return(paste0(eths[w],collapse = "/"))
 })
-# Diabetes info
-penguin[,c("length_of_diabetes","age_at_diabetes_dx","co_enroll","co_enroll_id")] = NA
+# Missing columns
+penguin[,c("diagnosis_date","co_enroll","co_enroll_id")] = NA
 # CROCODILE
 crocodile$subject_id = crocodile$record_id
 levels(crocodile$group) = c("T1D","Lean Control")
 crocodile$age_current = crocodile$age_consent 
 crocodile$gender = crocodile$sex
+crocodile$diagnosis_date = crocodile$diabetes_dx_date
 # Race
 crocodile$race = apply(crocodile,1,function(r){
   race = r[paste0("race___",1:7)]
@@ -128,9 +123,7 @@ crocodile$ethnicity = apply(crocodile,1,function(r){
   w = which(eth == "Checked")
   return(paste0(eths[w],collapse = "/"))
 })
-# Diabetes info
-crocodile$length_of_diabetes = crocodile$diabetes_duration
-crocodile$age_at_diabetes_dx = crocodile$diabetes_dx_age
+# Missing columns
 crocodile[,c("co_enroll","co_enroll_id")] = NA
 # COFFEE
 coffee$group = "T1D"
@@ -150,7 +143,8 @@ coffee$ethnicity = apply(coffee,1,function(r){
   return(paste0(eths[w],collapse = "/"))
 })
 # Diabetes info
-coffee$age_at_diabetes_dx = coffee$diabetes_age
+coffee$diagnosis_date = coffee$diagnosis
+coffee[,c("co_enroll","co_enroll_id")] = NA
 # CASPER
 casper$group = "T1D"
 # Race
@@ -159,7 +153,6 @@ casper$race = apply(casper,1,function(r){
   w = which(race == "Checked")
   return(paste0(sort(races[w]),collapse = "/"))
 })
-coffee[,c("co_enroll","co_enroll_id")] = NA
 # Ethnicity
 casper$ethnicity = apply(casper,1,function(r){
   eth = r[paste0("ethnicity___",1:3)]
@@ -167,7 +160,7 @@ casper$ethnicity = apply(casper,1,function(r){
   return(paste0(eths[w],collapse = "/"))
 })
 # Diabetes info
-casper$age_at_diabetes_dx = casper$diabetes_age
+casper$diagnosis_date = casper$diagnosis
 casper[,c("co_enroll","co_enroll_id")] = NA
 # IMPROVE
 improve$group = "T2D"
@@ -184,7 +177,7 @@ improve$ethnicity = apply(improve,1,function(r){
   return(paste0(eths[w],collapse = "/"))
 })
 # Diabetes info
-improve$age_at_diabetes_dx = improve$diabetes_age
+improve$diagnosis_date = improve$diagnosis
 # Just first visit 
 improve_dem = improve[grep("screening_arm",improve$redcap_event_name),]
 # Merge demographics
@@ -673,8 +666,9 @@ pet = do.call(rbind,list(renalheir[,pet_vars],penguin[,pet_vars],
 # Kidney biopsy
 ###############################################################################
 
-kidney_biopsy = c("subject_id","study","visit","gloms",
-                  paste0("glom_enlarge___",1:7),
+kidney_biopsy = c("subject_id","study","visit","bx_date","bx_kit_id",
+                  "vitals_sbp","vitals_dbp",
+                  "gloms",paste0("glom_enlarge___",1:7),
                   "gloms_gs","ifta","vessels___1","vessels___2","vessels_other",
                   "fia","glom_tuft_area","glom_volume_wiggins",
                   "mes_matrix_area","mes_index","mes_volume_wiggins",
@@ -688,11 +682,14 @@ penguin[,tail(kidney_biopsy,-3)] = NA
 coffee[,tail(kidney_biopsy,-3)] = NA
 # CASPER
 casper[,tail(kidney_biopsy,-3)] = NA
-# IMPROVE - all correct
-
+# IMPROVE
 kidney_biopsy = do.call(rbind,list(renalheir[,kidney_biopsy],penguin[,kidney_biopsy],
                                    crocodile[,kidney_biopsy],coffee[,kidney_biopsy],
                                    casper[,kidney_biopsy],improve[,kidney_biopsy]))
+kidney_biopsy = kidney_biopsy %>% 
+  rename(bx_sbp = vitals_sbp,bx_dbp = vitals_dbp)
+# Capitalize box IDs
+kidney_biopsy$bx_kit_id = toupper(kidney_biopsy$bx_kit_id)
 
 ###############################################################################
 # Merge everything together, fill non-changing variables
@@ -713,16 +710,20 @@ df = full_join(df,kidney_biopsy)
 df = full_join(df,pet)
 
 # Fill
-fill_vars = c("group","dob","gender","race","ethnicity","age_at_diabetes_dx")
+fill_vars = c("group","dob","gender","race","ethnicity","diagnosis_date")
 df = df %>% group_by(subject_id) %>% fill(all_of(fill_vars),.direction = "downup")
 
 ###############################################################################
 # Final formatting and calculated fields
 ###############################################################################
 
-# -99 and -999 as missing
+# -99, -999, and -9999 as missing
 df[df == -99] = NA
 df[df == -999] = NA
+df[df == -9999] = NA
+
+# Diabetes duration
+df$length_of_diabetes = round(as.numeric(difftime(df$diagnosis_date,df$dob,units = "days"))/365.25,1)
 
 # BMI percentile
 ## Excluding adults
@@ -775,3 +776,16 @@ df$co_enroll[is.na(df$co_enroll)] = "No"
 df = df %>% arrange(study,subject_id,visit)
 write.csv(df,file = paste0("./Data Clean/merged_dataset_",Sys.Date(),".csv"),
           row.names = F,na = "")
+
+# Data pull for Kumar Sharma 2022-09-14
+
+pull_vars = c("age_current","gender","group","length_of_diabetes",
+              "gfr","gfr_bsa","screen_urine_acr","sys_bp","dys_bp",
+              "bx_sbp","bx_dbp")
+
+ids = readxl::read_excel("./Data Exports/LN_shipments_status_To Tim.xlsx")
+ids = ids %>% select(`KL ID`)
+
+pull = left_join(ids,df,by = c("KL ID" = "bx_kit_id"))
+pull = pull %>% select(subject_id,study,visit,all_of(pull_vars))
+
