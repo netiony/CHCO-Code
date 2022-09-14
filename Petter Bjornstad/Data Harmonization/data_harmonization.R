@@ -188,8 +188,8 @@ demographics = do.call(rbind,list(renalheir[,demographic_vars],penguin[,demograp
 ###############################################################################
 # Screening variables
 ###############################################################################
-screen_vars = c("subject_id","study","visit","insulin","insulin_pump","screen_height",
-                "screen_weight","screen_bmi",
+screen_vars = c("subject_id","study","visit","date_of_screen","insulin","insulin_pump",
+                "screen_height","screen_weight","screen_bmi",
                 "waist_circumference","hip_circumference","sys_bp","dys_bp",
                 "map","pulse","activity_factor","schofield","hba1c","hemoglobin",
                 "screen_hematocrit","screen_serum_creatinine",
@@ -217,7 +217,7 @@ penguin = penguin %>%
          map = phys_map,pulse = phys_pulse,hba1c = bl_a1c,
          screen_serum_creatinine = bl_creatinine_s,
          screen_urine_cre = bl_creatinine_u,screen_urine_acr = bl_uacr,
-         screen_pregnant = eligibility_preg)
+         screen_pregnant = eligibility_preg,date_of_screen = labs_date)
 penguin$screen_urine_mab = NA
 # Missing
 penguin[,c("insulin","insulin_pump",
@@ -238,8 +238,8 @@ crocodile = crocodile %>%
          hip_circumference = phys_hipcm,sys_bp = phys_sysbp,dys_bp = phys_diasbp,
          map = phys_map,pulse = phys_pulse,hba1c = bl_a1c,
          screen_serum_creatinine = bl_creatinine_s,
-         screen_urine_cre = bl_creatinine_u,screen_urine_acr = bl_uacr,
-         screen_pregnant = screen_upt)
+         screen_urine_cre = bl_creatinine_u,screen_urine_acr = screen_uacr,
+         screen_pregnant = screen_upt,date_of_screen = labs_date)
 crocodile$screen_urine_mab = NA
 # Missing
 crocodile[,screen_vars[which(!screen_vars %in% colnames(crocodile))]] = NA
@@ -667,6 +667,7 @@ pet = do.call(rbind,list(renalheir[,pet_vars],penguin[,pet_vars],
 ###############################################################################
 
 kidney_biopsy = c("subject_id","study","visit","bx_date","bx_kit_id",
+                  "vitals_height","vitals_weight","vitals_bmi",
                   "vitals_sbp","vitals_dbp",
                   "gloms",paste0("glom_enlarge___",1:7),
                   "gloms_gs","ifta","vessels___1","vessels___2","vessels_other",
@@ -687,7 +688,8 @@ kidney_biopsy = do.call(rbind,list(renalheir[,kidney_biopsy],penguin[,kidney_bio
                                    crocodile[,kidney_biopsy],coffee[,kidney_biopsy],
                                    casper[,kidney_biopsy],improve[,kidney_biopsy]))
 kidney_biopsy = kidney_biopsy %>% 
-  rename(bx_sbp = vitals_sbp,bx_dbp = vitals_dbp)
+  rename(bx_sbp = vitals_sbp,bx_dbp = vitals_dbp,bx_height = vitals_height,
+         bx_weight = vitals_weight,bx_bmi = vitals_bmi)
 # Capitalize box IDs
 kidney_biopsy$bx_kit_id = toupper(kidney_biopsy$bx_kit_id)
 
@@ -721,9 +723,6 @@ df = df %>% group_by(subject_id) %>% fill(all_of(fill_vars),.direction = "downup
 df[df == -99] = NA
 df[df == -999] = NA
 df[df == -9999] = NA
-
-# Diabetes duration
-df$length_of_diabetes = round(as.numeric(difftime(df$diagnosis_date,df$dob,units = "days"))/365.25,1)
 
 # BMI percentile
 ## Excluding adults
@@ -778,14 +777,24 @@ write.csv(df,file = paste0("./Data Clean/merged_dataset_",Sys.Date(),".csv"),
           row.names = F,na = "")
 
 # Data pull for Kumar Sharma 2022-09-14
-
-pull_vars = c("age_current","gender","group","length_of_diabetes",
-              "gfr","gfr_bsa","screen_urine_acr","sys_bp","dys_bp",
-              "bx_sbp","bx_dbp")
+pull_vars = c("age","gender","group","length_of_diabetes","insulin",
+              "screen_height","screen_weight","screen_bmi","screen_urine_acr",
+              "gfr","gfr_bsa","sys_bp","dys_bp",
+              "bx_sbp","bx_dbp","bx_height","bx_weight","bx_bmi")
 
 ids = readxl::read_excel("./Data Exports/LN_shipments_status_To Tim.xlsx")
 ids = ids %>% select(`KL ID`)
 
+df = df %>% group_by(subject_id) %>% fill(screen_urine_acr,gfr,gfr_bsa,.direction = "down")
+
 pull = left_join(ids,df,by = c("KL ID" = "bx_kit_id"))
+pull$date = pmin(pull$date_of_screen,pull$bx_date,na.rm = T)
+pull$age = round(as.numeric(difftime(pull$date,pull$dob,units = "days"))/365.25,1)
+pull$length_of_diabetes = round(as.numeric(difftime(pull$date,pull$diagnosis_date,units = "days"))/365.25,1)
+
+
 pull = pull %>% select(subject_id,study,visit,all_of(pull_vars))
 
+
+write.csv(pull,file = paste0("./Data Exports/data_for_kumar_",Sys.Date(),".csv"),
+          row.names = F,na = "")
