@@ -1,10 +1,11 @@
 library(knitr)
 library(redcapAPI)
 library(childsds)
+library(parsedate)
 library(tidyverse)
 source("~/GitHub/shared-resources/Data Cleaning/Calculated Variables/eGFR.R")
 source("~/GitHub/shared-resources/Data Cleaning/Calculated Variables/hemodynamics.R")
-setwd("/Users/timvigers/Documents/Work/CHCO/Petter Bjornstad/Data Harmonization")
+setwd("~/Documents/Work/CHCO/Petter Bjornstad/Data Harmonization")
 # API import
 tokens <- read.csv("api_tokens.csv")
 uri <- "https://redcap.ucdenver.edu/api/"
@@ -72,12 +73,13 @@ rm(tokens, uri)
 demographic_vars <- c(
   "subject_id", "study", "co_enroll", "co_enroll_id", "visit",
   "group", "dob", "diagnosis_date", "gender", "race", "ethnicity",
-  "age_current"
+  "age_consent"
 )
 # RENAL HEIR
 levels(renalheir$group) <- c("T2D", "Obese Control", "Lean Control")
 renalheir$age_at_diabetes_dx <- renalheir$diabetes_age
 renalheir$diagnosis_date <- renalheir$diagnosis
+renalheir$age_consent = renalheir$age_current
 # Race
 races <- c(
   "American Indian or Alaskan Native", "Asian",
@@ -142,6 +144,7 @@ crocodile$ethnicity <- apply(crocodile, 1, function(r) {
 crocodile[, c("co_enroll", "co_enroll_id")] <- NA
 # COFFEE
 coffee$group <- "T1D"
+coffee$age_consent = coffee$age_current
 # Race
 races <- c(
   "American Indian or Alaskan Native", "Asian",
@@ -164,6 +167,7 @@ coffee$diagnosis_date <- coffee$diagnosis
 coffee[, c("co_enroll", "co_enroll_id")] <- NA
 # CASPER
 casper$group <- "T1D"
+casper$age_consent = casper$age_current
 # Race
 casper$race <- apply(casper, 1, function(r) {
   race <- r[paste0("race___", 1:7)]
@@ -181,6 +185,7 @@ casper$diagnosis_date <- casper$diagnosis
 casper[, c("co_enroll", "co_enroll_id")] <- NA
 # IMPROVE
 improve$group <- "T2D"
+improve$age_consent = improve$age_current
 # Race
 improve$race <- apply(improve, 1, function(r) {
   race <- r[paste0("race___", 1:7)]
@@ -208,7 +213,7 @@ demographics <- do.call(rbind, list(
 # Screening variables
 ###############################################################################
 screen_vars <- c(
-  "subject_id", "study", "visit", "date_of_screen", "insulin", "insulin_pump",
+  "subject_id", "study", "visit", "date_of_screen",
   "screen_height", "screen_weight", "screen_bmi",
   "waist_circumference", "hip_circumference", "sys_bp", "dys_bp",
   "map", "pulse", "activity_factor", "schofield", "hba1c", "hemoglobin",
@@ -216,12 +221,42 @@ screen_vars <- c(
   "screen_urine_mab", "screen_urine_cre", "screen_urine_acr",
   "screen_pregnant", "screening_labs_complete"
 )
+
 # RENAL HEIR
-# insulin
-renalheir$insulin <- renalheir$diabetes_med___2
-levels(renalheir$insulin) <- c("No", "Yes")
-# Insulin pump
+# Diabetes medications
+renalheir$insulin <- factor(renalheir$diabetes_med___2,
+  levels = c("Unchecked", "Checked"),
+  labels = c("No", "Yes")
+)
 renalheir$insulin_pump <- NA
+renalheir$metformin <- factor(renalheir$diabetes_med___1,
+  levels = c("Unchecked", "Checked"),
+  labels = c("No", "Yes")
+)
+renalheir$short_act_insulin <- factor(renalheir$insulin_type___1,
+  levels = c("Unchecked", "Checked"),
+  labels = c("No", "Yes")
+)
+renalheir$long_act_insulin <- factor(renalheir$insulin_type___2,
+  levels = c("Unchecked", "Checked"),
+  labels = c("No", "Yes")
+)
+renalheir$tzds <- factor(renalheir$diabetes_med_other___1,
+  levels = c("Unchecked", "Checked"),
+  labels = c("No", "Yes")
+)
+renalheir$glp1_agonists <- factor(renalheir$diabetes_med_other___2,
+  levels = c("Unchecked", "Checked"),
+  labels = c("No", "Yes")
+)
+renalheir$sglt2_inhibitors <- factor(renalheir$diabetes_med_other___3,
+  levels = c("Unchecked", "Checked"),
+  labels = c("No", "Yes")
+)
+renalheir$other_diabetes_meds <- factor(renalheir$diabetes_med_other___4,
+  levels = c("Unchecked", "Checked"),
+  labels = c("No", "Yes")
+)
 # Pregnancy
 levels(renalheir$screen_pregnant) <- c("Not Pregnant", "Pregnant")
 # activity_factor and schofield
@@ -244,18 +279,45 @@ penguin <- penguin %>%
 penguin$screen_urine_mab <- NA
 # Missing
 penguin[, c(
-  "insulin", "insulin_pump",
-  "activity_factor", "schofield", "hemoglobin", "screen_hematocrit"
+  "insulin", "insulin_pump", "metformin", "short_act_insulin",
+  "long_act_insulin", "tzds", "glp1_agonists", "sglt2_inhibitors",
+  "other_diabetes_meds", "activity_factor", "schofield", "hemoglobin",
+  "screen_hematocrit"
 )] <- NA
 # CROCODILE
-# insulin
+# Diabetes medications
 crocodile$insulin <- "No"
 crocodile$insulin[which(crocodile$diabetes_tx___1 == "Checked" |
   crocodile$diabetes_tx___2 == "Checked")] <- "Yes"
 crocodile$insulin <- factor(crocodile$insulin, levels = c("No", "Yes"))
-# insulin_pump
-crocodile$insulin_pump <- crocodile$diabetes_tx___1
-levels(crocodile$insulin_pump) <- c("No", "Yes")
+crocodile$insulin_pump <- factor(crocodile$diabetes_tx___1,
+                              levels = c("Unchecked", "Checked"),
+                              labels = c("No", "Yes")
+)
+crocodile$short_act_insulin <- "No"
+crocodile$short_act_insulin[which(rowSums(crocodile[,paste0("injections_short_acting___",1:3)]=="Checked")>0)] <- "Yes"
+crocodile$long_act_insulin <- "No"
+crocodile$long_act_insulin[which(rowSums(crocodile[,paste0("injections_long_acting___",1:6)]=="Checked")>0)] <- "Yes"
+crocodile$metformin <- factor(crocodile$diabetes_meds_other___1,
+                              levels = c("Unchecked", "Checked"),
+                              labels = c("No", "Yes")
+)
+crocodile$tzds <- factor(crocodile$diabetes_meds_other___2,
+                         levels = c("Unchecked", "Checked"),
+                         labels = c("No", "Yes")
+)
+crocodile$glp1_agonists <- factor(crocodile$diabetes_meds_other___3,
+                                  levels = c("Unchecked", "Checked"),
+                                  labels = c("No", "Yes")
+)
+crocodile$sglt2_inhibitors <- factor(crocodile$diabetes_meds_other___4,
+                                     levels = c("Unchecked", "Checked"),
+                                     labels = c("No", "Yes")
+)
+crocodile$other_diabetes_meds <- factor(crocodile$diabetes_meds_other___5,
+                                        levels = c("Unchecked", "Checked"),
+                                        labels = c("No", "Yes")
+)
 # Rename
 crocodile <- crocodile %>%
   rename(
@@ -271,14 +333,43 @@ crocodile$screen_urine_mab <- NA
 # Missing
 crocodile[, screen_vars[which(!screen_vars %in% colnames(crocodile))]] <- NA
 # COFFEE
-# insulin
+# Diabetes medications
 coffee$insulin <- "No"
-coffee$insulin[which(coffee$diabetes_med___1 == "Checked" |
-  coffee$diabetes_med___2 == "Checked")] <- "Yes"
+coffee$insulin[which(coffee$diabetes_tx___1 == "Checked" |
+                          coffee$diabetes_tx___2 == "Checked")] <- "Yes"
 coffee$insulin <- factor(coffee$insulin, levels = c("No", "Yes"))
-# insulin_pump
-coffee$insulin_pump <- coffee$diabetes_med___1
-levels(coffee$insulin_pump) <- c("No", "Yes")
+coffee$insulin_pump <- factor(coffee$diabetes_med___1,
+                                 levels = c("Unchecked", "Checked"),
+                                 labels = c("No", "Yes")
+)
+coffee$short_act_insulin <- factor(coffee$insulin_type___1,
+                           levels = c("Unchecked", "Checked"),
+                           labels = c("No", "Yes")
+)
+coffee$long_act_insulin <- factor(coffee$insulin_type___2,
+                                   levels = c("Unchecked", "Checked"),
+                                   labels = c("No", "Yes")
+)
+coffee$metformin <- factor(coffee$diabetes_med_other___1,
+                              levels = c("Unchecked", "Checked"),
+                              labels = c("No", "Yes")
+)
+coffee$tzds <- factor(coffee$diabetes_med_other___2,
+                         levels = c("Unchecked", "Checked"),
+                         labels = c("No", "Yes")
+)
+coffee$glp1_agonists <- factor(coffee$diabetes_med_other___3,
+                                  levels = c("Unchecked", "Checked"),
+                                  labels = c("No", "Yes")
+)
+coffee$sglt2_inhibitors <- factor(coffee$diabetes_med_other___4,
+                                     levels = c("Unchecked", "Checked"),
+                                     labels = c("No", "Yes")
+)
+coffee$other_diabetes_meds <- factor(coffee$diabetes_med_other___5,
+                                        levels = c("Unchecked", "Checked"),
+                                        labels = c("No", "Yes")
+)
 # activity_factor and schofield
 coffee <- coffee %>%
   unite(., activity_factor, fem_activity_factor, male_activity_factor, na.rm = T) %>%
@@ -286,26 +377,86 @@ coffee <- coffee %>%
 coffee$schofield[coffee$schofield == 0] <- NA
 # Other
 coffee$screening_labs_complete <- coffee$screening_labs_casper_complete
+
 # CASPER
-# insulin
+# Diabetes medications
 casper$insulin <- "No"
 casper$insulin[which(casper$diabetes_med___1 == "Checked" |
-  casper$diabetes_med___2 == "Checked")] <- "Yes"
+                       casper$diabetes_med___2 == "Checked")] <- "Yes"
 casper$insulin <- factor(casper$insulin, levels = c("No", "Yes"))
-# insulin_pump
-casper$insulin_pump <- casper$diabetes_med___1
-levels(casper$insulin_pump) <- c("No", "Yes")
+casper$insulin_pump <- factor(casper$diabetes_med___1,
+                              levels = c("Unchecked", "Checked"),
+                              labels = c("No", "Yes")
+)
+casper$short_act_insulin <- factor(casper$insulin_type___1,
+                                   levels = c("Unchecked", "Checked"),
+                                   labels = c("No", "Yes")
+)
+casper$long_act_insulin <- factor(casper$insulin_type___2,
+                                  levels = c("Unchecked", "Checked"),
+                                  labels = c("No", "Yes")
+)
+casper$metformin <- factor(casper$diabetes_med_other___1,
+                           levels = c("Unchecked", "Checked"),
+                           labels = c("No", "Yes")
+)
+casper$tzds <- factor(casper$diabetes_med_other___2,
+                      levels = c("Unchecked", "Checked"),
+                      labels = c("No", "Yes")
+)
+casper$glp1_agonists <- factor(casper$diabetes_med_other___3,
+                               levels = c("Unchecked", "Checked"),
+                               labels = c("No", "Yes")
+)
+casper$sglt2_inhibitors <- factor(casper$diabetes_med_other___4,
+                                  levels = c("Unchecked", "Checked"),
+                                  labels = c("No", "Yes")
+)
+casper$other_diabetes_meds <- factor(casper$diabetes_med_other___5,
+                                     levels = c("Unchecked", "Checked"),
+                                     labels = c("No", "Yes")
+)
 # activity_factor and schofield
 casper <- casper %>%
   unite(., activity_factor, fem_activity_factor, male_activity_factor, na.rm = T) %>%
   mutate(schofield = rowSums(.[c("schofield_female", "schofield_male")], na.rm = T))
 casper$schofield[casper$schofield == 0] <- NA
+
 # IMPROVE
-# insulin
-improve$insulin <- improve$diabetes_med___2
-improve$insulin <- factor(improve$insulin, levels = c("No", "Yes"))
-# insulin_pump
+# Diabetes medications
+improve$insulin <- factor(improve$diabetes_med___2,
+                            levels = c("Unchecked", "Checked"),
+                            labels = c("No", "Yes")
+)
 improve$insulin_pump <- NA
+improve$short_act_insulin <- factor(improve$insulin_type___1,
+                                   levels = c("Unchecked", "Checked"),
+                                   labels = c("No", "Yes")
+)
+improve$long_act_insulin <- factor(improve$insulin_type___2,
+                                  levels = c("Unchecked", "Checked"),
+                                  labels = c("No", "Yes")
+)
+improve$metformin <- factor(improve$diabetes_med___1,
+                            levels = c("Unchecked", "Checked"),
+                            labels = c("No", "Yes")
+)
+improve$tzds <- factor(improve$diabetes_med_other___1,
+                      levels = c("Unchecked", "Checked"),
+                      labels = c("No", "Yes")
+)
+improve$glp1_agonists <- factor(improve$diabetes_med_other___2,
+                               levels = c("Unchecked", "Checked"),
+                               labels = c("No", "Yes")
+)
+improve$sglt2_inhibitors <- factor(improve$diabetes_med_other___3,
+                                  levels = c("Unchecked", "Checked"),
+                                  labels = c("No", "Yes")
+)
+improve$other_diabetes_meds <- factor(improve$diabetes_med_other___4,
+                                     levels = c("Unchecked", "Checked"),
+                                     labels = c("No", "Yes")
+)
 # activity_factor and schofield
 improve <- improve %>%
   unite(., activity_factor, activity_factor_female, activity_factor_male, na.rm = T) %>%
@@ -325,7 +476,13 @@ screening <- do.call(rbind, list(
 ###############################################################################
 
 dxa_vars <- c(
-  "subject_id", "study", "visit", "dexa_date", "body_fat", "lean_mass",
+  "subject_id", "study", "visit", 
+  # Diabetes medications were formatted above because I (Tim) thought they were screening 
+  # variables. But these variables change at each IMPROVE visit, so they are added 
+  # here instead (the screening variables are limited to visit 1).
+  "insulin", "insulin_pump", "metformin", "short_act_insulin", "long_act_insulin",
+  "tzds", "glp1_agonists", "sglt2_inhibitors", "other_diabetes_meds",
+  "dexa_date", "body_fat", "lean_mass",
   "trunk_mass", "fat_kg", "lean_kg", "trunk_kg", "bone_mineral_density",
   "body_composition_dxa_complete"
 )
@@ -758,7 +915,7 @@ pet <- do.call(rbind, list(
 ###############################################################################
 
 kidney_biopsy <- c(
-  "subject_id", "study", "visit", "bx_date", "bx_kit_id",
+  "subject_id", "study", "visit", "bx_date", "bx_kit_id","age_biopsy",
   "vitals_height", "vitals_weight", "vitals_bmi",
   "vitals_sbp", "vitals_dbp",
   "gloms", paste0("glom_enlarge___", 1:7),
@@ -767,16 +924,21 @@ kidney_biopsy <- c(
   "mes_matrix_area", "mes_index", "mes_volume_wiggins",
   "glom_nuc_count", "mes_nuc_count"
 )
-
 # RENAL-HEIR - correct (names taken from this study)
+renalheir$age_biopsy = renalheir$age_current
 # PENGUIN
 penguin[, tail(kidney_biopsy, -3)] <- NA
 # CROCODILE - all correct (glom_enlarge levels match)
+crocodile$age_biopsy = crocodile$age_current
 # COFFEE
 coffee[, tail(kidney_biopsy, -3)] <- NA
 # CASPER
 casper[, tail(kidney_biopsy, -3)] <- NA
 # IMPROVE
+improve = improve %>% group_by(subject_id) %>% fill(dob)
+improve$dob = parse_date(improve$dob,approx = F)
+improve$bx_date = parse_date(improve$bx_date,approx = F)
+improve$age_biopsy = round(as.numeric(difftime(improve$bx_date,improve$dob,units = "days"))/365.25)
 kidney_biopsy <- do.call(rbind, list(
   renalheir[, kidney_biopsy], penguin[, kidney_biopsy],
   crocodile[, kidney_biopsy], coffee[, kidney_biopsy],
@@ -787,7 +949,7 @@ kidney_biopsy <- kidney_biopsy %>%
     bx_sbp = vitals_sbp, bx_dbp = vitals_dbp, bx_height = vitals_height,
     bx_weight = vitals_weight, bx_bmi = vitals_bmi
   )
-# Capitalize box IDs
+# Capitalize all box IDs
 kidney_biopsy$bx_kit_id <- toupper(kidney_biopsy$bx_kit_id)
 
 ###############################################################################
@@ -818,6 +980,10 @@ df <- df %>%
 # Final formatting and calculated fields
 ###############################################################################
 
+# Age
+df$age = df$age_consent
+df$age[is.na(df$age)] = df$age_biopsy[is.na(df$age)]
+
 # -99, -999, and -9999 as missing
 df[df == -99] <- NA
 df[df == -999] <- NA
@@ -827,14 +993,14 @@ df[df == -9999] <- NA
 ## Excluding adults
 df$screen_bmi_z <- sds(
   value = df$screen_bmi,
-  age = df$age_current,
+  age = df$age,
   sex = df$gender, male = "Male", female = "Female",
   item = "bmi", type = "SDS",
   ref = cdc.ref
 )
 df$screen_bmi_percentile <- sds(
   value = df$screen_bmi,
-  age = df$age_current,
+  age = df$age,
   sex = df$gender, male = "Male", female = "Female",
   item = "bmi", type = "perc",
   ref = cdc.ref
@@ -842,14 +1008,14 @@ df$screen_bmi_percentile <- sds(
 ## Including adults - over 20 treated as age == 20
 df$screen_bmi_z_all <- sds(
   value = df$screen_bmi,
-  age = ifelse(df$age_current >= 20, 20, df$age_current),
+  age = ifelse(df$age >= 20, 20, df$age),
   sex = df$gender, male = "Male", female = "Female",
   item = "bmi", type = "SDS",
   ref = cdc.ref
 )
 df$screen_bmi_percentile_all <- sds(
   value = df$screen_bmi,
-  age = ifelse(df$age_current >= 20, 20, df$age_current),
+  age = ifelse(df$age >= 20, 20, df$age),
   sex = df$gender, male = "Male", female = "Female",
   item = "bmi", type = "perc",
   ref = cdc.ref
@@ -857,7 +1023,7 @@ df$screen_bmi_percentile_all <- sds(
 
 # Various eGFRs
 df <- data.frame(cbind(df, egfr_calc(
-  age = df$age_current, serum_creatinine = df$serum_creatinine,
+  age = df$age, serum_creatinine = df$serum_creatinine,
   cystatin_c = df$cystatin_c, height = df$clamp_height, sex = df$gender
 )))
 
@@ -884,9 +1050,23 @@ df <- data.frame(cbind(df, hemo[, hemodynamics]))
 # Co-enroll "No" values
 df$co_enroll[is.na(df$co_enroll)] <- "No"
 
+# Visit names
+df$visit <- factor(df$visit,
+  levels = 1:4,
+  labels = c(
+    "Screening", "Pre-Surgery",
+    "3 Months Post-Surgery", "12 Months Post-Surgery"
+  )
+)
+
 # Sort and write!
 df <- df %>% arrange(study, subject_id, visit)
 write.csv(df,
   file = paste0("./Data Clean/merged_dataset_", Sys.Date(), ".csv"),
   row.names = F, na = ""
 )
+
+# Data pull for Joe
+joe_data <- read.csv("~/Desktop/Biopsy_clinical_clean_simplified_pbedits_morpho_july19updte.csv", header = T)
+new_joe_data = df[df$bx_kit_id %in% joe_data$KL.ID,]
+write.csv(new_joe_data,file = "/Users/timvigers/Desktop/biopsy_clinical_2022_09_27.csv",na="",row.names = F)
