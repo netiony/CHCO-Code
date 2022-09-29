@@ -16,7 +16,7 @@ renalheir <- exportRecords(
   labels = F
 )
 renalheir$study <- "RENAL-HEIR"
-renalheir$visit <- 1
+renalheir$visit <- "Baseline"
 
 penguin <- exportRecords(
   redcapConnection(
@@ -25,7 +25,7 @@ penguin <- exportRecords(
   labels = F
 )
 penguin$study <- "PENGUIN"
-penguin$visit <- 1
+penguin$visit <- "Baseline"
 
 crocodile <- exportRecords(
   redcapConnection(
@@ -34,7 +34,7 @@ crocodile <- exportRecords(
   labels = F
 )
 crocodile$study <- "CROCODILE"
-crocodile$visit <- 1
+crocodile$visit <- "Baseline"
 
 coffee <- exportRecords(
   redcapConnection(
@@ -43,7 +43,7 @@ coffee <- exportRecords(
   labels = F
 )
 coffee$study <- "COFFEE"
-coffee$visit <- 1
+coffee$visit <- "Baseline"
 
 casper <- exportRecords(
   redcapConnection(
@@ -52,7 +52,7 @@ casper <- exportRecords(
   labels = F
 )
 casper$study <- "CASPER"
-casper$visit <- 1
+casper$visit <- "Baseline"
 
 improve <- exportRecords(
   redcapConnection(
@@ -61,12 +61,9 @@ improve <- exportRecords(
   labels = F
 )
 improve$study <- "IMPROVE"
-improve <- improve %>%
-  group_by(subject_id) %>%
-  mutate(visit = row_number()) %>%
-  ungroup()
+improve$visit=as.character(improve$study_visit)
+improve$visit[is.na(improve$visit)] = "Baseline"
 
-rm(tokens, uri)
 ###############################################################################
 # Demographic variables
 ###############################################################################
@@ -1052,12 +1049,14 @@ df$co_enroll[is.na(df$co_enroll)] <- "No"
 
 # Visit names
 df$visit <- factor(df$visit,
-  levels = 1:4,
-  labels = c(
-    "Screening", "Pre-Surgery",
+  levels = c(
+    "Baseline", "Pre-Surgery",
     "3 Months Post-Surgery", "12 Months Post-Surgery"
   )
 )
+
+# Fix CROCODILE IDs
+df$subject_id[df$study=="CROCODILE"] = paste0("CRC-",str_pad(df$subject_id[df$study=="CROCODILE"],2,"left","0"))
 
 # Sort and write!
 df <- df %>% arrange(study, subject_id, visit)
@@ -1067,6 +1066,6 @@ write.csv(df,
 )
 
 # Data pull for Joe
-joe_data <- read.csv("~/Desktop/Biopsy_clinical_clean_simplified_pbedits_morpho_july19updte.csv", header = T)
-new_joe_data = df[df$bx_kit_id %in% joe_data$KL.ID,]
-write.csv(new_joe_data,file = "/Users/timvigers/Desktop/biopsy_clinical_2022_09_27.csv",na="",row.names = F)
+joe_data <- readxl::read_excel("/Users/timvigers/Desktop/CHCO_clinical_data_needed-9-15_pbedits.xlsx")
+new_joe_data = left_join(joe_data,df,by=c("Study ID"="subject_id","Visit"="visit"))
+write.csv(new_joe_data,file = "/Users/timvigers/Desktop/biopsy_clinical_2022_09_28.csv",na="",row.names = F)
