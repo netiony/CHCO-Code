@@ -5,7 +5,7 @@ library(tidyverse)
 library(parsedate)
 source("~/GitHub/shared-resources/Data Cleaning/Calculated Variables/eGFR.R")
 source("~/GitHub/shared-resources/Data Cleaning/Calculated Variables/hemodynamics.R")
-setwd("~/Documents/Work/CHCO/Petter Bjornstad/Data Harmonization")
+setwd("/Volumes/Documents/Work/CHCO/Petter Bjornstad/Data Harmonization")
 # API import
 tokens <- read.csv("api_tokens.csv")
 uri <- "https://redcap.ucdenver.edu/api/"
@@ -63,6 +63,7 @@ improve <- exportRecords(
 improve$study <- "IMPROVE"
 improve$visit=as.character(improve$study_visit)
 improve$visit[is.na(improve$visit)] = "Baseline"
+
 
 ###############################################################################
 # Demographic variables
@@ -981,6 +982,9 @@ df <- df %>%
 df$age = df$age_consent
 df$age[is.na(df$age)] = df$age_biopsy[is.na(df$age)]
 
+# Diabetes duration
+df$disease_duration = round(as.numeric(difftime(df$diagnosis_date,df$dob,units = "days"))/365.25)
+
 # -99, -999, and -9999 as missing
 df[df == -99] <- NA
 df[df == -999] <- NA
@@ -1065,7 +1069,13 @@ write.csv(df,
   row.names = F, na = ""
 )
 
-# Data pull for Joe
-joe_data <- readxl::read_excel("/Users/timvigers/Desktop/CHCO_clinical_data_needed-9-15_pbedits.xlsx")
-new_joe_data = left_join(joe_data,df,by=c("Study ID"="subject_id","Visit"="visit"))
-write.csv(new_joe_data,file = "/Users/timvigers/Desktop/biopsy_clinical_2022_09_28.csv",na="",row.names = F)
+# Data pull for Allison Dart
+df$height = coalesce(df$bx_height,df$clamp_height,df$screen_height)
+allison = df %>% 
+  filter(study %in% c("RENAL-HEIR","IMPROVE","CASPER","COFFEE")) %>%
+  mutate(height = coalesce(!!! select(.,contains("height"))),
+         weight = coalesce(!!! select(.,contains("weight"))),
+         bmi_z = coalesce(!!! select(.,contains("bmi_z"))),
+         bmi_percentile = coalesce(!!! select(.,contains("bmi_percentile")))) %>%
+  select(subject_id,visit,study,age,gender,race,ethnicity,disease_duration,
+         height,weight,bmi_z,bmi_percentile)
