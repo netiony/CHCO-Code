@@ -915,7 +915,7 @@ pet <- do.call(rbind, list(
 kidney_biopsy <- c(
   "subject_id", "study", "visit", "bx_date", "bx_kit_id","age_biopsy",
   "vitals_height", "vitals_weight", "vitals_bmi",
-  "vitals_sbp", "vitals_dbp",
+  "vitals_sbp", "vitals_dbp","bun",
   "gloms", paste0("glom_enlarge___", 1:7),
   "gloms_gs", "ifta", "vessels___1", "vessels___2", "vessels_other",
   "fia", "glom_tuft_area", "glom_volume_wiggins",
@@ -924,19 +924,23 @@ kidney_biopsy <- c(
 )
 # RENAL-HEIR - correct (names taken from this study)
 renalheir$age_biopsy = renalheir$age_current
+renalheir$bun = renalheir$labs_bun
 # PENGUIN
-penguin[, tail(kidney_biopsy, -3)] <- NA
+penguin[, setdiff(kidney_biopsy,colnames(penguin))] <- NA
 # CROCODILE - all correct (glom_enlarge levels match)
 crocodile$age_biopsy = crocodile$age_current
+crocodile[, setdiff(kidney_biopsy,colnames(crocodile))] <- NA
 # COFFEE
-coffee[, tail(kidney_biopsy, -3)] <- NA
+coffee[, setdiff(kidney_biopsy,colnames(coffee))] <- NA
 # CASPER
-casper[, tail(kidney_biopsy, -3)] <- NA
+casper[, setdiff(kidney_biopsy,colnames(casper))] <- NA
 # IMPROVE
 improve = improve %>% group_by(subject_id) %>% fill(dob)
 improve$dob = parse_date(improve$dob,approx = F)
 improve$bx_date = parse_date(improve$bx_date,approx = F)
 improve$age_biopsy = round(as.numeric(difftime(improve$bx_date,improve$dob,units = "days"))/365.25)
+improve$bun = improve$labs_bun
+
 kidney_biopsy <- do.call(rbind, list(
   renalheir[, kidney_biopsy], penguin[, kidney_biopsy],
   crocodile[, kidney_biopsy], coffee[, kidney_biopsy],
@@ -1070,12 +1074,13 @@ write.csv(df,
 )
 
 # Data pull for Allison Dart
-df$height = coalesce(df$bx_height,df$clamp_height,df$screen_height)
 allison = df %>% 
   filter(study %in% c("RENAL-HEIR","IMPROVE","CASPER","COFFEE")) %>%
   mutate(height = coalesce(!!! select(.,contains("height"))),
          weight = coalesce(!!! select(.,contains("weight"))),
          bmi_z = coalesce(!!! select(.,contains("bmi_z"))),
-         bmi_percentile = coalesce(!!! select(.,contains("bmi_percentile")))) %>%
+         bmi_percentile = coalesce(!!! select(.,contains("bmi_percentile"))),
+         bun = labs_bun) %>%
   select(subject_id,visit,study,age,gender,race,ethnicity,disease_duration,
-         height,weight,bmi_z,bmi_percentile)
+         height,weight,bmi_z,bmi_percentile,bun,hba1c,
+         cystatin_c,serum_creatinine,screen_urine_acr,gfr,gfr_bsa)
