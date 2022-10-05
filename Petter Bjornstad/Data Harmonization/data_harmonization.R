@@ -926,9 +926,11 @@ kidney_biopsy <- c(
 renalheir$age_biopsy = renalheir$age_current
 renalheir$bun = renalheir$labs_bun
 # PENGUIN
+penguin$bun = penguin$bl_bun_s
 penguin[, setdiff(kidney_biopsy,colnames(penguin))] <- NA
 # CROCODILE - all correct (glom_enlarge levels match)
 crocodile$age_biopsy = crocodile$age_current
+crocodile$bun = crocodile$labs_bun
 crocodile[, setdiff(kidney_biopsy,colnames(crocodile))] <- NA
 # COFFEE
 coffee[, setdiff(kidney_biopsy,colnames(coffee))] <- NA
@@ -1080,7 +1082,8 @@ allison = df %>%
          weight = coalesce(!!! select(.,contains("weight"))),
          bmi_z = coalesce(!!! select(.,contains("bmi_z"))),
          bmi_percentile = coalesce(!!! select(.,contains("bmi_percentile"))),
-         bun = labs_bun) %>%
+         first_glucose = coalesce(!!! select(.,glucose_minus_120:glucose_250))) %>%
   select(subject_id,visit,study,age,gender,race,ethnicity,disease_duration,
-         height,weight,bmi_z,bmi_percentile,bun,hba1c,
-         cystatin_c,serum_creatinine,screen_urine_acr,gfr,gfr_bsa)
+         height,weight,bmi_z,bmi_percentile,first_glucose,
+         bun,hba1c,cystatin_c,serum_creatinine,screen_urine_acr,gfr,gfr_bsa)
+write.csv(allison,file = "~/temp.csv",na="",row.names = F)
