@@ -5,7 +5,7 @@ library(tidyverse)
 library(parsedate)
 source("~/GitHub/shared-resources/Data Cleaning/Calculated Variables/eGFR.R")
 source("~/GitHub/shared-resources/Data Cleaning/Calculated Variables/hemodynamics.R")
-setwd("/Volumes/Documents/Work/CHCO/Petter Bjornstad/Data Harmonization")
+setwd("~/Dropbox/Work/CHCO/Petter Bjornstad/Data Harmonization")
 # API import
 tokens <- read.csv("api_tokens.csv")
 uri <- "https://redcap.ucdenver.edu/api/"
@@ -1074,16 +1074,3 @@ write.csv(df,
   file = paste0("./Data Clean/merged_dataset_", Sys.Date(), ".csv"),
   row.names = F, na = ""
 )
-
-# Data pull for Allison Dart
-allison = df %>% 
-  filter(study %in% c("RENAL-HEIR","IMPROVE","CASPER","COFFEE")) %>%
-  mutate(height = coalesce(!!! select(.,contains("height"))),
-         weight = coalesce(!!! select(.,contains("weight"))),
-         bmi_z = coalesce(!!! select(.,contains("bmi_z"))),
-         bmi_percentile = coalesce(!!! select(.,contains("bmi_percentile"))),
-         first_glucose = coalesce(!!! select(.,glucose_minus_120:glucose_250))) %>%
-  select(subject_id,visit,study,age,gender,race,ethnicity,disease_duration,
-         height,weight,bmi_z,bmi_percentile,first_glucose,
-         bun,hba1c,cystatin_c,serum_creatinine,screen_urine_acr,gfr,gfr_bsa)
-write.csv(allison,file = "~/temp.csv",na="",row.names = F)
