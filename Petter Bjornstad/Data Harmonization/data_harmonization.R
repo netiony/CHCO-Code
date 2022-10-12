@@ -17,6 +17,9 @@ renalheir <- exportRecords(
 )
 renalheir$study <- "RENAL-HEIR"
 renalheir$visit <- "Baseline"
+renalheir[renalheir == -99] <- NA
+renalheir[renalheir == -999] <- NA
+renalheir[renalheir == -9999] <- NA
 
 penguin <- exportRecords(
   redcapConnection(
@@ -26,6 +29,9 @@ penguin <- exportRecords(
 )
 penguin$study <- "PENGUIN"
 penguin$visit <- "Baseline"
+penguin[penguin == -99] <- NA
+penguin[penguin == -999] <- NA
+penguin[penguin == -9999] <- NA
 
 crocodile <- exportRecords(
   redcapConnection(
@@ -35,6 +41,9 @@ crocodile <- exportRecords(
 )
 crocodile$study <- "CROCODILE"
 crocodile$visit <- "Baseline"
+crocodile[crocodile == -99] <- NA
+crocodile[crocodile == -999] <- NA
+crocodile[crocodile == -9999] <- NA
 
 coffee <- exportRecords(
   redcapConnection(
@@ -44,6 +53,9 @@ coffee <- exportRecords(
 )
 coffee$study <- "COFFEE"
 coffee$visit <- "Baseline"
+coffee[coffee == -99] <- NA
+coffee[coffee == -999] <- NA
+coffee[coffee == -9999] <- NA
 
 casper <- exportRecords(
   redcapConnection(
@@ -53,6 +65,9 @@ casper <- exportRecords(
 )
 casper$study <- "CASPER"
 casper$visit <- "Baseline"
+casper[casper == -99] <- NA
+casper[casper == -999] <- NA
+casper[casper == -9999] <- NA
 
 improve <- exportRecords(
   redcapConnection(
@@ -63,6 +78,9 @@ improve <- exportRecords(
 improve$study <- "IMPROVE"
 improve$visit=as.character(improve$study_visit)
 improve$visit[is.na(improve$visit)] = "Baseline"
+improve[improve == -99] <- NA
+improve[improve == -999] <- NA
+improve[improve == -9999] <- NA
 
 
 ###############################################################################
@@ -78,6 +96,7 @@ levels(renalheir$group) <- c("T2D", "Obese Control", "Lean Control")
 renalheir$age_at_diabetes_dx <- renalheir$diabetes_age
 renalheir$diagnosis_date <- renalheir$diagnosis
 renalheir$age_consent = renalheir$age_current
+renalheir$co_enroll_id = sub("IT2D","IT",renalheir$co_enroll_id)
 # Race
 races <- c(
   "American Indian or Alaskan Native", "Asian",
@@ -882,6 +901,15 @@ kidney_mri <- do.call(rbind, list(
   casper[, kidney_mri], improve[, kidney_mri]
 ))
 
+# Calculate FSOC = bl_bold - pf_bold
+kidney_mri = kidney_mri %>%
+  mutate(fsoc_r_cortex = bold_r_bl_cortex - bold_r_pf_cortex,
+         fsoc_r_medulla = bold_r_bl_medulla - bold_r_pf_medulla,
+         fsoc_r_kidney = bold_r_bl_kidney - bold_r_pf_kidney,
+         fsoc_l_cortex = bold_l_bl_cortex - bold_l_pf_cortex,
+         fsoc_l_medulla = bold_l_bl_medulla - bold_l_pf_medulla,
+         fsoc_l_kidney = bold_l_bl_kidney - bold_l_pf_kidney)
+
 ###############################################################################
 # PET/CT
 ###############################################################################
@@ -951,7 +979,7 @@ kidney_biopsy <- do.call(rbind, list(
 kidney_biopsy <- kidney_biopsy %>%
   rename(
     bx_sbp = vitals_sbp, bx_dbp = vitals_dbp, bx_height = vitals_height,
-    bx_weight = vitals_weight, bx_bmi = vitals_bmi
+    bx_weight = vitals_weight
   )
 # Capitalize all box IDs
 kidney_biopsy$bx_kit_id <- toupper(kidney_biopsy$bx_kit_id)
@@ -985,16 +1013,13 @@ df <- df %>%
 ###############################################################################
 
 # Age
-df$age = df$age_consent
-df$age[is.na(df$age)] = df$age_biopsy[is.na(df$age)]
+df$age = coalesce(df$age_consent,df$age_biopsy)
+
+# BMI
+df$bmi = coalesce(df$screen_bmi,df$vitals_bmi)
 
 # Diabetes duration
 df$disease_duration = round(as.numeric(difftime(df$diagnosis_date,df$dob,units = "days"))/365.25)
-
-# -99, -999, and -9999 as missing
-df[df == -99] <- NA
-df[df == -999] <- NA
-df[df == -9999] <- NA
 
 # BMI percentile
 ## Excluding adults
@@ -1012,6 +1037,7 @@ df$screen_bmi_percentile <- sds(
   item = "bmi", type = "perc",
   ref = cdc.ref
 )
+
 ## Including adults - over 20 treated as age == 20
 df$screen_bmi_z_all <- sds(
   value = df$screen_bmi,
