@@ -230,7 +230,7 @@ demographics <- do.call(rbind, list(
 # Screening variables
 ###############################################################################
 screen_vars <- c(
-  "subject_id", "study", "visit", "date_of_screen",
+  "subject_id", "study", "visit", "date_of_screen","sglt2i",
   "screen_height", "screen_weight", "screen_bmi",
   "waist_circumference", "hip_circumference", "sys_bp", "dys_bp",
   "map", "pulse", "activity_factor", "schofield", "hba1c", "hemoglobin",
@@ -296,7 +296,7 @@ penguin <- penguin %>%
 penguin$screen_urine_mab <- NA
 # Missing
 penguin[, c(
-  "insulin", "insulin_pump", "metformin", "short_act_insulin",
+  "insulin", "insulin_pump", "metformin", "short_act_insulin","sglt2i",
   "long_act_insulin", "tzds", "glp1_agonists", "sglt2_inhibitors",
   "other_diabetes_meds", "activity_factor", "schofield", "hemoglobin",
   "screen_hematocrit"
@@ -394,7 +394,7 @@ coffee <- coffee %>%
 coffee$schofield[coffee$schofield == 0] <- NA
 # Other
 coffee$screening_labs_complete <- coffee$screening_labs_casper_complete
-
+coffee$sglt2i = NA
 # CASPER
 # Diabetes medications
 casper$insulin <- "No"
@@ -438,7 +438,7 @@ casper <- casper %>%
   unite(., activity_factor, fem_activity_factor, male_activity_factor, na.rm = T) %>%
   mutate(schofield = rowSums(.[c("schofield_female", "schofield_male")], na.rm = T))
 casper$schofield[casper$schofield == 0] <- NA
-
+casper$sglt2i = NA
 # IMPROVE
 # Diabetes medications
 improve$insulin <- factor(improve$diabetes_med___2,
@@ -1003,7 +1003,7 @@ df <- full_join(df, kidney_biopsy)
 df <- full_join(df, pet)
 
 # Fill
-fill_vars <- c("group", "dob", "gender", "race", "ethnicity", "diagnosis_date")
+fill_vars <- c("group", "dob", "gender", "race", "ethnicity", "diagnosis_date","sglt2i")
 df <- df %>%
   group_by(subject_id) %>%
   fill(all_of(fill_vars), .direction = "downup")
