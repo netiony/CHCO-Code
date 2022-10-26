@@ -6,9 +6,8 @@ harmonize_data = function(){
   library(parsedate)
   source("~/GitHub/shared-resources/Data Cleaning/Calculated Variables/eGFR.R")
   source("~/GitHub/shared-resources/Data Cleaning/Calculated Variables/hemodynamics.R")
-  setwd("~/Dropbox/Work/CHCO/Petter Bjornstad/Data Harmonization")
   # API import
-  tokens <- read.csv("api_tokens.csv")
+  tokens <- read.csv("/Volumes/som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
   uri <- "https://redcap.ucdenver.edu/api/"
   renalheir <- exportRecords(
     redcapConnection(
@@ -1008,6 +1007,8 @@ harmonize_data = function(){
   df <- df %>%
     group_by(subject_id) %>%
     fill(all_of(fill_vars), .direction = "downup")
+  # Only T2D are on SGLT2i
+  df$sglt2i[df$group != "T2D"] = "No"
   
   ###############################################################################
   # Final formatting and calculated fields
