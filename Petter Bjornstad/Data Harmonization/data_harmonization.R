@@ -7,7 +7,7 @@ harmonize_data = function(){
   source("~/GitHub/shared-resources/Data Cleaning/Calculated Variables/eGFR.R")
   source("~/GitHub/shared-resources/Data Cleaning/Calculated Variables/hemodynamics.R")
   # API import
-  tokens <- read.csv("/Volumes/som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+  tokens <- read.csv("/Users/timvigers/Documents/Work/CHCO/Petter Bjornstad/Data Harmonization/api_tokens.csv")
   uri <- "https://redcap.ucdenver.edu/api/"
   renalheir <- exportRecords(
     redcapConnection(
@@ -545,7 +545,7 @@ harmonize_data = function(){
   
   clamp_vitals <- c(
     "subject_id", "study", "visit", "clamp_date", "clamp_height",
-    "clamp_weight", "clamp_sbp", "clamp_dbp", "clamp_map", "clamp_pls"
+    "clamp_weight", "clamp_bmi", "clamp_sbp", "clamp_dbp", "clamp_map", "clamp_pls"
   )
   
   # RENAL-HEIR - already correct
@@ -1020,7 +1020,7 @@ harmonize_data = function(){
   df$age = coalesce(df$age_consent,df$age_biopsy,df$age_clamp)
   
   # BMI
-  df$bmi = coalesce(df$screen_bmi,df$vitals_bmi)
+  df$bmi = coalesce(df$screen_bmi,df$vitals_bmi,df$clamp_bmi)
   # BMI percentile
   ## Excluding adults
   df$bmi_z <- sds(
