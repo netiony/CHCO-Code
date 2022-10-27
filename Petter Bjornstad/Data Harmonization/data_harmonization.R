@@ -203,6 +203,7 @@ harmonize_data = function(){
   # IMPROVE
   improve$group <- "T2D"
   improve$age_consent = improve$age_current
+  
   # Race
   improve$race <- apply(improve, 1, function(r) {
     race <- r[paste0("race___", 1:7)]
@@ -493,7 +494,7 @@ harmonize_data = function(){
   ###############################################################################
   
   dxa_vars <- c(
-    "subject_id", "study", "visit", 
+    "subject_id", "study", "visit",
     # Diabetes medications were formatted above because I (Tim) thought they were screening 
     # variables. But these variables change at each IMPROVE visit, so they are added 
     # here instead (the screening variables are limited to visit 1).
@@ -1015,30 +1016,30 @@ harmonize_data = function(){
   ###############################################################################
   
   # Age
-  df$age = coalesce(df$age_consent,df$age_biopsy)
+  df$age_clamp = round(as.numeric(difftime(df$clamp_date,df$dob,units = "days"))/365.25)
+  df$age = coalesce(df$age_consent,df$age_biopsy,df$age_clamp)
   
   # BMI
   df$bmi = coalesce(df$screen_bmi,df$vitals_bmi)
-  
-  # Diabetes duration
-  df$disease_duration = round(as.numeric(difftime(df$diagnosis_date,df$dob,units = "days"))/365.25)
-  
   # BMI percentile
   ## Excluding adults
-  df$screen_bmi_z <- sds(
-    value = df$screen_bmi,
+  df$bmi_z <- sds(
+    value = df$bmi,
     age = df$age,
     sex = df$gender, male = "Male", female = "Female",
     item = "bmi", type = "SDS",
     ref = cdc.ref
   )
-  df$screen_bmi_percentile <- sds(
-    value = df$screen_bmi,
+  df$bmi_percentile <- sds(
+    value = df$bmi,
     age = df$age,
     sex = df$gender, male = "Male", female = "Female",
     item = "bmi", type = "perc",
     ref = cdc.ref
   )
+  
+  # Diabetes duration
+  df$disease_duration = round(as.numeric(difftime(df$diagnosis_date,df$dob,units = "days"))/365.25)
   
   ## Including adults - over 20 treated as age == 20
   df$screen_bmi_z_all <- sds(
