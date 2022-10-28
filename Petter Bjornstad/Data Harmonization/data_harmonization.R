@@ -567,7 +567,9 @@ harmonize_data = function(){
   crocodile$clamp_pls <- crocodile$pulse
   # COFFEE
   coffee$clamp_date <- coffee$cf_clamp_date
+  coffee$clamp_bmi = round((coffee$clamp_weight*10000)/((coffee$clamp_height)^(2)), 2)
   # CASPER - already correct
+  casper$clamp_bmi = round((casper$clamp_weight*10000)/((casper$clamp_height)^(2)), 2)
   # IMPROVE - already correct
   # Merge
   clamp_vitals <- do.call(rbind, list(
@@ -715,12 +717,13 @@ harmonize_data = function(){
   ffa <- ffa[, c("subject_id", "study", "visit", ffa_cols)]
   
   # IMPROVE
-  improve_ffa <- improve[, c("subject_id", "study", "visit", colnames(improve)[grep("ffa_.*\\d{1,}", colnames(improve))])]
+  improve_ffa <- improve[, c("subject_id", "study", "visit", "mmtt_hba1c_base", colnames(improve)[grep("ffa_.*\\d{1,}", colnames(improve))])]
   colnames(improve_ffa) <- sub("neg", "minus", colnames(improve_ffa))
   colnames(improve_ffa)[grep("ffa", colnames(improve_ffa))] <-
     paste0(colnames(improve_ffa)[grep("ffa", colnames(improve_ffa))], "_mmtt")
   # Add IMPROVE
   ffa <- full_join(ffa, improve_ffa)
+  ffa = ffa %>% select(subject_id, study, visit,mmtt_hba1c_base,everything())
   
   ###############################################################################
   # C-peptide clamp data
@@ -853,17 +856,19 @@ harmonize_data = function(){
   ###############################################################################
   
   kidney_mri <- c(
-    "subject_id", "study", "visit", "o2_sats", "pcasl3d_right", "pasl2d_right",
-    "adc_right", "length_right", "width_right", "depth_right",
-    "volume_right", "bold_r_bl_cortex", "bold_r_bl_medulla",
-    "bold_r_bl_kidney", "bold_r_pf_cortex", "bold_r_pf_medulla",
-    "bold_r_pf_kidney", "pcasl3d_left", "pasl2d_left", "adc_left",
-    "length_left", "width_left", "depth_left", "volume_left",
+    "subject_id", "study", "visit","mri_date", "visit_height","visit_weight",
+    "o2_sats", "pcasl3d_right","pasl2d_right","adc_right", "length_right", 
+    "width_right", "depth_right","volume_right", "bold_r_bl_cortex", 
+    "bold_r_bl_medulla","bold_r_bl_kidney", "bold_r_pf_cortex", 
+    "bold_r_pf_medulla","bold_r_pf_kidney", "pcasl3d_left", "pasl2d_left", 
+    "adc_left","length_left", "width_left", "depth_left", "volume_left",
     "bold_l_bl_cortex", "bold_l_bl_medulla", "bold_l_bl_kidney",
     "bold_l_pf_cortex", "bold_l_pf_medulla", "bold_l_pf_kidney"
   )
   
   # RENAL-HEIR
+  renalheir$visit_height = renalheir$clamp_height
+  renalheir$visit_weight = renalheir$clamp_weight
   renalheir <- renalheir %>% rename(pcasl3d_right = asl_right, pcasl3d_left = asl_left)
   renalheir[, c(
     "adc_right", "length_right", "width_right",
@@ -871,10 +876,12 @@ harmonize_data = function(){
     "width_left", "depth_left", "volume_left", "pasl2d_right", "pasl2d_left"
   )] <- NA
   # PENGUIN
-  penguin[, tail(kidney_mri, -3)] <- NA
+  penguin[, setdiff(kidney_mri,colnames(penguin))] <- NA
   # CROCODILE
   crocodile <- crocodile %>% rename(o2_sats = o2_sat)
   # COFFEE
+  coffee$visit_height = coffee$clamp_height
+  coffee$visit_weight = coffee$clamp_weight
   coffee <- coffee %>% rename(pcasl3d_right = asl_right, pcasl3d_left = asl_left)
   coffee[, c(
     "adc_right", "length_right", "width_right",
@@ -882,6 +889,8 @@ harmonize_data = function(){
     "width_left", "depth_left", "volume_left", "pasl2d_right", "pasl2d_left"
   )] <- NA
   # CASPER
+  casper$visit_height = casper$clamp_height
+  casper$visit_weight = casper$clamp_weight
   casper <- casper %>% rename(pcasl3d_right = asl_right, pcasl3d_left = asl_left)
   casper[, c(
     "adc_right", "length_right", "width_right",
@@ -889,6 +898,8 @@ harmonize_data = function(){
     "width_left", "depth_left", "volume_left", "pasl2d_right", "pasl2d_left"
   )] <- NA
   # IMPROVE
+  improve$visit_height = improve$clamp_height
+  improve$visit_weight = improve$clamp_weight
   improve <- improve %>% rename(pcasl3d_right = asl_right, pcasl3d_left = asl_left)
   improve[, c(
     "adc_right", "length_right", "width_right",
@@ -902,6 +913,8 @@ harmonize_data = function(){
     casper[, kidney_mri], improve[, kidney_mri]
   ))
   
+  # Add BMI at MRI
+  kidney_mri$mri_bmi = round(10000*(kidney_mri$visit_weight/(kidney_mri$visit_height^2)),2)
   # Calculate FSOC = bl_bold - pf_bold
   kidney_mri = kidney_mri %>%
     mutate(fsoc_r_cortex = bold_r_bl_cortex - bold_r_pf_cortex,
@@ -1015,12 +1028,16 @@ harmonize_data = function(){
   # Final formatting and calculated fields
   ###############################################################################
   
+  # HbA1c
+  df$hba1c = coalesce(df$hba1c,df$mmtt_hba1c_base)
+  
   # Age
   df$age_clamp = round(as.numeric(difftime(df$clamp_date,df$dob,units = "days"))/365.25)
-  df$age = coalesce(df$age_consent,df$age_biopsy,df$age_clamp)
+  df$age_mri = round(as.numeric(difftime(df$mri_date,df$dob,units = "days"))/365.25)
+  df$age = coalesce(df$age_consent,df$age_biopsy,df$age_clamp,df$age_mri)
   
   # BMI
-  df$bmi = coalesce(df$screen_bmi,df$vitals_bmi,df$clamp_bmi)
+  df$bmi = coalesce(df$screen_bmi,df$vitals_bmi,df$clamp_bmi,df$mri_bmi)
   # BMI percentile
   ## Excluding adults
   df$bmi_z <- sds(
@@ -1040,22 +1057,6 @@ harmonize_data = function(){
   
   # Diabetes duration
   df$disease_duration = round(as.numeric(difftime(df$diagnosis_date,df$dob,units = "days"))/365.25)
-  
-  ## Including adults - over 20 treated as age == 20
-  df$screen_bmi_z_all <- sds(
-    value = df$screen_bmi,
-    age = ifelse(df$age >= 20, 20, df$age),
-    sex = df$gender, male = "Male", female = "Female",
-    item = "bmi", type = "SDS",
-    ref = cdc.ref
-  )
-  df$screen_bmi_percentile_all <- sds(
-    value = df$screen_bmi,
-    age = ifelse(df$age >= 20, 20, df$age),
-    sex = df$gender, male = "Male", female = "Female",
-    item = "bmi", type = "perc",
-    ref = cdc.ref
-  )
   
   # Various eGFRs
   df <- data.frame(cbind(df, egfr_calc(
