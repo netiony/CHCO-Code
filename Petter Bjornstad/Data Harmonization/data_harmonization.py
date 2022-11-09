@@ -27,12 +27,21 @@ tokens = pd.read_csv(
     "~/Documents/Work/CHCO/Petter Bjornstad/Data Harmonization/api_tokens.csv")
 uri = "https://redcap.ucdenver.edu/api/"
 croc_token = tokens.loc[tokens["Study"] == "CROCODILE", "Token"].iloc[0]
+croc = redcap.Project(url=uri, token=croc_token)
+
+# -----------------------------------------------------------------------------
 # For each cross-sectional study, import procedure forms separately then stack
 # longwise for "semi-long" data.
+# -----------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # CROCODILE
-croc = redcap.Project(url=uri, token=croc_token)
-# Define demographic columns of interest
-dem_cols = ["record_id", "dob", "group", "sex", "race", "ethnicity"]
+# ------------------------------------------------------------------------------
+croc_meta = pd.DataFrame(croc.metadata)
+croc_df = croc.export_records(format_type="df")
+# DEMOGRAPHICS
+dem_cols = ["record_id", "dob", "diabetes_dx_date",
+            "group", "sex", "race", "ethnicity"]
 # Export
 croc_demo = croc.export_records(format_type="df", fields=dem_cols)
 # Race columns combined into one
@@ -46,3 +55,10 @@ croc_demo = combine_redcap_checkboxes(croc_demo,
 # Relevel sex and group
 croc_demo["sex"].replace({1: "Male", 2: "Female", 3: "Other"}, inplace=True)
 croc_demo["group"].replace({1: "Type 1 Diabetes", 2: "Control"}, inplace=True)
+# PHYSICAL EXAM
+var = [v for v in croc_meta.loc[croc_meta["form_name"]
+                                == "physical_exam", "field_name"]]
+phys = croc_df.filter(var, axis=1)
+phys["procedure"] = "physical_exam"
+phys.drop(["phys_normal", "phys_abnormal"], axis=1, inplace=True)
+phys.columns = phys.columns.str.replace(r"phys_", "")
