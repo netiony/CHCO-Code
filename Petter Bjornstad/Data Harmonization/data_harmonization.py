@@ -24,7 +24,7 @@ sys.path.insert(1,
 from combine_redcap_checkboxes import combine_redcap_checkboxes
 # REDCap import variables
 tokens = pd.read_csv(
-    "~/Documents/Work/CHCO/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+    "~/Dropbox/Work/CHCO/Petter Bjornstad/Data Harmonization/api_tokens.csv")
 uri = "https://redcap.ucdenver.edu/api/"
 croc_token = tokens.loc[tokens["Study"] == "CROCODILE", "Token"].iloc[0]
 croc = redcap.Project(url=uri, token=croc_token)
@@ -62,7 +62,7 @@ phys = croc_df.filter(var, axis=1)
 phys["procedure"] = "physical_exam"
 phys.drop(["phys_normal", "phys_abnormal"], axis=1, inplace=True)
 phys.columns = phys.columns.str.replace(r"phys_", "")
-# Screening
+# SCREENING
 var = [v for v in croc_meta.loc[croc_meta["form_name"]
                                 == "screening_labs", "field_name"]]
 screen = croc_df.filter(var, axis=1)
@@ -73,3 +73,16 @@ screen.columns = screen.columns.str.replace(
 screen.rename({"creat_s": "creatinine_s",
               "creat_u": "creatinine_u"}, axis=1, inplace=True)
 screen["procedure"] = "screening"
+# MERGE
+crocodile = pd.merge(phys, screen, on=["record_id", "date", "procedure"],
+                     how="outer")
+# REORGANIZE
+crocodile["visit"] = "baseline"
+crocodile["study"] = "CROCODILE"
+id_cols = ["study", "visit", "procedure", "date"]
+other_cols = crocodile.columns.difference(id_cols, sort=False).tolist()
+crocodile = crocodile[id_cols + other_cols]
+# SORT
+crocodile.sort_values(["record_id", "date"], inplace=True)
+# Print final data
+crocodile.to_csv("~/crocodile.csv")
