@@ -62,3 +62,14 @@ phys = croc_df.filter(var, axis=1)
 phys["procedure"] = "physical_exam"
 phys.drop(["phys_normal", "phys_abnormal"], axis=1, inplace=True)
 phys.columns = phys.columns.str.replace(r"phys_", "")
+# Screening
+var = [v for v in croc_meta.loc[croc_meta["form_name"]
+                                == "screening_labs", "field_name"]]
+screen = croc_df.filter(var, axis=1)
+screen.drop(["prescreen_a1c", "prescreen_a1c_date",
+            "screen_menstrual", "screen_upt"], axis=1, inplace=True)
+screen.columns = screen.columns.str.replace(
+    r"labs_|screen_", "", regex=True)
+screen.rename({"creat_s": "creatinine_s",
+              "creat_u": "creatinine_u"}, axis=1, inplace=True)
+screen["procedure"] = "screening"
