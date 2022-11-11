@@ -9,26 +9,22 @@ __maintainer__ = "Tim Vigers"
 __email__ = "timothy.vigers@cuanschutz.edu"
 __status__ = "Dev"
 
-# Libraries
+# Libraries and working directory
+import os
 import redcap
 import pandas as pd
 import numpy as np
 from combine_checkboxes import combine_checkboxes
-
-# For testing
-import os
-os.chdir("/Users/timvigers/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
-
+os.chdir("C:/Users/timbv/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
 
 # REDCap project variables
 tokens = pd.read_csv(
-    "~/Dropbox/Work/CHCO/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+    "C:/Users/timbv/Dropbox/Work/CHCO/Petter Bjornstad/Data Harmonization/api_tokens.csv")
 uri = "https://redcap.ucdenver.edu/api/"
 token = tokens.loc[tokens["Study"] == "CROCODILE", "Token"].iloc[0]
 proj = redcap.Project(url=uri, token=token)
 # Get project metadata
 meta = pd.DataFrame(proj.metadata)
-df = pd.DataFrame(proj.export_records())
 
 # ------------------------------------------------------------------------------
 # Demographics
@@ -37,7 +33,7 @@ df = pd.DataFrame(proj.export_records())
 dem_cols = ["record_id", "dob", "diabetes_dx_date",
             "group", "sex", "race", "ethnicity"]
 # Export
-demo = proj.export_records(format_type="df", fields=dem_cols)
+demo = pd.DataFrame(proj.export_records(fields=dem_cols))
 # Race columns combined into one
 demo = combine_checkboxes(demo, base_name="race",
                           levels=[
@@ -61,7 +57,7 @@ demo["group"].replace({1: "Type 1 Diabetes", 2: "Control"}, inplace=True)
 
 var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                            == "physical_exam", "field_name"]]
-phys = df.filter(var, axis=1)
+phys = pd.DataFrame(proj.export_records(fields=var))
 phys["procedure"] = "physical_exam"
 phys.drop(["phys_normal", "phys_abnormal"], axis=1, inplace=True)
 phys.columns = phys.columns.str.replace(r"phys_", "")
@@ -72,7 +68,7 @@ phys.columns = phys.columns.str.replace(r"phys_", "")
 
 var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                            == "screening_labs", "field_name"]]
-screen = df.filter(var, axis=1)
+screen = pd.DataFrame(proj.export_records(fields=var))
 screen.drop(["prescreen_a1c", "prescreen_a1c_date",
             "screen_menstrual", "screen_upt"], axis=1, inplace=True)
 screen.columns = screen.columns.str.replace(
@@ -87,13 +83,12 @@ screen["procedure"] = "screening"
 
 var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                            == "study_visit_baseline_vitalslabs", "field_name"]]
-labs = df.filter(var, axis=1)
+labs = pd.DataFrame(proj.export_records(fields=var))
 labs.drop(["baseline_vitals", "visit_upt",
           "visit_uptresult", "baseline_labs", "pilabs_yn", "pi_copeptin", "pi_renin", "pi_angiotensin2", "pi_osmo_s", "pi_osmo_u", "pi_lithium_s", "pi_lithium_u", "metabolomics_yn", "kim_yn", "pi_kim_ykl40", "pi_kim_ngal", "pi_kim_kim1", "pi_kim_il18", "pi_kim_tnfr1", "pi_kim_tnfr2"], axis=1, inplace=True)
 labs.columns = labs.columns.str.replace(
     r"visit_|bl_", "", regex=True)
 labs["procedure"] = "labs"
-
 
 # ------------------------------------------------------------------------------
 # BOLD/ASL MRI
@@ -101,7 +96,7 @@ labs["procedure"] = "labs"
 
 var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                            == "study_visit_boldasl_mri", "field_name"]]
-mri = df.filter(var, axis=1)
+mri = pd.DataFrame(proj.export_records(fields=var))
 mri.columns = mri.columns.str.replace(
     r"mri_", "", regex=True)
 mri["procedure"] = "bold_mri"
@@ -109,25 +104,87 @@ mri["procedure"] = "bold_mri"
 # ------------------------------------------------------------------------------
 # DXA Scan
 # ------------------------------------------------------------------------------
+
 var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                            == "study_visit_dxa_scan", "field_name"]]
-dxa = df.filter(var, axis=1)
+dxa = pd.DataFrame(proj.export_records(fields=var))
 dxa.columns = dxa.columns.str.replace(
     r"dxa_", "", regex=True)
 dxa["procedure"] = "dxa"
+
+# ------------------------------------------------------------------------------
+# Clamp
+# ------------------------------------------------------------------------------
+
+var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                           == "study_visit_he_clamp", "field_name"]]
+clamp = pd.DataFrame(proj.export_records(fields=var))
+clamp.drop(["clamp_yn", "clamp_d20", "clamp_ffa",
+           "clamp_insulin", "hct_yn", "clamp_bg"], axis=1, inplace=True)
+clamp.rename({"clamp_wt": "weight", "clamp_ht": "height"},
+             inplace=True, axis=1)
+clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
+clamp["procedure"] = "clamp"
+
+# ------------------------------------------------------------------------------
+# Renal Clearance Testing
+# ------------------------------------------------------------------------------
+
+var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                           == "study_visit_renal_clearance_testing", "field_name"]]
+rct = pd.DataFrame(proj.export_records(fields=var))
+rct.drop(["iohexol_yn", "pah_yn"], axis=1, inplace=True)
+rct["procedure"] = "renal_clearance_testing"
+
+# ------------------------------------------------------------------------------
+# Kidney Biopsy
+# ------------------------------------------------------------------------------
+
+var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                           == "optional_kidney_biopsy_56ba", "field_name"]]
+var = var + ["gloms", "gloms_gs", "ifta", "vessels_other", "fia",
+             "glom_tuft_area", "glom_volume_weibel", "glom_volume_wiggins",
+             "glom_volume_con", "mes_matrix_area",
+             "mes_index", "mes_volume_weibel", "mes_volume_wiggins",
+             "mes_volume_con", "glom_nuc_count", "mes_nuc_count", "art_intima",
+             "art_media", "pod_nuc_density", "pod_cell_volume"]
+biopsy = pd.DataFrame(proj.export_records(fields=var))
+biopsy.drop([col for col in biopsy.columns if '_yn' in col] +
+            [col for col in biopsy.columns if 'procedure_' in col],
+            axis=1, inplace=True)
+biopsy.columns = biopsy.columns.str.replace(r"bx_", "", regex=True)
+biopsy.columns = biopsy.columns.str.replace(r"labs_", "", regex=True)
+biopsy.columns = biopsy.columns.str.replace(r"vitals_", "", regex=True)
+biopsy["procedure"] = "kidney_biopsy"
+
+# ------------------------------------------------------------------------------
+# PET scan
+# ------------------------------------------------------------------------------
+
+var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                           == "optional_pet_scan", "field_name"]]
+pet = pd.DataFrame(proj.export_records(fields=var))
+pet.drop(["petcon_yn"], axis=1, inplace=True)
+pet.columns = pet.columns.str.replace(r"pet_", "", regex=True)
+pet["procedure"] = "pet_scan"
 
 # MERGE
 crocodile = pd.merge(phys, screen, how="outer")
 crocodile = pd.merge(crocodile, labs, how="outer")
 crocodile = pd.merge(crocodile, mri, how="outer")
 crocodile = pd.merge(crocodile, dxa, how="outer")
+crocodile = pd.merge(crocodile, clamp, how="outer")
+crocodile = pd.merge(crocodile, rct, how="outer")
+crocodile = pd.merge(crocodile, biopsy, how="outer")
+crocodile = pd.merge(crocodile, pet, how="outer")
+crocodile = pd.merge(crocodile, demo, on=["record_id"], how="left")
 # REORGANIZE
 crocodile["visit"] = "baseline"
 crocodile["study"] = "CROCODILE"
-id_cols = ["record_id", "study", "visit", "procedure", "date"]
+id_cols = ["record_id", "study"] + dem_cols + ["visit", "procedure", "date"]
 other_cols = crocodile.columns.difference(id_cols, sort=False).tolist()
 crocodile = crocodile[id_cols + other_cols]
 # SORT
 crocodile.sort_values(["record_id", "date", "procedure"], inplace=True)
 # Print final data
-crocodile.to_csv("~/crocodile.csv", index=False)
+crocodile.to_csv("crocodile.csv", index=False)
