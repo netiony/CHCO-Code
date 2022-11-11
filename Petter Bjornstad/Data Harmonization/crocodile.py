@@ -14,8 +14,8 @@ import os
 import redcap
 import pandas as pd
 import numpy as np
-from combine_checkboxes import combine_checkboxes
 os.chdir("C:/Users/timbv/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+from combine_checkboxes import combine_checkboxes
 
 # REDCap project variables
 tokens = pd.read_csv(
@@ -35,16 +35,17 @@ dem_cols = ["record_id", "dob", "diabetes_dx_date",
 # Export
 demo = pd.DataFrame(proj.export_records(fields=dem_cols))
 # Race columns combined into one
-demo = combine_checkboxes(demo, base_name="race",
-                          levels=[
-                              'American Indian/Alaska Native', 'Asian', 'Hawaiian/Pacific Islander', 'Black/African American', 'White', 'Other', 'Unknown'])
+demo = combine_checkboxes(demo, base_name="race", levels=[
+                          'American Indian/Alaska Native', 'Asian', 'Hawaiian/Pacific Islander', 'Black/African American', 'White', 'Other', 'Unknown'])
 # Same for ethnicity
 demo = combine_checkboxes(demo,
                           base_name="ethnicity",
                           levels=["Hispanic or Latino", "Not Hispanic or Latino", "Unknown/Not Reported"])
 # Relevel sex and group
-demo["sex"].replace({1: "Male", 2: "Female", 3: "Other"}, inplace=True)
-demo["group"].replace({1: "Type 1 Diabetes", 2: "Control"}, inplace=True)
+demo["sex"].replace({1: "Male", 2: "Female", 3: "Other",
+                     "1": "Male", "2": "Female", "3": "Other"}, inplace=True)
+demo["group"].replace({1: "Type 1 Diabetes", 2: "Control",
+                       "1": "Type 1 Diabetes", "2": "Control"}, inplace=True)
 
 # ------------------------------------------------------------------------------
 # Medications
@@ -177,14 +178,16 @@ crocodile = pd.merge(crocodile, clamp, how="outer")
 crocodile = pd.merge(crocodile, rct, how="outer")
 crocodile = pd.merge(crocodile, biopsy, how="outer")
 crocodile = pd.merge(crocodile, pet, how="outer")
-crocodile = pd.merge(crocodile, demo, on=["record_id"], how="left")
+crocodile = pd.merge(crocodile, demo, how="outer")
 # REORGANIZE
 crocodile["visit"] = "baseline"
 crocodile["study"] = "CROCODILE"
-id_cols = ["record_id", "study"] + dem_cols + ["visit", "procedure", "date"]
+id_cols = ["record_id", "study"] + \
+    dem_cols[1:] + ["visit", "procedure", "date"]
 other_cols = crocodile.columns.difference(id_cols, sort=False).tolist()
+other_cols.sort()
 crocodile = crocodile[id_cols + other_cols]
 # SORT
-crocodile.sort_values(["record_id", "date", "procedure"], inplace=True)
+crocodile.sort_values(by=["record_id", "date", "procedure"], inplace=True)
 # Print final data
 crocodile.to_csv("crocodile.csv", index=False)
