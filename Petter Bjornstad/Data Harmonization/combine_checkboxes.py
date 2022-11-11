@@ -14,7 +14,7 @@ def combine_checkboxes(df, base_name="", levels=[], sep=" & ",
     cols = [base_name + "___" + s for s in num]
     # Which columns are checked
     values = df[cols].apply(lambda x: " & ".join(
-        [str(s + 1) for s in np.where((x == 1) | (x == "Checked"))[0]]), axis=1)
+        [str(s + 1) for s in np.where((x == 1) | (x == "1") | (x == "Checked"))[0]]), axis=1)
     # Dictionary for number to level translation
     column_translation = dict(zip(num, levels))
     # Replace numbers with levels
