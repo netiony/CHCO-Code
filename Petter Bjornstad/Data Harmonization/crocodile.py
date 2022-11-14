@@ -63,7 +63,7 @@ var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
 phys = pd.DataFrame(proj.export_records(fields=var))
 phys["procedure"] = "physical_exam"
 phys.drop(["phys_normal", "phys_abnormal"], axis=1, inplace=True)
-phys.columns = phys.columns.str.replace(r"phys_", "")
+phys.columns = phys.columns.str.replace(r"phys_", "", regex=True)
 phys.rename({"sysbp": "sbp", "diasbp": "dbp"}, inplace=True, axis=1)
 
 # ------------------------------------------------------------------------------
@@ -77,8 +77,8 @@ screen.drop(["prescreen_a1c", "prescreen_a1c_date",
             "screen_menstrual", "screen_upt"], axis=1, inplace=True)
 screen.columns = screen.columns.str.replace(
     r"labs_|screen_", "", regex=True)
-screen.rename({"creat_s": "creatinine_s",
-              "creat_u": "creatinine_u"}, axis=1, inplace=True)
+screen.rename({"creat_s": "creatinine_s", "uacr": "acr_u",
+              "creat_u": "creatinine_u", "hg": "hemoglobin"}, axis=1, inplace=True)
 screen["procedure"] = "screening"
 
 # ------------------------------------------------------------------------------
@@ -92,6 +92,7 @@ labs.drop(["baseline_vitals", "visit_upt",
           "visit_uptresult", "baseline_labs", "pilabs_yn", "pi_copeptin", "pi_renin", "pi_angiotensin2", "pi_osmo_s", "pi_osmo_u", "pi_lithium_s", "pi_lithium_u", "metabolomics_yn", "kim_yn", "pi_kim_ykl40", "pi_kim_ngal", "pi_kim_kim1", "pi_kim_il18", "pi_kim_tnfr1", "pi_kim_tnfr2"], axis=1, inplace=True)
 labs.columns = labs.columns.str.replace(
     r"visit_|bl_", "", regex=True)
+labs.rename({"uacr": "acr_u"}, axis=1, inplace=True)
 labs["procedure"] = "labs"
 
 # ------------------------------------------------------------------------------
