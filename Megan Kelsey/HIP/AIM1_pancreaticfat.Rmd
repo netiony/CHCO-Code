@@ -1,0 +1,130 @@
+---
+title: "Pancreatic Fat Analysis"
+author: "Cameron Severn and Laura Pyle"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+library(tidyverse)
+library(nlme)
+library(MASS)
+library(knitr)
+library(stringr)
+library(MuMIn)
+
+setwd("E:\\Megan Kelsey\\Kelsey HIP\\Kelsey_HIP_R_Code")
+```
+
+```{r}
+load("./data/dat_analysis_1.RData")
+
+# read in pancreatic fat data and merge
+pancfat <- read.csv("E:\\Megan Kelsey\\Kelsey HIP\\Data raw\\Final_PancreaticFat.csv")
+pancfat$hip_id_screen <- word(pancfat$HIP.ID,1,sep="\\.")
+pancfat$HIP.ID <- NULL
+pancfat$pancreatic_fat_AVG <- pancfat$AVG
+pancfat$AVG <- NULL
+
+dat_analysis_1 <- merge(dat_analysis_1, pancfat, 
+                        by=c("hip_id_screen","study_visit_number_svl"),all.x = T, all.y = F)
+```
+
+```{r}
+dat <- dat_analysis_1 %>% dplyr::select(hip_id_screen,
+                                 study_visit_number_svl,
+                                 pancreatic_fat_AVG,
+                                 lept,
+                                 hba,
+                                 tg_lv,
+                                 igf_lv,
+                                 fasting_glucose,
+                                 fasting_insulin,
+                                 insulin_sensitivity,
+                                 insulin_secretion_mm,
+                                 disposition_index) %>% 
+  filter(!is.na(pancreatic_fat_AVG))
+```
+
+# Linear Models
+
+The following models look at pancreatic fat vs (leptin, hba1c, fasting insulin, fasting glucose, triglycerides, IGF-1, AIRg, SI, and DI) separately and without any clustering by subject. 
+
+Each variable has a plot and linear model. To interpret the model, look at the estimate next to the variable name. This is the slope of the line. If the variable goes up by 1 unit, then pancreatic fat goes up by whatever the estimate is. Then look at the p-value (Pr(>|t|)) in the same row as the estimate to determine significance. 
+
+ 
+```{r, results='asis'}
+predictors <- names(dat)[-c(1:3)]
+
+for (pred in predictors){
+  cat("\n")
+  cat(paste("##",pred))
+  cat("\n")
+  fml <- as.formula(paste("pancreatic_fat_AVG ~ ",pred))
+  model <- lme(fml,
+               random = ~1|hip_id_screen,
+               data = dat,
+               na.action = na.omit)
+  corr_plot <- ggplot(data = dat, 
+                      aes_string(y = "pancreatic_fat_AVG",
+                                 x = pred)) +
+    geom_point() +
+    geom_smooth(method = "lm")
+  r_squared <- r.squaredGLMM(model)[1]
+  r <- sqrt(r_squared)
+  print(corr_plot)
+  cat("\n")
+  #print(paste("R^2 = ",,3)))
+  print(paste("R-squared = ",round(r_squared,3)))
+  cat("\n")
+  print(paste("R = ",round(r,3)))
+  cat("\n")
+  print(kable(summary(model)$tTable))
+}
+```
+
+```{r}
+baseline <- dat %>% filter(study_visit_number_svl == "Tanner 2/3")
+follow_up <- dat %>% filter(study_visit_number_svl == "Tanner 5") %>% 
+  dplyr::select(hip_id_screen, pancreatic_fat_AVG)
+
+delta_set <- merge(baseline, follow_up, by = "hip_id_screen", all = T)
+delta_set$delta_pancreatic_fat <- delta_set$pancreatic_fat_AVG.y - delta_set$pancreatic_fat_AVG.x
+
+delta_set <- delta_set %>% filter(!is.na(delta_pancreatic_fat))
+```
+
+# Change in Pancreatic Fat  - Simple Linear Regression
+
+The following models predict change in pancreatic fat percentage using baseline pancreatic fat percentage and baseline values for leptin, hba1c, fasting insulin, fasting glucose, triglycerides, IGF-1, AIRg, SI, and DI. 
+
+These models can answer the question if any baseline values on their own can predict change in pancreatic fat at follow up. 
+
+Interpreting the baseline value of pancreatic fat (pancreatic_fat_AVG.x): for higher baseline levels of pancreatic fat, change in pancreatic fat from baseline to follow up is lower. 
+
+```{r, results='asis'}
+for (pred in predictors){
+  fml <- as.formula(paste("delta_pancreatic_fat ~ pancreatic_fat_AVG.x +",pred))
+  model <- lm(fml,
+               data = delta_set)
+  print(kable(summary(model)$coefficients))
+}
+```
+
+# Change in Pancreatic fat - Multiple Regression
+
+The following models predict change in pancreatic fat from baseline values. All baseline values are included in the model. In the second model, backwards selection is used to eliminate unnecessary covariates. 
+
+These models can answer the question if baseline values can collectively predict change in pancreatic fat at follow up.
+
+```{r}
+fml <- as.formula(paste("delta_pancreatic_fat ~ pancreatic_fat_AVG.x +",paste(predictors, collapse = "+")))
+model <- lm(fml,
+               data = delta_set)
+kable(summary(model)$coefficients)
+# backwords selected model
+step_model <- stepAIC(model, trace = 0)
+kable(summary(step_model)$coefficients)
+```

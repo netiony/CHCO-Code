@@ -1,0 +1,983 @@
+---
+title: "Pancreatic Fat Analysis"
+author: "Cameron Severn & Laura Pyle"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+library(tidyverse)
+library(nlme)
+library(emmeans)
+library(knitr)
+library(arsenal)
+library(Hmisc)
+library(car)
+library(ggpubr)
+library(doParallel)
+library(caret)
+library(glmnet)
+library(simputation)
+```
+
+# Summary
+
+The following models explore the effect of puberty and Obesity on pancreatic fat. 
+
+
+```{r}
+setwd("E:/Megan Kelsey/Kelsey HIP/Kelsey_HIP_R_Code/data")
+
+load("E:/Megan Kelsey/Kelsey HIP/Kelsey_HIP_R_Code/data/dat_analysis_1.RData")
+load("E:/Megan Kelsey/Kelsey HIP/Kelsey_HIP_R_Code/data/dat_analysis_2.RData")
+```
+
+```{r}
+dat_1 <- dat_analysis_1 
+#dat_2 <- dat_analysis_2 %>% filter(!is.na(liver_fat_perc))
+#dat <- merge(dat_1, dat_2, all = T)
+
+pancfat <- read.csv("E:\\Megan Kelsey\\Kelsey HIP\\Data raw\\Final_PancreaticFat.csv")
+pancfat$hip_id_screen <- word(pancfat$HIP.ID,1,sep="\\.")
+pancfat$HIP.ID <- NULL
+pancfat$pancreatic_fat_AVG <- pancfat$AVG
+pancfat$AVG <- NULL
+pancfat <- pancfat %>% filter(!is.na(pancreatic_fat_AVG))
+
+dat <- merge(dat_analysis_1, pancfat, 
+                        by=c("hip_id_screen","study_visit_number_svl"),all.x = T, all.y = T)
+dat <- dat %>% filter(!is.na(pancreatic_fat_AVG))
+
+#dat <- dat_2 %>% filter(study_phase != "Normal Weight")
+
+dat$study_phase <- as.character(dat$study_phase)
+
+#dat$study_phase[dat$study_phase == "Obese" | dat$study_phase == "Placebo"] <- "Obese/Placebo"
+#dat$study_phase[dat$study_phase == "Metformin" | dat$study_phase == "Placebo"] <- "Obese"
+
+dat$visc_subq_ratio <- dat$visceral / dat$subq_fat
+label(dat$visc_subq_ratio)="Visc:Subq Ratio"
+
+dat$per_subq <- dat$subq_fat / (dat$visceral/(dat$per_visceral/100)) * 100
+label(dat$per_subq)="Percent Subq Fat"
+
+dat$study_visit_number_svl <- factor(dat$study_visit_number_svl, levels = c("Tanner 2/3","Tanner 5"))
+
+label(dat$lept_adipo_ratio)="Leptin:Adiponectin Ratio"
+
+dat$age_y <- dat$age/365.25
+
+label(dat$age_y)="Age (years)"
+
+
+b <-pancfat %>% filter(study_visit_number_svl=="Tanner 2/3") %>% select(hip_id_screen,pancreatic_fat_AVG)
+colnames(b) <- c("hip_id_screen","baseline_pancreatic_fat_AVG")
+b <- b %>% filter(!is.na(baseline_pancreatic_fat_AVG))
+
+t5 <-pancfat %>% filter(study_visit_number_svl=="Tanner 5") %>% select(hip_id_screen,pancreatic_fat_AVG)
+colnames(t5) <- c("hip_id_screen","t5_pancreatic_fat_AVG")
+t5 <- t5 %>% filter(!is.na(t5_pancreatic_fat_AVG))
+
+dat <- merge(dat,b,by="hip_id_screen", all.x = T, all.y = T)
+dat <- merge(dat,t5,by="hip_id_screen", all.x = T, all.y = T)
+dat$delta_pancreatic_fat_AVG <- dat$t5_pancreatic_fat_AVG - dat$baseline_pancreatic_fat_AVG
+
+dat <- dat %>% filter(!is.na(study_phase))
+
+```
+
+```{r, results="asis"}
+control <- tableby.control(numeric.stats = c("N","meansd", "range"))
+
+tab <- tableby(study_phase ~ 
+                 age_y + 
+                 sex_exam + 
+                 race_eth + 
+                 bmi_z +
+                 bmi_screen_v1 +
+                 bmi_pct_screen_v1 +
+                 wc_avg_lv + 
+                 tcholes_lv +
+                 tg_lv +
+                 ldl_lv +
+                 hdl_lv +
+                 adiponect_lv + 
+                 crp_lv +
+                 fasting_glucose +
+                 fasting_insulin +
+                 insulin_sensitivity +
+                 hba +
+                 lept + 
+                 lept_adipo_ratio + 
+                 pancreatic_fat_AVG +
+                 per_subq +
+                 per_visceral + 
+                 fat_percentage_dexa +
+                 ast +
+                 alt
+               ,
+               strata = study_visit_number_svl, data = dat, control = control)
+summary(tab)
+```
+
+
+# Mixed Models
+
+```{r, results = "asis", warning = F, message=F}
+outcomes <- c("pancreatic_fat_AVG",
+              "visceral",
+              "per_visceral",
+              "subq_fat",
+              "visc_subq_ratio",
+              "fat_percentage_dexa",
+              "lept",
+              "ast",
+              "alt")
+
+for (outcome in outcomes){
+  model <- lme(as.formula(paste(outcome, "~ study_visit_number_svl*study_phase")),
+               random = ~1|hip_id_screen, 
+               data=dat,
+               correlation = corCompSymm(),
+               na.action = na.omit)
+  tTable <- as.data.frame(summary(model)$tTable)
+  
+  mm <- emmeans(model,~study_phase*study_visit_number_svl)
+  model_means <- as.data.frame(mm)
+  
+  model_contrasts <- as.data.frame(pairs(mm, by = "study_visit_number_svl", reverse = T))
+  
+  model_contrasts_2 <- as.data.frame(pairs(mm, by = "study_phase", reverse = T))
+  
+  
+  p <- ggplot() +
+    geom_jitter(data = dat, aes_string(y = outcome, x = "study_visit_number_svl", color = "study_phase"), width = 0.1) +
+    geom_point(data = model_means, aes(y = emmean, x = study_visit_number_svl, color = study_phase)) +
+    geom_line(data = model_means, aes(y = emmean, x = study_visit_number_svl, color = study_phase, group = study_phase)) +
+    geom_errorbar(data = model_means, aes(ymax = lower.CL, ymin = upper.CL, x = study_visit_number_svl, color = study_phase, group = study_phase), width = 0.1) +
+    labs(x = "", color = "") +
+    theme_light()
+  
+  
+  names(tTable) <- c("Estimated Effect", "SE", "DF", "t-value", "p-value")
+  tTable <- format(tTable, digits = 3)
+  names(model_means) <- c("Group", "Tanner Stage", "Mean", "SE", "DF","95% CI lower","95% CI upper")
+  model_means <- format(model_means, digits = 3)
+  names(model_contrasts) <- c("Test", "Tanner Stage","Estimated Difference", "SE", "DF", "t-ratio", "p-value")
+  model_contrasts <- format(model_contrasts, digits = 3)
+  names(model_contrasts_2) <- c("Test", "Group","Estimated Difference", "SE", "DF", "t-ratio", "p-value")
+  model_contrasts_2 <- format(model_contrasts_2, digits = 3)
+  
+  cat("\\newpage")
+  cat(paste("##",outcome))
+  cat("\n")
+  print(p)
+  print(kable(tTable, 
+              caption = "T-Table",
+              booktabs = TRUE,
+              longtable = FALSE))
+  print(kable(model_means, 
+              caption = "Model Means",
+              booktabs = TRUE,
+              longtable = FALSE))
+  cat("\\newpage")
+  print(kable(model_contrasts, 
+              caption = "Contrasts by Group",
+              booktabs = TRUE,
+              longtable = FALSE))
+  print(kable(model_contrasts_2, 
+              caption = "Contrasts by Tanner Stage",
+              booktabs = TRUE,
+              longtable = FALSE))
+  cat("\n")
+  
+}
+```
+
+
+```{r}
+fat_measures_baseline <- dat %>% filter(study_visit_number_svl == "Tanner 2/3") %>% 
+  select(insulin_secretion_mm, 
+         insulin_sensitivity, 
+         tg_lv, 
+         crp_lv, 
+         hba, 
+         igf_lv, 
+         sex_exam, 
+         race_eth, 
+         pancreatic_fat_AVG,
+         visceral,
+         per_visceral,
+         subq_fat,
+         visc_subq_ratio,
+         fat_percentage_dexa,
+         lept,
+         lept_adipo_ratio,
+         estradiol,
+         total_testosterone,
+         shbg,
+         fasting_glucose,
+         fasting_insulin,
+         study_phase
+  )
+
+write.csv(fat_measures_baseline,"pancreatic_fat_measures_baseline.csv", row.names = F)
+```
+
+```{r}
+fat_measures_tanner5 <- dat %>% filter(study_visit_number_svl == "Tanner 5") %>% 
+  select(insulin_secretion_mm, 
+         insulin_sensitivity, 
+         tg_lv, 
+         crp_lv, 
+         hba, 
+         igf_lv, 
+         sex_exam, 
+         race_eth, 
+         pancreatic_fat_AVG,
+         visceral,
+         per_visceral,
+         subq_fat,
+         visc_subq_ratio,
+         fat_percentage_dexa,
+         lept,
+         lept_adipo_ratio,
+         estradiol,
+         total_testosterone,
+         shbg,
+         fasting_glucose,
+         fasting_insulin
+  )
+
+write.csv(fat_measures_tanner5,"pancreatic_fat_measures_tanner5.csv", row.names = F)
+```
+
+```{r}
+fat_measures_delta <- dat %>% filter(study_visit_number_svl == "Tanner 5") %>% 
+  select(sex_exam, 
+         race_eth, 
+         baseline_insulin_secretion_mm, 
+         baseline_insulin_sensitivity, 
+         baseline_tg_lv, 
+         baseline_crp_lv, 
+         baseline_hba, 
+         baseline_igf_lv,
+         baseline_lept_adipo_ratio,
+         baseline_pancreatic_fat_AVG,
+         baseline_visceral,
+         baseline_per_visceral,
+         baseline_subq_fat,
+         baseline_visc_subq_ratio,
+         baseline_pancreatic_fat_AVG,
+         baseline_lept,
+         baseline_estradiol,
+         baseline_total_testosterone,
+         baseline_shbg,
+         baseline_fasting_glucose,
+         baseline_fasting_insulin,
+         
+         delta_pancreatic_fat_AVG,
+         delta_visceral,
+         delta_per_visceral,
+         delta_subq_fat,
+         delta_visc_subq_ratio,
+         delta_fat_percentage_dexa,
+         delta_lept
+  )
+
+write.csv(fat_measures_delta,"pancreatic_fat_measures_delta.csv", row.names = F)
+```
+
+```{r}
+fat_measures_tanner5_w_baseline <- dat %>% filter(study_visit_number_svl == "Tanner 5") %>% 
+  select(sex_exam, 
+         race_eth, 
+         baseline_insulin_secretion_mm, 
+         baseline_insulin_sensitivity, 
+         baseline_tg_lv, 
+         baseline_crp_lv, 
+         baseline_hba, 
+         baseline_igf_lv,
+         baseline_lept_adipo_ratio,
+         baseline_pancreatic_fat_AVG,
+         baseline_visceral,
+         baseline_per_visceral,
+         baseline_subq_fat,
+         baseline_visc_subq_ratio,
+         baseline_fat_percentage_dexa,
+         baseline_lept,
+         baseline_estradiol,
+         baseline_total_testosterone,
+         baseline_shbg,
+         baseline_fasting_glucose,
+         baseline_fasting_insulin,
+         
+         pancreatic_fat_AVG,
+         visceral,
+         per_visceral,
+         subq_fat,
+         visc_subq_ratio,
+         fat_percentage_dexa,
+         lept
+  )
+
+write.csv(fat_measures_tanner5_w_baseline,"pancreatic_fat_measures_tanner5_w_baseline.csv", row.names = F)
+```
+
+# Delta Models - Simple Group Means
+
+These group means models test whether the change in each variable is significantly different from 0 (whether that variable changed over puberty) for normal weight and obese separately, but within the same model. Statistically, it is a simple linear regression with the intercept removed. Use this to say if a specific group went up or down throughout puberty while accounting for all observations. 
+
+```{r, results = "asis", warning = F, message=F}
+dat_t5 <- dat %>% filter(study_visit_number_svl == "Tanner 5")
+
+
+outcomes <- c("pancreatic_fat_AVG",
+              "visceral",
+              "per_visceral",
+              "subq_fat",
+              "visc_subq_ratio",
+              "fat_percentage_dexa",
+              "lept",
+              "ast",
+              "alt")
+
+for (outcome in outcomes){
+  model <- lm(as.formula(paste0("delta_",outcome, " ~ ", "study_phase -1")),
+              data=dat_t5,
+              na.action = na.omit)
+  tTable <- as.data.frame(summary(model)$coefficients)
+  
+  
+  p <- ggplot(data = dat_t5, aes_string(x = paste0("delta_",outcome), fill = "study_phase")) +
+    geom_density(alpha = 0.5)
+  
+  
+  
+  cat("\\newpage")
+  cat(paste("##",outcome))
+  cat("\n")
+  print(p)
+  print(kable(tTable, 
+              caption = "T-Table",
+              booktabs = TRUE,
+              longtable = FALSE))
+  
+  cat("\n")
+  
+}
+
+```
+
+# Delta Models - T-tests
+
+T-tests stratified by group. 
+
+```{r, results = "asis", warning = F, message=F}
+outcomes <- c("pancreatic_fat_AVG",
+              "visceral",
+              "per_visceral",
+              "subq_fat",
+              "visc_subq_ratio",
+              "fat_percentage_dexa",
+              "lept",
+              "ast",
+              "alt")
+
+
+for (outcome in outcomes){
+  nw_model <- t.test(as.formula(paste0("delta_",outcome,"~1")),
+                     data=dat_t5[dat_t5$study_phase == "Normal Weight",],
+                     na.action = na.omit)
+  ob_model <- t.test(as.formula(paste0("delta_",outcome,"~1")),
+                     data=dat_t5[dat_t5$study_phase == "Obese",],
+                     na.action = na.omit)
+  results <- data.frame(group = c("Normal Weight","Obese"), estimate = c(nw_model$estimate,ob_model$estimate),p = c(nw_model$p.value,ob_model$p.value))
+  
+  cat("\n")
+  cat(paste("##",outcome))
+  cat("\n")
+  print(kable(results, 
+              caption = "T-test Results",
+              booktabs = TRUE,
+              longtable = FALSE))
+  
+  cat("\n")
+  
+}
+
+```
+
+# Multivariable Models
+
+Models are fitted using important variables selected by Elastic Net models.
+
+## Predict Tanner 5 Pancreatic Fat with Tanner 5 Covariates
+
+Variables Considered:
+
+```{r}
+names(fat_measures_tanner5)
+```
+
+### With obesity
+
+```{r}
+model <- lm(pancreatic_fat_AVG ~ 
+              study_phase +
+              lept + 
+              lept_adipo_ratio +
+              hba +
+              crp_lv +
+              insulin_secretion_mm +
+              fasting_glucose +
+              race_eth +
+              shbg +
+              per_visceral +
+              visc_subq_ratio
+              , 
+            data = dat_t5, 
+            na.action = na.omit)
+
+Anova(model, type = 3)
+summary(model)
+```
+
+### Without obesity
+
+```{r}
+model <- lm(pancreatic_fat_AVG ~ 
+              lept + 
+              lept_adipo_ratio +
+              hba +
+              crp_lv +
+              insulin_secretion_mm +
+              fasting_glucose +
+              race_eth +
+              shbg +
+              per_visceral +
+              visc_subq_ratio
+              , 
+            data = dat_t5, 
+            na.action = na.omit)
+
+Anova(model, type = 3)
+summary(model)
+```
+
+
+
+## Predict Tanner 2/3 Pancreatic Fat with Tanner 2/3 Covariates
+
+Variables Considered:
+
+```{r}
+names(fat_measures_baseline)
+```
+
+### with obesity
+
+```{r}
+model <- lm(pancreatic_fat_AVG ~ 
+              study_phase +
+              lept + 
+              race_eth + 
+              hba + 
+              insulin_secretion_mm + 
+              visceral + 
+              lept_adipo_ratio + 
+              tg_lv +
+              estradiol, 
+            data = fat_measures_baseline, 
+            na.action = na.omit)
+
+Anova(model, type = 3)
+summary(model)
+```
+
+### without obesity
+
+```{r}
+model <- lm(pancreatic_fat_AVG ~ 
+              lept + 
+              race_eth + 
+              hba + 
+              insulin_secretion_mm + 
+              visceral + 
+              lept_adipo_ratio + 
+              tg_lv +
+              estradiol, 
+            data = fat_measures_baseline, 
+            na.action = na.omit)
+
+Anova(model, type = 3)
+summary(model)
+```
+
+
+## Predict Tanner 5 Pancreatic Fat with Tanner 2/3 Covariates
+
+Variables Considered:
+
+```{r}
+names(fat_measures_tanner5_w_baseline[-c(22:28)])
+```
+
+### with obesity
+
+```{r}
+model <- lm(pancreatic_fat_AVG ~ 
+              study_phase +
+              baseline_pancreatic_fat_AVG + 
+              baseline_fasting_insulin +
+              race_eth +
+              baseline_shbg +
+              baseline_lept_adipo_ratio +
+              baseline_visc_subq_ratio +
+              baseline_crp_lv +
+              baseline_visceral +
+              sex_exam
+            , 
+            data = dat_t5, 
+            na.action = na.omit)
+
+Anova(model, type = 3)
+summary(model)
+```
+
+### without obesity
+
+```{r}
+model <- lm(pancreatic_fat_AVG ~ 
+              baseline_pancreatic_fat_AVG + 
+              baseline_fasting_insulin +
+              race_eth +
+              baseline_shbg +
+              baseline_lept_adipo_ratio +
+              baseline_visc_subq_ratio +
+              baseline_crp_lv +
+              baseline_visceral +
+              sex_exam
+            , 
+            data = fat_measures_tanner5_w_baseline, 
+            na.action = na.omit)
+
+Anova(model, type = 3)
+summary(model)
+```
+
+```{r, warning=F, message=F}
+plot_dat <- dat %>% filter(!is.na(study_visit_number_svl)) %>%
+  select(hip_id_screen,
+         study_phase,
+         study_visit_number_svl,
+         insulin_secretion_mm, 
+         insulin_sensitivity, 
+         tg_lv, 
+         crp_lv, 
+         hba, 
+         igf_lv, 
+         sex_exam, 
+         race_eth, 
+         pancreatic_fat_AVG,
+         visceral,
+         per_visceral,
+         subq_fat,
+         visc_subq_ratio,
+         fat_percentage_dexa,
+         lept,
+         lept_adipo_ratio,
+         estradiol,
+         total_testosterone,
+         shbg,
+         ast,
+         alt
+  ) %>% 
+  unique()
+
+healthy <- plot_dat %>% filter(study_phase == "Normal Weight")
+
+healthy <- healthy %>% filter((hip_id_screen %in% healthy$hip_id_screen[healthy$study_visit_number_svl == "Tanner 5"]) & (hip_id_screen %in% healthy$hip_id_screen[healthy$study_visit_number_svl == "Tanner 2/3"]))
+
+point_alpha <- 0.3
+line_alpha <- 0.3
+
+h_just <- 1
+y_just <- 1
+bound_extend <- 0.35
+label_radius <- unit(0, "lines")
+
+model1 <- t.test(pancreatic_fat_AVG ~ study_visit_number_svl, data = healthy, paired = T)
+
+p1 <- ggplot(data = healthy, aes(y = pancreatic_fat_AVG, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model1$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model1$p.value,2))),
+             label.r = label_radius) +
+  labs(y = "Pancreatic Fat (%)",  x = "") +
+  ylim(range(healthy$pancreatic_fat_AVG)[1],
+       range(healthy$pancreatic_fat_AVG)[2] + 
+         bound_extend*(range(healthy$pancreatic_fat_AVG)[2] - 
+                         range(healthy$pancreatic_fat_AVG)[1]))
+
+model2 <- t.test(visceral ~ study_visit_number_svl, data = healthy, paired = T)
+
+p2 <- ggplot(data = healthy, aes(y = visceral, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model2$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model2$p.value,2))),
+             label.r = label_radius) +
+  labs(y = expression("Visceral Fat"~(cm^2)), x = "") +
+  ylim(range(healthy$visceral)[1],
+       range(healthy$visceral)[2] + 
+         bound_extend*(range(healthy$visceral)[2] - 
+                         range(healthy$visceral)[1]))
+
+model3 <- t.test(lept ~ study_visit_number_svl, data = healthy, paired = T)
+
+p3 <- ggplot(data = healthy, aes(y = lept, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model3$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model3$p.value,2))),
+             label.r = label_radius) +
+  labs(y = "Leptin (ng/mL)", x = "") +
+  ylim(range(healthy$lept)[1],
+       range(healthy$lept)[2] + 
+         bound_extend*(range(healthy$lept)[2] - 
+                         range(healthy$lept)[1]))
+
+model4 <- t.test(fat_percentage_dexa ~ study_visit_number_svl, data = healthy, paired = T)
+
+p4 <- ggplot(data = healthy, aes(y = fat_percentage_dexa, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model4$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model4$p.value,2))),
+             label.r = label_radius) +
+  labs(y = "Body Fat by DEXA (%)", x = "") +
+  ylim(range(healthy$fat_percentage_dexa)[1],
+       range(healthy$fat_percentage_dexa)[2] + 
+         bound_extend*(range(healthy$fat_percentage_dexa)[2] - 
+                         range(healthy$fat_percentage_dexa)[1]))
+
+model5 <- t.test(per_visceral ~ study_visit_number_svl, data = healthy, paired = T)
+
+p5 <- ggplot(data = healthy, aes(y = per_visceral, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model5$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model5$p.value,2))),
+             label.r = label_radius) +
+  labs(y = "Visceral Fat (%)", x = "") +
+  ylim(range(healthy$per_visceral)[1],
+       range(healthy$per_visceral)[2] + 
+         bound_extend*(range(healthy$per_visceral)[2] - 
+                         range(healthy$per_visceral)[1]))
+
+model6 <- t.test(ast ~ study_visit_number_svl, data = healthy, paired = T)
+
+p6 <- ggplot(data = healthy, aes(y = ast, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model6$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model6$p.value,2))),
+             label.r = label_radius) +
+  labs(y = "AST (U/L)", x = "") +
+  ylim(range(healthy$ast)[1],
+       range(healthy$ast)[2] + 
+         bound_extend*(range(healthy$ast)[2] - 
+                         range(healthy$ast)[1]))
+
+model7 <- t.test(subq_fat ~ study_visit_number_svl, data = healthy, paired = T)
+
+p7 <- ggplot(data = healthy, aes(y = subq_fat, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model7$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model7$p.value,2))),
+             label.r = label_radius) +
+  labs(y = expression("Subcutaneous Fat"~(cm^2)), x = "") +
+  ylim(range(healthy$subq_fat)[1],
+       range(healthy$subq_fat)[2] + 
+         bound_extend*(range(healthy$subq_fat)[2] - 
+                         range(healthy$subq_fat)[1]))
+
+model8 <- t.test(visc_subq_ratio ~ study_visit_number_svl, data = healthy, paired = T)
+
+p8 <- ggplot(data = healthy, aes(y = visc_subq_ratio, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model8$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model8$p.value,2))),
+             label.r = label_radius) +
+  labs(y = "Visc/Subc Ratio", x = "") +
+  ylim(range(healthy$visc_subq_ratio)[1],
+       range(healthy$visc_subq_ratio)[2] + 
+         bound_extend*(range(healthy$visc_subq_ratio)[2] - 
+                         range(healthy$visc_subq_ratio)[1]))
+
+model9 <- t.test(alt ~ study_visit_number_svl, data = healthy, paired = T)
+
+p9 <- ggplot(data = healthy, aes(y = alt, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model9$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model9$p.value,2))),
+             label.r = label_radius) +
+  labs(y = "ALT (U/L)", x = "") +
+  ylim(range(healthy$alt)[1],
+       range(healthy$alt)[2] + 
+         bound_extend*(range(healthy$alt)[2] - 
+                         range(healthy$alt)[1]))
+
+scalar <- 0.9
+png(filename = "pancreatic_healthy_measures.png", res = 300, width = scalar*3000, height = scalar*2000)
+ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,
+          nrow = 3, ncol = 3)
+dev.off()
+
+# ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,
+#           nrow = 3, ncol = 3)
+
+```
+
+
+```{r, warning=F, message=F}
+obese <- plot_dat %>% filter(study_phase == "Obese")
+
+obese <- obese %>% filter((hip_id_screen %in% obese$hip_id_screen[obese$study_visit_number_svl == "Tanner 5"]) & (hip_id_screen %in% obese$hip_id_screen[obese$study_visit_number_svl == "Tanner 2/3"]))
+
+model1 <- t.test(pancreatic_fat_AVG ~ study_visit_number_svl, data = obese, paired = T)
+
+p1 <- ggplot(data = obese, aes(y = pancreatic_fat_AVG, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model1$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model1$p.value,2))),
+             label.r = label_radius) +
+  labs(y = "Pancreatic Fat (%)",  x = "") +
+  ylim(range(obese$pancreatic_fat_AVG)[1],
+       range(obese$pancreatic_fat_AVG)[2] + 
+         bound_extend*(range(obese$pancreatic_fat_AVG)[2] - 
+                         range(obese$pancreatic_fat_AVG)[1]))
+
+model2 <- t.test(visceral ~ study_visit_number_svl, data = obese, paired = T)
+
+p2 <- ggplot(data = obese, aes(y = visceral, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model2$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model2$p.value,2))),
+             label.r = label_radius) +
+  labs(y = expression("Visceral Fat"~(cm^2)), x = "") +
+  ylim(range(obese$visceral)[1],
+       range(obese$visceral)[2] + 
+         bound_extend*(range(obese$visceral)[2] - 
+                         range(obese$visceral)[1]))
+
+model3 <- t.test(lept ~ study_visit_number_svl, data = obese, paired = T)
+
+p3 <- ggplot(data = obese, aes(y = lept, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model3$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model3$p.value,2))),
+             label.r = label_radius) +
+  labs(y = "Leptin (ng/mL)", x = "") +
+  ylim(range(obese$lept)[1],
+       range(obese$lept)[2] + 
+         bound_extend*(range(obese$lept)[2] - 
+                         range(obese$lept)[1]))
+
+model4 <- t.test(fat_percentage_dexa ~ study_visit_number_svl, data = obese[obese$hip_id_screen != "160-T",], paired = T)
+
+p4 <- ggplot(data = obese, aes(y = fat_percentage_dexa, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model4$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model4$p.value,2))),
+             label.r = label_radius) +
+  labs(y = "Body Fat by DEXA (%)", x = "") +
+  ylim(range(obese$fat_percentage_dexa, na.rm = T)[1],
+       range(obese$fat_percentage_dexa, na.rm = T)[2] + 
+         bound_extend*(range(obese$fat_percentage_dexa, na.rm = T)[2] - 
+                         range(obese$fat_percentage_dexa, na.rm = T)[1]))
+
+model5 <- t.test(per_visceral ~ study_visit_number_svl, data = obese, paired = T)
+
+p5 <- ggplot(data = obese, aes(y = per_visceral, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model5$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model5$p.value,2))),
+             label.r = label_radius) +
+  labs(y = "Visceral Fat (%)", x = "") +
+  ylim(range(obese$per_visceral)[1],
+       range(obese$per_visceral)[2] + 
+         bound_extend*(range(obese$per_visceral)[2] - 
+                         range(obese$per_visceral)[1]))
+
+model6 <- t.test(ast ~ study_visit_number_svl, data = obese, paired = T)
+
+p6 <- ggplot(data = obese, aes(y = ast, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model6$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model6$p.value,2))),
+             label.r = label_radius) +
+  labs(y = "AST (U/L)", x = "") +
+  ylim(range(obese$ast)[1],
+       range(obese$ast)[2] + 
+         bound_extend*(range(obese$ast)[2] - 
+                         range(obese$ast)[1]))
+
+model7 <- t.test(subq_fat ~ study_visit_number_svl, data = obese, paired = T)
+
+p7 <- ggplot(data = obese, aes(y = subq_fat, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model7$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model7$p.value,2))),
+             label.r = label_radius) +
+  labs(y = expression("Subcutaneous Fat"~(cm^2)), x = "") +
+  ylim(range(obese$subq_fat)[1],
+       range(obese$subq_fat)[2] + 
+         bound_extend*(range(obese$subq_fat)[2] - 
+                         range(obese$subq_fat)[1]))
+
+model8 <- t.test(visc_subq_ratio ~ study_visit_number_svl, data = obese, paired = T)
+
+p8 <- ggplot(data = obese, aes(y = visc_subq_ratio, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model8$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model8$p.value,2))),
+             label.r = label_radius) +
+  labs(y = "Visc/Subc Ratio", x = "") +
+  ylim(range(obese$visc_subq_ratio)[1],
+       range(obese$visc_subq_ratio)[2] + 
+         bound_extend*(range(obese$visc_subq_ratio)[2] - 
+                         range(obese$visc_subq_ratio)[1]))
+
+model9 <- t.test(alt ~ study_visit_number_svl, data = obese, paired = T)
+
+p9 <- ggplot(data = obese, aes(y = alt, x = study_visit_number_svl)) +
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(alpha = point_alpha) +
+  geom_line(alpha = line_alpha, aes(group = hip_id_screen)) +
+  theme_light() +
+  geom_label(aes(x=Inf,y=Inf,hjust=h_just,vjust=y_just,
+                 label = paste("Δ", signif(-model9$estimate, 
+                                           digits= 3),
+                               "p =",
+                               signif(model9$p.value,2))),
+             label.r = label_radius) +
+  labs(y = "ALT (U/L)", x = "") +
+  ylim(range(obese$alt)[1],
+       range(obese$alt)[2] + 
+         bound_extend*(range(obese$alt)[2] - 
+                         range(obese$alt)[1]))
+
+scalar <- 0.9
+png(filename = "pancreatic_obese_measures.png", res = 300, width = scalar*3000, height = scalar*2000)
+ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,
+          nrow = 3, ncol = 3)
+dev.off()
+
+# ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,
+#           nrow = 3, ncol = 3)
+
+```
