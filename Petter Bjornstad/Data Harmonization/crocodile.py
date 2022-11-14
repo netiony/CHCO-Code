@@ -15,7 +15,8 @@ import redcap
 import pandas as pd
 import numpy as np
 os.chdir("C:/Users/timbv/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
-from combine_checkboxes import combine_checkboxes
+from harmonization_functions import combine_checkboxes
+from harmonization_functions import find_duplicate_columns
 
 # REDCap project variables
 tokens = pd.read_csv(
@@ -62,6 +63,7 @@ phys = pd.DataFrame(proj.export_records(fields=var))
 phys["procedure"] = "physical_exam"
 phys.drop(["phys_normal", "phys_abnormal"], axis=1, inplace=True)
 phys.columns = phys.columns.str.replace(r"phys_", "")
+phys.rename({"sysbp": "sbp", "diasbp": "dbp"}, inplace=True, axis=1)
 
 # ------------------------------------------------------------------------------
 # Screening labs
@@ -188,6 +190,9 @@ other_cols = crocodile.columns.difference(id_cols, sort=False).tolist()
 other_cols.sort()
 crocodile = crocodile[id_cols + other_cols]
 # SORT
-crocodile.sort_values(by=["record_id", "date", "procedure"], inplace=True)
+crocodile.sort_values(["record_id", "date", "procedure"], inplace=True)
+# Check for duplicated column names
+dups = find_duplicate_columns(crocodile)
+dups.to_csv("~/croc_duplicate_columns.csv", index=False)
 # Print final data
 crocodile.to_csv("crocodile.csv", index=False)
