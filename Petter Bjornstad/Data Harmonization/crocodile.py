@@ -9,18 +9,18 @@ __maintainer__ = "Tim Vigers"
 __email__ = "timothy.vigers@cuanschutz.edu"
 __status__ = "Dev"
 
-# Libraries and working directory
+# Libraries
 import os
 import redcap
 import pandas as pd
 import numpy as np
-os.chdir("C:/Users/timbv/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+os.chdir("/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
 from harmonization_functions import combine_checkboxes
 from harmonization_functions import find_duplicate_columns
 
 # REDCap project variables
 tokens = pd.read_csv(
-    "C:/Users/timbv/Dropbox/Work/CHCO/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+    "~/Dropbox/Work/CHCO/Petter Bjornstad/Data Harmonization/api_tokens.csv")
 uri = "https://redcap.ucdenver.edu/api/"
 token = tokens.loc[tokens["Study"] == "CROCODILE", "Token"].iloc[0]
 proj = redcap.Project(url=uri, token=token)
@@ -35,6 +35,7 @@ dem_cols = ["record_id", "dob", "diabetes_dx_date",
             "group", "sex", "race", "ethnicity"]
 # Export
 demo = pd.DataFrame(proj.export_records(fields=dem_cols))
+demo["co_enroll_id"] = np.nan
 # Race columns combined into one
 demo = combine_checkboxes(demo, base_name="race", levels=[
                           'American Indian/Alaska Native', 'Asian', 'Hawaiian/Pacific Islander', 'Black/African American', 'White', 'Other', 'Unknown'])
@@ -184,7 +185,7 @@ crocodile = pd.merge(crocodile, demo, how="outer")
 # REORGANIZE
 crocodile["visit"] = "baseline"
 crocodile["study"] = "CROCODILE"
-id_cols = ["record_id", "study"] + \
+id_cols = ["record_id", "co_enroll_id", "study"] + \
     dem_cols[1:] + ["visit", "procedure", "date"]
 other_cols = crocodile.columns.difference(id_cols, sort=False).tolist()
 other_cols.sort()
@@ -195,4 +196,4 @@ crocodile.sort_values(["record_id", "date", "procedure"], inplace=True)
 dups = find_duplicate_columns(crocodile)
 dups.to_csv("~/croc_duplicate_columns.csv", index=False)
 # Print final data
-crocodile.to_csv("crocodile.csv", index=False)
+crocodile.to_csv("~/crocodile.csv", index=False)
