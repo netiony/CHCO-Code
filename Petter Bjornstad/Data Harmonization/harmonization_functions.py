@@ -27,3 +27,25 @@ def combine_checkboxes(df, base_name="", levels=[], sep=" & ",
         df.drop(cols, axis=1, inplace=True)
     # Return df
     return df
+
+
+def find_duplicate_columns(df, score_thresh=80):
+    # Libraries
+    import pandas as pd
+    from fuzzywuzzy import fuzz
+    from fuzzywuzzy import process
+    # Remove underscores from column names for better scoring.
+    cols = [c.replace("_", " ") for c in df.columns]
+    # Find each column name's closest match
+    matches = []
+    for var in cols:
+        closest = process.extractBests(var, set(cols) - {var}, limit=1,
+                                       score_cutoff=score_thresh)
+        if len(closest) > 0:
+            closest = (var,) + closest[0]
+            matches.append(closest)
+    # To dataframe
+    matches = pd.DataFrame(matches,
+                           columns=["original_variable", "closest_match", "score"])
+    # Return
+    return matches
