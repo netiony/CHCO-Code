@@ -91,49 +91,88 @@ screen.rename({"serum_creatinine": "creatinine_s", "urine_acr": "acr_u",
               "urine_cre": "creatinine_u", "urine_mab": "mab_u"},
               axis=1, inplace=True)
 screen["procedure"] = "screening"
+screen["visit"] = "baseline"
 
 # ------------------------------------------------------------------------------
-# Labs
-# ------------------------------------------------------------------------------
-
-var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
-                                            == "study_visit_baseline_vitalslabs", "field_name"]]
-labs = pd.DataFrame(proj.export_records(fields=var))
-labs.drop(["baseline_vitals", "visit_upt",
-          "visit_uptresult", "baseline_labs", "pilabs_yn", "pi_copeptin", "pi_renin", "pi_angiotensin2", "pi_osmo_s", "pi_osmo_u", "pi_lithium_s", "pi_lithium_u", "metabolomics_yn", "kim_yn", "pi_kim_ykl40", "pi_kim_ngal", "pi_kim_kim1", "pi_kim_il18", "pi_kim_tnfr1", "pi_kim_tnfr2"], axis=1, inplace=True)
-labs.columns = labs.columns.str.replace(
-    r"visit_|bl_", "", regex=True)
-labs["procedure"] = "labs"
-
-# ------------------------------------------------------------------------------
-# BOLD/ASL MRI
+# Accelerometry
 # ------------------------------------------------------------------------------
 
 var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
-                                            == "study_visit_boldasl_mri", "field_name"]]
+                                            == "accelerometry", "field_name"]]
+var = var + ["study_visit"]
+accel = pd.DataFrame(proj.export_records(fields=var))
+accel = accel.loc[accel["acc_wear_percent"] != ""]
+accel.drop(redcap_cols + ["study_visit_accel"], axis=1, inplace=True)
+accel.columns = accel.columns.str.replace(
+    r"acc_|accel_", "", regex=True)
+accel["procedure"] = "accelerometry"
+
+# ------------------------------------------------------------------------------
+# Cardio/Abdominal MRI
+# ------------------------------------------------------------------------------
+
+var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
+                                            == "cardioabdominal_mri", "field_name"]]
+var = var + ["study_visit"]
 mri = pd.DataFrame(proj.export_records(fields=var))
+mri.drop(redcap_cols + ["mri_cardio", "mri_abdo",
+                        "mri_aortic", "study_visit_mri"],
+         axis=1, inplace=True)
+mri = mri.loc[mri["mri_visit_date"] != ""]
 mri.columns = mri.columns.str.replace(
-    r"mri_", "", regex=True)
-mri["procedure"] = "bold_mri"
+    r"mri_|visit_", "", regex=True)
+mri["procedure"] = "cardio_abdominal_mri"
 
 # ------------------------------------------------------------------------------
-# DXA Scan
+# MMTT + Metabolic Cart
 # ------------------------------------------------------------------------------
 
 var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
-                                            == "study_visit_dxa_scan", "field_name"]]
+                                            == "mmtt_metabolic_cart", "field_name"]]
+mmtt = pd.DataFrame(proj.export_records(fields=var))
+mmtt.drop(redcap_cols + ["study_visit_mttt", "mmtt_vitals", "mmtt_pregnant",
+                         "mmtt_lmp", "mmtt_brmr", "mmtt_60rmr", "mmtt_base_labs", "mmtt_ffa_labs", "mmtt_insulin",
+                         "mmtt_glp1", "mmtt_cpep", "mmtt_yy", "mmtt_glucagon",
+                         "mmtt_gluc"],
+          axis=1, inplace=True)
+mmtt = mmtt.loc[mmtt["mmtt_date"] != ""]
+mmtt.columns = mmtt.columns.str.replace(
+    r"mmtt_", "", regex=True)
+mmtt.rename({"wt": "weight", "ht": "height", "waist": "waistcm",
+             "hip": "hipcm", "hr": "pulse", "sys_bp": "sbp", "dia_bp": "dbp"},
+            inplace=True, axis=1)
+mmtt["procedure"] = "mmtt"
+
+# ------------------------------------------------------------------------------
+# DXA
+# ------------------------------------------------------------------------------
+
+var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
+                                            == "body_composition_dxa_bod_pod", "field_name"]]
 dxa = pd.DataFrame(proj.export_records(fields=var))
+dxa.drop(redcap_cols + ["study_visit_bodycomp", "dxa_complete",
+                        "bodpod_complete"],
+         axis=1, inplace=True)
+dxa = dxa.loc[dxa["bodcomp_date"] != ""]
 dxa.columns = dxa.columns.str.replace(
-    r"dxa_", "", regex=True)
-dxa["procedure"] = "dxa"
+    r"dxa_|bp_|bodcomp_", "", regex=True)
 
 # ------------------------------------------------------------------------------
 # Clamp
 # ------------------------------------------------------------------------------
 
 var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
-                                            == "study_visit_he_clamp", "field_name"]]
+                                            == "clamp", "field_name"]]
 clamp = pd.DataFrame(proj.export_records(fields=var))
+clamp.drop(redcap_cols + ["study_visit_clamp", "baseline", "fasting_labs",
+                          "bg_labs", "ns_bolus", "urine_labs"],
+           axis=1, inplace=True)
+clamp = clamp.loc[clamp["clamp_date"] != ""]
+clamp.columns = clamp.columns.str.replace(
+    r"clamp_", "", regex=True)
+clamp.to_csv("~/clamp.csv")
+
+
 clamp.drop(["clamp_yn", "clamp_d20", "clamp_ffa",
            "clamp_insulin", "hct_yn", "clamp_bg"], axis=1, inplace=True)
 clamp.rename({"clamp_wt": "weight", "clamp_ht": "height"},
