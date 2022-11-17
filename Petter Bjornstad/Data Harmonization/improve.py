@@ -175,6 +175,17 @@ clamp["procedure"] = "clamp"
 # Outcomes
 # ------------------------------------------------------------------------------
 
+var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
+                                                           == "outcomes", "field_name"]]
+out = pd.DataFrame(proj.export_records(fields=var))
+out.drop(redcap_cols + ["kidney_outcomes", "egfr", "metab_outcomes",
+                        "asl_outcomes", "bold_outcomes", "ipsc_draw"],
+         axis=1, inplace=True)
+out = out.loc[out["mri_date"] != ""]
+out.columns = out.columns.str.replace(
+    r"mri_", "", regex=True)
+out["procedure"] = "kidney_outcomes"
+
 # ------------------------------------------------------------------------------
 # Kidney Biopsy
 # ------------------------------------------------------------------------------
@@ -196,7 +207,6 @@ biopsy.columns = biopsy.columns.str.replace(r"bx_", "", regex=True)
 biopsy.columns = biopsy.columns.str.replace(r"labs_", "", regex=True)
 biopsy.columns = biopsy.columns.str.replace(r"vitals_", "", regex=True)
 biopsy["procedure"] = "kidney_biopsy"
-biopsy.to_csv("~/biopsy.csv")
 
 # MERGE
 improve = pd.merge(phys, screen, how="outer")
@@ -220,8 +230,3 @@ improve.sort_values(["subject_id", "visit", "date", "procedure"], inplace=True)
 improve["visit"].replace({'': "baseline", '1': "pre_surgery",
                           '2': "3_months_post_surgery",
                           '3': "12_months_post_surgery"}, inplace=True)
-# Check for duplicated column names
-dups = find_duplicate_columns(improve)
-dups.to_csv("~/imp_duplicate_columns.csv", index=False)
-# Print final data
-improve.to_csv("~/improve.csv", index=False)

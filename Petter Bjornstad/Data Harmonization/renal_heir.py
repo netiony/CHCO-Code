@@ -120,6 +120,15 @@ clamp["procedure"] = "clamp"
 # Outcomes
 # ------------------------------------------------------------------------------
 
+var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
+                                            == "outcomes", "field_name"]]
+out = pd.DataFrame(proj.export_records(fields=var))
+out.drop(["kidney_outcomes", "egfr", "metab_outcomes", "asl_outcomes"],
+         axis=1, inplace=True)
+out.columns = out.columns.str.replace(
+    r"mri_", "", regex=True)
+out["procedure"] = "kidney_outcomes"
+
 # ------------------------------------------------------------------------------
 # Kidney Biopsy
 # ------------------------------------------------------------------------------
@@ -146,6 +155,7 @@ biopsy["procedure"] = "kidney_biopsy"
 renal_heir = pd.merge(phys, screen, how="outer")
 renal_heir = pd.merge(renal_heir, dxa, how="outer")
 renal_heir = pd.merge(renal_heir, clamp, how="outer")
+renal_heir = pd.merge(renal_heir, out, how="outer")
 renal_heir = pd.merge(renal_heir, biopsy, how="outer")
 renal_heir = pd.merge(renal_heir, demo, how="outer")
 # REORGANIZE
@@ -157,8 +167,3 @@ other_cols = renal_heir.columns.difference(id_cols).tolist()
 renal_heir = renal_heir[id_cols + other_cols]
 # SORT
 renal_heir.sort_values(["subject_id", "date", "procedure"], inplace=True)
-# Check for duplicated column names
-dups = find_duplicate_columns(renal_heir)
-dups.to_csv("~/rh_duplicate_columns.csv", index=False)
-# Print final data
-renal_heir.to_csv("~/renal_heir.csv", index=False)
