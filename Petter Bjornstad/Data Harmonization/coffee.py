@@ -1,5 +1,5 @@
 """
-This code is designed to pull data from the CASPER REDCap project and output data in a "semi-long" format with one row per study procedure, and a visit column for longitudinal clustering when combined with other studies.
+This code is designed to pull data from the COFFEE REDCap project and output data in a "semi-long" format with one row per study procedure, and a visit column for longitudinal clustering when combined with other studies.
 """
 __author__ = "Tim Vigers"
 __credits__ = ["Tim Vigers"]
@@ -22,7 +22,7 @@ from harmonization_functions import find_duplicate_columns
 tokens = pd.read_csv(
     "~/Dropbox/Work/CHCO/Petter Bjornstad/Data Harmonization/api_tokens.csv")
 uri = "https://redcap.ucdenver.edu/api/"
-token = tokens.loc[tokens["Study"] == "CASPER", "Token"].iloc[0]
+token = tokens.loc[tokens["Study"] == "COFFEE", "Token"].iloc[0]
 proj = redcap.Project(url=uri, token=token)
 # Get project metadata
 meta = pd.DataFrame(proj.metadata)
@@ -67,7 +67,7 @@ demo["group"] = "Type 1 Diabetes"
 # ------------------------------------------------------------------------------
 
 var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
-                                            == "physical_exam", "field_name"]]
+                                            == "physical_exam_casper", "field_name"]]
 phys = pd.DataFrame(proj.export_records(fields=var))
 phys["procedure"] = "physical_exam"
 phys.drop(["phys_norm", "phys_no", "breast_tanner",
@@ -81,7 +81,7 @@ phys.rename({"sys_bp": "sbp", "dys_bp": "dbp", "waist_circumference": "waistcm",
 # ------------------------------------------------------------------------------
 
 var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
-                                            == "screening_labs", "field_name"]]
+                                            == "screening_labs_casper", "field_name"]]
 screen = pd.DataFrame(proj.export_records(fields=var))
 screen.drop(['a1c_pre', 'a1c_pre_date', "screen_pregnant"],
             axis=1, inplace=True)
@@ -100,23 +100,12 @@ var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                             == "clamp", "field_name"]]
 clamp = pd.DataFrame(proj.export_records(fields=var))
 clamp.drop(["baseline", "fasting_labs", "bg_labs", "urine_labs", "hct_lab",
-            "a1c_clamp_time", "clamp_a1c", "clamp_a1c_date"],
+            "cs_clamp_date"],
            axis=1, inplace=True)
-clamp = clamp.loc[clamp["clamp_date"] != ""]
+clamp = clamp.loc[clamp["cf_clamp_date"] != ""]
 clamp.columns = clamp.columns.str.replace(
-    r"clamp_", "", regex=True)
+    r"clamp_|cf_", "", regex=True)
 clamp["procedure"] = "clamp"
-
-# ------------------------------------------------------------------------------
-# DXA Scan
-# ------------------------------------------------------------------------------
-
-var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
-                                            == "body_composition_dxa", "field_name"]]
-dxa = pd.DataFrame(proj.export_records(fields=var))
-dxa.columns = dxa.columns.str.replace(
-    r"dexa_", "", regex=True)
-dxa["procedure"] = "dxa"
 
 # ------------------------------------------------------------------------------
 # Outcomes
@@ -135,21 +124,20 @@ out["procedure"] = "kidney_outcomes"
 out.to_csv("~/out.csv")
 
 # MERGE
-casper = pd.merge(phys, screen, how="outer")
-casper = pd.merge(casper, dxa, how="outer")
-casper = pd.merge(casper, clamp, how="outer")
-casper = pd.merge(casper, demo, how="outer")
+coffee = pd.merge(phys, screen, how="outer")
+coffee = pd.merge(coffee, clamp, how="outer")
+coffee = pd.merge(coffee, demo, how="outer")
 # REORGANIZE
-casper["visit"] = "baseline"
-casper["study"] = "CASPER"
+coffee["visit"] = "baseline"
+coffee["study"] = "COFFEE"
 id_cols = ["subject_id", "co_enroll_id", "study"] + \
     dem_cols[1:] + ["visit", "procedure", "date"]
-other_cols = casper.columns.difference(id_cols).tolist()
-casper = casper[id_cols + other_cols]
+other_cols = coffee.columns.difference(id_cols).tolist()
+coffee = coffee[id_cols + other_cols]
 # SORT
-casper.sort_values(["subject_id", "date", "procedure"], inplace=True)
+coffee.sort_values(["subject_id", "date", "procedure"], inplace=True)
 # Check for duplicated column names
-dups = find_duplicate_columns(casper)
+dups = find_duplicate_columns(coffee)
 dups.to_csv("~/croc_duplicate_columns.csv", index=False)
 # Print final data
-casper.to_csv("~/casper.csv", index=False)
+coffee.to_csv("~/coffee.csv", index=False)
