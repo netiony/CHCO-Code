@@ -188,8 +188,7 @@ crocodile["visit"] = "baseline"
 crocodile["study"] = "CROCODILE"
 id_cols = ["record_id", "co_enroll_id", "study"] + \
     dem_cols[1:] + ["visit", "procedure", "date"]
-other_cols = crocodile.columns.difference(id_cols, sort=False).tolist()
-other_cols.sort()
+other_cols = crocodile.columns.difference(id_cols).tolist()
 crocodile = crocodile[id_cols + other_cols]
 # SORT
 crocodile.sort_values(["record_id", "date", "procedure"], inplace=True)

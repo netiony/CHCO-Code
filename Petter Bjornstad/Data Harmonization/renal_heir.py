@@ -1,5 +1,5 @@
 """
-This code is designed to pull data from the CROCODILE REDCap project and output data in a "semi-long" format with one row per study procedure, and a visit column for longitudinal clustering when combined with other studies.
+This code is designed to pull data from the RENAL HEIR REDCap project and output data in a "semi-long" format with one row per study procedure, and a visit column for longitudinal clustering when combined with other studies.
 """
 __author__ = "Tim Vigers"
 __credits__ = ["Tim Vigers"]
@@ -35,11 +35,10 @@ dem_cols = ["subject_id", "co_enroll_id", "dob", "diagnosis",
             "group", "gender", "race", "ethnicity"]
 # Export
 demo = pd.DataFrame(proj.export_records(fields=dem_cols))
-demo.drop(redcap_cols, axis=1, inplace=True)
 demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date"},
             inplace=True, axis=1)
 dem_cols[3] = "diabetes_dx_date"
-dem_cols[4] = "sex"
+dem_cols[5] = "sex"
 # Race columns combined into one
 demo = combine_checkboxes(demo, base_name="race", levels=[
                           "American Indian or Alaskan Native", "Asian", "Hawaiian or Pacific Islander", "Black or African American", "White", "Unknown", "Other"])
@@ -68,11 +67,11 @@ var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                             == "physical_exam", "field_name"]]
 phys = pd.DataFrame(proj.export_records(fields=var))
 phys["procedure"] = "physical_exam"
-
-
-phys.drop(["phys_normal", "phys_abnormal"], axis=1, inplace=True)
-phys.columns = phys.columns.str.replace(r"phys_", "", regex=True)
-phys.rename({"sysbp": "sbp", "diasbp": "dbp"}, inplace=True, axis=1)
+phys.drop(["male_activity_factor", "fem_activity_factor", "schofield_male",
+           "schofield_female", "phys_norm", "phys_no", "breast_tanner", "testicular_volume", "lmp", "screen_bmi_percentile"], axis=1, inplace=True)
+phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
+phys.rename({"sysbp": "sbp", "diasbp": "dbp",
+            "waist_circumference": "waistcm", "hip_circumference": "hipcm"}, inplace=True, axis=1)
 
 # ------------------------------------------------------------------------------
 # Screening labs
@@ -81,48 +80,24 @@ phys.rename({"sysbp": "sbp", "diasbp": "dbp"}, inplace=True, axis=1)
 var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                             == "screening_labs", "field_name"]]
 screen = pd.DataFrame(proj.export_records(fields=var))
-screen.drop(["prescreen_a1c", "prescreen_a1c_date",
-            "screen_menstrual", "screen_upt"], axis=1, inplace=True)
+screen.drop(["a1c_pre", "a1c_pre_date", "screen_pregnant"],
+            axis=1, inplace=True)
 screen.columns = screen.columns.str.replace(
-    r"labs_|screen_", "", regex=True)
-screen.rename({"creat_s": "creatinine_s", "uacr": "acr_u",
-              "creat_u": "creatinine_u", "hg": "hemoglobin"}, axis=1, inplace=True)
+    r"_of_screen|screen_", "", regex=True)
+screen.rename({"serum_creatinine": "creatinine_s", "urine_acr": "acr_u",
+              "urine_mab": "mab_u", "urine_cre": "creatinine_u"},
+              axis=1, inplace=True)
 screen["procedure"] = "screening"
-
-# ------------------------------------------------------------------------------
-# Labs
-# ------------------------------------------------------------------------------
-
-var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
-                                            == "study_visit_baseline_vitalslabs", "field_name"]]
-labs = pd.DataFrame(proj.export_records(fields=var))
-labs.drop(["baseline_vitals", "visit_upt",
-          "visit_uptresult", "baseline_labs", "pilabs_yn", "pi_copeptin", "pi_renin", "pi_angiotensin2", "pi_osmo_s", "pi_osmo_u", "pi_lithium_s", "pi_lithium_u", "metabolomics_yn", "kim_yn", "pi_kim_ykl40", "pi_kim_ngal", "pi_kim_kim1", "pi_kim_il18", "pi_kim_tnfr1", "pi_kim_tnfr2"], axis=1, inplace=True)
-labs.columns = labs.columns.str.replace(
-    r"visit_|bl_", "", regex=True)
-labs.rename({"uacr": "acr_u"}, axis=1, inplace=True)
-labs["procedure"] = "labs"
-
-# ------------------------------------------------------------------------------
-# BOLD/ASL MRI
-# ------------------------------------------------------------------------------
-
-var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
-                                            == "study_visit_boldasl_mri", "field_name"]]
-mri = pd.DataFrame(proj.export_records(fields=var))
-mri.columns = mri.columns.str.replace(
-    r"mri_", "", regex=True)
-mri["procedure"] = "bold_mri"
 
 # ------------------------------------------------------------------------------
 # DXA Scan
 # ------------------------------------------------------------------------------
 
 var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
-                                            == "study_visit_dxa_scan", "field_name"]]
+                                            == "body_composition_dxa", "field_name"]]
 dxa = pd.DataFrame(proj.export_records(fields=var))
 dxa.columns = dxa.columns.str.replace(
-    r"dxa_", "", regex=True)
+    r"dexa_", "", regex=True)
 dxa["procedure"] = "dxa"
 
 # ------------------------------------------------------------------------------
@@ -130,31 +105,27 @@ dxa["procedure"] = "dxa"
 # ------------------------------------------------------------------------------
 
 var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
-                                            == "study_visit_he_clamp", "field_name"]]
+                                            == "clamp", "field_name"]]
 clamp = pd.DataFrame(proj.export_records(fields=var))
-clamp.drop(["clamp_yn", "clamp_d20", "clamp_ffa",
-           "clamp_insulin", "hct_yn", "clamp_bg"], axis=1, inplace=True)
-clamp.rename({"clamp_wt": "weight", "clamp_ht": "height"},
+clamp.drop(["baseline", "fasting_labs", "urine_labs", "hct_lab",
+           "bg_labs", "ffa_lab", "cpep_lab", "insulin_labs"], axis=1, inplace=True)
+clamp.columns = clamp.columns.str.replace(
+    r"clamp_", "", regex=True)
+clamp.rename({"serum_creatinine": "creatinine_s", "serum_sodium": "sodium_s"},
              inplace=True, axis=1)
 clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
 clamp["procedure"] = "clamp"
 
 # ------------------------------------------------------------------------------
-# Renal Clearance Testing
+# Outcomes
 # ------------------------------------------------------------------------------
-
-var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
-                                            == "study_visit_renal_clearance_testing", "field_name"]]
-rct = pd.DataFrame(proj.export_records(fields=var))
-rct.drop(["iohexol_yn", "pah_yn"], axis=1, inplace=True)
-rct["procedure"] = "renal_clearance_testing"
 
 # ------------------------------------------------------------------------------
 # Kidney Biopsy
 # ------------------------------------------------------------------------------
 
-var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
-                                            == "optional_kidney_biopsy_56ba", "field_name"]]
+var = ["subject_id", ] + [v for v in meta.loc[meta["form_name"]
+                                              == "kidney_biopsy", "field_name"]]
 var = var + ["gloms", "gloms_gs", "ifta", "vessels_other", "fia",
              "glom_tuft_area", "glom_volume_weibel", "glom_volume_wiggins",
              "glom_volume_con", "mes_matrix_area",
@@ -162,6 +133,7 @@ var = var + ["gloms", "gloms_gs", "ifta", "vessels_other", "fia",
              "mes_volume_con", "glom_nuc_count", "mes_nuc_count", "art_intima",
              "art_media", "pod_nuc_density", "pod_cell_volume"]
 biopsy = pd.DataFrame(proj.export_records(fields=var))
+biopsy = biopsy.loc[biopsy["bx_date"] != ""]
 biopsy.drop([col for col in biopsy.columns if '_yn' in col] +
             [col for col in biopsy.columns if 'procedure_' in col],
             axis=1, inplace=True)
@@ -170,39 +142,23 @@ biopsy.columns = biopsy.columns.str.replace(r"labs_", "", regex=True)
 biopsy.columns = biopsy.columns.str.replace(r"vitals_", "", regex=True)
 biopsy["procedure"] = "kidney_biopsy"
 
-# ------------------------------------------------------------------------------
-# PET scan
-# ------------------------------------------------------------------------------
-
-var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
-                                            == "optional_pet_scan", "field_name"]]
-pet = pd.DataFrame(proj.export_records(fields=var))
-pet.drop(["petcon_yn"], axis=1, inplace=True)
-pet.columns = pet.columns.str.replace(r"pet_", "", regex=True)
-pet["procedure"] = "pet_scan"
-
 # MERGE
-crocodile = pd.merge(phys, screen, how="outer")
-crocodile = pd.merge(crocodile, labs, how="outer")
-crocodile = pd.merge(crocodile, mri, how="outer")
-crocodile = pd.merge(crocodile, dxa, how="outer")
-crocodile = pd.merge(crocodile, clamp, how="outer")
-crocodile = pd.merge(crocodile, rct, how="outer")
-crocodile = pd.merge(crocodile, biopsy, how="outer")
-crocodile = pd.merge(crocodile, pet, how="outer")
-crocodile = pd.merge(crocodile, demo, how="outer")
+renal_heir = pd.merge(phys, screen, how="outer")
+renal_heir = pd.merge(renal_heir, dxa, how="outer")
+renal_heir = pd.merge(renal_heir, clamp, how="outer")
+renal_heir = pd.merge(renal_heir, biopsy, how="outer")
+renal_heir = pd.merge(renal_heir, demo, how="outer")
 # REORGANIZE
-crocodile["visit"] = "baseline"
-crocodile["study"] = "CROCODILE"
+renal_heir["visit"] = "baseline"
+renal_heir["study"] = "RENAL-HEIR"
 id_cols = ["subject_id", "co_enroll_id", "study"] + \
     dem_cols[1:] + ["visit", "procedure", "date"]
-other_cols = crocodile.columns.difference(id_cols, sort=False).tolist()
-other_cols.sort()
-crocodile = crocodile[id_cols + other_cols]
+other_cols = renal_heir.columns.difference(id_cols).tolist()
+renal_heir = renal_heir[id_cols + other_cols]
 # SORT
-crocodile.sort_values(["subject_id", "date", "procedure"], inplace=True)
+renal_heir.sort_values(["subject_id", "date", "procedure"], inplace=True)
 # Check for duplicated column names
-dups = find_duplicate_columns(crocodile)
-dups.to_csv("~/croc_duplicate_columns.csv", index=False)
+dups = find_duplicate_columns(renal_heir)
+dups.to_csv("~/rh_duplicate_columns.csv", index=False)
 # Print final data
-crocodile.to_csv("~/crocodile.csv", index=False)
+renal_heir.to_csv("~/renal_heir.csv", index=False)
