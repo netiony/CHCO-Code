@@ -1,5 +1,5 @@
 """
-This function takes as its arguments a pandas dataframe and a dictionary linking the current column names to new names. This assumes standard REDCap formatting where the base variable is split into multiple columns, named according to the format: "base_name___*" where * is a digit (1 through the number of checkbox options). The list of levels names must be in the correct order.
+Helper functions for data harmonization. 
 """
 
 
