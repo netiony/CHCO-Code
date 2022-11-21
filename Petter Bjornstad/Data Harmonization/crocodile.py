@@ -16,7 +16,7 @@ def clean_crocodile():
     import os
     import redcap
     import pandas as pd
-    import numpy as np
+    from natsort import natsorted, ns
     os.chdir(
         "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     from harmonization_functions import combine_checkboxes
@@ -38,7 +38,7 @@ def clean_crocodile():
                 "group", "sex", "race", "ethnicity"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
-    demo["co_enroll_id"] = np.nan
+    demo["co_enroll_id"] = ""
     # Race columns combined into one
     demo = combine_checkboxes(demo, base_name="race", levels=[
         'American Indian/Alaska Native', 'Asian', 'Hawaiian/Pacific Islander', 'Black/African American', 'White', 'Other', 'Unknown'])
@@ -191,10 +191,13 @@ def clean_crocodile():
     df["study"] = "CROCODILE"
     id_cols = ["record_id", "co_enroll_id", "study"] + \
         dem_cols[1:] + ["visit", "procedure", "date"]
-    other_cols = df.columns.difference(id_cols).tolist()
+    other_cols = df.columns.difference(id_cols, sort=False).tolist()
+    other_cols = natsorted(other_cols, alg=ns.IGNORECASE)
     df = df[id_cols + other_cols]
     # SORT
     df.sort_values(["record_id", "date", "procedure"], inplace=True)
+    # Rename IDs
+    df["record_id"] = ["CRC-" + str(i).zfill(2) for i in df["record_id"]]
     # Check for duplicated column names
     # dups = find_duplicate_columns(df)
     # dups.to_csv("~/croc_duplicate_columns.csv", index=False)

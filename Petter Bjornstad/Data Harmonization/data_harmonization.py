@@ -15,6 +15,7 @@ __status__ = "Dev"
 
 # Libraries
 import os
+import pandas as pd
 os.chdir(
     "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
 from casper import clean_casper
@@ -30,3 +31,16 @@ crocodile = clean_crocodile()
 improve = clean_improve()
 penguin = clean_penguin()
 renal_heir = clean_renal_heir()
+# Merge
+harmonized = pd.merge(casper, coffee, how="outer")
+harmonized = pd.merge(harmonized, crocodile, how="outer")
+harmonized = pd.merge(harmonized, improve, how="outer")
+harmonized = pd.merge(harmonized, penguin, how="outer")
+harmonized = pd.merge(harmonized, renal_heir, how="outer")
+# Sort and replace missing values
+harmonized.sort_values(
+    ["study", "record_id", "date", "procedure"], inplace=True)
+rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999]
+rep = rep + [str(r) for r in rep]
+harmonized.replace(rep, "", inplace=True)
+harmonized.to_csv("~/df.csv", index=False)

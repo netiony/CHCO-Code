@@ -15,7 +15,7 @@ def clean_penguin():
     import os
     import redcap
     import pandas as pd
-    import numpy as np
+    from natsort import natsorted, ns
     os.chdir(
         "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     from harmonization_functions import combine_checkboxes
@@ -52,8 +52,8 @@ def clean_penguin():
     # Relevel sex and group
     demo["sex"].replace({2: "Male", 1: "Female", 3: "Other",
                         "2": "Male", "1": "Female", "3": "Other"}, inplace=True)
-    demo["diabetes_dx_date"] = np.nan
-    demo["co_enroll_id"] = np.nan
+    demo["diabetes_dx_date"] = ""
+    demo["co_enroll_id"] = ""
 
 # ------------------------------------------------------------------------------
 # Medications
@@ -170,7 +170,8 @@ def clean_penguin():
     df["study"] = "PENGUIN"
     id_cols = ["record_id", "co_enroll_id", "study"] + \
         dem_cols[1:] + ["visit", "procedure", "date"]
-    other_cols = df.columns.difference(id_cols).tolist()
+    other_cols = df.columns.difference(id_cols, sort=False).tolist()
+    other_cols = natsorted(other_cols, alg=ns.IGNORECASE)
     df = df[id_cols + other_cols]
     # SORT
     df.sort_values(["record_id", "date", "procedure"], inplace=True)

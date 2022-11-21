@@ -1,5 +1,5 @@
 """
-Helper functions for data harmonization. 
+Helper functions for data harmonization.
 """
 
 
@@ -34,7 +34,10 @@ def find_duplicate_columns(df, score_thresh=80):
     import pandas as pd
     from fuzzywuzzy import fuzz
     from fuzzywuzzy import process
-    # Remove underscores from column names for better scoring.
+    from collections import Counter
+    # Exact matches
+    exact = [k for k, v in Counter(df.columns).items() if v > 1]
+    # Remove underscores from column names for better similarity scoring.
     cols = [c.replace("_", " ") for c in df.columns]
     # Find each column name's closest match
     matches = []
@@ -49,3 +52,13 @@ def find_duplicate_columns(df, score_thresh=80):
                            columns=["original_variable", "closest_match", "score"])
     # Return
     return matches
+
+
+def find_different_column_types(df1, df2):
+    overlap = list(set(df1.columns).intersection(set(df2.columns)))
+    diff = []
+    for c in overlap:
+        t1 = df1[c].dtypes
+        t2 = df2[c].dtypes
+        if t1 != t2:
+            diff.append(c)

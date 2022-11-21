@@ -15,7 +15,7 @@ def clean_improve():
     import os
     import redcap
     import pandas as pd
-    import numpy as np
+    from natsort import natsorted, ns
     os.chdir(
         "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     from harmonization_functions import combine_checkboxes
@@ -154,6 +154,12 @@ def clean_improve():
                             "bodpod_complete"],
              axis=1, inplace=True)
     dxa = dxa.loc[dxa["bodcomp_date"] != ""]
+    dxa.rename({"bp_body_fat": "body_fat_bod_pod",
+               "dxa_body_fat": "body_fat_dexa",
+                "bp_lean_kg": "lean_kg_bod_pod",
+                "dxa_lean_kg": "lean_kg_dexa",
+                "bp_lean_mass": "lean_mass_bod_pod",
+                "dxa_lean_mass": "lean_mass_dexa"}, axis=1, inplace=True)
     dxa.columns = dxa.columns.str.replace(
         r"dxa_|bp_|bodcomp_", "", regex=True)
     dxa["procedure"] = "dxa"
@@ -224,7 +230,8 @@ def clean_improve():
     df["study"] = "IMPROVE"
     id_cols = ["subject_id", "study"] + \
         dem_cols[1:] + ["visit", "procedure", "date"]
-    other_cols = df.columns.difference(id_cols).tolist()
+    other_cols = df.columns.difference(id_cols, sort=False).tolist()
+    other_cols = natsorted(other_cols, alg=ns.IGNORECASE)
     df = df[id_cols + other_cols]
     # SORT
     df.sort_values(
@@ -233,4 +240,6 @@ def clean_improve():
     df["visit"].replace({'': "baseline", '1': "pre_surgery",
                          '2': "3_months_post_surgery",
                               '3': "12_months_post_surgery"}, inplace=True)
+    # Rename subject identifier
+    df.rename({"subject_id": "record_id"}, axis=1, inplace=True)
     return df

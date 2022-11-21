@@ -15,7 +15,7 @@ def clean_renal_heir():
     import os
     import redcap
     import pandas as pd
-    import numpy as np
+    from natsort import natsorted, ns
     os.chdir(
         "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     from harmonization_functions import combine_checkboxes
@@ -164,10 +164,12 @@ def clean_renal_heir():
     df["visit"] = "baseline"
     df["study"] = "RENAL-HEIR"
     id_cols = ["subject_id", "co_enroll_id", "study"] + \
-        dem_cols[1:] + ["visit", "procedure", "date"]
-    other_cols = df.columns.difference(id_cols).tolist()
+        dem_cols[2:] + ["visit", "procedure", "date"]
+    other_cols = df.columns.difference(id_cols, sort=False).tolist()
     df = df[id_cols + other_cols]
     # SORT
     df.sort_values(["subject_id", "date", "procedure"], inplace=True)
+    # Rename subject identifier
+    df.rename({"subject_id": "record_id"}, axis=1, inplace=True)
     # Return final data
     return df

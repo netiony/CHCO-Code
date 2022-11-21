@@ -15,7 +15,7 @@ def clean_coffee():
     import os
     import redcap
     import pandas as pd
-    import numpy as np
+    from natsort import natsorted, ns
     os.chdir(
         "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     from harmonization_functions import combine_checkboxes
@@ -37,7 +37,7 @@ def clean_coffee():
                 "gender", "race", "ethnicity"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
-    demo["co_enroll_id"] = np.nan
+    demo["co_enroll_id"] = ""
     demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date"},
                 inplace=True, axis=1)
     dem_cols[2] = "diabetes_dx_date"
@@ -133,10 +133,13 @@ def clean_coffee():
     df["study"] = "COFFEE"
     id_cols = ["subject_id", "co_enroll_id", "study"] + \
         dem_cols[1:] + ["visit", "procedure", "date"]
-    other_cols = df.columns.difference(id_cols).tolist()
+    other_cols = df.columns.difference(id_cols, sort=False).tolist()
+    other_cols = natsorted(other_cols, alg=ns.IGNORECASE)
     df = df[id_cols + other_cols]
     # SORT
     df.sort_values(["subject_id", "date", "procedure"], inplace=True)
+    # Rename subject identifier
+    df.rename({"subject_id": "record_id"}, axis=1, inplace=True)
     # Check for duplicated column names
     # dups = find_duplicate_columns(df)
     # dups.to_csv("~/croc_duplicate_columns.csv", index=False)
