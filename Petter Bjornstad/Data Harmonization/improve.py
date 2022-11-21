@@ -179,7 +179,7 @@ var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                            == "outcomes", "field_name"]]
 out = pd.DataFrame(proj.export_records(fields=var))
 out.drop(redcap_cols + ["kidney_outcomes", "egfr", "metab_outcomes",
-                        "asl_outcomes", "bold_outcomes", "ipsc_draw"],
+                        "asl_outcomes", "bold_outcomes"],
          axis=1, inplace=True)
 out = out.loc[out["mri_date"] != ""]
 out.columns = out.columns.str.replace(
@@ -230,3 +230,4 @@ improve.sort_values(["subject_id", "visit", "date", "procedure"], inplace=True)
 improve["visit"].replace({'': "baseline", '1': "pre_surgery",
                           '2': "3_months_post_surgery",
                           '3': "12_months_post_surgery"}, inplace=True)
+improve.to_csv("~/improve.csv")
