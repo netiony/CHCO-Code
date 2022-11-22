@@ -81,3 +81,6 @@ yr10risk$log_trig <- log(yr10risk$trig)
 
 # Save
 save(yr10risk,file = "./Clinical data/TODAY/yr10risk.Rdata")
+
+
+
