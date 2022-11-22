@@ -12,12 +12,9 @@ __status__ = "Dev"
 
 def clean_renal_heir():
     # Libraries
-    import os
     import redcap
     import pandas as pd
     from natsort import natsorted, ns
-    os.chdir(
-        "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     from harmonization_functions import combine_checkboxes
     from harmonization_functions import find_duplicate_columns
     # REDCap project variables
@@ -72,7 +69,7 @@ def clean_renal_heir():
     phys.drop(["male_activity_factor", "fem_activity_factor", "schofield_male",
                "schofield_female", "phys_norm", "phys_no", "breast_tanner", "testicular_volume", "lmp", "screen_bmi_percentile"], axis=1, inplace=True)
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
-    phys.rename({"sysbp": "sbp", "diasbp": "dbp",
+    phys.rename({"sys_bp": "sbp", "dys_bp": "dbp",
                 "waist_circumference": "waistcm", "hip_circumference": "hipcm"}, inplace=True, axis=1)
 
 # ------------------------------------------------------------------------------
@@ -100,6 +97,9 @@ def clean_renal_heir():
     dxa = pd.DataFrame(proj.export_records(fields=var))
     dxa.columns = dxa.columns.str.replace(
         r"dexa_", "", regex=True)
+    dxa_cols = dxa.columns[2:].to_list()
+    dxa.rename(dict(zip(dxa_cols, ["dexa_" + d for d in dxa_cols])),
+               axis=1, inplace=True)
     dxa["procedure"] = "dxa"
 
 # ------------------------------------------------------------------------------
@@ -113,7 +113,9 @@ def clean_renal_heir():
                 "bg_labs", "ffa_lab", "cpep_lab", "insulin_labs"], axis=1, inplace=True)
     clamp.columns = clamp.columns.str.replace(
         r"clamp_", "", regex=True)
-    clamp.rename({"serum_creatinine": "creatinine_s", "serum_sodium": "sodium_s"},
+    clamp.rename({"serum_creatinine": "creatinine_s",
+                  "serum_sodium": "sodium_s",
+                  "cystatin_c": "cystatin_c_s"},
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
     clamp["procedure"] = "clamp"

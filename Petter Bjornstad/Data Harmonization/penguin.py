@@ -12,12 +12,9 @@ __status__ = "Dev"
 
 def clean_penguin():
     # Libraries
-    import os
     import redcap
     import pandas as pd
     from natsort import natsorted, ns
-    os.chdir(
-        "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     from harmonization_functions import combine_checkboxes
     from harmonization_functions import find_duplicate_columns
     # REDCap project variables
@@ -109,8 +106,14 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_dxa_scan", "field_name"]]
     dxa = pd.DataFrame(proj.export_records(fields=var))
+    dxa.rename({"bodyfat_percent": "body_fat",
+                "leanmass_percent": "lean_mass", "fatmass_kg": "fat_kg", "leanmass_kg": "lean_kg", "trunkmass_kg": "trunk_kg",
+                "bmd": "bone_mineral_density"}, axis=True, inplace=True)
     dxa.columns = dxa.columns.str.replace(
         r"dxa_", "", regex=True)
+    dxa_cols = dxa.columns[2:].to_list()
+    dxa.rename(dict(zip(dxa_cols, ["dexa_" + d for d in dxa_cols])),
+               axis=1, inplace=True)
     dxa["procedure"] = "dxa"
 
 # ------------------------------------------------------------------------------

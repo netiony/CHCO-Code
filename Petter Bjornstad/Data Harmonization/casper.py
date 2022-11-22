@@ -12,12 +12,9 @@ __status__ = "Dev"
 
 def clean_casper():
     # Libraries
-    import os
     import redcap
     import pandas as pd
     from natsort import natsorted, ns
-    os.chdir(
-        "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     from harmonization_functions import combine_checkboxes
     from harmonization_functions import find_duplicate_columns
     # REDCap project variables
@@ -76,8 +73,9 @@ def clean_casper():
     phys.drop(["phys_norm", "phys_no", "breast_tanner",
                "testicular_volume", "lmp", "screen_bmi_percentile", "male_activity_factor", "fem_activity_factor", "schofield_male", "schofield_female"], axis=1, inplace=True)
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
-    phys.rename({"sys_bp": "sbp", "dys_bp": "dbp", "waist_circumference": "waistcm",
-                "hip_circumference": "hipcm"}, inplace=True, axis=1)
+    phys.rename({"sys_bp": "sbp", "dys_bp": "dbp",
+                 "waist_circumference": "waistcm",
+                 "hip_circumference": "hipcm"}, inplace=True, axis=1)
 
 # ------------------------------------------------------------------------------
 # Screening labs
@@ -108,6 +106,7 @@ def clean_casper():
     clamp = clamp.loc[clamp["clamp_date"] != ""]
     clamp.columns = clamp.columns.str.replace(
         r"clamp_", "", regex=True)
+    clamp.rename({"cystatin_c": "cystatin_c_s"}, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
 
 # ------------------------------------------------------------------------------
@@ -119,6 +118,9 @@ def clean_casper():
     dxa = pd.DataFrame(proj.export_records(fields=var))
     dxa.columns = dxa.columns.str.replace(
         r"dexa_", "", regex=True)
+    dxa_cols = dxa.columns[2:].to_list()
+    dxa.rename(dict(zip(dxa_cols, ["dexa_" + d for d in dxa_cols])),
+               axis=1, inplace=True)
     dxa["procedure"] = "dxa"
 
 # ------------------------------------------------------------------------------

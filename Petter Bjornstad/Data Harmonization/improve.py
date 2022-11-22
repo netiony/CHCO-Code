@@ -12,12 +12,9 @@ __status__ = "Dev"
 
 def clean_improve():
     # Libraries
-    import os
     import redcap
     import pandas as pd
     from natsort import natsorted, ns
-    os.chdir(
-        "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     from harmonization_functions import combine_checkboxes
     from harmonization_functions import find_duplicate_columns
     # REDCap project variables
@@ -139,7 +136,8 @@ def clean_improve():
     mmtt.columns = mmtt.columns.str.replace(
         r"mmtt_", "", regex=True)
     mmtt.rename({"wt": "weight", "ht": "height", "waist": "waistcm",
-                "hip": "hipcm", "hr": "pulse", "sys_bp": "sbp", "dia_bp": "dbp"},
+                "hip": "hipcm", "hr": "pulse", "sys_bp": "sbp",
+                 "dia_bp": "dbp", "hba1c_base": "hba1c"},
                 inplace=True, axis=1)
     mmtt["procedure"] = "mmtt"
 
@@ -154,14 +152,11 @@ def clean_improve():
                             "bodpod_complete"],
              axis=1, inplace=True)
     dxa = dxa.loc[dxa["bodcomp_date"] != ""]
-    dxa.rename({"bp_body_fat": "body_fat_bod_pod",
-               "dxa_body_fat": "body_fat_dexa",
-                "bp_lean_kg": "lean_kg_bod_pod",
-                "dxa_lean_kg": "lean_kg_dexa",
-                "bp_lean_mass": "lean_mass_bod_pod",
-                "dxa_lean_mass": "lean_mass_dexa"}, axis=1, inplace=True)
     dxa.columns = dxa.columns.str.replace(
-        r"dxa_|bp_|bodcomp_", "", regex=True)
+        r"dxa_", "dexa_", regex=True)
+    dxa.columns = dxa.columns.str.replace(
+        r"bp_", "bod_pod_", regex=True)
+    dxa.rename({"dexa_bmd": "dexa_bone_mineral_density"}, axis=1, inplace=True)
     dxa["procedure"] = "dxa"
 
 # ------------------------------------------------------------------------------
@@ -177,6 +172,7 @@ def clean_improve():
     clamp = clamp.loc[clamp["clamp_date"] != ""]
     clamp.columns = clamp.columns.str.replace(
         r"clamp_", "", regex=True)
+    clamp.rename({"cystatin_c": "cystatin_c_s"}, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
 
 # ------------------------------------------------------------------------------

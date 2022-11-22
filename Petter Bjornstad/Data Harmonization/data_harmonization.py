@@ -3,7 +3,7 @@ This code is designed to pull data from multiple REDCap projects and harmonize
 the data in a single dataset. Some studies are cross-sectional but include
 measures at multiple visits, and some studies are longitudinal. So, this code
 outputs data in a "semi-long" format with one row per study procedure, and a
-visit column for longitudinal clustering.
+visit column for longitudinal clustering. The data cleaning process for each individual dataset is a separate function, and this function puts them together and performs some formatting tweaks.
 """
 __author__ = "Tim Vigers"
 __credits__ = ["Tim Vigers"]
@@ -16,10 +16,7 @@ __status__ = "Dev"
 
 def harmonize_data():
     # Libraries
-    import os
     import pandas as pd
-    os.chdir(
-        "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     from casper import clean_casper
     from coffee import clean_coffee
     from crocodile import clean_crocodile
@@ -57,5 +54,11 @@ def harmonize_data():
     harmonized["ethnicity"].replace({"": "Unknown"}, inplace=True)
     harmonized["race_ethnicity"] = harmonized["race"] + \
         ", " + harmonized["ethnicity"]
+    # Date variables
+    harmonized[["dob", "date"]] = harmonized[["dob", "date"]].apply(
+        pd.to_datetime, errors='coerce')
+    # Calculated variables
+    harmonized["age"] = round((harmonized["date"] -
+                               harmonized["dob"]).dt.days / 365.25, 2)
     # Return
     return harmonized

@@ -12,12 +12,9 @@ __status__ = "Dev"
 
 def clean_coffee():
     # Libraries
-    import os
     import redcap
     import pandas as pd
     from natsort import natsorted, ns
-    os.chdir(
-        "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     from harmonization_functions import combine_checkboxes
     from harmonization_functions import find_duplicate_columns
     # REDCap project variables
@@ -108,6 +105,7 @@ def clean_coffee():
     clamp = clamp.loc[clamp["cf_clamp_date"] != ""]
     clamp.columns = clamp.columns.str.replace(
         r"clamp_|cf_", "", regex=True)
+    clamp.rename({"cystatin_c": "cystatin_c_s"}, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
 
 # ------------------------------------------------------------------------------

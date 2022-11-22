@@ -11,14 +11,10 @@ __status__ = "Dev"
 
 
 def clean_crocodile():
-
     # Libraries
-    import os
     import redcap
     import pandas as pd
     from natsort import natsorted, ns
-    os.chdir(
-        "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     from harmonization_functions import combine_checkboxes
     from harmonization_functions import find_duplicate_columns
     # REDCap project variables
@@ -80,7 +76,7 @@ def clean_crocodile():
                 "screen_menstrual", "screen_upt"], axis=1, inplace=True)
     screen.columns = screen.columns.str.replace(
         r"labs_|screen_", "", regex=True)
-    screen.rename({"creat_s": "creatinine_s", "uacr": "acr_u",
+    screen.rename({"creat_s": "creatinine_s", "uacr": "acr_u", "a1c": "hba1c",
                    "creat_u": "creatinine_u", "hg": "hemoglobin"}, axis=1, inplace=True)
     screen["procedure"] = "screening"
 
@@ -95,7 +91,7 @@ def clean_crocodile():
                "visit_uptresult", "baseline_labs", "pilabs_yn", "pi_copeptin", "pi_renin", "pi_angiotensin2", "pi_osmo_s", "pi_osmo_u", "pi_lithium_s", "pi_lithium_u", "metabolomics_yn", "kim_yn", "pi_kim_ykl40", "pi_kim_ngal", "pi_kim_kim1", "pi_kim_il18", "pi_kim_tnfr1", "pi_kim_tnfr2"], axis=1, inplace=True)
     labs.columns = labs.columns.str.replace(
         r"visit_|bl_", "", regex=True)
-    labs.rename({"uacr": "acr_u"}, axis=1, inplace=True)
+    labs.rename({"uacr": "acr_u", "a1c": "hba1c"}, axis=1, inplace=True)
     labs["procedure"] = "labs"
 
 # ------------------------------------------------------------------------------
@@ -117,7 +113,14 @@ def clean_crocodile():
                                                == "study_visit_dxa_scan", "field_name"]]
     dxa = pd.DataFrame(proj.export_records(fields=var))
     dxa.columns = dxa.columns.str.replace(
-        r"dxa_", "", regex=True)
+        r"dxa_|_percent", "", regex=True)
+    dxa.rename({"bodyfat": "body_fat", "leanmass": "lean_mass",
+                "trunkmass": "trunk_mass", "fatmass_kg": "fat_kg",
+                "leanmass_kg": "lean_kg", "trunkmass_kg": "trunk_kg",
+                "bmd": "bone_mineral_density"}, axis=1, inplace=True)
+    dxa_cols = dxa.columns[2:].to_list()
+    dxa.rename(dict(zip(dxa_cols, ["dexa_" + d for d in dxa_cols])),
+               axis=1, inplace=True)
     dxa["procedure"] = "dxa"
 
 # ------------------------------------------------------------------------------
