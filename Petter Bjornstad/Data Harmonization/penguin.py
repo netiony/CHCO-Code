@@ -54,6 +54,7 @@ def clean_penguin():
                         "2": "Male", "1": "Female", "3": "Other"}, inplace=True)
     demo["diabetes_dx_date"] = ""
     demo["co_enroll_id"] = ""
+    demo["group"] = "PKD"
 
 # ------------------------------------------------------------------------------
 # Medications
