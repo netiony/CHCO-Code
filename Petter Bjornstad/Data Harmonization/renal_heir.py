@@ -16,7 +16,6 @@ def clean_renal_heir():
     import pandas as pd
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
-    from harmonization_functions import find_duplicate_columns
     # REDCap project variables
     tokens = pd.read_csv(
         "~/Dropbox/Work/CHCO/Petter Bjornstad/Data Harmonization/api_tokens.csv")

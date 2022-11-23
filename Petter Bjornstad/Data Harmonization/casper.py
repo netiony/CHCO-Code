@@ -16,7 +16,6 @@ def clean_casper():
     import pandas as pd
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
-    from harmonization_functions import find_duplicate_columns
     # REDCap project variables
     tokens = pd.read_csv(
         "~/Dropbox/Work/CHCO/Petter Bjornstad/Data Harmonization/api_tokens.csv")
@@ -106,7 +105,8 @@ def clean_casper():
     clamp = clamp.loc[clamp["clamp_date"] != ""]
     clamp.columns = clamp.columns.str.replace(
         r"clamp_", "", regex=True)
-    clamp.rename({"cystatin_c": "cystatin_c_s"}, inplace=True, axis=1)
+    clamp.rename({"cystatin_c": "cystatin_c_s",
+                 "serum_creatinine": "creatinine_"}, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
 
 # ------------------------------------------------------------------------------

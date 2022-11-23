@@ -16,7 +16,6 @@ def clean_improve():
     import pandas as pd
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
-    from harmonization_functions import find_duplicate_columns
     # REDCap project variables
     tokens = pd.read_csv(
         "~/Dropbox/Work/CHCO/Petter Bjornstad/Data Harmonization/api_tokens.csv")
@@ -156,7 +155,8 @@ def clean_improve():
         r"dxa_", "dexa_", regex=True)
     dxa.columns = dxa.columns.str.replace(
         r"bp_", "bod_pod_", regex=True)
-    dxa.rename({"dexa_bmd": "dexa_bone_mineral_density"}, axis=1, inplace=True)
+    dxa.rename({"dexa_bmd": "dexa_bone_mineral_density",
+                "bod_pod_fat_mass": "bod_pod_fat_kg"}, axis=1, inplace=True)
     dxa["procedure"] = "dxa"
 
 # ------------------------------------------------------------------------------
@@ -172,7 +172,8 @@ def clean_improve():
     clamp = clamp.loc[clamp["clamp_date"] != ""]
     clamp.columns = clamp.columns.str.replace(
         r"clamp_", "", regex=True)
-    clamp.rename({"cystatin_c": "cystatin_c_s"}, inplace=True, axis=1)
+    clamp.rename({"cystatin_c": "cystatin_c_s",
+                  "serum_creatinine": "creatinine_"}, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
 
 # ------------------------------------------------------------------------------
