@@ -153,8 +153,8 @@ def clean_crocodile():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_renal_clearance_testing", "field_name"]]
     rct = pd.DataFrame(proj.export_records(fields=var))
-    rct.drop(["iohexol_yn", "pah_yn"], axis=1, inplace=True)
-    rct.rename({"gfr_raw": "gfr"}, axis=1, inplace=True)
+    rct.drop(["iohexol_yn", "pah_yn", "gfr_bsa"], axis=1, inplace=True)
+    rct.rename({"gfr_raw": "gfr", "gfrbsa": "gfr_bsa"}, axis=1, inplace=True)
     rct["procedure"] = "renal_clearance_testing"
 
 # ------------------------------------------------------------------------------
