@@ -16,6 +16,9 @@ __status__ = "Dev"
 
 def harmonize_data():
     # Libraries
+    import os
+    os.chdir(
+        "C:/Users/timbv/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import pandas as pd
     from casper import clean_casper
     from coffee import clean_coffee
@@ -23,6 +26,7 @@ def harmonize_data():
     from improve import clean_improve
     from penguin import clean_penguin
     from renal_heir import clean_renal_heir
+    from harmonization_functions import calc_egfr
     # Use individual data functions to import cleaned DFs
     casper = clean_casper()
     coffee = clean_coffee()
@@ -36,13 +40,16 @@ def harmonize_data():
     harmonized = pd.merge(harmonized, improve, how="outer")
     harmonized = pd.merge(harmonized, penguin, how="outer")
     harmonized = pd.merge(harmonized, renal_heir, how="outer")
-    # Sort and replace missing values
-    harmonized.sort_values(
-        ["study", "record_id", "date", "procedure"], inplace=True)
+    # Replace missing values
     rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999]
     rep = rep + [str(r) for r in rep]
     harmonized.replace(rep, "", inplace=True)
     # Fix levels of categorical variables
+    harmonized["visit"] = \
+        pd.Categorical(harmonized["visit"],
+                       categories=['baseline', 'pre_surgery',
+                                   '3_months_post_surgery', '12_months_post_surgery'],
+                       ordered=True)
     harmonized["race"].replace(
         ["American Indian or Alaskan Native & White",
          "Black or African American & White",
@@ -60,5 +67,11 @@ def harmonize_data():
     # Calculated variables
     harmonized["age"] = round((harmonized["date"] -
                                harmonized["dob"]).dt.days / 365.25, 2)
+    harmonized = calc_egfr(harmonized, age="age",
+                           serum_creatinine="creatinine_s", cystatin_c="cystatin_c_s",
+                           bun="bun", height="height", sex="sex", male="Male", female="Female", alpha=0.5)
+    # Sort
+    harmonized.sort_values(
+        ["study", "record_id", "visit", "procedure", "date"], inplace=True)
     # Return
     return harmonized

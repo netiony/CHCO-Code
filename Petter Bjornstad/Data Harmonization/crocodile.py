@@ -51,6 +51,15 @@ def clean_crocodile():
 # Medications
 # ------------------------------------------------------------------------------
 
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                               == "medical_history", "field_name"]]
+    med = pd.DataFrame(proj.export_records(fields=var))
+    # Just SGLT2i for now
+    med = med[["record_id", "diabetes_meds_other___4"]]
+    med["diabetes_meds_other___4"].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med.rename({"diabetes_meds_other___4": "sglti_timepoint"},
+               axis=1, inplace=True)
 
 # ------------------------------------------------------------------------------
 # Physical exam
@@ -131,7 +140,8 @@ def clean_crocodile():
     clamp = pd.DataFrame(proj.export_records(fields=var))
     clamp.drop(["clamp_yn", "clamp_d20", "clamp_ffa",
                 "clamp_insulin", "hct_yn", "clamp_bg"], axis=1, inplace=True)
-    clamp.rename({"clamp_wt": "weight", "clamp_ht": "height"},
+    clamp.rename({"clamp_wt": "weight", "clamp_ht": "height",
+                  "cystatin_c": "cystatin_c_s"},
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
     clamp["procedure"] = "clamp"
@@ -144,6 +154,7 @@ def clean_crocodile():
                                                == "study_visit_renal_clearance_testing", "field_name"]]
     rct = pd.DataFrame(proj.export_records(fields=var))
     rct.drop(["iohexol_yn", "pah_yn"], axis=1, inplace=True)
+    rct.rename({"gfr_raw": "gfr"}, axis=1, inplace=True)
     rct["procedure"] = "renal_clearance_testing"
 
 # ------------------------------------------------------------------------------
@@ -180,6 +191,7 @@ def clean_crocodile():
 
     # MERGE
     df = pd.merge(phys, screen, how="outer")
+    df = pd.merge(df, med, how="outer")
     df = pd.merge(df, labs, how="outer")
     df = pd.merge(df, mri, how="outer")
     df = pd.merge(df, dxa, how="outer")

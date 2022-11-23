@@ -56,6 +56,13 @@ def clean_renal_heir():
 # Medications
 # ------------------------------------------------------------------------------
 
+    var = ["subject_id", "sglt2i", "diabetes_med_other"]
+    med = pd.DataFrame(proj.export_records(fields=var))
+    # Just SGLT2i for now
+    med = med[["subject_id", "sglt2i", "diabetes_med_other___3"]]
+    med.replace({0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med.rename({"diabetes_med_other___3": "sglti_timepoint",
+                "sglt2i": "sglt2i_ever"}, axis=1, inplace=True)
 
 # ------------------------------------------------------------------------------
 # Physical exam
@@ -156,6 +163,7 @@ def clean_renal_heir():
 
     # MERGE
     df = pd.merge(phys, screen, how="outer")
+    df = pd.merge(df, med, how="outer")
     df = pd.merge(df, dxa, how="outer")
     df = pd.merge(df, clamp, how="outer")
     df = pd.merge(df, out, how="outer")

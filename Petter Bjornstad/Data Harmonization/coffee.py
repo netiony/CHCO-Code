@@ -60,6 +60,15 @@ def clean_coffee():
 # Medications
 # ------------------------------------------------------------------------------
 
+    var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
+                                                == "medical_history_casper", "field_name"]]
+    med = pd.DataFrame(proj.export_records(fields=var))
+    # Just SGLT2i for now
+    med = med[["subject_id", "diabetes_med_other___4"]]
+    med["diabetes_med_other___4"].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med.rename({"diabetes_med_other___4": "sglti_timepoint"},
+               axis=1, inplace=True)
 
 # ------------------------------------------------------------------------------
 # Physical exam
@@ -104,7 +113,9 @@ def clean_coffee():
     clamp = clamp.loc[clamp["cf_clamp_date"] != ""]
     clamp.columns = clamp.columns.str.replace(
         r"clamp_|cf_", "", regex=True)
-    clamp.rename({"cystatin_c": "cystatin_c_s"}, inplace=True, axis=1)
+    clamp.rename({"cystatin_c": "cystatin_c_s",
+                  "serum_creatinine": "creatinine_s"
+                  }, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
 
 # ------------------------------------------------------------------------------
@@ -123,7 +134,9 @@ def clean_coffee():
     out["procedure"] = "kidney_outcomes"
     # MERGE
     df = pd.merge(phys, screen, how="outer")
+    df = pd.merge(df, med, how="outer")
     df = pd.merge(df, clamp, how="outer")
+    df = pd.merge(df, out, how="outer")
     df = pd.merge(df, demo, how="outer")
     # REORGANIZE
     df["visit"] = "baseline"

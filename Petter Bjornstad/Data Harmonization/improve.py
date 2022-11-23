@@ -14,6 +14,7 @@ def clean_improve():
     # Libraries
     import redcap
     import pandas as pd
+    import numpy as np
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
@@ -33,7 +34,7 @@ def clean_improve():
 # ------------------------------------------------------------------------------
 
     dem_cols = ["subject_id", "co_enroll_id", "dob", "diagnosis",
-                "gender", "race", "ethnicity"]
+                "gender", "race", "ethnicity", "sglt2i"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols,
                                             events=["screening_arm_1"]))
@@ -43,6 +44,7 @@ def clean_improve():
                 inplace=True, axis=1)
     dem_cols[3] = "diabetes_dx_date"
     dem_cols[4] = "sex"
+    dem_cols[7] = "sglt2i_ever"
     # Race columns combined into one
     demo = combine_checkboxes(demo, base_name="race", levels=[
         "American Indian or Alaskan Native", "Asian", "Hawaiian or Pacific Islander", "Black or African American", "White", "Unknown", "Other"])
@@ -53,11 +55,23 @@ def clean_improve():
     # Relevel sex and group
     demo["sex"].replace({1: "Male", 0: "Female", 2: "Other",
                         "1": "Male", "0": "Female", "2": "Other"}, inplace=True)
+    demo["sglt2i"].replace({1: "Yes", 0: "No", "1": "Yes", "0": "No"},
+                           inplace=True)
+    demo.rename({"sglt2i": "sglt2i_ever"}, axis=1, inplace=True)
 
 # ------------------------------------------------------------------------------
 # Medications
 # ------------------------------------------------------------------------------
 
+    var = ["subject_id", "study_visit", "diabetes_med_other"]
+    med = pd.DataFrame(proj.export_records(fields=var))
+    # Just SGLT2i for now
+    med = med[["subject_id", "study_visit", "diabetes_med_other___3"]]
+    med["diabetes_med_other___3"] = med["diabetes_med_other___3"].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
+    med.rename({"diabetes_med_other___3": "sglti_timepoint"},
+               axis=1, inplace=True)
+    med["procedure"] = "medication_review"
 
 # ------------------------------------------------------------------------------
 # Physical exam
@@ -71,8 +85,9 @@ def clean_improve():
     phys.drop(redcap_cols + ["phys_norm", "phys_no", "breast_tanner",
                              "testicular_volume", "lmp", "screen_bmi_percentile", "activity_factor_male", "activity_factor_female", "schofield_male", "schofield_female"], axis=1, inplace=True)
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
-    phys.rename({"sys_bp": "sbp", "dys_bp": "dbp", "waist_circumference": "waistcm",
-                "hip_circumference": "hipcm"}, inplace=True, axis=1)
+    phys.rename({"sys_bp": "sbp", "dys_bp": "dbp",
+                 "waist_circumference": "waistcm",
+                 "hip_circumference": "hipcm"}, inplace=True, axis=1)
 
 # ------------------------------------------------------------------------------
 # Screening labs
@@ -156,7 +171,8 @@ def clean_improve():
     dxa.columns = dxa.columns.str.replace(
         r"bp_", "bod_pod_", regex=True)
     dxa.rename({"dexa_bmd": "dexa_bone_mineral_density",
-                "bod_pod_fat_mass": "bod_pod_fat_kg"}, axis=1, inplace=True)
+                "bod_pod_fat_mass": "bod_pod_fat_kg",
+                "bodcomp_date": "date"}, axis=1, inplace=True)
     dxa["procedure"] = "dxa"
 
 # ------------------------------------------------------------------------------
@@ -173,7 +189,7 @@ def clean_improve():
     clamp.columns = clamp.columns.str.replace(
         r"clamp_", "", regex=True)
     clamp.rename({"cystatin_c": "cystatin_c_s",
-                  "serum_creatinine": "creatinine_"}, inplace=True, axis=1)
+                  "serum_creatinine": "creatinine_s"}, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
 
 # ------------------------------------------------------------------------------
@@ -215,11 +231,13 @@ def clean_improve():
 
     # MERGE
     df = pd.merge(phys, screen, how="outer")
+    df = pd.merge(df, med, how="outer")
     df = pd.merge(df, accel, how="outer")
     df = pd.merge(df, mri, how="outer")
     df = pd.merge(df, mmtt, how="outer")
     df = pd.merge(df, dxa, how="outer")
     df = pd.merge(df, clamp, how="outer")
+    df = pd.merge(df, out, how="outer")
     df = pd.merge(df, biopsy, how="outer")
     df = pd.merge(df, demo, how="outer")
     # REORGANIZE
