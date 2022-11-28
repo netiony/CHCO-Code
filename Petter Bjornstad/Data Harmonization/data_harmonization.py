@@ -16,9 +16,6 @@ __status__ = "Dev"
 
 def harmonize_data():
     # Libraries
-    import os
-    os.chdir(
-        "C:/Users/timbv/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import pandas as pd
     from casper import clean_casper
     from coffee import clean_coffee

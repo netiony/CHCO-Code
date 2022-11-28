@@ -12,12 +12,11 @@ __status__ = "Dev"
 
 import os
 os.chdir(
-    "C:/Users/timbv/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+    "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
 import pandas as pd
 from data_harmonization import harmonize_data
 # Get dataset
 df = harmonize_data()
-df.to_csv("~/df.csv", index=False)
 # Variable list
 vars = ["record_id", "co_enroll_id", "study", "group", "dob",
         "diabetes_dx_date", "race", "ethnicity", "race_ethnicity", "visit",
