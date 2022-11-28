@@ -17,6 +17,7 @@ __status__ = "Dev"
 def harmonize_data():
     # Libraries
     import pandas as pd
+    import numpy as np
     from casper import clean_casper
     from coffee import clean_coffee
     from crocodile import clean_crocodile
@@ -70,5 +71,7 @@ def harmonize_data():
     # Sort
     harmonized.sort_values(
         ["study", "record_id", "visit", "procedure", "date"], inplace=True)
+    # Replace blanks with missing
+    harmonized.replace("", np.nan, inplace=True)
     # Return
     return harmonized

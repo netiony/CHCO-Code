@@ -189,7 +189,8 @@ def clean_improve():
     clamp.columns = clamp.columns.str.replace(
         r"clamp_", "", regex=True)
     clamp.rename({"cystatin_c": "cystatin_c_s",
-                  "serum_creatinine": "creatinine_s"}, inplace=True, axis=1)
+                  "serum_creatinine": "creatinine_s", "acr_baseline": "acr_u"
+                  }, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
 
 # ------------------------------------------------------------------------------
