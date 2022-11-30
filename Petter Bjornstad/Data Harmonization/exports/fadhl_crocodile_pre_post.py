@@ -20,9 +20,8 @@ from data_harmonization import harmonize_data
 df = harmonize_data()
 # Variable list
 vars = ["record_id", "co_enroll_id", "study", "kit_id", "group", "dob",
-        "diabetes_dx_date", "race", "ethnicity", "race_ethnicity", "visit",
-        "date", "age", "sex", "sglt2i_ever", "sglti_timepoint", "bmi", "sbp", "dbp", "creatinine_s", "cystatin_c_s", "bun", "height",
-        "gfr", "gfr_bsa", "eGFR_fas_cr", "eGFR_bedside_Schwartz",
+        "diabetes_dx_date", "race", "ethnicity", "race_ethnicity", "visit", "date", "age", "sex", "sglt2i_ever", "sglti_timepoint", "bmi", "sbp", "dbp", "creatinine_s", "cystatin_c_s", "bun",
+        "gfr", "gfr_bsa", "eGFR_fas_cr",
         "acr_u", "hba1c", 'dexa_body_fat', 'dexa_fat_kg', 'dexa_trunk_kg', 'bod_pod_body_fat', 'bod_pod_fat_kg',
         "bold_r_bl_cortex", "bold_r_bl_medulla", "bold_r_bl_kidney",
         "bold_r_pf_cortex", "bold_r_pf_medulla", "bold_r_pf_kidney",
@@ -30,6 +29,7 @@ vars = ["record_id", "co_enroll_id", "study", "kit_id", "group", "dob",
         "bold_l_pf_cortex", "bold_l_pf_medulla", "bold_l_pf_kidney",
         "gloms", "gloms_gs", "ifta", "vessels_other", "fia", "glom_tuft_area", "glom_volume_weibel", "glom_volume_wiggins", "glom_volume_con", "mes_matrix_area", "mes_index", "mes_volume_weibel", "mes_volume_wiggins", "mes_volume_con", "glom_nuc_count", "mes_nuc_count", "art_intima", "art_media", "pod_nuc_density", "pod_cell_volume"]
 fadhl = df.loc[df["study"].isin(['CROCODILE', "IMPROVE"]), vars]
+fadhl = fadhl[fadhl["visit"] != "3_months_post_surgery"]
 fadhl.to_csv("~/fadhl_pre_aggregation.csv", index=False)
 # Group rows by visit, get non-missing values
 fadhl["visit"] = fadhl["visit"].replace({"pre_surgery": "baseline"})
