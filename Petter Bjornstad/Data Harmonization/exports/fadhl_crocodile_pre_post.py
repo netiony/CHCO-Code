@@ -1,6 +1,6 @@
 """
-This code is designed pulls our harmonized data and selects the variables Fadhl 
-is using in his pre-/post-surgery analysis. 
+This code is designed pulls our harmonized data and selects the variables Fadhl
+is using in his pre-/post-surgery analysis.
 """
 __author__ = "Tim Vigers"
 __credits__ = ["Tim Vigers"]
@@ -11,16 +11,17 @@ __email__ = "timothy.vigers@cuanschutz.edu"
 __status__ = "Dev"
 
 import os
-os.chdir(
-    "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+os.chdir(os.path.expanduser('~'))
+os.chdir("Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
 import pandas as pd
+import numpy as np
 from data_harmonization import harmonize_data
 # Get dataset
 df = harmonize_data()
 # Variable list
-vars = ["record_id", "co_enroll_id", "study", "group", "dob",
+vars = ["record_id", "co_enroll_id", "study", "kit_id", "group", "dob",
         "diabetes_dx_date", "race", "ethnicity", "race_ethnicity", "visit",
-        "procedure", "date", "age", "sex", "sglt2i_ever", "sglti_timepoint", "bmi", "sbp", "dbp", "creatinine_s", "cystatin_c_s", "bun", "height",
+        "date", "age", "sex", "sglt2i_ever", "sglti_timepoint", "bmi", "sbp", "dbp", "creatinine_s", "cystatin_c_s", "bun", "height",
         "gfr", "gfr_bsa", "eGFR_fas_cr", "eGFR_bedside_Schwartz",
         "acr_u", "hba1c", 'dexa_body_fat', 'dexa_fat_kg', 'dexa_trunk_kg',
         'bod_pod_body_fat', 'bod_pod_fat_kg',
@@ -35,5 +36,12 @@ fadhl.to_csv("~/fadhl_pre_aggregation.csv", index=False)
 fadhl["visit"] = fadhl["visit"].replace({"pre_surgery": "baseline"})
 fadhl = fadhl.groupby(by=["record_id", "visit"]).agg("last").reset_index()
 fadhl = fadhl.loc[~pd.isna(fadhl["study"])]
+id = fadhl["record_id"].copy()
+id.loc[(fadhl["study"] == "IMPROVE") & (fadhl["visit"] == "baseline")] += "_BL"
+id.loc[(fadhl["study"] == "IMPROVE") & (
+    fadhl["visit"] == "12_months_post_surgery")] += "_12M"
+fadhl["michigan_id"] = id
+fadhl.set_index(["michigan_id"], drop=True, inplace=True)
+fadhl.replace({-13332: np.nan, "INF": np.nan})
 # Write
-fadhl.to_csv("~/fadhl_latest_value.csv", index=False)
+fadhl.to_csv("~/fadhl_latest_value.csv")

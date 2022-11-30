@@ -28,8 +28,6 @@ def combine_checkboxes(df, base_name="", levels=[], sep=" & ",
     # Return df
     return df
 
-# Calculated variables
-
 
 def calc_egfr(df, age="age", serum_creatinine="creatinine_s",
               cystatin_c="cystatin_c_s", bun="bun", height="height", sex="sex",

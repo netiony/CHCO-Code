@@ -11,7 +11,7 @@ __status__ = "Dev"
 
 import os
 os.chdir(
-    "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+    "C:/Users/timbv/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
 import pandas as pd
 from data_harmonization import harmonize_data
 # Get dataset
@@ -20,20 +20,14 @@ df = harmonize_data()
 mri = df[df["record_id"].isin(
     ["CRC-10", "CRC-12", "CRC-13", "CRC-18", "CRC-20", "CRC-24", "CRC-28", "CRC-31", "CRC-33", "CRC-34", "CRC-35"])]
 mri = mri.groupby(by=["record_id"]).agg("last").reset_index()
-
-cols = ["subject_id", "group", "age", "gender", "bmi",
-    'pasl2d_left', 'pasl2d_right', 'pcasl3d_left', 'pcasl3d_right',
-    "volume_left", "volume_right"] + \
-        [c for c in mri.columns if "_bl_" in c] + \
-            [c for c in mri.columns if "fsoc" in c]
-
-cols = [c for c in df.columns if "adc" in c]
-
-subject_id % in % paste0("CRC -", c())) % > %
-select(,
-       contains("adc"), volume_left, volume_right, contains("_bl_"),
-       contains("fsoc"))
+# Select variables of interest
+cols = ["record_id", "group", "age", "sex", "bmi",
+        'adc_left', 'adc_right', 'pasl2d_left', 'pasl2d_right', 'pcasl3d_left', 'pcasl3d_right', "volume_left", "volume_right"] + \
+    [c for c in mri.columns if "_bl_" in c] + \
+    [c for c in mri.columns if "_pf_" in c] + \
+    [c for c in mri.columns if "fsoc" in c] + \
+    ["rc_k1", "rc_k2", "rc_f", "rc_vb", "rm_k1", "rm_k2", "rm_f", "rm_vb",
+     "lc_k1", "lc_k2", "lc_f", "lc_vb", "lm_k1", "lm_k2", "lm_f", "lm_vb"]
+mri = mri[cols]
 # Write CSV
-write.csv(mri, na = "", row.names = F,
-          file = paste0("~/Desktop/bold_mri_",
-                      format(Sys.time(), "%Y_%m_%d_%H%M"), ".csv"))
+mri.to_csv("~/mri_and_pet.csv", index=False)

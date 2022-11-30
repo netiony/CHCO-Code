@@ -18,7 +18,7 @@ def harmonize_data():
 
     import os
     os.chdir(
-        "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+        "C:/Users/timbv/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     # Libraries
     import pandas as pd
     import numpy as np
@@ -77,6 +77,10 @@ def harmonize_data():
                            serum_creatinine="creatinine_s", cystatin_c="cystatin_c_s",
                            bun="bun", height="height", sex="sex", male="Male", female="Female", alpha=0.5)
     # Calculate FSOC = bl_bold - pf_bold
+    cols = [c for c in harmonized.columns if "_bl_" in c] + \
+        [c for c in harmonized.columns if "_pf_" in c]
+    harmonized[cols] = harmonized[cols].apply(
+        pd.to_numeric, errors='coerce', axis=1)
     harmonized = harmonized.assign(
         fsoc_r_cortex=harmonized["bold_r_bl_cortex"] -
         harmonized["bold_r_pf_cortex"],
