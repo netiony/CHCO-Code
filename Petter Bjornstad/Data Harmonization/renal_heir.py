@@ -90,7 +90,7 @@ def clean_renal_heir():
     screen.columns = screen.columns.str.replace(
         r"_of_screen|screen_", "", regex=True)
     screen.rename({"serum_creatinine": "creatinine_s", "urine_acr": "acr_u",
-                   "urine_mab": "mab_u", "urine_cre": "creatinine_u"},
+                   "urine_mab": "microalbumin_u", "urine_cre": "creatinine_u"},
                   axis=1, inplace=True)
     screen["procedure"] = "screening"
 
@@ -121,7 +121,9 @@ def clean_renal_heir():
         r"clamp_", "", regex=True)
     clamp.rename({"serum_creatinine": "creatinine_s",
                   "serum_sodium": "sodium_s",
-                  "cystatin_c": "cystatin_c_s"},
+                  "cystatin_c": "cystatin_c_s",
+                  "urine_mab_baseline": "microalbumin_u",
+                  "urine_cre_baseline": "creatinine_u"},
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
     clamp["procedure"] = "clamp"

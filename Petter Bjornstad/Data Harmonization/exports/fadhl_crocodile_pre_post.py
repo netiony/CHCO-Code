@@ -23,8 +23,7 @@ vars = ["record_id", "co_enroll_id", "study", "kit_id", "group", "dob",
         "diabetes_dx_date", "race", "ethnicity", "race_ethnicity", "visit",
         "date", "age", "sex", "sglt2i_ever", "sglti_timepoint", "bmi", "sbp", "dbp", "creatinine_s", "cystatin_c_s", "bun", "height",
         "gfr", "gfr_bsa", "eGFR_fas_cr", "eGFR_bedside_Schwartz",
-        "acr_u", "hba1c", 'dexa_body_fat', 'dexa_fat_kg', 'dexa_trunk_kg',
-        'bod_pod_body_fat', 'bod_pod_fat_kg',
+        "acr_u", "hba1c", 'dexa_body_fat', 'dexa_fat_kg', 'dexa_trunk_kg', 'bod_pod_body_fat', 'bod_pod_fat_kg',
         "bold_r_bl_cortex", "bold_r_bl_medulla", "bold_r_bl_kidney",
         "bold_r_pf_cortex", "bold_r_pf_medulla", "bold_r_pf_kidney",
         "bold_l_bl_cortex", "bold_l_bl_medulla", "bold_l_bl_kidney",
@@ -42,6 +41,5 @@ id.loc[(fadhl["study"] == "IMPROVE") & (
     fadhl["visit"] == "12_months_post_surgery")] += "_12M"
 fadhl["michigan_id"] = id
 fadhl.set_index(["michigan_id"], drop=True, inplace=True)
-fadhl.replace({-13332: np.nan, "INF": np.nan})
 # Write
 fadhl.to_csv("~/fadhl_latest_value.csv")

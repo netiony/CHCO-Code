@@ -15,11 +15,10 @@ __status__ = "Dev"
 
 
 def harmonize_data():
-
-    import os
-    os.chdir(
-        "C:/Users/timbv/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     # Libraries
+    import os
+    os.chdir(os.path.expanduser('~'))
+    os.chdir("Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import pandas as pd
     import numpy as np
     from casper import clean_casper
@@ -94,6 +93,10 @@ def harmonize_data():
         harmonized["bold_l_pf_medulla"],
         fsoc_l_kidney=harmonized["bold_l_bl_kidney"] -
         harmonized["bold_l_pf_kidney"])
+    # UACR
+    harmonized["acr_u"] = \
+        pd.to_numeric(harmonized["microalbumin_u"], errors="coerce") * 100 / \
+        pd.to_numeric(harmonized["creatinine_u"], errors="coerce")
     # Sort
     harmonized.sort_values(
         ["study", "record_id", "visit", "procedure", "date"], inplace=True)

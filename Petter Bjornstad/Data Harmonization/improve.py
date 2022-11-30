@@ -102,7 +102,7 @@ def clean_improve():
     screen.columns = screen.columns.str.replace(
         r"screen_|_of_screen", "", regex=True)
     screen.rename({"serum_creatinine": "creatinine_s", "urine_acr": "acr_u",
-                   "urine_cre": "creatinine_u", "urine_mab": "mab_u"},
+                   "urine_cre": "creatinine_u", "urine_mab": "microalbumin_u"},
                   axis=1, inplace=True)
     screen["procedure"] = "screening"
 
@@ -188,8 +188,10 @@ def clean_improve():
     clamp = clamp.loc[clamp["clamp_date"] != ""]
     clamp.columns = clamp.columns.str.replace(
         r"clamp_", "", regex=True)
-    clamp.rename({"cystatin_c": "cystatin_c_s",
-                  "serum_creatinine": "creatinine_s", "acr_baseline": "acr_u"
+    clamp.rename({"cystatin_c": "cystatin_c_s", "urine_mab": "microalbumin_u",
+                  "serum_creatinine": "creatinine_s", "acr_baseline": "acr_u",
+                  "urine_mab_baseline": "microalbumin_u",
+                  "urine_cre_baseline": "creatinine_u"
                   }, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
 

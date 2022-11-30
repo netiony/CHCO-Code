@@ -96,7 +96,7 @@ def clean_coffee():
     screen.columns = screen.columns.str.replace(
         r"screen_|_of_screen", "", regex=True)
     screen.rename({"serum_creatinine": "creatinine_s", "urine_acr": "acr_u",
-                   "urine_cre": "creatinine_u", "urine_mab": "mab_u"},
+                   "urine_cre": "creatinine_u", "urine_mab": "microalbumin_u"},
                   axis=1, inplace=True)
     screen["procedure"] = "screening"
 
