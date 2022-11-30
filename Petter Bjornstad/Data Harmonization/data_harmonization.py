@@ -15,6 +15,10 @@ __status__ = "Dev"
 
 
 def harmonize_data():
+
+    import os
+    os.chdir(
+        "/Users/timvigers/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     # Libraries
     import pandas as pd
     import numpy as np
@@ -62,16 +66,32 @@ def harmonize_data():
     # Date variables
     harmonized[["dob", "date"]] = harmonized[["dob", "date"]].apply(
         pd.to_datetime, errors='coerce')
+    # Replace blanks with missing
+    harmonized.replace("", np.nan, inplace=True)
     # Calculated variables
-    harmonized["age"] = round((harmonized["date"] -
-                               harmonized["dob"]).dt.days / 365.25, 2)
+    age = round((harmonized["date"] -
+                 harmonized["dob"]).dt.days / 365.25, 2)
+    harmonized = pd.concat([harmonized, age], axis=1)
+    harmonized.rename({0: "age"}, axis=1, inplace=True)
     harmonized = calc_egfr(harmonized, age="age",
                            serum_creatinine="creatinine_s", cystatin_c="cystatin_c_s",
                            bun="bun", height="height", sex="sex", male="Male", female="Female", alpha=0.5)
+    # Calculate FSOC = bl_bold - pf_bold
+    harmonized = harmonized.assign(
+        fsoc_r_cortex=harmonized["bold_r_bl_cortex"] -
+        harmonized["bold_r_pf_cortex"],
+        fsoc_r_medulla=harmonized["bold_r_bl_medulla"] -
+        harmonized["bold_r_pf_medulla"],
+        fsoc_r_kidney=harmonized["bold_r_bl_kidney"] -
+        harmonized["bold_r_pf_kidney"],
+        fsoc_l_cortex=harmonized["bold_l_bl_cortex"] -
+        harmonized["bold_l_pf_cortex"],
+        fsoc_l_medulla=harmonized["bold_l_bl_medulla"] -
+        harmonized["bold_l_pf_medulla"],
+        fsoc_l_kidney=harmonized["bold_l_bl_kidney"] -
+        harmonized["bold_l_pf_kidney"])
     # Sort
     harmonized.sort_values(
         ["study", "record_id", "visit", "procedure", "date"], inplace=True)
-    # Replace blanks with missing
-    harmonized.replace("", np.nan, inplace=True)
     # Return
     return harmonized

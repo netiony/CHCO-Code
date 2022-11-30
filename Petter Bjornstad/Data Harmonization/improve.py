@@ -201,7 +201,7 @@ def clean_improve():
                                                                == "outcomes", "field_name"]]
     out = pd.DataFrame(proj.export_records(fields=var))
     out.drop(redcap_cols + ["kidney_outcomes", "egfr", "metab_outcomes",
-                            "asl_outcomes", "bold_outcomes"],
+                            "asl_outcomes", "bold_outcomes", "adc_outcomes"],
              axis=1, inplace=True)
     out = out.loc[out["mri_date"] != ""]
     out.columns = out.columns.str.replace(
