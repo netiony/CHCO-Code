@@ -110,7 +110,6 @@ def clean_casper():
     clamp.drop(["baseline", "fasting_labs", "bg_labs", "urine_labs", "hct_lab",
                 "a1c_clamp_time", "clamp_a1c", "clamp_a1c_date"],
                axis=1, inplace=True)
-    clamp = clamp.loc[clamp["clamp_date"] != ""]
     clamp.columns = clamp.columns.str.replace(
         r"clamp_", "", regex=True)
     clamp.rename({"cystatin_c": "cystatin_c_s",
@@ -143,7 +142,6 @@ def clean_casper():
     out.drop(["kidney_outcomes", "egfr", "metab_outcomes",
               "asl_outcomes", "bold_outcomes"],
              axis=1, inplace=True)
-    out = out.loc[out["mri_date"] != ""]
     out.columns = out.columns.str.replace(
         r"mri_", "", regex=True)
     out["procedure"] = "kidney_outcomes"

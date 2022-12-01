@@ -154,7 +154,6 @@ def clean_renal_heir():
                  "mes_volume_con", "glom_nuc_count", "mes_nuc_count", "art_intima",
                  "art_media", "pod_nuc_density", "pod_cell_volume"]
     biopsy = pd.DataFrame(proj.export_records(fields=var))
-    biopsy = biopsy.loc[biopsy["bx_date"] != ""]
     biopsy.drop([col for col in biopsy.columns if '_yn' in col] +
                 [col for col in biopsy.columns if 'procedure_' in col],
                 axis=1, inplace=True)

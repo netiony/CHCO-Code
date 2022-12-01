@@ -129,7 +129,6 @@ def clean_improve():
     mri.drop(redcap_cols + ["mri_cardio", "mri_abdo",
                             "mri_aortic", "study_visit_mri"],
              axis=1, inplace=True)
-    mri = mri.loc[mri["mri_visit_date"] != ""]
     mri.columns = mri.columns.str.replace(
         r"mri_|visit_", "", regex=True)
     mri["procedure"] = "cardio_abdominal_mri"
@@ -146,7 +145,6 @@ def clean_improve():
                              "mmtt_glp1", "mmtt_cpep", "mmtt_yy", "mmtt_glucagon",
                              "mmtt_gluc"],
               axis=1, inplace=True)
-    mmtt = mmtt.loc[mmtt["mmtt_date"] != ""]
     mmtt.columns = mmtt.columns.str.replace(
         r"mmtt_", "", regex=True)
     mmtt.rename({"wt": "weight", "ht": "height", "waist": "waistcm",
@@ -165,7 +163,6 @@ def clean_improve():
     dxa.drop(redcap_cols + ["study_visit_bodycomp", "dxa_complete",
                             "bodpod_complete"],
              axis=1, inplace=True)
-    dxa = dxa.loc[dxa["bodcomp_date"] != ""]
     dxa.columns = dxa.columns.str.replace(
         r"dxa_", "dexa_", regex=True)
     dxa.columns = dxa.columns.str.replace(
@@ -185,7 +182,6 @@ def clean_improve():
     clamp.drop(redcap_cols + ["study_visit_clamp", "baseline", "fasting_labs",
                               "bg_labs", "ns_bolus", "urine_labs"],
                axis=1, inplace=True)
-    clamp = clamp.loc[clamp["clamp_date"] != ""]
     clamp.columns = clamp.columns.str.replace(
         r"clamp_", "", regex=True)
     clamp.rename({"cystatin_c": "cystatin_c_s", "urine_mab": "microalbumin_u",
@@ -205,7 +201,6 @@ def clean_improve():
     out.drop(redcap_cols + ["kidney_outcomes", "egfr", "metab_outcomes",
                             "asl_outcomes", "bold_outcomes", "adc_outcomes"],
              axis=1, inplace=True)
-    out = out.loc[out["mri_date"] != ""]
     out.columns = out.columns.str.replace(
         r"mri_", "", regex=True)
     out["procedure"] = "kidney_outcomes"
@@ -223,7 +218,6 @@ def clean_improve():
                  "mes_volume_con", "glom_nuc_count", "mes_nuc_count", "art_intima",
                  "art_media", "pod_nuc_density", "pod_cell_volume"]
     biopsy = pd.DataFrame(proj.export_records(fields=var))
-    biopsy = biopsy.loc[biopsy["bx_date"] != ""]
     biopsy.drop(redcap_cols + [col for col in biopsy.columns if '_yn' in col] +
                 [col for col in biopsy.columns if 'procedure_' in col],
                 axis=1, inplace=True)

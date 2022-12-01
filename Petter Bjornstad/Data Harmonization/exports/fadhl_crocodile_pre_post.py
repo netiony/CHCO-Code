@@ -20,7 +20,7 @@ from data_harmonization import harmonize_data
 df = harmonize_data()
 # Variable list
 vars = ["record_id", "co_enroll_id", "study", "kit_id", "group", "dob",
-        "diabetes_dx_date", "race", "ethnicity", "race_ethnicity", "visit", "date", "age", "sex", "sglt2i_ever", "sglti_timepoint", "bmi", "sbp", "dbp", "creatinine_s", "cystatin_c_s", "bun",
+        "diabetes_dx_date", "race", "ethnicity", "race_ethnicity", "visit", "procedure", "date", "age", "sex", "sglt2i_ever", "sglti_timepoint", "bmi", "sbp", "dbp", "creatinine_s", "cystatin_c_s", "bun",
         "gfr", "gfr_bsa", "eGFR_fas_cr",
         "acr_u", "hba1c", 'dexa_body_fat', 'dexa_fat_kg', 'dexa_trunk_kg', 'bod_pod_body_fat', 'bod_pod_fat_kg',
         "bold_r_bl_cortex", "bold_r_bl_medulla", "bold_r_bl_kidney",
