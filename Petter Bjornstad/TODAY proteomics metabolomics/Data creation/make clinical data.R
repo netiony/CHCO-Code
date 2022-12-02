@@ -16,6 +16,27 @@ comorb$MIC.OR.MAC <- ifelse(comorb$MAC==1 | comorb$MIC==1,1,
                             ifelse(is.na(comorb$MAC) & is.na(comorb$MIC), NA, 0))
 comorb$releaseid <- comorb$RELEASEID
 comorb$RELEASEID <- NULL
+# Merge in bariatric surgery info
+# read in TME dataset to find those who had bariatric surgery
+tme <- read.csv("./Clinical data/TODAY2/TME.csv")
+tme <- tme %>% filter(TMETYPE==1)
+tme <- tme %>% select(RELEASEID,TMETYPE,DAYSTOTME)
+colnames(tme) <- c("releaseid","TMETYPE","DAYSTOTME")
+comorb <- merge(comorb, tme, by="releaseid", all.x = T, all.y=F)
+# now censor all outcomes at time of TME for those who had bariatric surgery
+# need to reset the indicator variable as well as the time variable
+comorb <- comorb %>% mutate(test_htn_days = case_when(
+  HTN==0 ~ DAYSTOHTN,
+  HTN==1 & is.na(DAYSTOTME) ~ DAYSTOHTN,
+  HTN==1 & !is.na(DAYSTOTME) & DAYSTOHTN>DAYSTOTME ~ DAYSTOTME,
+  HTN==1 & !is.na(DAYSTOTME) & DAYSTOHTN<=DAYSTOTME ~ DAYSTOHTN
+))  
+comorb <- comorb %>% mutate(test_htn_flag = case_when(
+  HTN==0 ~ HTN,
+  HTN==1 & is.na(DAYSTOTME) ~ HTN,
+  HTN==1 & !is.na(DAYSTOTME) & DAYSTOHTN>DAYSTOTME ~ as.integer(0),
+  HTN==1 & !is.na(DAYSTOTME) & DAYSTOHTN<=DAYSTOTME ~ HTN
+))  
 # Save
 save(comorb,file = "./Clinical data/comorb.Rdata")
 
