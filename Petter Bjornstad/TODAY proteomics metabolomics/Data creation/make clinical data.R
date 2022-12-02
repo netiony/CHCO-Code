@@ -37,6 +37,17 @@ comorb <- comorb %>% mutate(test_htn_flag = case_when(
   HTN==1 & !is.na(DAYSTOTME) & DAYSTOHTN>DAYSTOTME ~ as.integer(0),
   HTN==1 & !is.na(DAYSTOTME) & DAYSTOHTN<=DAYSTOTME ~ HTN
 ))  
+
+# Tim's test code!
+temp = comorb %>% select(HTN,DAYSTOTME,DAYSTOHTN)
+temp$test_htn_days = pmin(temp$DAYSTOHTN,temp$DAYSTOTME,na.rm = T)
+temp$test_htn_days[temp$HTN==0] = temp$DAYSTOHTN[temp$HTN==0]
+temp$test_htn_flag = temp$HTN
+temp$test_htn_flag[which(temp$DAYSTOTME < temp$DAYSTOHTN)] = 0
+
+all(temp$test_htn_days == comorb$test_htn_days)
+all(temp$test_htn_flag == comorb$test_htn_flag)
+
 # Save
 save(comorb,file = "./Clinical data/comorb.Rdata")
 
