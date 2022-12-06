@@ -33,6 +33,20 @@ soma <- soma %>% filter(!is.na(releaseid))
 # fix date drawn
 soma$Date.Drawn <- as.Date(soma$Date.Drawn,format="%m/%d/%Y")
 
+# merge in bariatric surgery data
+tme <- read.csv("./Clinical data/TODAY2/TME.csv")
+tme <- tme %>% filter(TMETYPE==1)
+tme <- tme %>% select(RELEASEID,TMETYPE,DAYSTOTME)
+colnames(tme) <- c("releaseid","TMETYPE","DAYSTOTME")
+soma <- merge(soma, tme, by="releaseid", all.x = T, all.y=F)
+# get rid of the 10 yr visit if DAYSTOTME<=3650
+# need to be sure to keep the baseline visit for those people
+# first add a variable that is sequential within ppt so we can tell baseline vs. followup
+soma <- soma %>% group_by(releaseid) %>% mutate(visit=seq_along(releaseid))
+soma <- soma %>% filter(!(visit==2 & !is.na(DAYSTOTME) & DAYSTOTME<3652))
+# drop bariatric surgery variables
+soma <- soma %>% select(-c(TMETYPE,DAYSTOTME))
+
 # Save
 save(soma,file = "./Somalogic data raw/soma.Rdata")
 save(analytes,file = "./Somalogic data raw/analytes.Rdata")

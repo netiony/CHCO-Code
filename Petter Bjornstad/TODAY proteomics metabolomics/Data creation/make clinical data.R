@@ -25,29 +25,177 @@ colnames(tme) <- c("releaseid","TMETYPE","DAYSTOTME")
 comorb <- merge(comorb, tme, by="releaseid", all.x = T, all.y=F)
 # now censor all outcomes at time of TME for those who had bariatric surgery
 # need to reset the indicator variable as well as the time variable
-comorb <- comorb %>% mutate(test_htn_days = case_when(
+# HTN
+comorb <- comorb %>% mutate(DAYSTOHTN = case_when(
   HTN==0 ~ DAYSTOHTN,
   HTN==1 & is.na(DAYSTOTME) ~ DAYSTOHTN,
   HTN==1 & !is.na(DAYSTOTME) & DAYSTOHTN>DAYSTOTME ~ DAYSTOTME,
   HTN==1 & !is.na(DAYSTOTME) & DAYSTOHTN<=DAYSTOTME ~ DAYSTOHTN
 ))  
-comorb <- comorb %>% mutate(test_htn_flag = case_when(
+comorb <- comorb %>% mutate(HTN = case_when(
   HTN==0 ~ HTN,
   HTN==1 & is.na(DAYSTOTME) ~ HTN,
   HTN==1 & !is.na(DAYSTOTME) & DAYSTOHTN>DAYSTOTME ~ as.integer(0),
   HTN==1 & !is.na(DAYSTOTME) & DAYSTOHTN<=DAYSTOTME ~ HTN
 ))  
-
-# Tim's test code!
-temp = comorb %>% select(HTN,DAYSTOTME,DAYSTOHTN)
-temp$test_htn_days = pmin(temp$DAYSTOHTN,temp$DAYSTOTME,na.rm = T)
-temp$test_htn_days[temp$HTN==0] = temp$DAYSTOHTN[temp$HTN==0]
-temp$test_htn_flag = temp$HTN
-temp$test_htn_flag[which(temp$DAYSTOTME < temp$DAYSTOHTN)] = 0
-
-all(temp$test_htn_days == comorb$test_htn_days)
-all(temp$test_htn_flag == comorb$test_htn_flag)
-
+# LDL
+comorb <- comorb %>% mutate(DAYSTOLDL = case_when(
+  LDLDLP==0 ~ DAYSTOLDL,
+  LDLDLP==1 & is.na(DAYSTOTME) ~ DAYSTOLDL,
+  LDLDLP==1 & !is.na(DAYSTOTME) & DAYSTOLDL>DAYSTOTME ~ DAYSTOTME,
+  LDLDLP==1 & !is.na(DAYSTOTME) & DAYSTOLDL<=DAYSTOTME ~ DAYSTOLDL
+))  
+comorb <- comorb %>% mutate(LDLDLP = case_when(
+  LDLDLP==0 ~ LDLDLP,
+  LDLDLP==1 & is.na(DAYSTOTME) ~ LDLDLP,
+  LDLDLP==1 & !is.na(DAYSTOTME) & DAYSTOLDL>DAYSTOTME ~ as.integer(0),
+  LDLDLP==1 & !is.na(DAYSTOTME) & DAYSTOLDL<=DAYSTOTME ~ LDLDLP
+))  
+# TG
+comorb <- comorb %>% mutate(DAYSTOTG = case_when(
+  TGDLP==0 ~ DAYSTOTG,
+  TGDLP==1 & is.na(DAYSTOTME) ~ DAYSTOTG,
+  TGDLP==1 & !is.na(DAYSTOTME) & DAYSTOTG>DAYSTOTME ~ DAYSTOTME,
+  TGDLP==1 & !is.na(DAYSTOTME) & DAYSTOTG<=DAYSTOTME ~ DAYSTOTG
+))  
+comorb <- comorb %>% mutate(TGDLP = case_when(
+  TGDLP==0 ~ TGDLP,
+  TGDLP==1 & is.na(DAYSTOTME) ~ TGDLP,
+  TGDLP==1 & !is.na(DAYSTOTME) & DAYSTOTG>DAYSTOTME ~ as.integer(0),
+  TGDLP==1 & !is.na(DAYSTOTME) & DAYSTOTG<=DAYSTOTME ~ TGDLP
+))  
+# ANYDLP
+comorb <- comorb %>% mutate(DAYSTOANYDLP = case_when(
+  ANYDLP==0 ~ DAYSTOANYDLP,
+  ANYDLP==1 & is.na(DAYSTOTME) ~ DAYSTOANYDLP,
+  ANYDLP==1 & !is.na(DAYSTOTME) & DAYSTOANYDLP>DAYSTOTME ~ DAYSTOTME,
+  ANYDLP==1 & !is.na(DAYSTOTME) & DAYSTOANYDLP<=DAYSTOTME ~ DAYSTOANYDLP
+))  
+comorb <- comorb %>% mutate(ANYDLP = case_when(
+  ANYDLP==0 ~ ANYDLP,
+  ANYDLP==1 & is.na(DAYSTOTME) ~ ANYDLP,
+  ANYDLP==1 & !is.na(DAYSTOTME) & DAYSTOANYDLP>DAYSTOTME ~ as.integer(0),
+  ANYDLP==1 & !is.na(DAYSTOTME) & DAYSTOANYDLP<=DAYSTOTME ~ ANYDLP
+))  
+# MIC
+comorb <- comorb %>% mutate(DAYSTOMIC = case_when(
+  MIC==0 ~ DAYSTOMIC,
+  MIC==1 & is.na(DAYSTOTME) ~ DAYSTOMIC,
+  MIC==1 & !is.na(DAYSTOTME) & DAYSTOMIC>DAYSTOTME ~ DAYSTOTME,
+  MIC==1 & !is.na(DAYSTOTME) & DAYSTOMIC<=DAYSTOTME ~ DAYSTOMIC
+))  
+comorb <- comorb %>% mutate(MIC = case_when(
+  MIC==0 ~ MIC,
+  MIC==1 & is.na(DAYSTOTME) ~ MIC,
+  MIC==1 & !is.na(DAYSTOTME) & DAYSTOMIC>DAYSTOTME ~ as.integer(0),
+  MIC==1 & !is.na(DAYSTOTME) & DAYSTOMIC<=DAYSTOTME ~ MIC
+))  
+# MAC
+comorb <- comorb %>% mutate(DAYSTOMAC = case_when(
+  MAC==0 ~ DAYSTOMAC,
+  MAC==1 & is.na(DAYSTOTME) ~ DAYSTOMAC,
+  MAC==1 & !is.na(DAYSTOTME) & DAYSTOMAC>DAYSTOTME ~ DAYSTOTME,
+  MAC==1 & !is.na(DAYSTOTME) & DAYSTOMAC<=DAYSTOTME ~ DAYSTOMAC
+))  
+comorb <- comorb %>% mutate(MAC = case_when(
+  MAC==0 ~ MAC,
+  MAC==1 & is.na(DAYSTOTME) ~ MAC,
+  MAC==1 & !is.na(DAYSTOTME) & DAYSTOMAC>DAYSTOTME ~ as.integer(0),
+  MAC==1 & !is.na(DAYSTOTME) & DAYSTOMAC<=DAYSTOTME ~ MAC
+))  
+# NEPHRO
+comorb <- comorb %>% mutate(DAYSTONEPHRO = case_when(
+  NEPHRO==0 ~ DAYSTONEPHRO,
+  NEPHRO==1 & is.na(DAYSTOTME) ~ DAYSTONEPHRO,
+  NEPHRO==1 & !is.na(DAYSTOTME) & DAYSTONEPHRO>DAYSTOTME ~ DAYSTOTME,
+  NEPHRO==1 & !is.na(DAYSTOTME) & DAYSTONEPHRO<=DAYSTOTME ~ DAYSTONEPHRO
+))  
+comorb <- comorb %>% mutate(NEPHRO = case_when(
+  NEPHRO==0 ~ NEPHRO,
+  NEPHRO==1 & is.na(DAYSTOTME) ~ NEPHRO,
+  NEPHRO==1 & !is.na(DAYSTOTME) & DAYSTONEPHRO>DAYSTOTME ~ as.integer(0),
+  NEPHRO==1 & !is.na(DAYSTOTME) & DAYSTONEPHRO<=DAYSTOTME ~ NEPHRO
+))  
+# HYP
+comorb <- comorb %>% mutate(DAYSTOHYP = case_when(
+  HYP==0 ~ DAYSTOHYP,
+  HYP==1 & is.na(DAYSTOTME) ~ DAYSTOHYP,
+  HYP==1 & !is.na(DAYSTOTME) & DAYSTOHYP>DAYSTOTME ~ DAYSTOTME,
+  HYP==1 & !is.na(DAYSTOTME) & DAYSTOHYP<=DAYSTOTME ~ DAYSTOHYP
+))  
+comorb <- comorb %>% mutate(HYP = case_when(
+  HYP==0 ~ HYP,
+  HYP==1 & is.na(DAYSTOTME) ~ HYP,
+  HYP==1 & !is.na(DAYSTOTME) & DAYSTOHYP>DAYSTOTME ~ as.integer(0),
+  HYP==1 & !is.na(DAYSTOTME) & DAYSTOHYP<=DAYSTOTME ~ HYP
+))  
+# FILAM
+comorb <- comorb %>% mutate(DAYSTOFILAM = case_when(
+  FILAM==0 ~ DAYSTOFILAM,
+  FILAM==1 & is.na(DAYSTOTME) ~ DAYSTOFILAM,
+  FILAM==1 & !is.na(DAYSTOTME) & DAYSTOFILAM>DAYSTOTME ~ DAYSTOTME,
+  FILAM==1 & !is.na(DAYSTOTME) & DAYSTOFILAM<=DAYSTOTME ~ DAYSTOFILAM
+))  
+comorb <- comorb %>% mutate(FILAM = case_when(
+  FILAM==0 ~ FILAM,
+  FILAM==1 & is.na(DAYSTOTME) ~ FILAM,
+  FILAM==1 & !is.na(DAYSTOTME) & DAYSTOFILAM>DAYSTOTME ~ as.integer(0),
+  FILAM==1 & !is.na(DAYSTOTME) & DAYSTOFILAM<=DAYSTOTME ~ FILAM
+))  
+# NEURO
+comorb <- comorb %>% mutate(DAYSTONEURO = case_when(
+  NEURO==0 ~ DAYSTONEURO,
+  NEURO==1 & is.na(DAYSTOTME) ~ DAYSTONEURO,
+  NEURO==1 & !is.na(DAYSTOTME) & DAYSTONEURO>DAYSTOTME ~ DAYSTOTME,
+  NEURO==1 & !is.na(DAYSTOTME) & DAYSTONEURO<=DAYSTOTME ~ DAYSTONEURO
+))  
+comorb <- comorb %>% mutate(NEURO = case_when(
+  NEURO==0 ~ NEURO,
+  NEURO==1 & is.na(DAYSTOTME) ~ NEURO,
+  NEURO==1 & !is.na(DAYSTOTME) & DAYSTONEURO>DAYSTOTME ~ as.integer(0),
+  NEURO==1 & !is.na(DAYSTOTME) & DAYSTONEURO<=DAYSTOTME ~ NEURO
+))  
+# RETINO
+comorb <- comorb %>% mutate(DAYSTORETINO = case_when(
+  RETINO==0 ~ DAYSTORETINO,
+  RETINO==1 & is.na(DAYSTOTME) ~ DAYSTORETINO,
+  RETINO==1 & !is.na(DAYSTOTME) & DAYSTORETINO>DAYSTOTME ~ DAYSTOTME,
+  RETINO==1 & !is.na(DAYSTOTME) & DAYSTORETINO<=DAYSTOTME ~ DAYSTORETINO
+))  
+comorb <- comorb %>% mutate(RETINO = case_when(
+  RETINO==0 ~ RETINO,
+  RETINO==1 & is.na(DAYSTOTME) ~ RETINO,
+  RETINO==1 & !is.na(DAYSTOTME) & DAYSTORETINO>DAYSTOTME ~ as.integer(0),
+  RETINO==1 & !is.na(DAYSTOTME) & DAYSTORETINO<=DAYSTOTME ~ RETINO
+))  
+# MVD
+comorb <- comorb %>% mutate(DAYSTOMVD = case_when(
+  MVD==0 ~ DAYSTOMVD,
+  MVD==1 & is.na(DAYSTOTME) ~ DAYSTOMVD,
+  MVD==1 & !is.na(DAYSTOTME) & DAYSTOMVD>DAYSTOTME ~ DAYSTOTME,
+  MVD==1 & !is.na(DAYSTOTME) & DAYSTOMVD<=DAYSTOTME ~ DAYSTOMVD
+))  
+comorb <- comorb %>% mutate(MVD = case_when(
+  MVD==0 ~ MVD,
+  MVD==1 & is.na(DAYSTOTME) ~ MVD,
+  MVD==1 & !is.na(DAYSTOTME) & DAYSTOMVD>DAYSTOTME ~ as.integer(0),
+  MVD==1 & !is.na(DAYSTOTME) & DAYSTOMVD<=DAYSTOTME ~ MVD
+))  
+# GLYC
+comorb <- comorb %>% mutate(DAYSTOGLYC = case_when(
+  GLYC==0 ~ DAYSTOGLYC,
+  GLYC==1 & is.na(DAYSTOTME) ~ DAYSTOGLYC,
+  GLYC==1 & !is.na(DAYSTOTME) & DAYSTOGLYC>DAYSTOTME ~ DAYSTOTME,
+  GLYC==1 & !is.na(DAYSTOTME) & DAYSTOGLYC<=DAYSTOTME ~ DAYSTOGLYC
+))  
+comorb <- comorb %>% mutate(GLYC = case_when(
+  GLYC==0 ~ GLYC,
+  GLYC==1 & is.na(DAYSTOTME) ~ GLYC,
+  GLYC==1 & !is.na(DAYSTOTME) & DAYSTOGLYC>DAYSTOTME ~ as.integer(0),
+  GLYC==1 & !is.na(DAYSTOTME) & DAYSTOGLYC<=DAYSTOTME ~ GLYC
+))  
+# drop bariatric surgery variables
+comorb <- comorb %>% select(-c(TMETYPE,DAYSTOTME))
 # Save
 save(comorb,file = "./Clinical data/comorb.Rdata")
 
