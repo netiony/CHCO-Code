@@ -44,8 +44,8 @@ def clean_crocodile():
     # Relevel sex and group
     demo["sex"].replace({1: "Male", 2: "Female", 3: "Other",
                         "1": "Male", "2": "Female", "3": "Other"}, inplace=True)
-    demo["group"].replace({1: "Type 1 Diabetes", 2: "Control",
-                           "1": "Type 1 Diabetes", "2": "Control"}, inplace=True)
+    demo["group"].replace({1: "Type 1 Diabetes", 2: "Lean Control",
+                           "1": "Type 1 Diabetes", "2": "Lean Control"}, inplace=True)
 
 # ------------------------------------------------------------------------------
 # Medications
