@@ -35,6 +35,7 @@ fadhl.to_csv("~/fadhl_pre_aggregation.csv", index=False)
 fadhl["visit"] = fadhl["visit"].replace({"pre_surgery": "baseline"})
 fadhl = fadhl.groupby(by=["record_id", "visit"]).agg("last").reset_index()
 fadhl = fadhl.loc[~pd.isna(fadhl["study"])]
+# Add Michigan ID
 id = fadhl["record_id"].copy()
 id.loc[(fadhl["study"] == "IMPROVE") & (fadhl["visit"] == "baseline")] += "_BL"
 id.loc[(fadhl["study"] == "IMPROVE") & (

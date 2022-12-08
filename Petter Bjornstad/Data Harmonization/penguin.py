@@ -60,7 +60,7 @@ def clean_penguin():
     med = pd.DataFrame(proj.export_records(fields=var))
     # Name translations
     med_list = {"htn_med___1": "ace_inhibitor",
-                "htn_med___2": "raas_inhibitor",
+                "htn_med___2": "angiotensin_receptor_blocker",
                 "htn_med___3": "beta_blocker",
                 "htn_med___4": "ca_channel_blocker",
                 "htn_med___5": "diuretic",
@@ -175,6 +175,7 @@ def clean_penguin():
 
     # MERGE
     df = pd.merge(phys, screen, how="outer")
+    df = pd.merge(df, med, how="outer")
     df = pd.merge(df, labs, how="outer")
     df = pd.merge(df, dxa, how="outer")
     df = pd.merge(df, clamp, how="outer")

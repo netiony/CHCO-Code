@@ -18,6 +18,5 @@ import numpy as np
 from data_harmonization import harmonize_data
 # Get dataset
 df = harmonize_data()
-df = df.loc[df["study"].isin(['CROCODILE', "IMPROVE"])]
 # Write
-df.to_csv("/Volumes/Work/CHCO/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv")
+df.to_csv("/Volumes/Work/CHCO/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", index=False)

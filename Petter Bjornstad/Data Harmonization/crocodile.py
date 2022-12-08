@@ -60,7 +60,7 @@ def clean_crocodile():
                 "diabetes_meds_other___4": "sglti_timepoint",
                 "diabetes_meds_other___5": "other_diabetes_med_timepoint",
                 "htn_med___1": "ace_inhibitor",
-                "htn_med___2": "raas_inhibitor",
+                "htn_med___2": "angiotensin_receptor_blocker",
                 "htn_med___3": "beta_blocker",
                 "htn_med___4": "ca_channel_blocker",
                 "htn_med___5": "diuretic",
