@@ -55,7 +55,21 @@ def clean_penguin():
 # ------------------------------------------------------------------------------
 # Medications
 # ------------------------------------------------------------------------------
-
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                               == "medical_history", "field_name"]]
+    med = pd.DataFrame(proj.export_records(fields=var))
+    # Name translations
+    med_list = {"htn_med___1": "ace_inhibitor",
+                "htn_med___2": "raas_inhibitor",
+                "htn_med___3": "beta_blocker",
+                "htn_med___4": "ca_channel_blocker",
+                "htn_med___5": "diuretic",
+                "htn_med___6": "statin"}
+    og_names = list(med_list.keys())
+    med = med[["record_id"] + og_names]
+    med[og_names] = med[og_names].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
+    med.rename(med_list, axis=1, inplace=True)
 
 # ------------------------------------------------------------------------------
 # Physical exam
