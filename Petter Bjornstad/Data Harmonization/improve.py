@@ -19,7 +19,7 @@ def clean_improve():
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
     tokens = pd.read_csv(
-        "~/Dropbox/Work/CHCO/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+        "/Volumes/Work/CHCO/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "IMPROVE", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
