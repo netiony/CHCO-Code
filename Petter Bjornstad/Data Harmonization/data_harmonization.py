@@ -67,6 +67,11 @@ def harmonize_data():
         pd.to_datetime, errors='coerce')
     # Replace blanks with missing
     harmonized.replace("", np.nan, inplace=True)
+    # Convert to numeric
+    num_vars = ["height", "total_kidney_volume_ml",
+                "left_kidney_volume_ml", "right_kidney_volume_ml"]
+    harmonized[num_vars] = harmonized[num_vars].apply(
+        pd.to_numeric, errors='coerce')
     # Calculated variables
     age = round((harmonized["date"] -
                  harmonized["dob"]).dt.days / 365.25, 2)
@@ -75,6 +80,10 @@ def harmonize_data():
     harmonized = calc_egfr(harmonized, age="age",
                            serum_creatinine="creatinine_s", cystatin_c="cystatin_c_s",
                            bun="bun", height="height", sex="sex", male="Male", female="Female", alpha=0.5)
+    # Kidney volume
+    harmonized["total_kidney_volume_ml"] = \
+        harmonized["left_kidney_volume_ml"] + \
+        harmonized["right_kidney_volume_ml"]
     # Calculate FSOC = bl_bold - pf_bold
     cols = [c for c in harmonized.columns if "_bl_" in c] + \
         [c for c in harmonized.columns if "_pf_" in c]

@@ -121,6 +121,8 @@ def clean_crocodile():
     mri = pd.DataFrame(proj.export_records(fields=var))
     mri.columns = mri.columns.str.replace(
         r"mri_", "", regex=True)
+    mri.rename({"volume_right": "right_kidney_volume_ml", "volume_left": "left_kidney_volume_ml"},
+               axis=1, inplace=True)
     mri["procedure"] = "bold_mri"
 
 # ------------------------------------------------------------------------------
