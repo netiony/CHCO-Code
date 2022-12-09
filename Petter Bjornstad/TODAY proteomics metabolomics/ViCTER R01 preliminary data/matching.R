@@ -30,9 +30,10 @@ for_matching <- merge(for_matching,PAT,by="releaseid",all.x = T,all.y = F)
 # get treatment arm - PRIMOUT
 PRIMOUT <- read.csv("./Clinical data/TODAY/PRIMOUT.csv")
 PRIMOUT$releaseid <- PRIMOUT$PTID
-for_matching <- merge(for_matching,PRIMOUT,by="releaseid",all.x = T,all.y = F)
+#for_matching <- merge(for_matching,PRIMOUT,by="releaseid",all.x = T,all.y = F)
 # IDs in PRIMOUT don't seem to match the release IDs
 
-
+# write file to read into SAS
+write.csv(for_matching,"E:/Petter Bjornstad/TODAY subaward/ViCTER matching/for_matching.csv", row.names = F)
 
 
