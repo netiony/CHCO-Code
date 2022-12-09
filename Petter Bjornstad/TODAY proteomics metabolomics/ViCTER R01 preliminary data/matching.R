@@ -35,12 +35,17 @@ for_matching <- merge(for_matching,PE_baseline,by="releaseid",all.x = T,all.y = 
 
 # get treatment arm - PRIMOUT
 PRIMOUT <- read.csv("./Clinical data/TODAY/PRIMOUT.csv")
-PRIMOUT$releaseid <- PRIMOUT$PTID
-#for_matching <- merge(for_matching,PRIMOUT,by="releaseid",all.x = T,all.y = F)
+for_matching <- merge(for_matching,PRIMOUT,by="releaseid",all.x = T,all.y = F)
 # IDs in PRIMOUT don't seem to match the release IDs
 
+# read in soma data so we only pick people in the ancillary study
+load(file = "E:/Petter Bjornstad/TODAY subaward/Somalogic data raw/soma.Rdata")
+keep_soma <- soma %>% select(releaseid)
+keep_soma <- unique(keep_soma)
+for_matching <- merge(for_matching,keep_soma,by="releaseid",all.x = F, all.y = T)
+
 # write file to read into SAS
-for_matching <- for_matching %>% select(releaseid, AGEBASE, sex, tanner)
+for_matching <- for_matching %>% select(releaseid, AGEBASE, sex, tanner, tx)
 write.csv(for_matching,"E:/Petter Bjornstad/TODAY subaward/ViCTER matching/for_matching.csv", row.names = F, na=".")
 
 
