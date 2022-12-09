@@ -25,9 +25,9 @@ def clean_coffee():
     # Get project metadata
     meta = pd.DataFrame(proj.metadata)
 
-# ------------------------------------------------------------------------------
-# Demographics
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Demographics
+    # --------------------------------------------------------------------------
 
     dem_cols = ["subject_id", "dob", "diagnosis",
                 "gender", "race", "ethnicity"]
@@ -56,9 +56,9 @@ def clean_coffee():
                         "1": "Male", "0": "Female", "3": "Other"}, inplace=True)
     demo["group"] = "Type 1 Diabetes"
 
-# ------------------------------------------------------------------------------
-# Medications
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Medications
+    # --------------------------------------------------------------------------
 
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "medical_history_casper", "field_name"]]
@@ -70,9 +70,9 @@ def clean_coffee():
     med.rename({"diabetes_med_other___4": "sglti_timepoint"},
                axis=1, inplace=True)
 
-# ------------------------------------------------------------------------------
-# Physical exam
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Physical exam
+    # --------------------------------------------------------------------------
 
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "physical_exam_casper", "field_name"]]
@@ -84,9 +84,9 @@ def clean_coffee():
     phys.rename({"sys_bp": "sbp", "dys_bp": "dbp", "waist_circumference": "waistcm",
                 "hip_circumference": "hipcm"}, inplace=True, axis=1)
 
-# ------------------------------------------------------------------------------
-# Screening labs
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Screening labs
+    # --------------------------------------------------------------------------
 
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "screening_labs_casper", "field_name"]]
@@ -100,9 +100,9 @@ def clean_coffee():
                   axis=1, inplace=True)
     screen["procedure"] = "screening"
 
-# ------------------------------------------------------------------------------
-# Clamp
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Clamp
+    # --------------------------------------------------------------------------
 
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "clamp", "field_name"]]
@@ -117,9 +117,9 @@ def clean_coffee():
                   }, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
 
-# ------------------------------------------------------------------------------
-# Outcomes
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Outcomes
+    # --------------------------------------------------------------------------
 
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "outcomes", "field_name"]]
@@ -148,8 +148,5 @@ def clean_coffee():
     df.sort_values(["subject_id", "date", "procedure"], inplace=True)
     # Rename subject identifier
     df.rename({"subject_id": "record_id"}, axis=1, inplace=True)
-    # Check for duplicated column names
-    # dups = find_duplicate_columns(df)
-    # dups.to_csv("~/croc_duplicate_columns.csv", index=False)
     # Return final data
     return df

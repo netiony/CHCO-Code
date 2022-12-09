@@ -25,9 +25,9 @@ def clean_penguin():
     # Get project metadata
     meta = pd.DataFrame(proj.metadata)
 
-# ------------------------------------------------------------------------------
-# Demographics
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Demographics
+    # --------------------------------------------------------------------------
 
     dem_cols = ["record_id", "dob", "group", "sex", "race", "ethnicity"]
     # Export
@@ -52,9 +52,9 @@ def clean_penguin():
     demo["co_enroll_id"] = ""
     demo["group"] = "PKD"
 
-# ------------------------------------------------------------------------------
-# Medications
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Medications
+    # --------------------------------------------------------------------------
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "medical_history", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
@@ -71,9 +71,9 @@ def clean_penguin():
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
     med.rename(med_list, axis=1, inplace=True)
 
-# ------------------------------------------------------------------------------
-# Physical exam
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Physical exam
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "physical_exam", "field_name"]]
@@ -84,9 +84,9 @@ def clean_penguin():
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
     phys.rename({"sysbp": "sbp", "diasbp": "dbp"}, inplace=True, axis=1)
 
-# ------------------------------------------------------------------------------
-# Screening labs
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Screening labs
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "screening_labs", "field_name"]]
@@ -98,9 +98,9 @@ def clean_penguin():
     screen.rename({"creat_s": "creatinine_s"}, axis=1, inplace=True)
     screen["procedure"] = "screening"
 
-# ------------------------------------------------------------------------------
-# Baseline labs
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Baseline labs
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_baseline_vitalslabs", "field_name"]]
@@ -112,9 +112,9 @@ def clean_penguin():
     labs.rename({"a1c": "hba1c", "uacr": "acr_u"}, axis=1, inplace=True)
     labs["procedure"] = "labs"
 
-# ------------------------------------------------------------------------------
-# DXA Scan
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # DXA Scan
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_dxa_scan", "field_name"]]
@@ -129,9 +129,9 @@ def clean_penguin():
                axis=1, inplace=True)
     dxa["procedure"] = "dxa"
 
-# ------------------------------------------------------------------------------
-# Clamp
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Clamp
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_he_clamp", "field_name"]]
@@ -141,11 +141,18 @@ def clean_penguin():
     clamp.rename({"clamp_wt": "weight", "clamp_ht": "height"},
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
+    clamp.columns = clamp.columns.str.replace(
+        r"insulin_minus", "insulin_minus_", regex=True)
+    clamp.columns = clamp.columns.str.replace(
+        r"ffa_minus", "ffa_minus_", regex=True)
+    clamp.columns = clamp.columns.str.replace(r"bg_", "glucose_", regex=True)
+    clamp.columns = clamp.columns.str.replace(
+        r"glucose_minus", "glucose_minus_", regex=True)
     clamp["procedure"] = "clamp"
 
-# ------------------------------------------------------------------------------
-# Renal Clearance Testing
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Renal Clearance Testing
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_renal_clearance_testing", "field_name"]]
@@ -153,9 +160,9 @@ def clean_penguin():
     rct.drop(["iohexol_yn", "pah_yn", "egfr"], axis=1, inplace=True)
     rct["procedure"] = "renal_clearance_testing"
 
-# ------------------------------------------------------------------------------
-# PET scan
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # PET scan
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "pet_scan", "field_name"]]
@@ -164,9 +171,9 @@ def clean_penguin():
     pet.columns = pet.columns.str.replace(r"pet_", "", regex=True)
     pet["procedure"] = "pet_scan"
 
-# ------------------------------------------------------------------------------
-# fMRI
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # fMRI
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "fmri", "field_name"]]
@@ -193,8 +200,5 @@ def clean_penguin():
     df = df[id_cols + other_cols]
     # SORT
     df.sort_values(["record_id", "date", "procedure"], inplace=True)
-    # Check for duplicated column names
-    # dups = find_duplicate_columns(df)
-    # dups.to_csv("~/df_duplicate_columns.csv", index=False)
     # Return final data
     return df

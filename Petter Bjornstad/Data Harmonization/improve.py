@@ -29,9 +29,9 @@ def clean_improve():
     redcap_cols = ["redcap_event_name",
                    "redcap_repeat_instrument", "redcap_repeat_instance"]
 
-# ------------------------------------------------------------------------------
-# Demographics
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Demographics
+    # --------------------------------------------------------------------------
 
     dem_cols = ["subject_id", "co_enroll_id", "dob", "diagnosis",
                 "gender", "race", "ethnicity", "sglt2i"]
@@ -59,9 +59,9 @@ def clean_improve():
                            inplace=True)
     demo.rename({"sglt2i": "sglt2i_ever"}, axis=1, inplace=True)
 
-# ------------------------------------------------------------------------------
-# Medications
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Medications
+    # --------------------------------------------------------------------------
 
     var = ["subject_id", "study_visit", "diabetes_med_other"]
     med = pd.DataFrame(proj.export_records(fields=var))
@@ -73,9 +73,9 @@ def clean_improve():
                axis=1, inplace=True)
     med["procedure"] = "medication_review"
 
-# ------------------------------------------------------------------------------
-# Physical exam
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Physical exam
+    # --------------------------------------------------------------------------
 
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "physical_exam", "field_name"]]
@@ -89,9 +89,9 @@ def clean_improve():
                  "waist_circumference": "waistcm",
                  "hip_circumference": "hipcm"}, inplace=True, axis=1)
 
-# ------------------------------------------------------------------------------
-# Screening labs
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Screening labs
+    # --------------------------------------------------------------------------
 
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "screening_labs", "field_name"]]
@@ -106,9 +106,9 @@ def clean_improve():
                   axis=1, inplace=True)
     screen["procedure"] = "screening"
 
-# ------------------------------------------------------------------------------
-# Accelerometry
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Accelerometry
+    # --------------------------------------------------------------------------
 
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "accelerometry", "field_name"]]
@@ -119,9 +119,9 @@ def clean_improve():
         r"acc_|accel_", "", regex=True)
     accel["procedure"] = "accelerometry"
 
-# ------------------------------------------------------------------------------
-# Cardio/Abdominal MRI
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Cardio/Abdominal MRI
+    # --------------------------------------------------------------------------
 
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "cardioabdominal_mri", "field_name"]]
@@ -133,9 +133,9 @@ def clean_improve():
         r"mri_|visit_", "", regex=True)
     mri["procedure"] = "cardio_abdominal_mri"
 
-# ------------------------------------------------------------------------------
-# MMTT + Metabolic Cart
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # MMTT + Metabolic Cart
+    # --------------------------------------------------------------------------
 
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "mmtt_metabolic_cart", "field_name"]]
@@ -153,9 +153,9 @@ def clean_improve():
                 inplace=True, axis=1)
     mmtt["procedure"] = "mmtt"
 
-# ------------------------------------------------------------------------------
-# DXA
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # DXA
+    # --------------------------------------------------------------------------
 
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "body_composition_dxa_bod_pod", "field_name"]]
@@ -172,9 +172,9 @@ def clean_improve():
                 "bodcomp_date": "date"}, axis=1, inplace=True)
     dxa["procedure"] = "dxa"
 
-# ------------------------------------------------------------------------------
-# Clamp
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Clamp
+    # --------------------------------------------------------------------------
 
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "clamp", "field_name"]]
@@ -184,6 +184,8 @@ def clean_improve():
                axis=1, inplace=True)
     clamp.columns = clamp.columns.str.replace(
         r"clamp_", "", regex=True)
+    clamp.columns = clamp.columns.str.replace(
+        r"_neg_", "_minus_", regex=True)
     clamp.rename({"cystatin_c": "cystatin_c_s", "urine_mab": "microalbumin_u",
                   "serum_creatinine": "creatinine_s", "acr_baseline": "acr_u",
                   "urine_mab_baseline": "microalbumin_u",
@@ -191,9 +193,9 @@ def clean_improve():
                   }, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
 
-# ------------------------------------------------------------------------------
-# Outcomes
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Outcomes
+    # --------------------------------------------------------------------------
 
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "outcomes", "field_name"]]
@@ -205,9 +207,9 @@ def clean_improve():
         r"mri_", "", regex=True)
     out["procedure"] = "kidney_outcomes"
 
-# ------------------------------------------------------------------------------
-# Kidney Biopsy
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Kidney Biopsy
+    # --------------------------------------------------------------------------
 
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "kidney_biopsy", "field_name"]]
