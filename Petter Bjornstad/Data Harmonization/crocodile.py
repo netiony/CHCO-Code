@@ -25,9 +25,9 @@ def clean_crocodile():
     # Get project metadata
     meta = pd.DataFrame(proj.metadata)
 
-# ------------------------------------------------------------------------------
-# Demographics
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Demographics
+    # --------------------------------------------------------------------------
 
     dem_cols = ["record_id", "dob", "diabetes_dx_date",
                 "group", "sex", "race", "ethnicity"]
@@ -47,9 +47,9 @@ def clean_crocodile():
     demo["group"].replace({1: "Type 1 Diabetes", 2: "Lean Control",
                            "1": "Type 1 Diabetes", "2": "Lean Control"}, inplace=True)
 
-# ------------------------------------------------------------------------------
-# Medications
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Medications
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "medical_history", "field_name"]]
@@ -71,9 +71,9 @@ def clean_crocodile():
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
     med.rename(med_list, axis=1, inplace=True)
 
-# ------------------------------------------------------------------------------
-# Physical exam
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Physical exam
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "physical_exam", "field_name"]]
@@ -83,9 +83,9 @@ def clean_crocodile():
     phys.columns = phys.columns.str.replace(r"phys_", "", regex=True)
     phys.rename({"sysbp": "sbp", "diasbp": "dbp"}, inplace=True, axis=1)
 
-# ------------------------------------------------------------------------------
-# Screening labs
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Screening labs
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "screening_labs", "field_name"]]
@@ -98,9 +98,9 @@ def clean_crocodile():
                    "creat_u": "creatinine_u", "hg": "hemoglobin"}, axis=1, inplace=True)
     screen["procedure"] = "screening"
 
-# ------------------------------------------------------------------------------
-# Labs
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Labs
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_baseline_vitalslabs", "field_name"]]
@@ -112,9 +112,9 @@ def clean_crocodile():
     labs.rename({"uacr": "acr_u", "a1c": "hba1c"}, axis=1, inplace=True)
     labs["procedure"] = "labs"
 
-# ------------------------------------------------------------------------------
-# BOLD/ASL MRI
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # BOLD/ASL MRI
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_boldasl_mri", "field_name"]]
@@ -125,9 +125,9 @@ def clean_crocodile():
                axis=1, inplace=True)
     mri["procedure"] = "bold_mri"
 
-# ------------------------------------------------------------------------------
-# DXA Scan
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # DXA Scan
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_dxa_scan", "field_name"]]
@@ -143,9 +143,9 @@ def clean_crocodile():
                axis=1, inplace=True)
     dxa["procedure"] = "dxa"
 
-# ------------------------------------------------------------------------------
-# Clamp
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Clamp
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_he_clamp", "field_name"]]
@@ -156,11 +156,18 @@ def clean_crocodile():
                   "cystatin_c": "cystatin_c_s"},
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
+    clamp.columns = clamp.columns.str.replace(
+        r"insulin_minus", "insulin_minus_", regex=True)
+    clamp.columns = clamp.columns.str.replace(
+        r"ffa_minus", "ffa_minus_", regex=True)
+    clamp.columns = clamp.columns.str.replace(r"bg_", "glucose_", regex=True)
+    clamp.columns = clamp.columns.str.replace(
+        r"glucose_minus", "glucose_minus_", regex=True)
     clamp["procedure"] = "clamp"
 
-# ------------------------------------------------------------------------------
-# Renal Clearance Testing
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Renal Clearance Testing
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_renal_clearance_testing", "field_name"]]
@@ -169,9 +176,9 @@ def clean_crocodile():
     rct.rename({"gfr_raw": "gfr", "gfrbsa": "gfr_bsa"}, axis=1, inplace=True)
     rct["procedure"] = "renal_clearance_testing"
 
-# ------------------------------------------------------------------------------
-# Kidney Biopsy
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Kidney Biopsy
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "optional_kidney_biopsy_56ba", "field_name"]]
@@ -190,9 +197,9 @@ def clean_crocodile():
     biopsy.columns = biopsy.columns.str.replace(r"vitals_", "", regex=True)
     biopsy["procedure"] = "kidney_biopsy"
 
-# ------------------------------------------------------------------------------
-# PET scan
-# ------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # PET scan
+    # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "optional_pet_scan", "field_name"]]
@@ -224,8 +231,5 @@ def clean_crocodile():
     df.sort_values(["record_id", "date", "procedure"], inplace=True)
     # Rename IDs
     df["record_id"] = ["CRC-" + str(i).zfill(2) for i in df["record_id"]]
-    # Check for duplicated column names
-    # dups = find_duplicate_columns(df)
-    # dups.to_csv("~/croc_duplicate_columns.csv", index=False)
     # Print final data
     return df

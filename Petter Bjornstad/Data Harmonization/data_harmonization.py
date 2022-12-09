@@ -68,8 +68,8 @@ def harmonize_data():
     # Replace blanks with missing
     harmonized.replace("", np.nan, inplace=True)
     # Convert to numeric
-    num_vars = ["height", "total_kidney_volume_ml",
-                "left_kidney_volume_ml", "right_kidney_volume_ml"]
+    num_vars = ["height", "total_kidney_volume_ml", "left_kidney_volume_ml",
+                "right_kidney_volume_ml"]
     harmonized[num_vars] = harmonized[num_vars].apply(
         pd.to_numeric, errors='coerce')
     # Calculated variables
@@ -106,6 +106,12 @@ def harmonize_data():
     harmonized["acr_u"] = \
         pd.to_numeric(harmonized["microalbumin_u"], errors="coerce") * 100 / \
         pd.to_numeric(harmonized["creatinine_u"], errors="coerce")
+    # FFA
+    # Baseline FFA  = Average FFA (T-10, T-5)
+    # Steady State FFA = Average FFA (T220, T230, T240, T250)
+    [c for c in harmonized.columns if "ffa_minus" in c]
+    harmonized["baseline_ffa"] = \
+        harmonized[['ffa_minus_10', 'ffa_minus_20', 'ffa_minus_5']].mean()
     # Sort
     harmonized.sort_values(
         ["study", "record_id", "visit", "procedure", "date"], inplace=True)
