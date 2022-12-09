@@ -1,129 +1,69 @@
 libname matching 'E:\Petter Bjornstad\TODAY subaward\ViCTER matching';
 
 /* NEED TO ADD TX GROUP */
-
- /**********************************************************************
+  /**********************************************************************
  *   PRODUCT:   SAS
  *   VERSION:   9.4
  *   CREATOR:   External File Interface
- *   DATE:      08DEC22
+ *   DATE:      09DEC22
  *   DESC:      Generated SAS Datastep Code
  *   TEMPLATE SOURCE:  (None Specified.)
  ***********************************************************************/
-    data WORK.MATCHING    ;
+    data WORK.alldata    ;
     %let _EFIERR_ = 0; /* set the ERROR detection macro variable */
     infile 'E:\Petter Bjornstad\TODAY subaward\ViCTER matching\for_matching.csv' delimiter = ',' MISSOVER DSD lrecl=32767 firstobs=2 ;
        informat releaseid $10. ;
        informat AGEBASE best32. ;
        informat sex best32. ;
        informat tanner best32. ;
+       informat tx best32. ;
+       informat GLYC best32. ;
+	   informat DAYSTOGLYC best32. ;
        format releaseid $10. ;
        format AGEBASE best12. ;
        format sex best12. ;
        format tanner best12. ;
+       format tx best12. ;
+       format GLYC best12. ;
+	   format DAYSTOGLYC best12. ;
     input
                 releaseid  $
                 AGEBASE
                 sex
                 tanner
+                tx
+                GLYC
+				DAYSTOGLYC
     ;
     if _ERROR_ then call symputx('_EFIERR_',1);  /* set ERROR detection macro variable */
     run;
 
-
-* OLD CODE;
-
-/* merge two sheets and fix status variable */
-proc sort data=alldata1; by record_id; run;
-proc sort data=alldata2; by record_id; run;
-data alldata;
-merge alldata1 alldata2;
-by record_id; 
-run;
-data alldata;
-set alldata;
-if record_id>=1000 then do;
-  status=1;
-  diabetes=1;
-end;
-else do;
-  status=2;
-  diabetes=0;
-end;
-run;
-
-
-data alldata;
-set alldata;
-age_at_dx=intck('years',dob,pcosdx_date);
-if ethnicity=. then ethnicity=2;
-bmi_round=round(pcosdx_bmi);
-run;
-
-/* create new variable for white/non-white */
-data alldata;
-set alldata;
-if race=5 and ethnicity=2 then white=1;
-else white=0;
-run;
-
-proc univariate data=alldata;
-var  bmi_round ;
-histogram bmi_round;
-output out=x pctlpre=pv pctlpts=33 66;
-run;
-proc print data=x; run;
-
-/* need to categorize BMI and age to try and get more matches */
-data alldata;
-set alldata;
-/* these are the original matching critieria but not getting enough */
-/* use quartiles of BMI */
-/*if age_at_dx in (12,13) then age_cat=1;*/
-/*else if age_at_dx in (14,15) then age_cat=2;*/
-/*else if age_at_dx in (16,17) then age_cat=3;*/
-/*else if age_at_dx  in (18,19,20) then age_cat=4;*/
-/*if bmi_round ne . and bmi_round<=33 then bmi_cat=1;*/
-/*else if bmi_round>33 and bmi_round<=37 then bmi_cat=2;*/
-/*else if bmi_round>37 and bmi_round<=41 then bmi_cat=3;*/
-/*else bmi_cat=4;*/
-if age_at_dx in (12,13,14) then age_cat=1;
-else if age_at_dx in (15,16,17) then age_cat=2;
-else if age_at_dx  in (18,19,20) then age_cat=3;
-if bmi_round ne . and bmi_round<=34 then bmi_cat=1;
-else if bmi_round>34 and bmi_round<=39 then bmi_cat=2;
-else if bmi_round>39 then bmi_cat=3;
-run;
-
 /* create index variable to match on */
 data alldata;
 set alldata;
-index=  white || age_cat || bmi_cat;
+index=  agebase || sex || tanner || tx;
 run;
-proc print data=alldata;
-where record_id in (144,9,297);
+data alldata;
+set alldata;
+where GLYC ne . and index ne ".";
 run;
+proc print; run;
 
 /* create separate datasets for cases and controls */
-data t2d;
+data case;
 set alldata;
-where status= 1;
+where glyc= 1;
 run;
-data nont2d;
+data control;
 set alldata;
-where status=2;
+where glyc=0;
 run;
-proc sort data=nont2d; by index descending person_years; run;
-proc print data=nont2d;
-by index;
-run;
-
 
 /* check numbers available to match */
-proc freq data=t2d;
+proc freq data=case;
 tables index / out=outa;
 run;
-proc freq data=nont2d;
+proc freq data=control;
 tables index / out=outb;
 run;
 data outa;
@@ -147,7 +87,7 @@ by index ;
 run;
 *ods rtf file='C:\temp\matching categories.rtf' style=journal;
 proc print data=temp noobs label; 
-label index='Category' counta='Count of patients with T2D' countb='Count of patients without T2D';
+label index='Category' counta='Count of cases' countb='Count of controls';
 where counta ne .;
 run;
 *ods rtf close;

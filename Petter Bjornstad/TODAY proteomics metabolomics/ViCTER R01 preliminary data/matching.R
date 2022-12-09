@@ -45,7 +45,7 @@ keep_soma <- unique(keep_soma)
 for_matching <- merge(for_matching,keep_soma,by="releaseid",all.x = F, all.y = T)
 
 # write file to read into SAS
-for_matching <- for_matching %>% select(releaseid, AGEBASE, sex, tanner, tx)
+for_matching <- for_matching %>% select(releaseid, AGEBASE, sex, tanner, tx, GLYC, DAYSTOGLYC)
 write.csv(for_matching,"E:/Petter Bjornstad/TODAY subaward/ViCTER matching/for_matching.csv", row.names = F, na=".")
 
 
