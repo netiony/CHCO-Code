@@ -27,6 +27,12 @@ PAT <- read.csv("./Clinical data/TODAY/PAT.csv")
 keepPAT <- PAT %>% select(releaseid,sex)
 for_matching <- merge(for_matching,PAT,by="releaseid",all.x = T,all.y = F)
 
+# PE
+PE <- read.csv("./Clinical data/TODAY/PE.csv")
+PE_baseline <- PE %>% filter(mvisit=="M00")
+PE_baseline <- PE_baseline %>% select(releaseid,tanner)
+for_matching <- merge(for_matching,PE_baseline,by="releaseid",all.x = T,all.y = F)
+
 # get treatment arm - PRIMOUT
 PRIMOUT <- read.csv("./Clinical data/TODAY/PRIMOUT.csv")
 PRIMOUT$releaseid <- PRIMOUT$PTID
@@ -34,6 +40,7 @@ PRIMOUT$releaseid <- PRIMOUT$PTID
 # IDs in PRIMOUT don't seem to match the release IDs
 
 # write file to read into SAS
-write.csv(for_matching,"E:/Petter Bjornstad/TODAY subaward/ViCTER matching/for_matching.csv", row.names = F)
+for_matching <- for_matching %>% select(releaseid, AGEBASE, sex)
+write.csv(for_matching,"E:/Petter Bjornstad/TODAY subaward/ViCTER matching/for_matching.csv", row.names = F, na=".")
 
 
