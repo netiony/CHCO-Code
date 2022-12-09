@@ -12,15 +12,15 @@ setwd(home_dir)
 
 # find those with normal kidney function at baseline
 comorb <- read.csv("./Clinical data/COMORB.csv")
-normal_kidney_function <- comorb %>% filter(MIC0==0 & MAC0==0 & NEPHRO0==0 & RAPID0==0)
 comorb$releaseid <- comorb$RELEASEID
 comorb$RELEASEID <- NULL
+normal_kidney_function <- comorb %>% filter(MIC0==0 & MAC0==0 & NEPHRO0==0 & RAPID0==0)
 
 # AGEBASE - uncollapsed age at baseline
 AGEBASE <- read.csv("./Clinical data/TODAY/AGEBASE.csv")
 AGEBASE$releaseid <- AGEBASE$RELEASEID
 AGEBASE$RELEASEID <- NULL
-for_matching <- merge(comorb, AGEBASE, by="releaseid",all.x = T,all.y = F)
+for_matching <- merge(normal_kidney_function, AGEBASE, by="releaseid",all.x = T,all.y = F)
 
 # PAT
 PAT <- read.csv("./Clinical data/TODAY/PAT.csv")
@@ -40,7 +40,7 @@ PRIMOUT$releaseid <- PRIMOUT$PTID
 # IDs in PRIMOUT don't seem to match the release IDs
 
 # write file to read into SAS
-for_matching <- for_matching %>% select(releaseid, AGEBASE, sex)
+for_matching <- for_matching %>% select(releaseid, AGEBASE, sex, tanner)
 write.csv(for_matching,"E:/Petter Bjornstad/TODAY subaward/ViCTER matching/for_matching.csv", row.names = F, na=".")
 
 
