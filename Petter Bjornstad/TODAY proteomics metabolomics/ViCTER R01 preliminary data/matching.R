@@ -1,6 +1,6 @@
 library(dplyr)
 library(stringr)
-library(MatchIt)
+library(CGEN)
 
 if(Sys.info()["sysname"] == "Windows"){
   home_dir = "E:/Petter Bjornstad/TODAY subaward"
@@ -41,7 +41,7 @@ for_matching <- merge(for_matching,PRIMOUT,by="releaseid",all.x = T,all.y = F)
 # IDs in PRIMOUT don't seem to match the release IDs
 
 # read in soma data so we only pick people in the ancillary study
-load(file = "./Somalogic data raw/soma.Rdata")
+#load(file = "./Somalogic data raw/soma.Rdata")
 keep_soma <- soma %>% select(releaseid)
 keep_soma <- unique(keep_soma)
 for_matching <- merge(for_matching,keep_soma,by="releaseid",all.x = F, all.y = T)
@@ -58,13 +58,23 @@ for_matching <- for_matching %>% filter(!is.na(index))
 # find 20 with shortest time to glycemic failure - CASES
 f <- for_matching %>% filter(GLYC==1)
 f <- f %>% arrange(DAYSTOGLYC)
-cases <- f %>% slice_head(n=20)
-cases$case_control <- "Case"
+cases <- f %>% slice_head(n=22)
+cases <- cases %>% filter(!releaseid=="65-96152")
+cases <- cases %>% filter(!releaseid=="65-92022")
+cases$case1_control0 <- 1
 
 # those who did not reach glycemic failure - CONTROLS
 controls <- for_matching %>% filter(GLYC==0)
-controls$case_control <- "Control"
+controls$case1_control0 <- 0
 
 final <- rbind(cases,controls)
-matched <- matchit(data=final, case_control ~ AGEBASE + sex + tx, method = "exact")
+matched <- getMatchedSets(final, CC=TRUE, NN=FALSE, ccs.var = "case1_control0",dist.vars = c("AGEBASE","sex"), strata.var = "tx")                                                                                 
+#matched <- getMatchedSets(final, CC=TRUE, NN=FALSE, ccs.var = "case1_control0",dist.vars = "index")                                                                                 
+
 summary(matched)
+final <- cbind(final, matched$CC)
+final <- final %>% filter(!`matched$CC`==21)
+table(final$`matched$CC`,final$tx)
+table(final$`matched$CC`,final$AGEBASE)
+table(final$`matched$CC`,final$sex)
+write.csv(final,"./ViCTER matching/matched_pairs.csv", row.names = F, na=".")
