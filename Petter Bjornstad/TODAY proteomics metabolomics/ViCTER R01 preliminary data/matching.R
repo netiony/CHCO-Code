@@ -1,4 +1,6 @@
 library(dplyr)
+library(stringr)
+library(MatchIt)
 
 if(Sys.info()["sysname"] == "Windows"){
   home_dir = "E:/Petter Bjornstad/TODAY subaward"
@@ -39,13 +41,30 @@ for_matching <- merge(for_matching,PRIMOUT,by="releaseid",all.x = T,all.y = F)
 # IDs in PRIMOUT don't seem to match the release IDs
 
 # read in soma data so we only pick people in the ancillary study
-load(file = "E:/Petter Bjornstad/TODAY subaward/Somalogic data raw/soma.Rdata")
+load(file = "./Somalogic data raw/soma.Rdata")
 keep_soma <- soma %>% select(releaseid)
 keep_soma <- unique(keep_soma)
 for_matching <- merge(for_matching,keep_soma,by="releaseid",all.x = F, all.y = T)
 
 # write file to read into SAS
 for_matching <- for_matching %>% select(releaseid, AGEBASE, sex, tanner, tx, GLYC, DAYSTOGLYC)
-write.csv(for_matching,"E:/Petter Bjornstad/TODAY subaward/ViCTER matching/for_matching.csv", row.names = F, na=".")
+write.csv(for_matching,"./ViCTER matching/for_matching.csv", row.names = F, na=".")
 
+# create index variable
+for_matching$index <- str_c(for_matching$AGEBASE,for_matching$sex,for_matching$tanner,for_matching$tx)
+for_matching <- for_matching %>% filter(!is.na(GLYC))
+for_matching <- for_matching %>% filter(!is.na(index))
 
+# find 20 with shortest time to glycemic failure - CASES
+f <- for_matching %>% filter(GLYC==1)
+f <- f %>% arrange(DAYSTOGLYC)
+cases <- f %>% slice_head(n=20)
+cases$case_control <- "Case"
+
+# those who did not reach glycemic failure - CONTROLS
+controls <- for_matching %>% filter(GLYC==0)
+controls$case_control <- "Control"
+
+final <- rbind(cases,controls)
+matched <- matchit(data=final, case_control ~ AGEBASE + sex + tx, method = "exact")
+summary(matched)
