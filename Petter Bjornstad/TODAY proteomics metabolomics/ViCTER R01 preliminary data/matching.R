@@ -41,7 +41,7 @@ for_matching <- merge(for_matching,PRIMOUT,by="releaseid",all.x = T,all.y = F)
 # IDs in PRIMOUT don't seem to match the release IDs
 
 # read in soma data so we only pick people in the ancillary study
-#load(file = "./Somalogic data raw/soma.Rdata")
+load(file = "./Somalogic data raw/soma.Rdata")
 keep_soma <- soma %>% select(releaseid)
 keep_soma <- unique(keep_soma)
 for_matching <- merge(for_matching,keep_soma,by="releaseid",all.x = F, all.y = T)
@@ -77,4 +77,6 @@ final <- final %>% filter(!`matched$CC`==21)
 table(final$`matched$CC`,final$tx)
 table(final$`matched$CC`,final$AGEBASE)
 table(final$`matched$CC`,final$sex)
+table(final$case1_control0,final$tx)
+table(final$case1_control0,final$AGEBASE)
 write.csv(final,"./ViCTER matching/matched_pairs.csv", row.names = F, na=".")

@@ -18,11 +18,19 @@ setwd(home_dir)
 nih_urine <- openxlsx::read.xlsx("./Metabolomic data/NIDDK_AA_20220427_20220620_nM_AF.xlsx", sheet = "Urine",
                                  startRow = 2,colNames = TRUE)
 nih_urine$site <- "NIH"
+# add OA data
+nih_urine_oa <- openxlsx::read.xlsx("./Metabolomic data/LEAD_NIDDK_OA_08292022.xlsx", sheet = "NIDDK Urine",
+                                        startRow = 2,colNames = TRUE)
+# ID scheme (sample name and freezerworks ID) appears to be switched from the previous file
+# sent email to Anthony and Kumar to confirm
 
 # read in LEAD samples
 lead_urine <- openxlsx::read.xlsx("./Metabolomic data/Lead_AA_20220322_20220620_nM_AF.xlsx", sheet = "Urine",
                                  startRow = 2,colNames = TRUE)
 lead_urine$site <- "LEAD"
+# add OA data
+lead_urine_oa <- openxlsx::read.xlsx("./Metabolomic data/LEAD_NIDDK_OA_08292022.xlsx", sheet = "LEAD Urine",
+                                    startRow = 2,colNames = TRUE)
 
 ####################
 # plasma           #
