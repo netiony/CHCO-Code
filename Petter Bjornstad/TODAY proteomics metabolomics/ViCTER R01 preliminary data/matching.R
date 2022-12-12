@@ -90,4 +90,8 @@ write.csv(final,"./ViCTER matching/matched_pairs.csv", row.names = F, na=".")
 # sampleinfo <- cbind(sampleinfo,ids)
 # colnames(sampleinfo) <- c(colnames(sampleinfo)[1:37],"releaseid")
 # pairs <- merge(pairs,sampleinfo,by="releaseid",all.x = T, all.y=F)
+# merge in diabetes duration
+# dxtime <- read.csv("./Clinical data/TODAY/PAT.csv")
+# dxtime <- dxtime %>% select(releaseid,dxtime)
+# pairs <- merge(pairs,dxtime,by="releaseid",all.x=T,all.y=F)
 # write.csv(pairs,"./ViCTER matching/matched_pairs.csv", row.names = F, na=".")
