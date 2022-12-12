@@ -17,20 +17,26 @@ setwd(home_dir)
 ####################
 nih_urine <- openxlsx::read.xlsx("./Metabolomic data/NIDDK_AA_20220427_20220620_nM_AF.xlsx", sheet = "Urine",
                                  startRow = 2,colNames = TRUE)
-nih_urine$site <- "NIH"
+
 # add OA data
 nih_urine_oa <- openxlsx::read.xlsx("./Metabolomic data/LEAD_NIDDK_OA_08292022.xlsx", sheet = "NIDDK Urine",
                                         startRow = 2,colNames = TRUE)
 # ID scheme (sample name and freezerworks ID) appears to be switched from the previous file
 # sent email to Anthony and Kumar to confirm
+nih_urine_oa$Freezerworks.ID <- nih_urine_oa$Sample.Name
+nih_urine_oa$Sample.Name <- NULL
+nih_urine <- merge(nih_urine,nih_urine_oa,by="Freezerworks.ID",all.x = T,all.y = T)
+nih_urine$site <- "NIH"
 
 # read in LEAD samples
 lead_urine <- openxlsx::read.xlsx("./Metabolomic data/Lead_AA_20220322_20220620_nM_AF.xlsx", sheet = "Urine",
                                  startRow = 2,colNames = TRUE)
-lead_urine$site <- "LEAD"
 # add OA data
 lead_urine_oa <- openxlsx::read.xlsx("./Metabolomic data/LEAD_NIDDK_OA_08292022.xlsx", sheet = "LEAD Urine",
                                     startRow = 2,colNames = TRUE)
+lead_urine <- merge(lead_urine, lead_urine_oa, by="Freezerworks.ID",all.x = T,all.y = T)
+lead_urine$site <- "LEAD"
+
 
 ####################
 # plasma           #
@@ -39,11 +45,21 @@ lead_urine_oa <- openxlsx::read.xlsx("./Metabolomic data/LEAD_NIDDK_OA_08292022.
 # read in NIH samples
 nih_plasma <- openxlsx::read.xlsx("./Metabolomic data/NIDDK_AA_20220427_20220620_nM_AF.xlsx", sheet = "Plasma",
                                   startRow = 2,colNames = TRUE)
+# add OA data
+nih_plasma_oa <- openxlsx::read.xlsx("./Metabolomic data/LEAD_NIDDK_OA_08292022.xlsx", sheet = "NIDDK Plasma",
+                                     startRow = 2,colNames = TRUE)
+nih_plasma_oa$Freezerworks.ID <- nih_plasma_oa$Sample.Name
+nih_plasma_oa$Sample.Name <- NULL
+nih_plasma <- merge(nih_plasma,nih_plasma_oa,by="Freezerworks.ID",all.x = T,all.y = T)
 nih_plasma$site <- "NIH"
 
 # read in LEAD samples
 lead_plasma <- openxlsx::read.xlsx("./Metabolomic data/Lead_AA_20220322_20220620_nM_AF.xlsx", sheet = "Plasma",
                                   startRow = 2,colNames = TRUE)
+# add OA data
+lead_plamsa_oa <- openxlsx::read.xlsx("./Metabolomic data/LEAD_NIDDK_OA_08292022.xlsx", sheet = "LEAD Plasma",
+                                      startRow = 2,colNames = TRUE)
+lead_plasma <- merge(lead_plasma,lead_plamsa_oa,by="Freezerworks.ID")
 lead_plasma$site <- "LEAD"
 
 ######################
