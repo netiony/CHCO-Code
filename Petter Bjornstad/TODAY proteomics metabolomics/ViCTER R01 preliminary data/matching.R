@@ -80,3 +80,14 @@ table(final$`matched$CC`,final$sex)
 table(final$case1_control0,final$tx)
 table(final$case1_control0,final$AGEBASE)
 write.csv(final,"./ViCTER matching/matched_pairs.csv", row.names = F, na=".")
+
+# merge sample info with matched pairs
+# need to select the baseline sample info
+# pairs <- read.csv("./ViCTER matching/matched_pairs.csv")
+# base <- soma %>% arrange(releaseid,Date.Drawn) %>% group_by(releaseid) %>% filter(row_number()==1)
+# sampleinfo <- base[,1:37]
+# ids <- base$releaseid
+# sampleinfo <- cbind(sampleinfo,ids)
+# colnames(sampleinfo) <- c(colnames(sampleinfo)[1:37],"releaseid")
+# pairs <- merge(pairs,sampleinfo,by="releaseid",all.x = T, all.y=F)
+# write.csv(pairs,"./ViCTER matching/matched_pairs.csv", row.names = F, na=".")
