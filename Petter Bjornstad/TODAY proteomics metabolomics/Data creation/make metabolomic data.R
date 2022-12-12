@@ -8,7 +8,7 @@ if(Sys.info()["sysname"] == "Windows"){
 } else if (Sys.info()["sysname"] == "Linux"){
   home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/"
 } else if (Sys.info()["sysname"] == "Darwin"){
-  home_dir = ""
+  home_dir = "/Volumes/som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/"
 }
 setwd(home_dir)
 
@@ -21,6 +21,8 @@ nih_urine <- openxlsx::read.xlsx("./Metabolomic data/NIDDK_AA_20220427_20220620_
 # add OA data
 nih_urine_oa <- openxlsx::read.xlsx("./Metabolomic data/LEAD_NIDDK_OA_08292022.xlsx", sheet = "NIDDK Urine",
                                         startRow = 2,colNames = TRUE)
+xtra <- openxlsx::read.xlsx("./Metabolomic data/6217497 Urine.xlsx",startRow = 2,colNames = TRUE)
+nih_urine_oa <- rbind(nih_urine_oa,xtra)
 # ID scheme (sample name and freezerworks ID) appears to be switched from the previous file
 # sent email to Anthony and Kumar to confirm
 nih_urine_oa$Freezerworks.ID <- nih_urine_oa$Sample.Name
@@ -34,9 +36,11 @@ lead_urine <- openxlsx::read.xlsx("./Metabolomic data/Lead_AA_20220322_20220620_
 # add OA data
 lead_urine_oa <- openxlsx::read.xlsx("./Metabolomic data/LEAD_NIDDK_OA_08292022.xlsx", sheet = "LEAD Urine",
                                     startRow = 2,colNames = TRUE)
+lead_urine_oa$Sample.Name <- NULL
+# one sample shows up in both the LEAD urine and plasma tabs of the OA, remove from urine
+lead_urine_oa <- lead_urine_oa %>% filter(!Freezerworks.ID==165196)
 lead_urine <- merge(lead_urine, lead_urine_oa, by="Freezerworks.ID",all.x = T,all.y = T)
 lead_urine$site <- "LEAD"
-
 
 ####################
 # plasma           #
@@ -59,6 +63,7 @@ lead_plasma <- openxlsx::read.xlsx("./Metabolomic data/Lead_AA_20220322_20220620
 # add OA data
 lead_plamsa_oa <- openxlsx::read.xlsx("./Metabolomic data/LEAD_NIDDK_OA_08292022.xlsx", sheet = "LEAD Plasma",
                                       startRow = 2,colNames = TRUE)
+lead_plamsa_oa$Sample.Name <- NULL
 lead_plasma <- merge(lead_plasma,lead_plamsa_oa,by="Freezerworks.ID")
 lead_plasma$site <- "LEAD"
 
