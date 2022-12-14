@@ -54,6 +54,7 @@ nih_plasma_oa <- openxlsx::read.xlsx("./Metabolomic data/LEAD_NIDDK_OA_08292022.
                                      startRow = 2,colNames = TRUE)
 nih_plasma_oa$Freezerworks.ID <- nih_plasma_oa$Sample.Name
 nih_plasma_oa$Sample.Name <- NULL
+nih_plasma_oa$Creatinine.in.uM <- NULL
 nih_plasma <- merge(nih_plasma,nih_plasma_oa,by="Freezerworks.ID",all.x = T,all.y = T)
 nih_plasma$site <- "NIH"
 
@@ -64,6 +65,7 @@ lead_plasma <- openxlsx::read.xlsx("./Metabolomic data/Lead_AA_20220322_20220620
 lead_plamsa_oa <- openxlsx::read.xlsx("./Metabolomic data/LEAD_NIDDK_OA_08292022.xlsx", sheet = "LEAD Plasma",
                                       startRow = 2,colNames = TRUE)
 lead_plamsa_oa$Sample.Name <- NULL
+lead_plamsa_oa$Creatinine.in.uM <- NULL
 lead_plasma <- merge(lead_plasma,lead_plamsa_oa,by="Freezerworks.ID")
 lead_plasma$site <- "LEAD"
 
