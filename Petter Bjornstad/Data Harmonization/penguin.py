@@ -18,7 +18,7 @@ def clean_penguin():
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
     tokens = pd.read_csv(
-        "/home/timvigers/Work/CHCO/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+        "/home/timvigers/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "PENGUIN", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
