@@ -1,8 +1,8 @@
 """
 This code is designed to pull data from the IMPROVE REDCap project and output data in a long format with one row per study procedure per visit.
 """
-__author__ = "Tim Vigers"
-__credits__ = ["Tim Vigers"]
+__author__ = ["Tim Vigers","Ye Ji Choi"]
+__credits__ = ["Tim Vigers","Ye Ji Choi"]
 __license__ = "MIT"
 __version__ = "0.0.1"
 __maintainer__ = "Tim Vigers"
@@ -19,7 +19,7 @@ def clean_improve():
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
     tokens = pd.read_csv(
-        "/Volumes/Work/CHCO/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+        "/home/timvigers/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "IMPROVE", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -147,6 +147,8 @@ def clean_improve():
               axis=1, inplace=True)
     mmtt.columns = mmtt.columns.str.replace(
         r"mmtt_", "", regex=True)
+    mmtt.columns = mmtt.columns.str.replace(
+        r"_neg_", "_minus_", regex=True)
     mmtt.rename({"wt": "weight", "ht": "height", "waist": "waistcm",
                 "hip": "hipcm", "hr": "pulse", "sys_bp": "sbp",
                  "dia_bp": "dbp", "hba1c_base": "hba1c"},
@@ -184,8 +186,6 @@ def clean_improve():
                axis=1, inplace=True)
     clamp.columns = clamp.columns.str.replace(
         r"clamp_", "", regex=True)
-    clamp.columns = clamp.columns.str.replace(
-        r"_neg_", "_minus_", regex=True)
     clamp.rename({"cystatin_c": "cystatin_c_s", "urine_mab": "microalbumin_u",
                   "serum_creatinine": "creatinine_s", "acr_baseline": "acr_u",
                   "urine_mab_baseline": "microalbumin_u",
