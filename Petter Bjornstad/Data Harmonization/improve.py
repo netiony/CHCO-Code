@@ -157,6 +157,15 @@ def clean_improve():
                  "dia_bp": "dbp", "hba1c_base": "hba1c"},
                 inplace=True, axis=1)
     mmtt["procedure"] = "mmtt"
+    # FFA
+    # See /home/timvigers/Work/CHCO/Petter Bjornstad/IHD/Background/Renal Heir Equations.docx
+    ffa = [c for c in mmtt.columns if "ffa_" in c]
+    mmtt[ffa] = mmtt[ffa].apply(
+        pd.to_numeric, errors='coerce')
+    mmtt["baseline_ffa"] = mmtt['ffa_minus_10']
+    mmtt["steady_state_ffa"] = mmtt['ffa_240']
+    mmtt["ffa_supression"] = (
+        (mmtt["baseline_ffa"] - mmtt["steady_state_ffa"]) / mmtt["baseline_ffa"]) * 100
 
     # --------------------------------------------------------------------------
     # DXA

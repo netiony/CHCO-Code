@@ -20,8 +20,6 @@ from natsort import natsorted, ns
 # Get dataset
 df = harmonize_data()
 # Variable lists
-ffa = [c for c in df.columns if "ffa" in c]
-ffa = natsorted(ffa, alg=ns.IGNORECASE)
 vars = ["record_id", "co_enroll_id", "study", "kit_id", "group", "dob",
         "diabetes_dx_date", "race", "ethnicity", "race_ethnicity", "visit", "procedure", "date", "age", "sex",
         "sglt2i_ever", "sglti_timepoint", "bmi", "sbp", "dbp", "creatinine_s", "cystatin_c_s", "bun",
@@ -35,7 +33,8 @@ vars = ["record_id", "co_enroll_id", "study", "kit_id", "group", "dob",
         "glom_volume_weibel", "glom_volume_wiggins", "glom_volume_con",
         "mes_matrix_area", "mes_index", "mes_volume_weibel", "mes_volume_wiggins", "mes_volume_con",
         "glom_nuc_count", "mes_nuc_count", "art_intima", "art_media", "pod_nuc_density", "pod_cell_volume", "he_clamp",
-        "raw_m", "steady_state_insulin", "steady_state_cpeptide", "acprg", "airg", "di", "p1_raw_m", "p1_raw_leanm", "p1_gc_m", "p1_gc_leanm", "p2_raw_m", "p2_raw_leanm", "p2_gc_m", "p2_gc_leanm"] + ffa
+        "raw_m", "steady_state_insulin", "steady_state_cpeptide", "acprg", "airg", "di", "p1_raw_m", "p1_raw_leanm", "p1_gc_m", "p1_gc_leanm", "p2_raw_m", "p2_raw_leanm", "p2_gc_m", "p2_gc_leanm"] + \
+    ["baseline_ffa", "steady_state_ffa", "ffa_supression"]
 fadhl = df[vars]
 fadhl = fadhl[fadhl["visit"] != "3_months_post_surgery"]
 fadhl.to_csv("~/fadhl_pre_aggregation.csv", index=False)

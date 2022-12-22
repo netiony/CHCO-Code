@@ -133,7 +133,17 @@ def clean_renal_heir():
     clamp[num_vars] = clamp[num_vars].apply(
         pd.to_numeric, errors='coerce')
     clamp["raw_m"] = (clamp["d20_infusion"] * 190 / 60) / clamp["weight"]
-    # No FFA
+    # FFA
+    # See /home/timvigers/Work/CHCO/Petter Bjornstad/IHD/Background/Renal Heir Equations.docx
+    ffa = [c for c in clamp.columns if "ffa_" in c]
+    clamp[ffa] = clamp[ffa].apply(
+        pd.to_numeric, errors='coerce')
+    clamp["baseline_ffa"] = \
+        clamp[['ffa_minus_10', 'ffa_minus_5']].mean(axis=1)
+    clamp["steady_state_ffa"] = \
+        clamp[['ffa_220', 'ffa_230', 'ffa_240', 'ffa_250']].mean(axis=1)
+    clamp["ffa_supression"] = (
+        (clamp["baseline_ffa"] - clamp["steady_state_ffa"]) / clamp["baseline_ffa"]) * 100
     # Insulin
     ins = ['insulin_minus_10', 'insulin_minus_5', 'insulin_2', 'insulin_4',
            'insulin_6', 'insulin_8', 'insulin_10', 'insulin_120',
