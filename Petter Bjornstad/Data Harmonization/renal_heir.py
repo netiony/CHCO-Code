@@ -127,7 +127,7 @@ def clean_renal_heir():
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
     clamp["procedure"] = "clamp"
-    clamp["he_clamp"] = False
+    clamp["he_clamp"] = "No"
     # M
     num_vars = ["d20_infusion", "weight"]
     clamp[num_vars] = clamp[num_vars].apply(

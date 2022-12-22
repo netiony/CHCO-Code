@@ -120,7 +120,7 @@ def clean_casper():
                   "urine_mab_baseline": "microalbumin_u",
                   "urine_cre_baseline": "creatinine_u"}, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
-    clamp["he_clamp"] = False
+    clamp["he_clamp"] = "No"
     # No insulin, c peptide, or FFA
     num_vars = ["d20_infusion", "weight"]
     clamp[num_vars] = clamp[num_vars].apply(

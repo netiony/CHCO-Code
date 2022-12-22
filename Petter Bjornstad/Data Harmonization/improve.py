@@ -195,7 +195,7 @@ def clean_improve():
                   "urine_cre_baseline": "creatinine_u"
                   }, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
-    clamp["he_clamp"] = False
+    clamp["he_clamp"] = "No"
     # M
     num_vars = ["d20_infusion", "weight"]
     clamp[num_vars] = clamp[num_vars].apply(

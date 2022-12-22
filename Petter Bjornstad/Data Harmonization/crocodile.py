@@ -167,7 +167,7 @@ def clean_crocodile():
     clamp.columns = clamp.columns.str.replace(
         r"glucose_minus", "glucose_minus_", regex=True)
     clamp["procedure"] = "clamp"
-    clamp["he_clamp"] = True
+    clamp["he_clamp"] = "Yes"
 
     # --------------------------------------------------------------------------
     # Renal Clearance Testing
