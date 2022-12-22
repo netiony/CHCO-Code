@@ -12,6 +12,9 @@ __status__ = "Dev"
 
 def clean_crocodile():
     # Libraries
+    import os
+    os.chdir(
+        "C:/Users/timbv/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import redcap
     import pandas as pd
     from natsort import natsorted, ns
@@ -210,16 +213,17 @@ def clean_crocodile():
     pet["procedure"] = "pet_scan"
 
     # MERGE
-    df = pd.merge(phys, screen, how="outer")
-    df = pd.merge(df, med, how="outer")
-    df = pd.merge(df, labs, how="outer")
-    df = pd.merge(df, mri, how="outer")
-    df = pd.merge(df, dxa, how="outer")
-    df = pd.merge(df, clamp, how="outer")
-    df = pd.merge(df, rct, how="outer")
-    df = pd.merge(df, biopsy, how="outer")
-    df = pd.merge(df, pet, how="outer")
-    df = pd.merge(df, demo, how="outer")
+    df = pd.concat([phys, screen], join='outer', ignore_index=True)
+    df = pd.concat([df, med], join='outer', ignore_index=True)
+    df = pd.concat([df, labs], join='outer', ignore_index=True)
+    df = pd.concat([df, mri], join='outer', ignore_index=True)
+    df = pd.concat([df, dxa], join='outer', ignore_index=True)
+    df = pd.concat([df, clamp], join='outer', ignore_index=True)
+    df = pd.concat([df, rct], join='outer', ignore_index=True)
+    df = pd.concat([df, biopsy], join='outer', ignore_index=True)
+    df = pd.concat([df, pet], join='outer', ignore_index=True)
+    df = pd.concat([df, demo], join='outer', ignore_index=True)
+    df = df.copy()
     # REORGANIZE
     df["visit"] = "baseline"
     df["study"] = "CROCODILE"

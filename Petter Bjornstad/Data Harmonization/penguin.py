@@ -149,7 +149,7 @@ def clean_penguin():
     clamp.columns = clamp.columns.str.replace(
         r"glucose_minus", "glucose_minus_", regex=True)
     clamp["procedure"] = "clamp"
-    clamp["he_clamp"] = False
+    clamp["he_clamp"] = True
 
     # --------------------------------------------------------------------------
     # Renal Clearance Testing
@@ -182,15 +182,16 @@ def clean_penguin():
     mri["procedure"] = "fmri"
 
     # MERGE
-    df = pd.merge(phys, screen, how="outer")
-    df = pd.merge(df, med, how="outer")
-    df = pd.merge(df, labs, how="outer")
-    df = pd.merge(df, dxa, how="outer")
-    df = pd.merge(df, clamp, how="outer")
-    df = pd.merge(df, rct, how="outer")
-    df = pd.merge(df, pet, how="outer")
-    df = pd.merge(df, mri, how="outer")
-    df = pd.merge(df, demo, how="outer")
+    df = pd.concat([phys, screen], join='outer', ignore_index=True)
+    df = pd.concat([df, med], join='outer', ignore_index=True)
+    df = pd.concat([df, labs], join='outer', ignore_index=True)
+    df = pd.concat([df, dxa], join='outer', ignore_index=True)
+    df = pd.concat([df, clamp], join='outer', ignore_index=True)
+    df = pd.concat([df, rct], join='outer', ignore_index=True)
+    df = pd.concat([df, pet], join='outer', ignore_index=True)
+    df = pd.concat([df, mri], join='outer', ignore_index=True)
+    df = pd.concat([df, demo], join='outer', ignore_index=True)
+    df = df.copy()
     # REORGANIZE
     df["visit"] = "baseline"
     df["study"] = "PENGUIN"

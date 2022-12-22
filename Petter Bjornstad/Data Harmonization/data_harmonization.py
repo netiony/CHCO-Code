@@ -37,11 +37,15 @@ def harmonize_data():
     penguin = clean_penguin()
     renal_heir = clean_renal_heir()
     # Merge
-    harmonized = pd.merge(casper, coffee, how="outer")
-    harmonized = pd.merge(harmonized, crocodile, how="outer")
-    harmonized = pd.merge(harmonized, improve, how="outer")
-    harmonized = pd.merge(harmonized, penguin, how="outer")
-    harmonized = pd.merge(harmonized, renal_heir, how="outer")
+    harmonized = pd.concat([casper, coffee], join='outer', ignore_index=True)
+    harmonized = pd.concat([harmonized, crocodile],
+                           join='outer', ignore_index=True)
+    harmonized = pd.concat([harmonized, improve],
+                           join='outer', ignore_index=True)
+    harmonized = pd.concat([harmonized, penguin],
+                           join='outer', ignore_index=True)
+    harmonized = pd.concat([harmonized, renal_heir],
+                           join='outer', ignore_index=True)
     # Replace missing values
     rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999]
     rep = rep + [str(r) for r in rep]
@@ -107,35 +111,9 @@ def harmonize_data():
     harmonized["acr_u"] = \
         pd.to_numeric(harmonized["microalbumin_u"], errors="coerce") * 100 / \
         pd.to_numeric(harmonized["creatinine_u"], errors="coerce")
-    # FFA
-    # See /home/timvigers/Work/CHCO/Petter Bjornstad/IHD/Background/Renal Heir Equations.docx
-    ffa = [c for c in harmonized.columns if "ffa_" in c]
-    ffa = natsorted(ffa, alg=ns.IGNORECASE)
-    harmonized[ffa] = harmonized[ffa].apply(
-        pd.to_numeric, errors='coerce')
-    harmonized["baseline_ffa"] = \
-        harmonized[['ffa_minus_10', 'ffa_minus_20',
-                    'ffa_minus_5']].mean(axis=1)
-    harmonized["steady_state_ffa"] = \
-        harmonized[['ffa_220', 'ffa_230', 'ffa_240',
-                    'ffa_250', 'ffa_260', 'ffa_270']].mean(axis=1)
-    harmonized["ffa_supression"] = (
-        (harmonized["baseline_ffa"] - harmonized["steady_state_ffa"]) / harmonized["baseline_ffa"]) * 100
-    # Insulin
-    ins = ['insulin_220', 'insulin_230', 'insulin_240', 'insulin_245',
-           'insulin_249', 'insulin_252', 'insulin_253', 'insulin_254', 'insulin_255',
-           'insulin_250', 'insulin_260', 'insulin_270']
-    harmonized[ins] = harmonized[ins].apply(
-        pd.to_numeric, errors='coerce')
-    harmonized["steady_state_insulin"] = harmonized[ins].mean(axis=1) * 6
-    # C peptide
-    cpep = ['cpeptide_220', 'cpeptide_230', 'cpeptide_240', 'cpeptide_245', 'cpeptide_249', 'cpeptide_250',
-            'cpeptide_252', 'cpeptide_253', 'cpeptide_254', 'cpeptide_255']
-    harmonized[ins] = harmonized[ins].apply(
-        pd.to_numeric, errors='coerce')
-    harmonized["steady_state_insulin"] = harmonized[ins].mean(axis=1) * 6
     # Sort
     harmonized.sort_values(
         ["study", "record_id", "visit", "procedure", "date"], inplace=True)
     # Return
+    harmonized = harmonized.astype(object)
     return harmonized

@@ -128,6 +128,35 @@ def clean_renal_heir():
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
     clamp["procedure"] = "clamp"
     clamp["he_clamp"] = False
+    # M
+    num_vars = ["d20_infusion", "weight"]
+    clamp[num_vars] = clamp[num_vars].apply(
+        pd.to_numeric, errors='coerce')
+    clamp["raw_m"] = (clamp["d20_infusion"] * 190 / 60) / clamp["weight"]
+    # No FFA
+    # Insulin
+    ins = ['insulin_minus_10', 'insulin_minus_5', 'insulin_2', 'insulin_4',
+           'insulin_6', 'insulin_8', 'insulin_10', 'insulin_120',
+           'insulin_220', 'insulin_230', 'insulin_240', 'insulin_250']
+    clamp[ins] = clamp[ins].apply(
+        pd.to_numeric, errors='coerce')
+    clamp["steady_state_insulin"] = clamp[['insulin_220',
+                                           'insulin_230', 'insulin_240', 'insulin_250']].mean(axis=1) * 6
+    # C peptide
+    cpep = [c for c in clamp.columns if "cpeptide" in c]
+    clamp[cpep] = clamp[cpep].apply(
+        pd.to_numeric, errors='coerce')
+    clamp["steady_state_cpeptide"] = clamp[['cpeptide_220',
+                                            'cpeptide_230', 'cpeptide_240', 'cpeptide_250']].mean(axis=1)
+    # ACPRg
+    clamp["acprg"] = clamp[['cpeptide_2', 'cpeptide_4',
+                            'cpeptide_6', 'cpeptide_8', 'cpeptide_10']].mean(axis=1) - clamp[['cpeptide_minus_10', 'cpeptide_minus_5']].mean(axis=1)
+    # AIRg
+    clamp["airg"] = clamp[['insulin_2', 'insulin_4',
+                           'insulin_6', 'insulin_8', 'insulin_10']].mean(axis=1) * 6 - clamp[['insulin_minus_10', 'insulin_minus_5']].mean(axis=1) * 6
+    # DI
+    clamp["di"] = \
+        (clamp["raw_m"] / clamp["steady_state_insulin"]) * clamp["airg"]
 
     # --------------------------------------------------------------------------
     # Outcomes
@@ -164,13 +193,14 @@ def clean_renal_heir():
     biopsy["procedure"] = "kidney_biopsy"
 
     # MERGE
-    df = pd.merge(phys, screen, how="outer")
-    df = pd.merge(df, med, how="outer")
-    df = pd.merge(df, dxa, how="outer")
-    df = pd.merge(df, clamp, how="outer")
-    df = pd.merge(df, out, how="outer")
-    df = pd.merge(df, biopsy, how="outer")
-    df = pd.merge(df, demo, how="outer")
+    df = pd.concat([phys, screen], join='outer', ignore_index=True)
+    df = pd.concat([df, med], join='outer', ignore_index=True)
+    df = pd.concat([df, dxa], join='outer', ignore_index=True)
+    df = pd.concat([df, clamp], join='outer', ignore_index=True)
+    df = pd.concat([df, out], join='outer', ignore_index=True)
+    df = pd.concat([df, biopsy], join='outer', ignore_index=True)
+    df = pd.concat([df, demo], join='outer', ignore_index=True)
+    df = df.copy()
     # REORGANIZE
     df["visit"] = "baseline"
     df["study"] = "RENAL-HEIR"

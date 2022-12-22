@@ -12,6 +12,9 @@ __status__ = "Dev"
 
 def clean_improve():
     # Libraries
+    import os
+    os.chdir(
+        "C:/Users/timbv/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import redcap
     import pandas as pd
     import numpy as np
@@ -193,6 +196,40 @@ def clean_improve():
                   }, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
     clamp["he_clamp"] = False
+    # M
+    num_vars = ["d20_infusion", "weight"]
+    clamp[num_vars] = clamp[num_vars].apply(
+        pd.to_numeric, errors='coerce')
+    clamp["raw_m"] = (clamp["d20_infusion"] * 190 / 60) / clamp["weight"]
+    # No FFA
+    # Insulin
+    ins = ['insulin_minus_10', 'insulin_minus_5', 'insulin_2', 'insulin_4',
+           'insulin_6', 'insulin_8', 'insulin_10', 'insulin_120', 'insulin_220',
+           'insulin_230', 'insulin_240', 'insulin_245', 'insulin_249',
+           'insulin_250', 'insulin_252', 'insulin_253', 'insulin_254',
+           'insulin_255']
+    clamp[ins] = clamp[ins].apply(
+        pd.to_numeric, errors='coerce')
+    clamp["steady_state_insulin"] = clamp[['insulin_220',
+                                           'insulin_230', 'insulin_240', 'insulin_245', 'insulin_249',
+                                           'insulin_250', 'insulin_252', 'insulin_253', 'insulin_254',
+                                           'insulin_255']].mean(axis=1) * 6
+    # C peptide
+    cpep = [c for c in clamp.columns if "cpeptide" in c]
+    clamp[cpep] = clamp[cpep].apply(
+        pd.to_numeric, errors='coerce')
+    clamp["steady_state_cpeptide"] = clamp[['cpeptide_220', 'cpeptide_230',
+                                            'cpeptide_240', 'cpeptide_245',
+                                            'cpeptide_249', 'cpeptide_250', 'cpeptide_252', 'cpeptide_253', 'cpeptide_254', 'cpeptide_255']].mean(axis=1)
+    # ACPRg
+    clamp["acprg"] = clamp[['cpeptide_2', 'cpeptide_4',
+                            'cpeptide_6', 'cpeptide_8', 'cpeptide_10']].mean(axis=1) - clamp[['cpeptide_minus_10', 'cpeptide_minus_5']].mean(axis=1)
+    # AIRg
+    clamp["airg"] = clamp[['insulin_2', 'insulin_4',
+                           'insulin_6', 'insulin_8', 'insulin_10']].mean(axis=1) * 6 - clamp[['insulin_minus_10', 'insulin_minus_5']].mean(axis=1) * 6
+    # DI
+    clamp["di"] = \
+        (clamp["raw_m"] / clamp["steady_state_insulin"]) * clamp["airg"]
 
     # --------------------------------------------------------------------------
     # Outcomes
@@ -230,16 +267,17 @@ def clean_improve():
     biopsy["procedure"] = "kidney_biopsy"
 
     # MERGE
-    df = pd.merge(phys, screen, how="outer")
-    df = pd.merge(df, med, how="outer")
-    df = pd.merge(df, accel, how="outer")
-    df = pd.merge(df, mri, how="outer")
-    df = pd.merge(df, mmtt, how="outer")
-    df = pd.merge(df, dxa, how="outer")
-    df = pd.merge(df, clamp, how="outer")
-    df = pd.merge(df, out, how="outer")
-    df = pd.merge(df, biopsy, how="outer")
-    df = pd.merge(df, demo, how="outer")
+    df = pd.concat([phys, screen], join='outer', ignore_index=True)
+    df = pd.concat([df, med], join='outer', ignore_index=True)
+    df = pd.concat([df, accel], join='outer', ignore_index=True)
+    df = pd.concat([df, mri], join='outer', ignore_index=True)
+    df = pd.concat([df, mmtt], join='outer', ignore_index=True)
+    df = pd.concat([df, dxa], join='outer', ignore_index=True)
+    df = pd.concat([df, clamp], join='outer', ignore_index=True)
+    df = pd.concat([df, out], join='outer', ignore_index=True)
+    df = pd.concat([df, biopsy], join='outer', ignore_index=True)
+    df = pd.concat([df, demo], join='outer', ignore_index=True)
+    df = df.copy()
     # REORGANIZE
     df.rename({"study_visit": "visit"}, axis=1, inplace=True)
     df["study"] = "IMPROVE"
@@ -257,4 +295,5 @@ def clean_improve():
                               '3': "12_months_post_surgery"}, inplace=True)
     # Rename subject identifier
     df.rename({"subject_id": "record_id"}, axis=1, inplace=True)
+    # Return final data
     return df

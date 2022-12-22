@@ -17,6 +17,7 @@ def clean_casper():
         "C:/Users/timbv/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import redcap
     import pandas as pd
+    from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
     tokens = pd.read_csv(
@@ -120,6 +121,11 @@ def clean_casper():
                   "urine_cre_baseline": "creatinine_u"}, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
     clamp["he_clamp"] = False
+    # No insulin, c peptide, or FFA
+    num_vars = ["d20_infusion", "weight"]
+    clamp[num_vars] = clamp[num_vars].apply(
+        pd.to_numeric, errors='coerce')
+    clamp["raw_m"] = (clamp["d20_infusion"] * 190 / 60) / clamp["weight"]
 
     # --------------------------------------------------------------------------
     # DXA Scan
@@ -149,12 +155,13 @@ def clean_casper():
         r"mri_", "", regex=True)
     out["procedure"] = "kidney_outcomes"
     # MERGE
-    df = pd.merge(phys, screen, how="outer")
-    df = pd.merge(df, med, how="outer")
-    df = pd.merge(df, dxa, how="outer")
-    df = pd.merge(df, clamp, how="outer")
-    df = pd.merge(df, out, how="outer")
-    df = pd.merge(df, demo, how="outer")
+    df = pd.concat([phys, screen], join='outer', ignore_index=True)
+    df = pd.concat([df, med], join='outer', ignore_index=True)
+    df = pd.concat([df, dxa], join='outer', ignore_index=True)
+    df = pd.concat([df, clamp], join='outer', ignore_index=True)
+    df = pd.concat([df, out], join='outer', ignore_index=True)
+    df = pd.concat([df, demo], join='outer', ignore_index=True)
+    df = df.copy()
     # REORGANIZE
     df["visit"] = "baseline"
     df["study"] = "CASPER"
