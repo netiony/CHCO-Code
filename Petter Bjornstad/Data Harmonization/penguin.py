@@ -1,8 +1,8 @@
 """
 This code is designed to pull data from the PENGUIN REDCap project and output data in a "semi-long" format with one row per study procedure, and a visit column for longitudinal clustering when combined with other studies.
 """
-__author__ = ["Tim Vigers","Ye Ji Choi"]
-__credits__ = ["Tim Vigers","Ye Ji Choi"]
+__author__ = ["Tim Vigers", "Ye Ji Choi"]
+__credits__ = ["Tim Vigers", "Ye Ji Choi"]
 __license__ = "MIT"
 __version__ = "0.0.1"
 __maintainer__ = "Tim Vigers"
@@ -18,7 +18,7 @@ def clean_penguin():
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
     tokens = pd.read_csv(
-        "/home/timvigers/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+        "Z:/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "PENGUIN", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -149,6 +149,7 @@ def clean_penguin():
     clamp.columns = clamp.columns.str.replace(
         r"glucose_minus", "glucose_minus_", regex=True)
     clamp["procedure"] = "clamp"
+    clamp["he_clamp"] = False
 
     # --------------------------------------------------------------------------
     # Renal Clearance Testing

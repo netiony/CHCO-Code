@@ -1,8 +1,8 @@
 """
 This code is designed to pull data from the IMPROVE REDCap project and output data in a long format with one row per study procedure per visit.
 """
-__author__ = ["Tim Vigers","Ye Ji Choi"]
-__credits__ = ["Tim Vigers","Ye Ji Choi"]
+__author__ = ["Tim Vigers", "Ye Ji Choi"]
+__credits__ = ["Tim Vigers", "Ye Ji Choi"]
 __license__ = "MIT"
 __version__ = "0.0.1"
 __maintainer__ = "Tim Vigers"
@@ -19,7 +19,7 @@ def clean_improve():
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
     tokens = pd.read_csv(
-        "/home/timvigers/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+        "Z:/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "IMPROVE", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -192,6 +192,7 @@ def clean_improve():
                   "urine_cre_baseline": "creatinine_u"
                   }, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
+    clamp["he_clamp"] = False
 
     # --------------------------------------------------------------------------
     # Outcomes

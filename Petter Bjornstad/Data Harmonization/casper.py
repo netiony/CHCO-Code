@@ -1,8 +1,8 @@
 """
 This code is designed to pull data from the CASPER REDCap project and output data in a "semi-long" format with one row per study procedure, and a visit column for longitudinal clustering when combined with other studies.
 """
-__author__ = ["Tim Vigers","Ye Ji Choi"]
-__credits__ = ["Tim Vigers","Ye Ji Choi"]
+__author__ = ["Tim Vigers", "Ye Ji Choi"]
+__credits__ = ["Tim Vigers", "Ye Ji Choi"]
 __license__ = "MIT"
 __version__ = "0.0.1"
 __maintainer__ = "Tim Vigers"
@@ -12,13 +12,15 @@ __status__ = "Dev"
 
 def clean_casper():
     # Libraries
+    import os
+    os.chdir(
+        "C:/Users/timbv/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import redcap
     import pandas as pd
-    from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
     tokens = pd.read_csv(
-        "/home/timvigers/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+        "Z:/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "CASPER", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -117,6 +119,7 @@ def clean_casper():
                   "urine_mab_baseline": "microalbumin_u",
                   "urine_cre_baseline": "creatinine_u"}, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
+    clamp["he_clamp"] = False
 
     # --------------------------------------------------------------------------
     # DXA Scan
