@@ -1,0 +1,656 @@
+---
+title: "TODAY Somalogic Pathway Analyses: Moderated Adjusted Linear Models"
+author: "Tim Vigers"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
+    self-contained: true
+    code-fold: true
+    fig-width: 8
+    fig-height: 10
+---
+
+```{r include=FALSE}
+library(readxl)
+library(clusterProfiler)
+library(ReactomePA)
+library(enrichplot)
+library(EnhancedVolcano)
+```
+
+# Enrichment
+
+Enrichment analyses were performed on nominally significant proteins using the R package `clusterProfiler` and a gene set ranked by log FC. Entrez gene IDs were used for all annotation. All genes in the `org.Hs.eg.db` were used as background for GO enrichment analysis. All duplicate gene/protein names were removed from the differentially expressed gene list.
+
+```{r}
+# Make a function for pathway analysis
+# Need a genelist in the format used by clusterProfiler, with names in UniProt form
+pathway_analysis = function(de_genes){
+  # Remove duplicates and fix names
+  de_genes = de_genes[!is.na(names(de_genes))]
+  names(de_genes) = sub("\\|.*","",names(de_genes))
+  de_genes = de_genes[which(!duplicated(names(de_genes)))]
+  # GSEA with KEGG
+  gseaKEGG = gseKEGG(geneList = de_genes[unique(names(de_genes))],
+                     keyType = 'uniprot',pvalueCutoff = 1)
+  gsea_upset = upsetplot(gseaKEGG) + ggtitle("GSEA Upset Plot")
+  ridge = ridgeplot(gseaKEGG) + ggtitle("GSEA Ridge Plot")
+  # gseap = gseaplot2(gseaKEGG,geneSetID = 1:nrow(gseaKEGG@result)) + 
+  #   ggtitle("GSEA Plot")
+  gsea_heat = heatplot(gseaKEGG,foldChange=de_genes) + ggtitle("GSEA Heatmap")
+  # Convert to gene names (some won't match unfortunately)
+  eg = bitr(names(de_genes), fromType="UNIPROT", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+  de_genes = de_genes[which(names(de_genes) %in% eg$UNIPROT)]
+  names(de_genes) = eg$ENTREZID[match(names(de_genes),eg$UNIPROT)]
+  # GO enrichment
+  ego = enrichGO(names(de_genes),OrgDb = 'org.Hs.eg.db')
+  bar = barplot(ego,showCategory=20) + ggtitle("GO Enrichment Bar Plot")
+  dot = dotplot(ego,showCategory=20) + ggtitle("GO Enrichment Dot Plot")
+  # Convert to gene symbols
+  egox = setReadable(ego, 'org.Hs.eg.db', 'ENTREZID')
+  # More plots!
+  cnet = cnetplot(egox, foldChange=de_genes) + ggtitle("GO Enrichment Network Plot")
+  circos = cnetplot(egox, foldChange=de_genes, circular = TRUE, colorEdge = TRUE) + 
+    ggtitle("GO Enrichment Circos Plot")
+  heat = heatplot(egox, foldChange=de_genes) + ggtitle("GO Enrichment Heatmap")
+  egop = pairwise_termsim(ego)
+  emap = emapplot(egop) + ggtitle("GO Enrichment Map")
+  upset = upsetplot(egop) + ggtitle("GO Enrichment Upset Plot")
+  # Return those beautiful plots
+  return(list("gsea_upset" = gsea_upset,"ridge" = ridge,"gseap" = NULL,
+              "gsea_heat" = gsea_heat,"bar" = bar,"dot" = dot,"cnet" = cnet,
+              "circos" = circos,"heat" = heat,"emap" = emap,"upset" = upset))
+}
+# Function for comparing two gene lists
+# de_gene_list is a list of multiple gene sets
+pathway_comparison = function(de_gene_list){
+  # Format names
+  de_gene_list = lapply(de_gene_list, function(l){
+    n = names(l)
+    n = sub("\\|.*","",n)
+    eg = bitr(n, fromType="UNIPROT", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+    n = eg$ENTREZID[match(n,eg$UNIPROT)]
+    n = n[!is.na(n)]
+    dups = n[duplicated(n)]
+    n = n[!n %in% dups]
+    return(n)
+  })
+  # Compare with GO enrichment
+  ck = compareCluster(geneClusters = de_gene_list,
+                      fun='enrichGO', OrgDb='org.Hs.eg.db')
+  # Gene names
+  ckx = setReadable(ck, OrgDb = "org.Hs.eg.db", keyType="ENTREZID")
+  # Plots
+  dot = dotplot(ckx) + ggtitle("Cluster Comparison Dot Plot")
+  net = cnetplot(ckx) + ggtitle("Cluster Comparison Network Plot")
+  xx = pairwise_termsim(ckx)
+  emap = emapplot(xx) + ggtitle("Cluster Comparison Enrichment Map")
+  # Return
+  return(list("dot" = dot,"net" = net,"emap" = emap))
+}
+# Volcano plot
+volcano = function(df,lab = "Target",xcol = "logFC",ycol = "P.Value",top = 10,
+                           xlimit = c(-1, 1),ylimit = c(0, -log10(10e-7)),
+                           pCutoff = 0.05){
+  df = as.data.frame(df)
+  df = df[order(df[,ycol]),]
+  df$logp = -log10(df[,ycol])
+  df$fc = df[,xcol]
+  df$sig = df$P.Value <= pCutoff
+  p = ggplot(data = df,aes(x = fc,y = logp,color = sig)) + 
+    geom_hline(yintercept = -log10(pCutoff),linetype = "dashed") +
+    geom_point() + 
+    geom_label_repel(data=df[1:top,],aes(label=Target),color = "black") +
+    scale_color_manual(values = c("grey","#00BFC4")) +
+    xlab(bquote(~Log ~ "fold change")) + ylab(bquote(~-Log[10] ~ italic(P))) +
+    theme_bw() +
+    theme(legend.position = "none") 
+  return(p)
+}
+```
+
+# Baseline (moderated adjusted linear models)
+
+```{r}
+#f = "Z:/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma baseline adjusted.xlsx"
+f = "E:\Petter Bjornstad\TODAY subaward\Results\Metabolomics linear and Cox models\TODAY plasma metabolomics limma baseline adjusted.xlsx"
+
+#f = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma baseline adjusted.xlsx"
+```
+
+## MAC
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+mac = read_excel(f,sheet = "MAC_moderated_FDR")
+volcano(mac)
+mac = mac[mac$P.Value <= 0.05,]
+de_genes_mac = mac$logFC
+names(de_genes_mac) = mac$UniProt
+de_genes_mac = sort(de_genes_mac, decreasing = TRUE)
+# Pathway analysis
+mac_p = pathway_analysis(de_genes_mac)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+mac_p$bar
+mac_p$dot
+mac_p$cnet
+mac_p$circos
+mac_p$heat
+mac_p$emap
+mac_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+mac_p$gsea_upset
+mac_p$ridge
+# mac_p$gseap
+mac_p$gsea_heat
+```
+
+## MIC
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+mic = read_excel(f,sheet = "MIC_moderated_FDR")
+volcano(mic)
+mic = mic[mic$P.Value <= 0.05,]
+de_genes_mic = mic$logFC
+names(de_genes_mic) = mic$UniProt
+de_genes_mic = sort(de_genes_mic, decreasing = TRUE)
+# Pathway analysis
+mic_p = pathway_analysis(de_genes_mic)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+mic_p$bar
+mic_p$dot
+mic_p$cnet
+mic_p$circos
+mic_p$heat
+mic_p$emap
+mic_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+mic_p$gsea_upset
+mic_p$ridge
+# mic_p$gseap
+mac_p$gsea_heat
+```
+
+## MAC vs. MIC
+
+```{r warning=FALSE,message=FALSE}
+mac_vs_mic = list("MAC" = de_genes_mac,"MIC" = de_genes_mic)
+mac_vs_mic_p = pathway_comparison(mac_vs_mic)
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+mac_vs_mic_p$dot
+mac_vs_mic_p$net
+mac_vs_mic_p$emap
+```
+
+## Hyperfiltration
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+hyper = read_excel(f,sheet = "hyperfilt_moderated_FDR")
+volcano(hyper)
+hyper = hyper[hyper$P.Value <= 0.05,]
+de_genes_hyper = hyper$logFC
+names(de_genes_hyper) = hyper$UniProt
+de_genes_hyper = sort(de_genes_hyper, decreasing = TRUE)
+# Pathway analysis
+hyper_p = pathway_analysis(de_genes_hyper)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+hyper_p$bar
+hyper_p$dot
+hyper_p$cnet
+hyper_p$circos
+hyper_p$heat
+hyper_p$emap
+hyper_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+hyper_p$gsea_upset
+hyper_p$ridge
+# hyper_p$gseap
+hyper_p$gsea_heat
+```
+
+## Rapid eGFR decline
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+rapid = read_excel(f,sheet = "rapid_moderated_FDR")
+volcano(rapid)
+rapid = rapid[rapid$P.Value <= 0.05,]
+de_genes_rapid = rapid$logFC
+names(de_genes_rapid) = rapid$UniProt
+de_genes_rapid = sort(de_genes_rapid, decreasing = TRUE)
+# Pathway analysis
+rapid_p = pathway_analysis(de_genes_rapid)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+rapid_p$bar
+rapid_p$dot
+rapid_p$cnet
+rapid_p$circos
+rapid_p$heat
+rapid_p$emap
+rapid_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+rapid_p$gsea_upset
+rapid_p$ridge
+# rapid_p$gseap
+rapid_p$gsea_heat
+```
+
+## Hypertension
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+htn = read_excel(f,sheet = "htn_moderated_FDR")
+volcano(htn)
+htn = htn[htn$P.Value <= 0.05,]
+de_genes_htn = htn$logFC
+names(de_genes_htn) = htn$UniProt
+de_genes_htn = sort(de_genes_htn, decreasing = TRUE)
+# Pathway analysis
+htn_p = pathway_analysis(de_genes_htn)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+htn_p$bar
+htn_p$dot
+htn_p$cnet
+htn_p$circos
+htn_p$heat
+htn_p$emap
+htn_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+htn_p$gsea_upset
+htn_p$ridge
+# htn_p$gseap
+htn_p$gsea_heat
+```
+
+## Glycemic failure
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+glyc = read_excel(f,sheet = "glyc_moderated_FDR")
+volcano(glyc)
+glyc = glyc[glyc$P.Value <= 0.05,]
+de_genes_glyc = glyc$logFC
+names(de_genes_glyc) = glyc$UniProt
+de_genes_glyc = sort(de_genes_glyc, decreasing = TRUE)
+# Pathway analysis
+glyc_p = pathway_analysis(de_genes_glyc)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+glyc_p$bar
+glyc_p$dot
+glyc_p$cnet
+glyc_p$circos
+glyc_p$heat
+glyc_p$emap
+glyc_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+glyc_p$gsea_upset
+glyc_p$ridge
+# glyc_p$gseap
+glyc_p$gsea_heat
+```
+
+# 10-year follow-up (adjusted)
+
+```{r}
+f = "Z:/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx"
+#f = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx"
+```
+
+## MAC
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+mac_10y = read_excel(f,sheet = "MAC_moderated_FDR")
+volcano(mac_10y)
+mac_10y = mac_10y[mac_10y$P.Value <= 0.05,]
+de_genes_mac_10y = mac_10y$logFC
+names(de_genes_mac_10y) = mac_10y$UniProt
+de_genes_mac_10y = sort(de_genes_mac_10y, decreasing = TRUE)
+# Pathway analysis
+mac_10y_p = pathway_analysis(de_genes_mac_10y)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+mac_10y_p$bar
+mac_10y_p$dot
+mac_10y_p$cnet
+mac_10y_p$circos
+mac_10y_p$heat
+mac_10y_p$emap
+mac_10y_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+mac_10y_p$gsea_upset
+mac_10y_p$ridge
+# mac_10y_p$gseap
+mac_10y_p$gsea_heat
+```
+
+## MIC
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+mic_10y = read_excel(f,sheet = "MIC_moderated_FDR")
+volcano(mic_10y)
+mic_10y = mic_10y[mic_10y$P.Value <= 0.05,]
+de_genes_mic_10y = mic_10y$logFC
+names(de_genes_mic_10y) = mic_10y$UniProt
+de_genes_mic_10y = sort(de_genes_mic_10y, decreasing = TRUE)
+# Pathway analysis
+mic_10y_p = pathway_analysis(de_genes_mic_10y)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+mic_10y_p$bar
+mic_10y_p$dot
+mic_10y_p$cnet
+mic_10y_p$circos
+mic_10y_p$heat
+mic_10y_p$emap
+mic_10y_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+mic_10y_p$gsea_upset
+mic_10y_p$ridge
+# mic_10y_p$gseap
+mac_p$gsea_heat
+```
+
+## MAC vs. MIC
+
+```{r warning=FALSE,message=FALSE}
+mac_vs_mic_10y = list("MAC" = de_genes_mac_10y,"MIC" = de_genes_mic_10y)
+mac_vs_mic_p_10y = pathway_comparison(mac_vs_mic_10y)
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+mac_vs_mic_p_10y$dot
+mac_vs_mic_p_10y$net
+mac_vs_mic_p_10y$emap
+```
+
+## Hyperfiltration
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+hyper_10y = read_excel(f,sheet = "hyperfilt_moderated_FDR")
+volcano(hyper_10y)
+hyper_10y = hyper_10y[hyper_10y$P.Value <= 0.05,]
+de_genes_hyper_10y = hyper_10y$logFC
+names(de_genes_hyper_10y) = hyper_10y$UniProt
+de_genes_hyper_10y = sort(de_genes_hyper_10y, decreasing = TRUE)
+# Pathway analysis
+hyper_10y_p = pathway_analysis(de_genes_hyper_10y)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+hyper_10y_p$bar
+hyper_10y_p$dot
+hyper_10y_p$cnet
+hyper_10y_p$circos
+hyper_10y_p$heat
+hyper_10y_p$emap
+hyper_10y_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+hyper_10y_p$gsea_upset
+hyper_10y_p$ridge
+# hyper_10y_p$gseap
+hyper_10y_p$gsea_heat
+```
+
+## Rapid eGFR decline
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+rapid_10y = read_excel(f,sheet = "rapid_moderated_FDR")
+volcano(rapid_10y)
+rapid_10y = rapid_10y[rapid_10y$P.Value <= 0.05,]
+de_genes_rapid_10y = rapid_10y$logFC
+names(de_genes_rapid_10y) = rapid_10y$UniProt
+de_genes_rapid_10y = sort(de_genes_rapid_10y, decreasing = TRUE)
+# Pathway analysis
+rapid_10y_p = pathway_analysis(de_genes_rapid_10y)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+rapid_10y_p$bar
+rapid_10y_p$dot
+rapid_10y_p$cnet
+rapid_10y_p$circos
+rapid_10y_p$heat
+rapid_10y_p$emap
+rapid_10y_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+rapid_10y_p$gsea_upset
+rapid_10y_p$ridge
+# rapid_10y_p$gseap
+rapid_10y_p$gsea_heat
+```
+
+## Hypertension
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+htn_10y = read_excel(f,sheet = "htn_moderated_FDR")
+labs = htn_10y$Target[order(htn_10y$P.Value)[1:10]]
+volcano(htn_10y)
+htn_10y = htn_10y[htn_10y$P.Value <= 0.05,]
+de_genes_htn_10y = htn_10y$logFC
+names(de_genes_htn_10y) = htn_10y$UniProt
+de_genes_htn_10y = sort(de_genes_htn_10y, decreasing = TRUE)
+# Pathway analysis
+htn_10y_p = pathway_analysis(de_genes_htn_10y)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+htn_10y_p$bar
+htn_10y_p$dot
+htn_10y_p$cnet
+htn_10y_p$circos
+htn_10y_p$heat
+htn_10y_p$emap
+htn_10y_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+htn_10y_p$gsea_upset
+htn_10y_p$ridge
+# htn_10y_p$gseap
+htn_10y_p$gsea_heat
+```
+
+## Glycemic failure
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+glyc_10y = read_excel(f,sheet = "glyc_moderated_FDR")
+volcano(glyc_10y)
+glyc_10y = glyc_10y[glyc_10y$P.Value <= 0.05,]
+de_genes_glyc_10y = glyc_10y$logFC
+names(de_genes_glyc_10y) = glyc_10y$UniProt
+de_genes_glyc_10y = sort(de_genes_glyc_10y, decreasing = TRUE)
+# Pathway analysis
+glyc_10y_p = pathway_analysis(de_genes_glyc_10y)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+glyc_10y_p$bar
+glyc_10y_p$dot
+glyc_10y_p$cnet
+glyc_10y_p$circos
+glyc_10y_p$heat
+glyc_10y_p$emap
+glyc_10y_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+glyc_10y_p$gsea_upset
+glyc_10y_p$ridge
+# glyc_10y_p$gseap
+glyc_10y_p$gsea_heat
+```
+
+# Baseline vs. 10-year follow-up
+
+## MAC
+
+```{r warning=FALSE,message=FALSE}
+mac_base_follow = list("Baseline" = de_genes_mac,"Follow-up" = de_genes_mac_10y)
+mac_base_follow_p = pathway_comparison(mac_base_follow)
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+mac_base_follow_p$dot
+mac_base_follow_p$net
+mac_base_follow_p$emap
+```
+
+## MIC
+
+```{r warning=FALSE,message=FALSE}
+mic_base_follow = list("Baseline" = de_genes_mic,"Follow-up" = de_genes_mic_10y)
+mic_base_follow_p = pathway_comparison(mic_base_follow)
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+mic_base_follow_p$dot
+mic_base_follow_p$net
+mic_base_follow_p$emap
+```
+
+## Hyperfiltration
+
+```{r warning=FALSE,message=FALSE}
+hyper_base_follow = list("Baseline" = de_genes_hyper,"Follow-up" = de_genes_hyper_10y)
+hyper_base_follow_p = pathway_comparison(hyper_base_follow)
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+hyper_base_follow_p$dot
+hyper_base_follow_p$net
+hyper_base_follow_p$emap
+```
+
+## Rapid eGFR decline
+
+```{r warning=FALSE,message=FALSE}
+rapid_base_follow = list("Baseline" = de_genes_rapid,"Follow-up" = de_genes_rapid_10y)
+rapid_base_follow_p = pathway_comparison(rapid_base_follow)
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+rapid_base_follow_p$dot
+rapid_base_follow_p$net
+rapid_base_follow_p$emap
+```
+
+## Hypertension
+
+```{r warning=FALSE,message=FALSE}
+htn_base_follow = list("Baseline" = de_genes_htn,"Follow-up" = de_genes_htn_10y)
+htn_base_follow_p = pathway_comparison(htn_base_follow)
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+htn_base_follow_p$dot
+htn_base_follow_p$net
+htn_base_follow_p$emap
+```
+
+## Glycemic failure
+
+```{r warning=FALSE,message=FALSE}
+glyc_base_follow = list("Baseline" = de_genes_glyc,"Follow-up" = de_genes_glyc_10y)
+glyc_base_follow_p = pathway_comparison(glyc_base_follow)
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+glyc_base_follow_p$dot
+glyc_base_follow_p$net
+glyc_base_follow_p$emap
+```
