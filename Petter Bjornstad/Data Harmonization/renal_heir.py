@@ -115,6 +115,11 @@ def clean_renal_heir():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "clamp", "field_name"]]
     clamp = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999]
+    rep = rep + [str(r) for r in rep]
+    clamp.replace(rep, "", inplace=True)
+    # Format
     clamp.drop(["baseline", "fasting_labs", "urine_labs", "hct_lab",
                 "bg_labs", "ffa_lab", "cpep_lab", "insulin_labs"], axis=1, inplace=True)
     clamp.columns = clamp.columns.str.replace(
@@ -209,7 +214,7 @@ def clean_renal_heir():
     df = pd.concat([df, clamp], join='outer', ignore_index=True)
     df = pd.concat([df, out], join='outer', ignore_index=True)
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
-    df = pd.concat([df, demo], join='outer', ignore_index=True)
+    df = pd.merge(df, demo, how="outer")
     df = df.copy()
     # REORGANIZE
     df["visit"] = "baseline"
