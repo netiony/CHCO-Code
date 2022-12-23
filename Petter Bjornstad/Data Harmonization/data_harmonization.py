@@ -79,16 +79,17 @@ def harmonize_data():
     harmonized[num_vars] = harmonized[num_vars].apply(
         pd.to_numeric, errors='coerce')
     # Calculated variables
+    # Age
     age = round((harmonized["date"] - harmonized["dob"]).dt.days / 365.25, 2)
     harmonized = pd.concat([harmonized, age], axis=1)
     harmonized.rename({0: "age"}, axis=1, inplace=True)
-
+    # Diabetes duration
     disease_duration = \
         round((harmonized["date"] -
               harmonized["diabetes_dx_date"]).dt.days / 365.25, 2)
     harmonized = pd.concat([harmonized, disease_duration], axis=1)
-    harmonized.rename({0: "disease_duration"}, axis=1, inplace=True)
-
+    harmonized.rename({0: "diabetes_duration"}, axis=1, inplace=True)
+    # eGFR
     harmonized = calc_egfr(harmonized, age="age",
                            serum_creatinine="creatinine_s", cystatin_c="cystatin_c_s",
                            bun="bun", height="height", sex="sex", male="Male", female="Female", alpha=0.5)

@@ -21,7 +21,7 @@ from natsort import natsorted, ns
 df = harmonize_data()
 # Variable lists
 vars = ["record_id", "co_enroll_id", "study", "kit_id", "group", "dob",
-        "diabetes_dx_date", "race", "ethnicity", "race_ethnicity", "visit", "procedure", "date", "age", "sex",
+        "diabetes_dx_date", "race", "ethnicity", "race_ethnicity", "visit", "procedure", "date", "diabetes_duration", "age", "sex",
         "sglt2i_ever", "sglti_timepoint", "bmi", "sbp", "dbp", "creatinine_s", "cystatin_c_s", "bun",
         "gfr", "gfr_bsa", "eGFR_fas_cr",
         "acr_u", "hba1c", 'dexa_body_fat', 'dexa_fat_kg', 'dexa_trunk_kg', 'bod_pod_body_fat', 'bod_pod_fat_kg',
@@ -51,4 +51,4 @@ fadhl["michigan_id"] = id
 fadhl.set_index(["michigan_id"], drop=True, inplace=True)
 # Write
 fadhl = fadhl.astype(object)
-fadhl.to_csv("~/harmonized_latest_value.csv")
+fadhl.to_csv("Z:/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Kidney Morphometrics/ADA 2023/Data_Cleaned/harmonized_latest_value.csv", index=False)
