@@ -13,15 +13,13 @@ __status__ = "Dev"
 def clean_coffee():
     # Libraries
     import os
-    os.chdir(
-        "C:/Users/timbv/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+    os.chdir("/Users/timvigers/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import redcap
     import pandas as pd
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
-    tokens = pd.read_csv(
-        "Z:/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+    tokens = pd.read_csv("/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "COFFEE", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)

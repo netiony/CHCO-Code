@@ -17,8 +17,7 @@ def clean_penguin():
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
-    tokens = pd.read_csv(
-        "Z:/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+    tokens = pd.read_csv("/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "PENGUIN", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
