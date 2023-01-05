@@ -17,8 +17,8 @@ __status__ = "Dev"
 def harmonize_data():
     # Libraries
     import os
-    os.chdir(
-        "C:/Users/timbv/Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+    os.chdir(os.path.expanduser('~'))
+    os.chdir("GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import pandas as pd
     import numpy as np
     from casper import clean_casper
