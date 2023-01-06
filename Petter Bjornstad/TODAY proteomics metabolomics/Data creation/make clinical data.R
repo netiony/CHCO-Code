@@ -252,7 +252,8 @@ INS_TODAY2_KEEP <- INS_TODAY2 %>% filter(pvisit=="P108") %>% select(releaseid, i
 VISIT_TODAY2 <- read.csv("./Clinical data/TODAY2/VISIT.csv")
 VISIT_TODAY2$releaseid <- VISIT_TODAY2$RELEASEID
 VISIT_TODAY2$sbp <- VISIT_TODAY2$SBP
-VISIT_TODAY2_KEEP <- VISIT_TODAY2 %>% filter(PVISIT=="P120") %>% select(releaseid, sbp)
+VISIT_TODAY2$bmi <- VISIT_TODAY2$BMI
+VISIT_TODAY2_KEEP <- VISIT_TODAY2 %>% filter(PVISIT=="P120") %>% select(releaseid, sbp, bmi)
 
 yr10risk <- merge(CBL_TODAY2_KEEP, INS_TODAY2_KEEP, by="releaseid", all.x = T, all.y = T)
 yr10risk <- merge(yr10risk, VISIT_TODAY2_KEEP, by="releaseid", all.x = T, all.y = T)
