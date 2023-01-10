@@ -22,6 +22,7 @@ soma <- soma %>% filter(!is.na(SampleDescription))
 croc_soma <- soma %>% filter(str_sub(SampleDescription,1,3)=="CRC")
 improve_soma <- soma %>% filter(str_sub(SampleDescription,1,4)=="IT2D")
 rh_soma <- soma %>% filter(str_sub(SampleDescription,1,2)=="RH")
+pima_soma <- soma %>% filter(str_sub(SampleDescription,1,4)=="CKDS")
 
 # Save CROCODILE
 if(Sys.info()["sysname"] == "Windows"){
@@ -57,4 +58,16 @@ if(Sys.info()["sysname"] == "Windows"){
 }
 setwd(dir)
 save(rh_soma,file = "./rh_soma.Rdata")
+save(analytes,file = "./analytes.Rdata")
+
+# save Pima
+if(Sys.info()["sysname"] == "Windows"){
+  dir = ""
+} else if (Sys.info()["sysname"] == "Linux"){
+  dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Pima/Somalogic data/"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  dir = ""
+}
+setwd(dir)
+save(rh_soma,file = "./pima_soma.Rdata")
 save(analytes,file = "./analytes.Rdata")
