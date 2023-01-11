@@ -12,12 +12,16 @@ __status__ = "Dev"
 
 def clean_penguin():
     # Libraries
+    import os
+    home_dir = os.path.expanduser("~")
+    os.chdir(home_dir + "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import redcap
     import pandas as pd
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
-    tokens = pd.read_csv("/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+    tokens = pd.read_csv(
+        "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "PENGUIN", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -173,7 +177,10 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_renal_clearance_testing", "field_name"]]
     rct = pd.DataFrame(proj.export_records(fields=var))
-    rct.drop(["iohexol_yn", "pah_yn", "egfr"], axis=1, inplace=True)
+    rename = {"gfr": "gfr_raw_plasma", "gfr_bsa": "gfr_bsa_plasma",
+              "erpf": "erpf_raw_plasma", "erpf_bsa": "erpf_bsa_plasma"}
+    rct.rename(rename, axis=1, inplace=True)
+    rct = rct[["record_id"] + list(rename.values())]
     rct["procedure"] = "renal_clearance_testing"
 
     # --------------------------------------------------------------------------
