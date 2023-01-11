@@ -182,7 +182,7 @@ def clean_crocodile():
         clamp[['ffa_minus_10', 'ffa_minus_20']].mean(axis=1)
     clamp["steady_state_ffa"] = \
         clamp[['ffa_250', 'ffa_260', 'ffa_270']].mean(axis=1)
-    clamp["ffa_supression"] = (
+    clamp["ffa_suppression"] = (
         (clamp["baseline_ffa"] - clamp["steady_state_ffa"]) / clamp["baseline_ffa"]) * 100
 
     # --------------------------------------------------------------------------

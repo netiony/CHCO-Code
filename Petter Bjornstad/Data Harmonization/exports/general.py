@@ -12,11 +12,11 @@ __status__ = "Dev"
 
 import os
 os.chdir(os.path.expanduser('~'))
-os.chdir("Documents/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+os.chdir("GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
 import pandas as pd
 import numpy as np
 from data_harmonization import harmonize_data
 # Get dataset
 df = harmonize_data()
 # Write
-df.to_csv("/Volumes/Work/CHCO/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", index=False)
+df.to_csv("/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", index=False)

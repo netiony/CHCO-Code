@@ -143,6 +143,11 @@ def clean_improve():
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "mmtt_metabolic_cart", "field_name"]]
     mmtt = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999]
+    rep = rep + [str(r) for r in rep]
+    mmtt.replace(rep, "", inplace=True)
+    # Drop unnecessary columns
     mmtt.drop(redcap_cols + ["study_visit_mttt", "mmtt_vitals", "mmtt_pregnant",
                              "mmtt_lmp", "mmtt_brmr", "mmtt_60rmr", "mmtt_base_labs", "mmtt_ffa_labs", "mmtt_insulin",
                              "mmtt_glp1", "mmtt_cpep", "mmtt_yy", "mmtt_glucagon",
@@ -164,7 +169,7 @@ def clean_improve():
         pd.to_numeric, errors='coerce')
     mmtt["baseline_ffa"] = mmtt['ffa_minus_10']
     mmtt["steady_state_ffa"] = mmtt['ffa_240']
-    mmtt["ffa_supression"] = (
+    mmtt["ffa_suppression"] = (
         (mmtt["baseline_ffa"] - mmtt["steady_state_ffa"]) / mmtt["baseline_ffa"]) * 100
 
     # --------------------------------------------------------------------------
@@ -194,8 +199,6 @@ def clean_improve():
                                                                == "clamp", "field_name"]]
     clamp = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
-    rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999]
-    rep = rep + [str(r) for r in rep]
     clamp.replace(rep, "", inplace=True)
     # Format
     clamp.drop(redcap_cols + ["study_visit_clamp", "baseline", "fasting_labs",

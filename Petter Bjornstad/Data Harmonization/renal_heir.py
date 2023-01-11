@@ -150,7 +150,7 @@ def clean_renal_heir():
         clamp[['ffa_minus_10', 'ffa_minus_5']].mean(axis=1)
     clamp["steady_state_ffa"] = \
         clamp[['ffa_220', 'ffa_230', 'ffa_240', 'ffa_250']].mean(axis=1)
-    clamp["ffa_supression"] = (
+    clamp["ffa_suppression"] = (
         (clamp["baseline_ffa"] - clamp["steady_state_ffa"]) / clamp["baseline_ffa"]) * 100
     # Insulin
     ins = ['insulin_minus_10', 'insulin_minus_5', 'insulin_2', 'insulin_4',
