@@ -13,14 +13,16 @@ __status__ = "Dev"
 def clean_improve():
     # Libraries
     import os
-    os.chdir("/Users/timvigers/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+    home_dir = os.path.expanduser("~")
+    os.chdir(home_dir + "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import redcap
     import pandas as pd
     import numpy as np
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
-    tokens = pd.read_csv("/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+    tokens = pd.read_csv(
+        "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "IMPROVE", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -255,6 +257,9 @@ def clean_improve():
              axis=1, inplace=True)
     out.columns = out.columns.str.replace(
         r"mri_", "", regex=True)
+    rename = {"gfr": "gfr_raw_plasma", "gfr_bsa": "gfr_bsa_plasma",
+              "rpf": "erpf_raw_plasma", "erpf_bsa": "erpf_bsa_plasma"}
+    out.rename(rename, axis=1, inplace=True)
     out["procedure"] = "kidney_outcomes"
 
     # --------------------------------------------------------------------------
