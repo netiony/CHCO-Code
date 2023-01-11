@@ -1,3 +1,9 @@
+---
+  title: "Subset of CROCODILE for Kumar (FFA and Insulin)"
+author: "Ye Ji Choi"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+---
+  
 library(dplyr)
 library(tidyr)
 library(magrittr)
@@ -9,14 +15,7 @@ library(Hmisc)
 library(emmeans)
 library(car)
 
-if(Sys.info()["sysname"] == "Windows"){
-  home_dir = "S:/Petter Bjornstad/Data Harmonization//Data Clean/"
-  } else if (Sys.info()["sysname"] == "Linux"){
-    home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/"
-    } else if (Sys.info()["sysname"] == "Darwin"){
-      home_dir = ""
-      }
-knitr::opts_knit$set(root.dir = home_dir)
+home_dir = "S:/Petter Bjornstad/Data Harmonization/Data Clean"
 setwd(home_dir)
 
 # read in raw data
