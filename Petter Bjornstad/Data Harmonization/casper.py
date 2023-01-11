@@ -1,5 +1,7 @@
 """
-This code is designed to pull data from the CASPER REDCap project and output data in a "semi-long" format with one row per study procedure, and a visit column for longitudinal clustering when combined with other studies.
+This code is designed to pull data from the CASPER REDCap project and output 
+data in a "semi-long" format with one row per study procedure, and a visit 
+column for longitudinal clustering when combined with other studies.
 """
 __author__ = ["Tim Vigers", "Ye Ji Choi"]
 __credits__ = ["Tim Vigers", "Ye Ji Choi"]
@@ -81,7 +83,9 @@ def clean_casper():
     phys = pd.DataFrame(proj.export_records(fields=var))
     phys["procedure"] = "physical_exam"
     phys.drop(["phys_norm", "phys_no", "breast_tanner",
-               "testicular_volume", "lmp", "screen_bmi_percentile", "male_activity_factor", "fem_activity_factor", "schofield_male", "schofield_female"], axis=1, inplace=True)
+               "testicular_volume", "lmp", "screen_bmi_percentile",
+               "male_activity_factor", "fem_activity_factor", "schofield_male",
+               "schofield_female"], axis=1, inplace=True)
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
     phys.rename({"sys_bp": "sbp", "dys_bp": "dbp",
                  "waist_circumference": "waistcm",
