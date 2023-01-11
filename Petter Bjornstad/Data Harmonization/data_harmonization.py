@@ -5,8 +5,8 @@ measures at multiple visits, and some studies are longitudinal. So, this code
 outputs data in a "semi-long" format with one row per study procedure, and a
 visit column for longitudinal clustering. The data cleaning process for each individual dataset is a separate function, and this function puts them together and performs some formatting tweaks.
 """
-__author__ = "Tim Vigers"
-__credits__ = ["Tim Vigers"]
+__author__ = ["Tim Vigers", "Ye Ji Choi"]
+__credits__ = ["Tim Vigers", "Ye Ji Choi"]
 __license__ = "MIT"
 __version__ = "0.0.1"
 __maintainer__ = "Tim Vigers"
