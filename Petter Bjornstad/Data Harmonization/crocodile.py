@@ -13,13 +13,15 @@ __status__ = "Dev"
 def clean_crocodile():
     # Libraries
     import os
-    os.chdir("/Users/timvigers/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+    home_dir = os.path.expanduser("~")
+    os.chdir(home_dir + "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import redcap
     import pandas as pd
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
-    tokens = pd.read_csv("/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+    tokens = pd.read_csv(
+        "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "CROCODILE", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -190,8 +192,12 @@ def clean_crocodile():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_renal_clearance_testing", "field_name"]]
     rct = pd.DataFrame(proj.export_records(fields=var))
-    rct.drop(["iohexol_yn", "pah_yn", "gfr_bsa"], axis=1, inplace=True)
-    rct.rename({"gfr_raw": "gfr", "gfrbsa": "gfr_bsa"}, axis=1, inplace=True)
+    rename = {"gfr_raw": "gfr_raw_plasma_urine ", "gfr_bsa": "gfr_bsa_plasma_urine",
+              "erpf_raw": "erpf_raw_plasma_urine", "erpf": "erpf_bsa_plasma_urine",
+              "gfr_15mgmin": "gfr_raw_plasma", "gfrbsa": "gfr_bsa_plasma",
+              "erpf_pah_85": "erpf_raw_plasma", "erpfbsa": "erpf_bsa_plasma"}
+    rct.rename(rename, axis=1, inplace=True)
+    rct = rct[["record_id"] + list(rename.values())]
     rct["procedure"] = "renal_clearance_testing"
 
     # --------------------------------------------------------------------------
