@@ -69,5 +69,5 @@ if(Sys.info()["sysname"] == "Windows"){
   dir = ""
 }
 setwd(dir)
-save(rh_soma,file = "./pima_soma.Rdata")
+save(pima_soma,file = "./pima_soma.Rdata")
 save(analytes,file = "./analytes.Rdata")
