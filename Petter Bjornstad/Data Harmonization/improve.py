@@ -164,7 +164,7 @@ def clean_improve():
         pd.to_numeric, errors='coerce')
     mmtt["baseline_ffa"] = mmtt['ffa_minus_10']
     mmtt["steady_state_ffa"] = mmtt['ffa_240']
-    mmtt["ffa_supression"] = (
+    mmtt["ffa_suppression"] = (
         (mmtt["baseline_ffa"] - mmtt["steady_state_ffa"]) / mmtt["baseline_ffa"]) * 100
 
     # --------------------------------------------------------------------------

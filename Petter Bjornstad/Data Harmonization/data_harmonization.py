@@ -46,10 +46,6 @@ def harmonize_data():
                            join='outer', ignore_index=True)
     harmonized = pd.concat([harmonized, renal_heir],
                            join='outer', ignore_index=True)
-    # Replace missing values
-    rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999]
-    rep = rep + [str(r) for r in rep]
-    harmonized.replace(rep, "", inplace=True)
     # Fix levels of categorical variables
     harmonized["visit"] = \
         pd.Categorical(harmonized["visit"],
@@ -119,7 +115,7 @@ def harmonize_data():
     harmonized["acr_u"] = \
         pd.to_numeric(harmonized["microalbumin_u"], errors="coerce") * 100 / \
         pd.to_numeric(harmonized["creatinine_u"], errors="coerce")
-    # Sort
+    # Sort rows
     harmonized.sort_values(
         ["study", "record_id", "visit", "procedure", "date"], inplace=True)
     # Return
