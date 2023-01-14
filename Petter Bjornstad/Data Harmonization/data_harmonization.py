@@ -28,7 +28,6 @@ def harmonize_data():
     from penguin import clean_penguin
     from renal_heir import clean_renal_heir
     from harmonization_functions import calc_egfr
-    from natsort import natsorted, ns
     # Use individual data functions to import cleaned DFs
     casper = clean_casper()
     coffee = clean_coffee()

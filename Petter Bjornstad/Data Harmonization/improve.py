@@ -167,10 +167,11 @@ def clean_improve():
     ffa = [c for c in mmtt.columns if "ffa_" in c]
     mmtt[ffa] = mmtt[ffa].apply(
         pd.to_numeric, errors='coerce')
-    mmtt["baseline_ffa"] = mmtt['ffa_minus_10']
-    mmtt["steady_state_ffa"] = mmtt['ffa_240']
+    mmtt["baseline_ffa"] = mmtt[['ffa_minus_10', 'ffa_0']].mean(axis=1)
+    mmtt["steady_state_ffa"] = mmtt['ffa_120']
     mmtt["ffa_suppression"] = (
         (mmtt["baseline_ffa"] - mmtt["steady_state_ffa"]) / mmtt["baseline_ffa"]) * 100
+    mmtt["ffa_method"] = "mmtt"
 
     # --------------------------------------------------------------------------
     # DXA
@@ -212,7 +213,7 @@ def clean_improve():
                   "urine_cre_baseline": "creatinine_u"
                   }, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
-    clamp["he_clamp"] = "No"
+    clamp["insulin_sensitivity_method"] = "hyperglycemic_clamp"
     # M
     num_vars = ["d20_infusion", "weight"]
     clamp[num_vars] = clamp[num_vars].apply(
