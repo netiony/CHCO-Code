@@ -60,8 +60,10 @@ def harmonize_data():
         {'Black/African American': 'Black or African American',
          "": "Unknown"}, inplace=True)
     harmonized["ethnicity"].replace({"": "Unknown"}, inplace=True)
-    harmonized["race_ethnicity"] = harmonized["race"] + \
+    race_ethnicity = harmonized["race"] + \
         ", " + harmonized["ethnicity"]
+    harmonized = pd.concat([harmonized, race_ethnicity], axis=1)
+    harmonized.rename({0: "race_ethnicity"}, axis=1, inplace=True)
     # Date variables
     dates = ["dob", "date", "diabetes_dx_date"]
     harmonized[dates] = \
