@@ -21,6 +21,7 @@ def harmonize_data():
     os.chdir(home_dir + "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import pandas as pd
     import numpy as np
+    from natsort import natsorted, ns
     from casper import clean_casper
     from coffee import clean_coffee
     from crocodile import clean_crocodile
@@ -116,6 +117,12 @@ def harmonize_data():
     harmonized["acr_u"] = \
         pd.to_numeric(harmonized["microalbumin_u"], errors="coerce") * 100 / \
         pd.to_numeric(harmonized["creatinine_u"], errors="coerce")
+    # Sort columns
+    id_cols = ["record_id", "co_enroll_id", "study", "dob", "diabetes_dx_date",
+               "sex", "race", "ethnicity", "visit", "procedure", "date"]
+    other_cols = harmonized.columns.difference(id_cols, sort=False).tolist()
+    other_cols = natsorted(other_cols, alg=ns.IGNORECASE)
+    harmonized = harmonized[id_cols + other_cols]
     # Sort rows
     harmonized.sort_values(
         ["study", "record_id", "visit", "procedure", "date"], inplace=True)

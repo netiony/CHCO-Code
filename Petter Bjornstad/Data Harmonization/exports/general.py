@@ -14,9 +14,20 @@ import os
 os.chdir(os.path.expanduser('~'))
 os.chdir("GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
 import pandas as pd
-import numpy as np
+from datetime import datetime
 from data_harmonization import harmonize_data
 # Get dataset
 df = harmonize_data()
 # Write
 df.to_csv("/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", index=False)
+# Update for Michigan
+time = datetime.now().strftime('%Y_%m_%d_%I%M%p')
+# Re-save dictionary
+dictionary = pd.read_csv(
+    "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv")
+df.to_csv("/Users/timvigers/Dropbox/Shared/Michigan/CHCO_Sample_IDs_Clinical/chco_data_dictionary_" +
+          time + ".csv", index=False)
+# Save cleaned data (de-identified)
+df = df.drop(["dob"], axis=1)
+df.to_csv("/Users/timvigers/Dropbox/Shared/Michigan/CHCO_Sample_IDs_Clinical/chco_harmonized_dataset_" +
+          time + ".csv", index=False)
