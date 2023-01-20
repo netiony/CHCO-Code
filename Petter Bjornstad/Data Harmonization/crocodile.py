@@ -172,18 +172,22 @@ def clean_crocodile():
     clamp.columns = clamp.columns.str.replace(
         r"glucose_minus", "glucose_minus_", regex=True)
     clamp["procedure"] = "clamp"
-    clamp["he_clamp"] = "Yes"
+    clamp["insulin_sensitivity_method"] = "hyperinsulinemic_euglycemic_clamp"
     # FFA
-    # See /home/timvigers/Work/CHCO/Petter Bjornstad/IHD/Background/Renal Heir Equations.docx
     ffa = [c for c in clamp.columns if "ffa_" in c]
     clamp[ffa] = clamp[ffa].apply(
         pd.to_numeric, errors='coerce')
     clamp["baseline_ffa"] = \
-        clamp[['ffa_minus_10', 'ffa_minus_20']].mean(axis=1)
-    clamp["steady_state_ffa"] = \
+        clamp[['ffa_minus_20', 'ffa_minus_10', 'ffa_0']].mean(axis=1)
+    clamp["p1_steady_state_ffa"] = \
+        clamp[['ffa_70', 'ffa_80', 'ffa_90']].mean(axis=1)
+    clamp["p2_steady_state_ffa"] = \
         clamp[['ffa_250', 'ffa_260', 'ffa_270']].mean(axis=1)
-    clamp["ffa_suppression"] = (
-        (clamp["baseline_ffa"] - clamp["steady_state_ffa"]) / clamp["baseline_ffa"]) * 100
+    clamp["p1_ffa_suppression"] = (
+        (clamp["baseline_ffa"] - clamp["p1_steady_state_ffa"]) / clamp["baseline_ffa"]) * 100
+    clamp["p2_ffa_suppression"] = (
+        (clamp["baseline_ffa"] - clamp["p2_steady_state_ffa"]) / clamp["baseline_ffa"]) * 100
+    clamp["ffa_method"] = "hyperinsulinemic_euglycemic_clamp"
 
     # --------------------------------------------------------------------------
     # Renal Clearance Testing

@@ -210,12 +210,16 @@ BASELINE <- read.csv("./Clinical data/TODAY/BASELINE.csv")
 
 # PAT
 PAT <- read.csv("./Clinical data/TODAY/PAT.csv")
-keepPAT <- PAT %>% select(releaseid,age,sex)
+keepPAT <- PAT %>% select(releaseid,age,sex,dxtime)
 
 # AGEBASE - uncollapsed age at baseline
 AGEBASE <- read.csv("./Clinical data/TODAY/AGEBASE.csv")
 AGEBASE$releaseid <- AGEBASE$RELEASEID
 AGEBASE$RELEASEID <- NULL
+
+# PRIMOUT - treatment group assignment
+PRIMOUT <- read.csv("./Clinical data/TODAY/PRIMOUT.csv")
+keepPRIMOUT <- PRIMOUT %>% select(releaseid,tx)
 
 # create new dataset of baseline risk factors
 basecbl <- CBL %>% filter(mvisit=="M00")
@@ -224,10 +228,11 @@ baserisk <- merge(BASELINE, basecbl, by="releaseid", all.x=T, ally=T)
 baserisk <- merge(baserisk, baseaddcbl, by="releaseid", all.x=T, ally=T)
 baserisk$si_1_ins0 <- 1/baserisk$ins0min
 baserisk$log_trig <- log(baserisk$Trig)
-baserisk <- baserisk %>% select(releaseid, HbA1c, log_trig, sbp, uacid, si_1_ins0, UAlbCreat, bmi)
+baserisk <- baserisk %>% select(releaseid, HbA1c, log_trig, sbp, uacid, si_1_ins0, UAlbCreat, bmi, HDL, codi)
 baserisk <- merge(baserisk,keepPAT,by="releaseid",all.x = T,all.y = F)
 baserisk$age <- NULL
 baserisk <- merge(baserisk,AGEBASE,by="releaseid",all.x = T,all.y = F)
+baserisk <- merge(baserisk, keepPRIMOUT,by="releaseid",all.x = T,all.y = F)
 
 # Save
 save(baserisk,file = "./Clinical data/TODAY/baserisk.Rdata")

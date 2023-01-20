@@ -17,7 +17,6 @@ def clean_renal_heir():
     os.chdir(home_dir + "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import redcap
     import pandas as pd
-    from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
     tokens = pd.read_csv(
@@ -135,7 +134,7 @@ def clean_renal_heir():
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
     clamp["procedure"] = "clamp"
-    clamp["he_clamp"] = "No"
+    clamp["insulin_sensitivity_method"] = "hyperglycemic_clamp"
     # M
     num_vars = ["d20_infusion", "weight"]
     clamp[num_vars] = clamp[num_vars].apply(
@@ -152,6 +151,7 @@ def clean_renal_heir():
         clamp[['ffa_220', 'ffa_230', 'ffa_240', 'ffa_250']].mean(axis=1)
     clamp["ffa_suppression"] = (
         (clamp["baseline_ffa"] - clamp["steady_state_ffa"]) / clamp["baseline_ffa"]) * 100
+    clamp["ffa_method"] = "hyperglycemic_clamp"
     # Insulin
     ins = ['insulin_minus_10', 'insulin_minus_5', 'insulin_2', 'insulin_4',
            'insulin_6', 'insulin_8', 'insulin_10', 'insulin_120',
