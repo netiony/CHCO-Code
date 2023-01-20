@@ -22,8 +22,7 @@ setwd(home_dir)
 dat <- read.csv("harmonized_dataset.csv", na.strings = c(" ", "", "-99"))
 
 croc <- dat %>%
-  filter(study=="CROCODILE") %>%
-  select(record_id, age, sex, race, ethnicity, group, diabetes_duration, 
+  select(record_id, study, age, sex, race, ethnicity, group, diabetes_duration, 
                     baseline_ffa, ffa_minus_20, ffa_minus_10, ffa_minus_5, ffa_0, ffa_2, ffa_4, ffa_6, ffa_8, ffa_10, 
                     ffa_30, ffa_60, ffa_70, ffa_80, ffa_90, ffa_120, ffa_180, ffa_220, ffa_230, ffa_240, ffa_250, ffa_260, 
                     ffa_270, steady_state_ffa, ffa_suppression, insulin_minus_20, insulin_minus_10, insulin_minus_5, insulin_0, 
@@ -39,5 +38,12 @@ croc <- dat %>%
 
 croc_clean <- croc %>%
   select_if(~ !all(is.na(.)))
+
+croc_summary <- croc_clean %>%
+  ungroup() %>%
+  group_by(study) %>%
+  summarise(across(where(is.numeric), ~mean(.x, na.rm = T))) %>% 
+  filter(study != "CASPER" & study != "COFFEE") %>%
+  select(study, insulin_minus_20, insulin_minus_10, insulin_minus_5, insulin_0, ffa_minus_20, ffa_minus_10, ffa_minus_5, ffa_0)
 
 write.csv(croc_clean, "./Data Exports/data_for_kumar_crocodile_insulin_ffa_011123.csv", row.names=F)

@@ -1,0 +1,133 @@
+---
+title: PENGUIN Analysis
+author: Tim Vigers, Ye Ji Choi
+date: format(Sys.Date(), "%d %B %Y")
+format:
+ html:
+   toc: true
+   toc-depth: 5
+   code-fold: true
+   self-contained: true
+   fig-cap-location: top
+   page-layout: full
+editor: visual
+---
+
+```{python}
+import pandas as pd
+import numpy as np
+import statistics
+import rpy2
+import rpy2.robjects as ro
+from rpy2.robjects.packages import importr
+from rpy2.robjects import pandas2ri
+
+# Import data and variable names
+df = pd.read_csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", low_memory=False)
+var_names = pd.read_csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv", low_memory=False)
+
+# Subset to CROCODILE and PENGUIN
+df = df.loc[df["study"].isin(["CROCODILE","PENGUIN"])]
+df = df.loc[df["group"] != "Type 1 Diabetes"]
+
+# Get last values for each visit
+df = df.groupby(by=["record_id", "visit"]).agg("last").reset_index()
+
+# Create FFA suppression variables
+df = df.assign(ffa_suppression_1 = (df.baseline_ffa - df[['ffa_70', 'ffa_80', 'ffa_90']].mean(axis=1))/df.baseline_ffa*100, ffa_suppression_2 = (df.baseline_ffa -  df[['ffa_250', 'ffa_260', 'ffa_270']].mean(axis=1))/df.baseline_ffa*100)
+
+# Create urine albumin excretion variable
+
+
+```
+
+```{python}
+t1_vars = ["age", "sex","race","height","weight","bmi","sbp","dbp","pulse","creatinine_s","eGFR_CKD_epi","acr_u","statin"]
+#| label: t1-histograms
+import seaborn as sns
+import matplotlib.pyplot as plt
+hist_vars = df[list(t1_vars)].select_dtypes(include=np.number).columns.tolist()
+for v in hist_vars:
+  ax = sns.displot(df, x=v, hue="group", element="step")
+  ax.set(xlabel=v)
+  plt.show()
+```
+
+```{python}
+#| label: tbl-1
+#| tbl-cap: Participant Characteristics
+from tableone import TableOne
+cat = ["sex","race","statin"]
+groupby = "group"
+nn = ["acr_u", "creatinine_s", "dbp"]
+t1 = TableOne(df,t1_vars, cat, groupby=groupby,nonnormal=nn, pval=True,dip_test=True, normal_test=True, tukey_test=True,decimals=3)
+t1
+```
+
+```{python}
+dxa_vars = ["body_fat","fat_kg","lean_kg","trunk_kg","p1_raw_m","p1_raw_leanm","p1_gc_m","p1_gc_leanm","p2_raw_m","p2_raw_leanm","p2_gc_m","p2_gc_leanm", "ffa_suppression_1", "ffa_suppression_2"]
+```
+
+```{python}
+mri_vars = ["total_kidney_volume_ml","height_adj_total_kidney_volume","right_kidney_volume_ml","height_adj_right_kidney_volume","left_kidney_volume_ml","height_adj_left_kidney_volume","total_liver_volume_ml","total_cyst_volume_ml","total_number_of_cysts","lc_f","lc_k1","lc_k2","lc_vb","rc_f","rc_k1","rc_k2","rc_vb","lm_f","lm_k1","lm_k2","lm_vb","rm_f","rm_k1","rm_k2","rm_vb"]
+# Height-adjusted
+df["height_adj_total_kidney_volume"] = df["total_kidney_volume_ml"] / (df["height"] / 100)
+df["height_adj_right_kidney_volume"] = df["right_kidney_volume_ml"] / (df["height"] / 100)
+df["height_adj_left_kidney_volume"] = df["left_kidney_volume_ml"] / (df["height"] / 100)
+```
+
+```{python}
+#| label: t2-histograms
+hist_vars = list(mri_vars)
+
+for v in hist_vars:
+   ax = sns.displot(df, x=v, hue="group", element="step")
+   ax.set(xlabel=v)
+   plt.show()
+```
+
+```{python}
+#| label: tbl-2
+#| tbl-cap: PET and MRI
+#| warning: false
+# Table
+t2 = TableOne(df,mri_vars, groupby=groupby, pval=True, dip_test=True, normal_test=True, tukey_test=True, decimals=3)
+t2
+
+df_python = df
+```
+
+```{r, out.width = '1500px', out.height = '1500px'}
+library(dplyr)
+library(reticulate)
+library(corrplot)
+use_python("/usr/bin/python3", required = TRUE)
+
+df_R <- py$df_python
+
+df_R_correlation_raw <- df_R %>%
+  select(p1_raw_m, p1_raw_leanm, p2_raw_m, p2_raw_leanm, right_kidney_volume_ml, height_adj_right_kidney_volume, left_kidney_volume_ml, height_adj_left_kidney_volume, total_liver_volume_ml, total_cyst_volume_ml, total_number_of_cysts, lc_f,rc_f,lm_f, rm_f, lc_vb, rc_vb, lm_vb, rm_vb, lc_k1, rc_k1, lm_k1, rm_k1, lc_k2, rc_k2, lm_k2, rm_k2)
+
+df_R_correlation_gc <- df_R %>%
+  select(p1_gc_m, p1_gc_leanm, p2_gc_m, p2_gc_leanm, right_kidney_volume_ml, height_adj_right_kidney_volume, left_kidney_volume_ml, height_adj_left_kidney_volume)
+
+df_R_correlation_gc <- df_R %>%
+  select(ffa_suppression_1, ffa_suppression_2, right_kidney_volume_ml, height_adj_right_kidney_volume, left_kidney_volume_ml, height_adj_left_kidney_volume)
+
+df_R_correlation_gc <- df_R %>%
+  select(dexa_body_fat, dexa_lean_mass, right_kidney_volume_ml, height_adj_right_kidney_volume, left_kidney_volume_ml, height_adj_left_kidney_volume)
+
+
+M = cor(df_R_correlation_raw[,1:ncol(df_R_correlation_raw)], use = "pairwise.complete.obs") 
+testRes = cor.mtest(df_R_correlation_raw[,1:ncol(df_R_correlation_raw)]) 
+corrplot(M, p.mat = testRes$p, method = 'circle', type = 'lower', insig='blank', addCoef.col ='white', number.cex = .5, order = 'AOE', diag=FALSE)
+
+
+
+```
+
+\# Questions for Petter
+
+\# 1. Which variables for urine albumin excretion, RAASi, Metformin, and Tolvaptan? 
+
+\# 2. How would you like to deal with all the missing data for f, k1, k2, v, etc.?
