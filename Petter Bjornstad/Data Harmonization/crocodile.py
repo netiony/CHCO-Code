@@ -135,6 +135,10 @@ def clean_crocodile():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_dxa_scan", "field_name"]]
     dxa = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999]
+    rep = rep + [str(r) for r in rep]
+    dxa.replace(rep, "", inplace=True)
     dxa.columns = dxa.columns.str.replace(
         r"dxa_|_percent", "", regex=True)
     dxa.rename({"bodyfat": "body_fat", "leanmass": "lean_mass",
@@ -154,8 +158,6 @@ def clean_crocodile():
                                                == "study_visit_he_clamp", "field_name"]]
     clamp = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
-    rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999]
-    rep = rep + [str(r) for r in rep]
     clamp.replace(rep, "", inplace=True)
     # Format
     clamp.drop(["clamp_yn", "clamp_d20", "clamp_ffa",
