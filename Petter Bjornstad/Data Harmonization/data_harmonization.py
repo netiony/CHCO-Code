@@ -126,6 +126,7 @@ def harmonize_data():
       harmonized.assign(ffa_suppression_combined = \
       harmonized["ffa_suppression"].where(harmonized["ffa_suppression"].notnull(),harmonized["p2_ffa_suppression"]))
     # Fasting Insulin
+    harmonized[["insulin_minus_20", "insulin_minus_10", "insulin_minus_5", "insulin_0"]] = harmonized[["insulin_minus_20", "insulin_minus_10", "insulin_minus_5", "insulin_0"]].apply(pd.to_numeric)
     harmonized["fasting_insulin"] = \
         harmonized[["insulin_minus_20", "insulin_minus_10", "insulin_minus_5", "insulin_0"]].apply(lambda x: x.mean(), axis=1)
     # Fasting FFA

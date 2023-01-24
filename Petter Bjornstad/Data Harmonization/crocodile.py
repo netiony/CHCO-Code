@@ -15,13 +15,16 @@ def clean_crocodile():
     import os
     home_dir = os.path.expanduser("~")
     os.chdir(home_dir + "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+    import sys
     import redcap
     import pandas as pd
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
-    tokens = pd.read_csv(
-        "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+    try:
+      tokens = pd.read_csv("/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+    except FileNotFoundError:
+      tokens = pd.read_csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "CROCODILE", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -264,3 +267,4 @@ def clean_crocodile():
     df["record_id"] = ["CRC-" + str(i).zfill(2) for i in df["record_id"]]
     # Print final data
     return df
+
