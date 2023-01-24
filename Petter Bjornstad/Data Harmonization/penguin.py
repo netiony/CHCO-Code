@@ -142,10 +142,6 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_he_clamp", "field_name"]]
     clamp = pd.DataFrame(proj.export_records(fields=var))
-    # Replace missing values
-    rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999]
-    rep = rep + [str(r) for r in rep]
-    clamp.replace(rep, "", inplace=True)
     # Format
     clamp.drop(["clamp_yn", "clamp_d20", "clamp_ffa",
                 "clamp_insulin", "hct_yn", "clamp_bg"], axis=1, inplace=True)
@@ -234,5 +230,9 @@ def clean_penguin():
     df = df[id_cols + other_cols]
     # SORT
     df.sort_values(["record_id", "date", "procedure"], inplace=True)
+    # Replace missing values
+    rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999, -99999]
+    rep = rep + [str(r) for r in rep]
+    df.replace(rep, "", inplace=True)
     # Return final data
     return df
