@@ -25,9 +25,9 @@ time = datetime.now().strftime('%Y_%m_%d_%I%M%p')
 # Re-save dictionary
 dictionary = pd.read_csv(
     "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv")
-df.to_csv("/Users/timvigers/Dropbox/Shared/Michigan/CHCO_Sample_IDs_Clinical/chco_data_dictionary_" +
-          time + ".csv", index=False)
+dictionary.to_csv("/Users/timvigers/Dropbox/CHCO_Sample_IDs_Clinical/chco_data_dictionary_" +
+                  time + ".csv", index=False)
 # Save cleaned data (de-identified)
 df = df.drop(["dob"], axis=1)
-df.to_csv("/Users/timvigers/Dropbox/Shared/Michigan/CHCO_Sample_IDs_Clinical/chco_harmonized_dataset_" +
+df.to_csv("/Users/timvigers/Dropbox/CHCO_Sample_IDs_Clinical/chco_harmonized_dataset_" +
           time + ".csv", index=False)
