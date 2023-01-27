@@ -210,7 +210,14 @@ BASELINE <- read.csv("./Clinical data/TODAY/BASELINE.csv")
 
 # PAT
 PAT <- read.csv("./Clinical data/TODAY/PAT.csv")
-keepPAT <- PAT %>% select(releaseid,age,sex,dxtime)
+PAT$racedesc[PAT$race==1]<- "Non-Hispanic Black"
+PAT$racedesc[PAT$race==2]<- "Hispanic"
+PAT$racedesc[PAT$race==3]<- "Non-Hispanic White"
+PAT$racedesc[PAT$race==4]<- "Other"
+PAT$houseincdesc[PAT$houseinc==1]<- "<$24,999"
+PAT$houseincdesc[PAT$houseinc==2]<- "$25,000-$49,999"
+PAT$houseincdesc[PAT$houseinc==3]<- ">$50,000"
+keepPAT <- PAT %>% select(releaseid,age,sex,dxtime,race,houseinc,racedesc,houseincdesc)
 
 # AGEBASE - uncollapsed age at baseline
 AGEBASE <- read.csv("./Clinical data/TODAY/AGEBASE.csv")
@@ -219,7 +226,10 @@ AGEBASE$RELEASEID <- NULL
 
 # PRIMOUT - treatment group assignment
 PRIMOUT <- read.csv("./Clinical data/TODAY/PRIMOUT.csv")
-keepPRIMOUT <- PRIMOUT %>% select(releaseid,tx)
+PRIMOUT$txdesc[PRIMOUT$tx==1]<- "Metformin only"
+PRIMOUT$txdesc[PRIMOUT$tx==2]<- "Metformin + rosiglitazone"
+PRIMOUT$txdesc[PRIMOUT$tx==3]<- "Metformin + lifestyle"
+keepPRIMOUT <- PRIMOUT %>% select(releaseid,tx,txdesc)
 
 # create new dataset of baseline risk factors
 basecbl <- CBL %>% filter(mvisit=="M00")
