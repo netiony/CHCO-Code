@@ -1,15 +1,17 @@
 ---
 title: PENGUIN Analysis
 author: Tim Vigers, Ye Ji Choi
-date: r Sys.Date()
+date: "`r lubridate::today()`"
 format:
  html:
    toc: true
    toc-depth: 5
+   toc-location: left
    code-fold: true
    self-contained: true
    fig-cap-location: top
    page-layout: full
+   smooth-scroll: true
 editor: visual
 ---
 
@@ -23,6 +25,7 @@ library(tidyverse)
 library(scales)
 library(kableExtra)
 library(gtools)
+library(superheat)
 use_python("/usr/bin/python3", required = TRUE)
 ```
 
@@ -40,7 +43,10 @@ from rpy2.robjects import pandas2ri
 
 # Import data and variable names
 df = pd.read_csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", low_memory=False)
-var_names = pd.read_csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv", low_memory=False)
+var_names = pd.read_csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Dictionary_YC.csv", low_memory=False)
+vw = pd.read_csv("/Volumes/Peds Endo/Petter Bjornstad/PENGUIN/Background/voxelwise_means_combined.csv", low_memory=False)
+# Create dictionary of variable names
+var_dict = var_names.set_index('variable_name')['label_units'].to_dict()
 # Subset to CROCODILE and PENGUIN
 df = df.loc[df["study"].isin(["CROCODILE","PENGUIN"])]
 df = df.loc[df["group"] != "Type 1 Diabetes"]
@@ -52,18 +58,37 @@ df = df.assign(ffa_suppression_1 = (df.baseline_ffa - df[['ffa_70', 'ffa_80', 'f
 df = df.assign(aer_24 = (df.u24_mab * df.u24_vl) / 1440)
 # Create urine albumin excretion variable (specific to collection time)
 df = df.assign(aer_24_coltime = (df.u24_mab * df.u24_vl) / (df.u24_hrs * 60))
+# Group adpkd_classification grouping (ABC vs. DE)
+df['adpkd_grp'] = np.where((df['adpkd_classification'] == 1) | (df['adpkd_classification'] == 2) | (df['adpkd_classification'] == 3), "1ABC", 
+                           np.where((df['adpkd_classification'] == 4) | (df['adpkd_classification'] == 5), "1DE", np.nan))
+# ADPKD classification relevel
+df["adpkd_classification"].replace({1: "1A", 2: "1B", 3: "1C", 4: "1D", 5: "1E"}, inplace=True)
 # Height-adjusted
 df["height_adj_total_kidney_volume"] = df["total_kidney_volume_ml"] / (df["height"] / 100)
 df["height_adj_right_kidney_volume"] = df["right_kidney_volume_ml"] / (df["height"] / 100)
 df["height_adj_left_kidney_volume"] = df["left_kidney_volume_ml"] / (df["height"] / 100)
+# Merge voxelwise analysis means
+df = pd.merge(df, vw, on = "record_id", how = "outer")
+```
+
+```{python include = F}
+df_pkd = df.loc[df["group"] == "PKD"]
+df_pkd = df_pkd.loc[df_pkd["adpkd_grp"].notna()]
+cyst_vars = ["total_cyst_volume_ml", "total_number_of_cysts"]
+adpkd_grp_desc = TableOne(df_pkd,cyst_vars, groupby="adpkd_grp", pval=True, normal_test=True, tukey_test=True, decimals=3, rename=var_dict)
+```
+
+## Cyst burden by ADPKD group (grouped by 1A/1B/1C and 1D/1E)
+```{python}
+adpkd_grp_desc
 ```
 
 ```{python, include=F}
 # Variable grouping
-t1_vars = ["age", "sex","race","height","weight","bmi","sbp","dbp","pulse","creatinine_s","eGFR_CKD_epi","acr_u","aer_24", "aer_24_coltime","statin", "adpkd_classification"]
-mri_vars = ["total_kidney_volume_ml","height_adj_total_kidney_volume","right_kidney_volume_ml","height_adj_right_kidney_volume","left_kidney_volume_ml","height_adj_left_kidney_volume","total_liver_volume_ml","total_cyst_volume_ml","total_number_of_cysts","lc_f","rc_f", "lc_k1", "rc_k1", "lc_k2", "rc_k2", "lc_vb","rc_vb"]
+t1_vars = ["age", "sex","race","height","weight","bmi","sbp","dbp","pulse","creatinine_s","eGFR_CKD_epi","acr_u","aer_24", "aer_24_coltime","statin", "adpkd_classification", "adpkd_grp"]
+mri_vars = ["total_kidney_volume_ml","height_adj_total_kidney_volume","right_kidney_volume_ml","height_adj_right_kidney_volume","left_kidney_volume_ml","height_adj_left_kidney_volume","total_liver_volume_ml","total_cyst_volume_ml","total_number_of_cysts","lc_f","rc_f", "lc_k1", "rc_k1", "lc_k2", "rc_k2", "lc_vb","rc_vb", "rc_k1_w_cyst_vw",	"rc_k1_wo_cyst_vw",	"lc_k1_w_cyst_vw",	"lc_k1_wo_cyst_vw",	"rc_k2_w_cyst_vw",	"rc_k2_wo_cyst_vw",	"lc_k2_w_cyst_vw",	"lc_k2_wo_cyst_vw"]
 dxa_vars = ["dexa_body_fat","dexa_fat_kg","dexa_lean_kg","dexa_trunk_kg","p1_raw_m","p1_raw_leanm","p2_raw_m","p2_raw_leanm", "ffa_suppression_1", "ffa_suppression_2"]
-cat = ["sex","race","statin", "adpkd_classification"]
+cat = ["sex","race","statin", "adpkd_classification", "adpkd_grp"]
 groupby = "group"
 ```
 
@@ -75,7 +100,7 @@ for v in hist_vars1:
   ax.set(xlabel=v)
   plt.show()
 # t1-non-normal
-t1nn = ["acr_u", "creatinine_s", "dbp", "bmi"]
+t1nn = ["acr_u", "creatinine_s", "dbp", "bmi", "aer_24", "aer_24_col_time"]
 ```
 
 ```{python, include=F}
@@ -86,7 +111,7 @@ for v in hist_vars2:
    ax.set(xlabel=v)
    plt.show()
 # t2-non-normal
-t2nn = ["total_cyst_volume_ml", "total_number_of_cysts", "lc_f", "rc_f", "lc_k1", "rc_k1", "lc_vb", "rc_vb"]
+t2nn = ["total_cyst_volume_ml", "total_number_of_cysts", "lc_f", "rc_f", "lc_k1", "rc_k1", "lc_vb", "rc_vb", "rc_k1_w_cyst_vw",	"rc_k1_wo_cyst_vw",	"lc_k1_w_cyst_vw",	"lc_k1_wo_cyst_vw",	"rc_k2_w_cyst_vw",	"rc_k2_wo_cyst_vw",	"lc_k2_w_cyst_vw",	"lc_k2_wo_cyst_vw"]
 ```
 
 ```{python, include=F}
@@ -101,36 +126,40 @@ t3nn = ["p1_raw_m", "p1_raw_leanm", "ffa_suppression_1", "ffa_suppression_2"]
 ```
 
 ```{python, include=F}
-t1 = TableOne(df,t1_vars, cat, groupby=groupby, nonnormal=t1nn, pval=True,dip_test=True, normal_test=True, tukey_test=True,decimals=3)
-t2 = TableOne(df,dxa_vars, groupby=groupby, nonnormal=t2nn, pval=True, dip_test=True, normal_test=True, tukey_test=True, decimals=3)
-t3 = TableOne(df,mri_vars, groupby=groupby, nonnormal=t3nn, pval=True, dip_test=True, normal_test=True, tukey_test=True, decimals=3)
+t1 = TableOne(df,t1_vars, cat, groupby=groupby, nonnormal=t1nn, pval=True,dip_test=True, normal_test=True, tukey_test=True, decimals=3, rename=var_dict)
+t2 = TableOne(df,dxa_vars, groupby=groupby, nonnormal=t2nn, pval=True, dip_test=True, normal_test=True, tukey_test=True, decimals=3, rename=var_dict)
+t3 = TableOne(df,mri_vars, groupby=groupby, nonnormal=t3nn, pval=True, dip_test=True, normal_test=True, tukey_test=True, decimals=3, rename=var_dict)
 ```
+# Descriptive Tables
 
+## Demographics, anthropometrics and vital signs
 ```{python}
 #| label: tbl-1
 #| tbl-cap: Participant Characteristics
 t1
+```
 
+## DEXA
+```{python}
 #| label: tbl-2
 #| tbl-cap: DEXA
 t2
+```
 
+## MRI kidney and liver volumes, MRI cyst volume and numbers, ^11^C-acetate PET derived kidney energetics and function
+```{python}
 #| label: tbl-3
 #| tbl-cap: PET and MRI
 t3
 ```
 
-```{python, include=F}
-df_python = df
-```
-
 ```{r, include=F}
 # Make python version of df into R version df
-df_R <- py$df_python
+df_R <- py$df
 
 # Select relevant variables for the correlation matrix
 df_R_correlation <- df_R %>%
-  select(p1_raw_m, p1_raw_leanm, p2_raw_m, p2_raw_leanm, ffa_suppression_1, ffa_suppression_2, dexa_body_fat, dexa_lean_mass, right_kidney_volume_ml, height_adj_right_kidney_volume, left_kidney_volume_ml, height_adj_left_kidney_volume, total_liver_volume_ml, total_cyst_volume_ml, total_number_of_cysts,lc_f, rc_f,lc_vb, rc_vb, lc_k1, rc_k1, lc_k2, rc_k2)
+  select(p1_raw_m, p1_raw_leanm, p2_raw_m, p2_raw_leanm, ffa_suppression_1, ffa_suppression_2, dexa_body_fat, dexa_lean_mass, right_kidney_volume_ml, height_adj_right_kidney_volume, left_kidney_volume_ml, height_adj_left_kidney_volume, total_liver_volume_ml, total_cyst_volume_ml, total_number_of_cysts,lc_f, rc_f,lc_vb, rc_vb, lc_k1, rc_k1, lc_k2, rc_k2, rc_k1_w_cyst_vw,	rc_k1_wo_cyst_vw,	lc_k1_w_cyst_vw,	lc_k1_wo_cyst_vw,	rc_k2_w_cyst_vw,	rc_k2_wo_cyst_vw,	lc_k2_w_cyst_vw,	lc_k2_wo_cyst_vw)
 
 # Correlation matrix in table format
 M_table = as.data.frame(cor(y = df_R_correlation[,1:8],x=df_R_correlation[,9:ncol(df_R_correlation)], use = "pairwise.complete.obs"))
@@ -148,17 +177,266 @@ M_table_p <- bind_cols(M_table, corr_pval) %>%
   relocate(map(1:ncol(M_table), ~ c(.x, .x + ncol(M_table))) %>% unlist())
 ```
 
-```{r fig.height=10,fig.width=10}
-# Matrix table with p-values
-kable(M_table_p, caption = "Correlation", digits = 3, align = rep("r", ncol(M_table_p))) %>%
-  add_header_above(c(" "=1, "p1_raw_m"=2, "p1_raw_leanm"=2, "p2_raw_m"=2, "p2_raw_leanm"=2, "ffa_suppression_1"=2, "ffa_suppression_2"=2, "dexa_body_fat"=2, "dexa_lean_mass"=2))
+```{r include=F}
+# Label variables
+var_R <- as.data.frame(py$var_dict)
+var_R <- var_R[intersect(names(M_table_p), names(var_R))]
+var_R[setdiff(names(M_table_p), names(var_R))] <- "p-value"
+label(M_table_p) = var_R[match(names(M_table_p), names(var_R))]
+var_R <- as.data.frame(py$var_dict)
+row.names(M_table_p) <- var_R[match(row.names(M_table_p), names(var_R))]
+```
 
+# Correlation
+
+## Correlation matrix (table)
+```{r fig.height=10}
+# Matrix table with p-values
+kable(M_table_p, 
+      col.names = rep(c("Correlation", "p-value"), ncol(M_table_p)/2), 
+      caption = "Correlation", 
+      digits = c(1,4),
+      align = rep("r", ncol(M_table_p))) %>%
+  kable_styling(bootstrap_options = c("hover"),
+            full_width = F, 
+            fixed_thead = T) %>%
+  add_header_above(c(" "=1, 
+                     setNames(2, label(M_table_p)[1]), 
+                     setNames(2, label(M_table_p)[3]), 
+                     setNames(2, label(M_table_p)[5]), 
+                     setNames(2, label(M_table_p)[7]), 
+                     setNames(2, label(M_table_p)[9]), 
+                     setNames(2, label(M_table_p)[11]), 
+                     setNames(2, label(M_table_p)[13]), 
+                     setNames(2, label(M_table_p)[15]))) %>%
+  column_spec(1, width_min = "5in", border_right=T, bold = T) %>%
+  column_spec(3, border_right=T) %>%
+  column_spec(5, border_right=T) %>%
+  column_spec(7, border_right=T) %>%
+  column_spec(9, border_right=T) %>%
+  column_spec(11, border_right=T) %>%
+  column_spec(13, border_right=T) %>%
+  column_spec(15, border_right=T)
+```
+
+## Correlation matrix (plot)
+```{r fig.height=15,fig.width=15}
 # Plot correlation matrix
 M = cor(df_R_correlation[,1:ncol(df_R_correlation)], use = "pairwise.complete.obs") 
 testRes = cor.mtest(df_R_correlation[,1:ncol(df_R_correlation)]) 
 corrplot(M, p.mat = testRes$p, method = 'circle', type = 'lower', insig='blank', addCoef.col ='white', order = 'AOE', diag=FALSE, number.cex = 0.8)
 ```
 
-\# Questions for Petter
+# Voxelwise Activity Analysis
+*Missing excluded*
 
-\# 1. Which variables for urine albumin excretion, RAASi, Metformin, and Tolvaptan? (Tim is searching)
+## K1 activity
+```{r layout="[[1,1], [1,1]]"}
+# Data subset of voxelwise for heatmap
+vw_df <- df_R %>%
+  select(record_id, group, rc_k1_w_cyst_percent_low,	rc_k1_w_cyst_percent_avg,	rc_k1_w_cyst_percent_high,
+         rc_k1_wo_cyst_percent_low,	rc_k1_wo_cyst_percent_avg,	rc_k1_wo_cyst_percent_high,
+         lc_k1_w_cyst_percent_low,	lc_k1_w_cyst_percent_avg,	lc_k1_w_cyst_percent_high,
+         lc_k1_wo_cyst_percent_low,	lc_k1_wo_cyst_percent_avg,	lc_k1_wo_cyst_percent_high,
+         rc_k2_w_cyst_percent_low,	rc_k2_w_cyst_percent_avg,	rc_k2_w_cyst_percent_high,
+         rc_k2_wo_cyst_percent_low,	rc_k2_wo_cyst_percent_avg,	rc_k2_wo_cyst_percent_high,
+         lc_k2_w_cyst_percent_low,	lc_k2_w_cyst_percent_avg,	lc_k2_w_cyst_percent_high,
+         lc_k2_wo_cyst_percent_low,	lc_k2_wo_cyst_percent_avg,	lc_k2_wo_cyst_percent_high)
+
+# Subset of Right Cortex K1 w cyst
+vw_df_rck1_w_cyst <- vw_df %>%
+  select(rc_k1_w_cyst_percent_low,	rc_k1_w_cyst_percent_avg,	rc_k1_w_cyst_percent_high) %>%
+  filter(!is.na(rc_k1_w_cyst_percent_low)) %>%
+  rename("Low" = "rc_k1_w_cyst_percent_low",
+           "Average" = "rc_k1_w_cyst_percent_avg",
+         "High" = "rc_k1_w_cyst_percent_high")
+
+# Heatmap of voxelwise
+superheat(vw_df_rck1_w_cyst, 
+          title = "Right Cortex K1 Activity (Including Cysts)",
+          scale = F,
+          membership.rows = vw_df$group[!is.na(vw_df$rc_k1_w_cyst_percent_low)],
+          heat.na.col = "white",
+          heat.pal = c("#eeeeee", "#0b5394"),
+          heat.pal.values = c(0, 1),
+          grid.hline.col = "white",
+          grid.vline.col = "white",
+          left.label.col = c("#dddddd","#f2f2f2"),
+          bottom.label.col = c("#cccccc","#dddddd", "#eeeeee"),
+          left.label.text.size = 4,
+          bottom.label.text.size = 4
+          )
+
+# Subset of Right Cortex K1 wo cyst
+vw_df_rck1_wo_cyst <- vw_df %>%
+  select(rc_k1_wo_cyst_percent_low,	rc_k1_wo_cyst_percent_avg,	rc_k1_wo_cyst_percent_high) %>%
+  filter(!is.na(rc_k1_wo_cyst_percent_low)) %>%
+  rename("Low" = "rc_k1_wo_cyst_percent_low",
+           "Average" = "rc_k1_wo_cyst_percent_avg",
+         "High" = "rc_k1_wo_cyst_percent_high")
+
+# Heatmap of voxelwise
+superheat(vw_df_rck1_wo_cyst, 
+          title = "Right Cortex K1 Activity (Excluding Cysts)",
+          scale = F,
+          membership.rows = vw_df$group[!is.na(vw_df$rc_k1_wo_cyst_percent_low)],
+          heat.na.col = "white",
+          heat.pal = c("#eeeeee", "#0b5394"),
+          heat.pal.values = c(0, 1),
+          grid.hline.col = "white",
+          grid.vline.col = "white",
+          left.label.col = c("#dddddd","#f2f2f2"),
+          bottom.label.col = c("#cccccc","#dddddd", "#eeeeee"),
+          left.label.text.size = 4,
+          bottom.label.text.size = 4
+          )
+# Subset of Left Cortex K1 wo cyst
+vw_df_lck1_w_cyst <- vw_df %>%
+  select(lc_k1_w_cyst_percent_low,	lc_k1_w_cyst_percent_avg,	lc_k1_w_cyst_percent_high) %>%
+  filter(!is.na(lc_k1_w_cyst_percent_low)) %>%
+  rename("Low" = "lc_k1_w_cyst_percent_low",
+           "Average" = "lc_k1_w_cyst_percent_avg",
+         "High" = "lc_k1_w_cyst_percent_high")
+
+# Heatmap of voxelwise
+superheat(vw_df_lck1_w_cyst, 
+          title = "Left Cortex K1 Activity (Including Cysts)",
+          scale = F,
+          membership.rows = vw_df$group[!is.na(vw_df$lc_k1_w_cyst_percent_low)],
+          heat.na.col = "white",
+          heat.pal = c("#eeeeee", "#0b5394"),
+          heat.pal.values = c(0, 1),
+          grid.hline.col = "white",
+          grid.vline.col = "white",
+          left.label.col = c("#dddddd","#f2f2f2"),
+          bottom.label.col = c("#cccccc","#dddddd", "#eeeeee"),
+          left.label.text.size = 4,
+          bottom.label.text.size = 4
+          )
+
+# Subset of Left Cortex K1 wo cyst
+vw_df_lck1_wo_cyst <- vw_df %>%
+  select(lc_k1_wo_cyst_percent_low,	lc_k1_wo_cyst_percent_avg,	lc_k1_wo_cyst_percent_high) %>%
+  filter(!is.na(lc_k1_wo_cyst_percent_low)) %>%
+  rename("Low" = "lc_k1_wo_cyst_percent_low",
+           "Average" = "lc_k1_wo_cyst_percent_avg",
+         "High" = "lc_k1_wo_cyst_percent_high")
+
+# Heatmap of voxelwise
+superheat(vw_df_lck1_wo_cyst, 
+          title = "Left Cortex K1 Activity (Excluding Cysts)",
+          scale = F,
+          membership.rows = vw_df$group[!is.na(vw_df$lc_k1_wo_cyst_percent_low)],
+          heat.na.col = "white",
+          heat.pal = c("#eeeeee", "#0b5394"),
+          heat.pal.values = c(0, 1),
+          grid.hline.col = "white",
+          grid.vline.col = "white",
+          left.label.col = c("#dddddd","#f2f2f2"),
+          bottom.label.col = c("#cccccc","#dddddd", "#eeeeee"),
+          left.label.text.size = 4,
+          bottom.label.text.size = 4
+          )
+```
+
+## K2 activity
+```{r layout="[[1,1], [1,1]]"}
+# Subset of Right Cortex K2 w cyst
+vw_df_rck2_w_cyst <- vw_df %>%
+  select(rc_k2_w_cyst_percent_low,	rc_k2_w_cyst_percent_avg,	rc_k2_w_cyst_percent_high) %>%
+  filter(!is.na(rc_k2_w_cyst_percent_low)) %>%
+  rename("Low" = "rc_k2_w_cyst_percent_low",
+           "Average" = "rc_k2_w_cyst_percent_avg",
+         "High" = "rc_k2_w_cyst_percent_high")
+
+# Heatmap of voxelwise
+superheat(vw_df_rck2_w_cyst, 
+          title = "Right Cortex K2 Activity (Including Cysts)",
+          scale = F,
+          membership.rows = vw_df$group[!is.na(vw_df$rc_k2_w_cyst_percent_low)],
+          heat.na.col = "white",
+          heat.pal = c("#eeeeee", "#0b5394"),
+          heat.pal.values = c(0, 1),
+          grid.hline.col = "white",
+          grid.vline.col = "white",
+          left.label.col = c("#dddddd","#f2f2f2"),
+          bottom.label.col = c("#cccccc","#dddddd", "#eeeeee"),
+          left.label.text.size = 4,
+          bottom.label.text.size = 4
+          )
+
+# Subset of Right Cortex K2 wo cyst
+vw_df_rck2_wo_cyst <- vw_df %>%
+  select(rc_k2_wo_cyst_percent_low,	rc_k2_wo_cyst_percent_avg,	rc_k2_wo_cyst_percent_high) %>%
+  filter(!is.na(rc_k2_wo_cyst_percent_low)) %>%
+  rename("Low" = "rc_k2_wo_cyst_percent_low",
+           "Average" = "rc_k2_wo_cyst_percent_avg",
+         "High" = "rc_k2_wo_cyst_percent_high")
+
+# Heatmap of voxelwise
+superheat(vw_df_rck2_wo_cyst, 
+          title = "Right Cortex K2 Activity (Excluding Cysts)",
+          scale = F,
+          membership.rows = vw_df$group[!is.na(vw_df$rc_k2_wo_cyst_percent_low)],
+          heat.na.col = "white",
+          heat.pal = c("#eeeeee", "#0b5394"),
+          heat.pal.values = c(0, 1),
+          grid.hline.col = "white",
+          grid.vline.col = "white",
+          left.label.col = c("#dddddd","#f2f2f2"),
+          bottom.label.col = c("#cccccc","#dddddd", "#eeeeee"),
+          left.label.text.size = 4,
+          bottom.label.text.size = 4
+          )
+# Subset of Left Cortex K2 wo cyst
+vw_df_lck2_w_cyst <- vw_df %>%
+  select(lc_k2_w_cyst_percent_low,	lc_k2_w_cyst_percent_avg,	lc_k2_w_cyst_percent_high) %>%
+  filter(!is.na(lc_k2_w_cyst_percent_low)) %>%
+  rename("Low" = "lc_k2_w_cyst_percent_low",
+           "Average" = "lc_k2_w_cyst_percent_avg",
+         "High" = "lc_k2_w_cyst_percent_high")
+
+# Heatmap of voxelwise
+superheat(vw_df_lck2_w_cyst, 
+          title = "Left Cortex K2 Activity (Including Cysts)",
+          scale = F,
+          membership.rows = vw_df$group[!is.na(vw_df$lc_k2_w_cyst_percent_low)],
+          heat.na.col = "white",
+          heat.pal = c("#eeeeee", "#0b5394"),
+          heat.pal.values = c(0, 1),
+          grid.hline.col = "white",
+          grid.vline.col = "white",
+          left.label.col = c("#dddddd","#f2f2f2"),
+          bottom.label.col = c("#cccccc","#dddddd", "#eeeeee"),
+          left.label.text.size = 4,
+          bottom.label.text.size = 4
+          )
+
+# Subset of Left Cortex K2 wo cyst
+vw_df_lck2_wo_cyst <- vw_df %>%
+  select(lc_k2_wo_cyst_percent_low,	lc_k2_wo_cyst_percent_avg,	lc_k2_wo_cyst_percent_high) %>%
+  filter(!is.na(lc_k2_wo_cyst_percent_low)) %>%
+  rename("Low" = "lc_k2_wo_cyst_percent_low",
+           "Average" = "lc_k2_wo_cyst_percent_avg",
+         "High" = "lc_k2_wo_cyst_percent_high")
+
+# Heatmap of voxelwise
+superheat(vw_df_lck2_wo_cyst, 
+          title = "Left Cortex K2 Activity (Excluding Cysts)",
+          scale = F,
+          membership.rows = vw_df$group[!is.na(vw_df$lc_k2_wo_cyst_percent_low)],
+          heat.na.col = "white",
+          heat.pal = c("#eeeeee", "#0b5394"),
+          heat.pal.values = c(0, 1),
+          grid.hline.col = "white",
+          grid.vline.col = "white",
+          left.label.col = c("#dddddd","#f2f2f2"),
+          bottom.label.col = c("#cccccc","#dddddd", "#eeeeee"),
+          left.label.text.size = 4,
+          bottom.label.text.size = 4
+          )
+
+```
+
+# Questions for Petter
+1. Which variables for urine albumin excretion, RAASi, Metformin, and Tolvaptan? (Tim is searching)
