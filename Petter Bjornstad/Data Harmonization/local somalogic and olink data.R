@@ -1,6 +1,6 @@
 library(SomaDataIO)
 library(stringr)
-library(readxl)
+library(dplyr)
 
 if(Sys.info()["sysname"] == "Windows"){
   home_dir = "E:/Petter Bjornstad"
@@ -15,24 +15,24 @@ setwd(home_dir)
 soma <- read_adat("./Local cohort Somalogic data/WUS-22-002_v4.1_EDTAPlasma_hybNorm_medNormInt_plateScale_calibrate_anmlQC_qcCheck_anmlSMP.adat")
 analytes <- getAnalyteInfo(soma)
 
-olink_plasma = read_excel("./Olink Data/CROCODILE, IMPROVE, Renal HEIR_Plasma_Summary _1212_2022.xlsx")
-olink_urine = read_excel("./Olink Data/CROCODILE, IMPROVE, Renal HEIR_Urine_Summary _1212_2022.xlsx")
+olink_plasma = read.csv("./Olink Data/Data_Clean/plasma_cleaned.csv")
+olink_urine = read.csv("./Olink Data/Data_Clean/urine_cleaned.csv")
 
 # filter out Q/C samples
 soma <- soma %>% filter(!is.na(SampleDescription))
 
 # create dataframes for each study
 croc_soma <- soma %>% filter(str_sub(SampleDescription,1,3)=="CRC")
-croc_olink_plasma = olink_plasma %>% filter(STUDY=="CROCODILE")
-croc_olink_urine = olink_urine %>% filter(STUDY=="CROCODILE")
+croc_olink_plasma = olink_plasma %>% filter(grepl("CRC",record_id))
+croc_olink_urine = olink_urine %>% filter(grepl("CRC",record_id))
 
 improve_soma <- soma %>% filter(str_sub(SampleDescription,1,4)=="IT2D")
-improve_olink_plasma = olink_plasma %>% filter(STUDY=="IMPROVE")
-improve_olink_urine = olink_urine %>% filter(STUDY=="IMPROVE")
+improve_olink_plasma = olink_plasma %>% filter(grepl("IT",record_id))
+improve_olink_urine = olink_urine %>% filter(grepl("IT",record_id))
 
 rh_soma <- soma %>% filter(str_sub(SampleDescription,1,2)=="RH")
-rh_olink_plasma = olink_plasma %>% filter(STUDY=="Renal HEIR")
-rh_olink_urine = olink_urine %>% filter(STUDY=="Renal HEIR")
+rh_olink_plasma = olink_plasma %>% filter(grepl("RH",record_id))
+rh_olink_urine = olink_urine %>% filter(grepl("RH",record_id))
 
 pima_soma <- soma %>% filter(str_sub(SampleDescription,1,4)=="CKDS")
 
