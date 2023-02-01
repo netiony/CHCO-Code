@@ -9,13 +9,12 @@ __version__ = "0.0.1"
 __maintainer__ = "Tim Vigers"
 __email__ = "timothy.vigers@cuanschutz.edu"
 __status__ = "Dev"
-
 import os
 os.chdir(os.path.expanduser('~'))
 os.chdir("GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
-import pandas as pd
-from datetime import datetime
 from data_harmonization import harmonize_data
+from datetime import datetime
+import pandas as pd
 # Get dataset
 df = harmonize_data()
 # Write
