@@ -71,6 +71,12 @@ def clean_renal_heir():
     med.replace({0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med.rename({"diabetes_med_other___3": "sglti_timepoint",
                 "sglt2i": "sglt2i_ever"}, axis=1, inplace=True)
+    # Insulin
+    med["insulin_inj"].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med.rename({"insulin_inj": "insulin_med_timepoint"},
+               axis=1, inplace=True)
+
 
     # --------------------------------------------------------------------------
     # Physical exam

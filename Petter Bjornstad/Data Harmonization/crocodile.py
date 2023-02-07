@@ -76,6 +76,22 @@ def clean_crocodile():
     med[og_names] = med[og_names].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
     med.rename(med_list, axis=1, inplace=True)
+    # RAASi
+    med = med.assign(raasi = np.maximum(pd.to_numeric(med["ace_inhibitor"]), pd.to_numeric(med["angiotensin_receptor_blocker"])))
+    med.drop(med[['ace_inhibitor', 'angiotensin_receptor_blocker']], axis=1, inplace=True)
+    med["raasi_timepoint"].replace(
+    {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    # Metformin
+    med["diabetes_med_other___1"].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med.rename({"diabetes_med_other___1": "metformin_timepoint"},
+               axis=1, inplace=True)
+    # Insulin
+    med = med.assign(insulin_med = np.maximum(pd.to_numeric(med["diabetes_tx___1"]), pd.to_numeric(med["diabetes_tx___2"])))
+    med.drop(med[['diabetes_tx___1', 'diabetes_tx___2']], axis=1, inplace=True)
+    med["insulin_med_timepoint"].replace(
+    {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+
 
     # --------------------------------------------------------------------------
     # Physical exam

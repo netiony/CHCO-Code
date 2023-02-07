@@ -70,13 +70,29 @@ def clean_casper():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "medical_history", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
-    # Just SGLT2i for now
-    med = med[["subject_id", "diabetes_med_other___4"]]
+    # SGLT2i (diabetes_med_other___4), RAASi (htn_med_type___1, htn_med_type___2), Metformin (diabetes_med_other___1)
+    med = med[["subject_id", "diabetes_med_other___4", "htn_med_type___1", "htn_med_type___2", "diabetes_med_other___1", "diabetes_med___1", "diabetes_med___2"]]
+    # SGLT2i
     med["diabetes_med_other___4"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med.rename({"diabetes_med_other___4": "sglti_timepoint"},
                axis=1, inplace=True)
-
+    # RAASi
+    med = med.assign(raasi = np.maximum(pd.to_numeric(med["htn_med_type___1"]), pd.to_numeric(med["htn_med_type___2"])))
+    med.drop(med[['htn_med_type___1', 'htn_med_type___2']], axis=1, inplace=True)
+    med["raasi_timepoint"].replace(
+    {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    # Metformin
+    med["diabetes_med_other___1"].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med.rename({"diabetes_med_other___1": "metformin_timepoint"},
+               axis=1, inplace=True)
+    # Insulin
+    med = med.assign(insulin_med = np.maximum(pd.to_numeric(med["diabetes_med___1"]), pd.to_numeric(med["diabetes_med___2"])))
+    med.drop(med[['diabetes_med___1', 'diabetes_med___2']], axis=1, inplace=True)
+    med["insulin_med_timepoint"].replace(
+    {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    
     # --------------------------------------------------------------------------
     # Physical exam
     # --------------------------------------------------------------------------

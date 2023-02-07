@@ -70,13 +70,29 @@ def clean_improve():
 
     var = ["subject_id", "study_visit", "diabetes_med_other"]
     med = pd.DataFrame(proj.export_records(fields=var))
-    # Just SGLT2i for now
-    med = med[["subject_id", "study_visit", "diabetes_med_other___3"]]
-    med["diabetes_med_other___3"] = med["diabetes_med_other___3"].replace(
-        {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
-    med.rename({"diabetes_med_other___3": "sglti_timepoint"},
+    # SGLT2i (diabetes_med_other___4), RAASi (htn_med_type___1, htn_med_type___2), Metformin (diabetes_med_other___1)
+    med = med[["subject_id", "diabetes_med_other___4", "htn_med_type___1", "htn_med_type___2", "diabetes_med_other___1", "diabetes_med___1", "diabetes_med___2"]]
+    # SGLT2i
+    med["diabetes_med_other___4"].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med.rename({"diabetes_med_other___4": "sglti_timepoint"},
                axis=1, inplace=True)
-    med["procedure"] = "medication_review"
+    # RAASi
+    med = med.assign(raasi = np.maximum(pd.to_numeric(med["htn_med_type___1"]), pd.to_numeric(med["htn_med_type___2"])))
+    med.drop(med[['htn_med_type___1', 'htn_med_type___2']], axis=1, inplace=True)
+    med["raasi_timepoint"].replace(
+    {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    # Metformin
+    med["diabetes_med___1"].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med.rename({"diabetes_med___1": "metformin_timepoint"},
+               axis=1, inplace=True)
+    # Insulin
+    med["diabetes_med_2"].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med.rename({"diabetes_med_2": "insulin_med_timepoint"},
+               axis=1, inplace=True)
+
 
     # --------------------------------------------------------------------------
     # Physical exam
