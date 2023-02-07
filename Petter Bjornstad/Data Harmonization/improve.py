@@ -35,7 +35,10 @@ def clean_improve():
     # Columns to drop
     redcap_cols = ["redcap_event_name",
                    "redcap_repeat_instrument", "redcap_repeat_instance"]
-
+    # Replace missing values
+    rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999, -99999]
+    rep = rep + [str(r) for r in rep]
+    
     # --------------------------------------------------------------------------
     # Demographics
     # --------------------------------------------------------------------------
@@ -45,6 +48,7 @@ def clean_improve():
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols,
                                             events=["screening_arm_1"]))
+    demo.replace(rep, "", inplace=True) # Replace missing values
     demo["group"] = "Type 2 Diabetes"
     demo.drop(redcap_cols, axis=1, inplace=True)
     demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date"},
@@ -73,6 +77,7 @@ def clean_improve():
     var = ["subject_id", "study_visit", "diabetes_med",
            "diabetes_med_other", "htn_med_type"]
     med = pd.DataFrame(proj.export_records(fields=var))
+    med.replace(rep, "", inplace=True) # Replace missing values
     # SGLT2i (diabetes_med_other___4), RAASi (htn_med_type___1, htn_med_type___2), Metformin (diabetes_med_other___1)
     med = med[["subject_id", "diabetes_med_other___3", "htn_med_type___1",
                "htn_med_type___2", "diabetes_med___1", "diabetes_med___2"]]
@@ -107,6 +112,7 @@ def clean_improve():
                                                                == "physical_exam", "field_name"]]
     phys = pd.DataFrame(proj.export_records(
         fields=var, events=["screening_arm_1"]))
+    phys.replace(rep, "", inplace=True) # Replace missing values
     phys["procedure"] = "physical_exam"
     phys.drop(redcap_cols + ["phys_norm", "phys_no", "breast_tanner",
                              "testicular_volume", "lmp", "screen_bmi_percentile", "activity_factor_male", "activity_factor_female", "schofield_male", "schofield_female"], axis=1, inplace=True)
@@ -123,6 +129,7 @@ def clean_improve():
                                                                == "screening_labs", "field_name"]]
     screen = pd.DataFrame(proj.export_records(fields=var,
                                               events=["screening_arm_1"]))
+    screen.replace(rep, "", inplace=True) # Replace missing values
     screen.drop(redcap_cols + ['a1c_pre', 'a1c_pre_date', "screen_pregnant"],
                 axis=1, inplace=True)
     screen.columns = screen.columns.str.replace(
@@ -139,6 +146,7 @@ def clean_improve():
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "accelerometry", "field_name"]]
     accel = pd.DataFrame(proj.export_records(fields=var))
+    accel.replace(rep, "", inplace=True) # Replace missing values
     accel = accel.loc[accel["acc_wear_percent"] != ""]
     accel.drop(redcap_cols + ["study_visit_accel"], axis=1, inplace=True)
     accel.columns = accel.columns.str.replace(
@@ -152,6 +160,7 @@ def clean_improve():
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "cardioabdominal_mri", "field_name"]]
     mri = pd.DataFrame(proj.export_records(fields=var))
+    mri.replace(rep, "", inplace=True) # Replace missing values
     mri.drop(redcap_cols + ["mri_cardio", "mri_abdo",
                             "mri_aortic", "study_visit_mri"],
              axis=1, inplace=True)
@@ -166,6 +175,7 @@ def clean_improve():
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "mmtt_metabolic_cart", "field_name"]]
     mmtt = pd.DataFrame(proj.export_records(fields=var))
+    mmtt.replace(rep, "", inplace=True) # Replace missing values
     # Drop unnecessary columns
     mmtt.drop(redcap_cols + ["study_visit_mttt", "mmtt_vitals", "mmtt_pregnant",
                              "mmtt_lmp", "mmtt_brmr", "mmtt_60rmr", "mmtt_base_labs", "mmtt_ffa_labs", "mmtt_insulin",
@@ -199,6 +209,7 @@ def clean_improve():
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "body_composition_dxa_bod_pod", "field_name"]]
     dxa = pd.DataFrame(proj.export_records(fields=var))
+    dxa.replace(rep, "", inplace=True) # Replace missing values
     dxa.drop(redcap_cols + ["study_visit_bodycomp", "dxa_complete",
                             "bodpod_complete"],
              axis=1, inplace=True)
@@ -218,6 +229,7 @@ def clean_improve():
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "clamp", "field_name"]]
     clamp = pd.DataFrame(proj.export_records(fields=var))
+    clamp.replace(rep, "", inplace=True) # Replace missing values
     # Format
     clamp.drop(redcap_cols + ["study_visit_clamp", "baseline", "fasting_labs",
                               "bg_labs", "ns_bolus", "urine_labs"],
@@ -275,6 +287,7 @@ def clean_improve():
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "outcomes", "field_name"]]
     out = pd.DataFrame(proj.export_records(fields=var))
+    out.replace(rep, "", inplace=True) # Replace missing values
     out.drop(redcap_cols + ["kidney_outcomes", "egfr", "metab_outcomes",
                             "asl_outcomes", "bold_outcomes", "adc_outcomes"],
              axis=1, inplace=True)
@@ -298,6 +311,7 @@ def clean_improve():
                  "mes_volume_con", "glom_nuc_count", "mes_nuc_count", "art_intima",
                  "art_media", "pod_nuc_density", "pod_cell_volume"]
     biopsy = pd.DataFrame(proj.export_records(fields=var))
+    biopsy.replace(rep, "", inplace=True) # Replace missing values
     biopsy.drop(redcap_cols + [col for col in biopsy.columns if '_yn' in col] +
                 [col for col in biopsy.columns if 'procedure_' in col],
                 axis=1, inplace=True)
@@ -336,9 +350,5 @@ def clean_improve():
                               '3': "12_months_post_surgery"}, inplace=True)
     # Rename subject identifier
     df.rename({"subject_id": "record_id"}, axis=1, inplace=True)
-    # Replace missing values
-    rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999, -99999]
-    rep = rep + [str(r) for r in rep]
-    df.replace(rep, "", inplace=True)
     # Return final data
     return df

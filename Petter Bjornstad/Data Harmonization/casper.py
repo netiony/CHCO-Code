@@ -34,6 +34,9 @@ def clean_casper():
     proj = redcap.Project(url=uri, token=token)
     # Get project metadata
     meta = pd.DataFrame(proj.metadata)
+    # Replace missing values
+    rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999, -99999]
+    rep = rep + [str(r) for r in rep]
 
     # --------------------------------------------------------------------------
     # Demographics
@@ -43,6 +46,7 @@ def clean_casper():
                 "gender", "race", "ethnicity"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
+    demo.replace(rep, "", inplace=True) # Replace missing values
     demo["co_enroll_id"] = ""
     demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date"},
                 inplace=True, axis=1)
@@ -72,6 +76,7 @@ def clean_casper():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "medical_history", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
+    med.replace(rep, "", inplace=True) # Replace missing values
     # SGLT2i (diabetes_med_other___4), RAASi (htn_med_type___1, htn_med_type___2), Metformin (diabetes_med_other___1)
     med = med[["subject_id", "diabetes_med_other___4", "htn_med_type___1",
                "htn_med_type___2", "diabetes_med_other___1", "diabetes_med___1", "diabetes_med___2"]]
@@ -107,6 +112,7 @@ def clean_casper():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "physical_exam", "field_name"]]
     phys = pd.DataFrame(proj.export_records(fields=var))
+    phys.replace(rep, "", inplace=True) # Replace missing values
     phys["procedure"] = "physical_exam"
     phys.drop(["phys_norm", "phys_no", "breast_tanner",
                "testicular_volume", "lmp", "screen_bmi_percentile",
@@ -124,6 +130,7 @@ def clean_casper():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "screening_labs", "field_name"]]
     screen = pd.DataFrame(proj.export_records(fields=var))
+    screen.replace(rep, "", inplace=True) # Replace missing values
     screen.drop(['a1c_pre', 'a1c_pre_date', "screen_pregnant"],
                 axis=1, inplace=True)
     screen.columns = screen.columns.str.replace(
@@ -140,6 +147,7 @@ def clean_casper():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "clamp", "field_name"]]
     clamp = pd.DataFrame(proj.export_records(fields=var))
+    clamp.replace(rep, "", inplace=True) # Replace missing values
     # Format
     clamp.drop(["baseline", "fasting_labs", "bg_labs", "urine_labs", "hct_lab",
                 "a1c_clamp_time", "clamp_a1c", "clamp_a1c_date"],
@@ -165,6 +173,7 @@ def clean_casper():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "body_composition_dxa", "field_name"]]
     dxa = pd.DataFrame(proj.export_records(fields=var))
+    dxa.replace(rep, "", inplace=True) # Replace missing values
     dxa.columns = dxa.columns.str.replace(
         r"dexa_", "", regex=True)
     dxa_cols = dxa.columns[2:].to_list()
@@ -179,6 +188,7 @@ def clean_casper():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "outcomes", "field_name"]]
     out = pd.DataFrame(proj.export_records(fields=var))
+    out.replace(rep, "", inplace=True) # Replace missing values
     out.drop(["kidney_outcomes", "egfr", "metab_outcomes",
               "asl_outcomes", "bold_outcomes"],
              axis=1, inplace=True)
@@ -209,9 +219,5 @@ def clean_casper():
     df.sort_values(["subject_id", "date", "procedure"], inplace=True)
     # Rename subject identifier
     df.rename({"subject_id": "record_id"}, axis=1, inplace=True)
-    # Replace missing values
-    rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999, -99999]
-    rep = rep + [str(r) for r in rep]
-    df.replace(rep, "", inplace=True)
     # Return final data
     return df
