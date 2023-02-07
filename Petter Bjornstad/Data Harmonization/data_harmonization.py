@@ -125,11 +125,6 @@ def harmonize_data():
     harmonized = \
       harmonized.assign(ffa_suppression_combined = \
       harmonized["ffa_suppression"].where(harmonized["ffa_suppression"].notnull(),harmonized["p2_ffa_suppression"]))
-    # Serum Sodium (combine RH version and others)
-    harmonized = \
-      harmonized.assign(sodium_s = \
-      harmonized["serum_sodium"].where(harmonized["serum_sodium"].notnull(),harmonized["sodium_s"]))
-    harmonized = harmonized.drop('serum_sodium', axis = 1, inplace=True)
     # Fasting Insulin
     harmonized[["insulin_minus_20", "insulin_minus_10", "insulin_minus_5", "insulin_0"]] = harmonized[["insulin_minus_20", "insulin_minus_10", "insulin_minus_5", "insulin_0"]].apply(pd.to_numeric)
     harmonized["fasting_insulin"] = \
