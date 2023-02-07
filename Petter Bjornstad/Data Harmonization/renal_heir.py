@@ -64,17 +64,18 @@ def clean_renal_heir():
     # Medications
     # --------------------------------------------------------------------------
 
-    var = ["subject_id", "sglt2i", "diabetes_med_other"]
+    var = ["subject_id"] + ["sglt2i"] + [v for v in meta.loc[meta["form_name"]
+                                                == "medical_history", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
     # Just SGLT2i for now
-    med = med[["subject_id", "sglt2i", "diabetes_med_other___3"]]
+    med = med[["subject_id", "sglt2i", "diabetes_med_other___3", "diabetes_med___3"]]
     med.replace({0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med.rename({"diabetes_med_other___3": "sglti_timepoint",
                 "sglt2i": "sglt2i_ever"}, axis=1, inplace=True)
     # Insulin
-    med["insulin_inj"].replace(
+    med["diabetes_med___3"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
-    med.rename({"insulin_inj": "insulin_med_timepoint"},
+    med.rename({"diabetes_med___3": "insulin_med_timepoint"},
                axis=1, inplace=True)
 
     # --------------------------------------------------------------------------
