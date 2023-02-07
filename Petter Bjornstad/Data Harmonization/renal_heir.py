@@ -15,9 +15,9 @@ def clean_renal_heir():
     import os
     home_dir = os.path.expanduser("~")
     os.chdir(home_dir + "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
-    import sys
     import redcap
     import pandas as pd
+    import numpy as np
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
@@ -76,7 +76,6 @@ def clean_renal_heir():
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med.rename({"insulin_inj": "insulin_med_timepoint"},
                axis=1, inplace=True)
-
 
     # --------------------------------------------------------------------------
     # Physical exam

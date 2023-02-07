@@ -15,16 +15,18 @@ def clean_crocodile():
     import os
     home_dir = os.path.expanduser("~")
     os.chdir(home_dir + "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
-    import sys
     import redcap
     import pandas as pd
+    import numpy as np
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
     try:
-      tokens = pd.read_csv("/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+        tokens = pd.read_csv(
+            "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     except FileNotFoundError:
-      tokens = pd.read_csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+        tokens = pd.read_csv(
+            "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "CROCODILE", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -60,7 +62,9 @@ def clean_crocodile():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "medical_history", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
-    med_list = {"diabetes_meds_other___1": "metformin_timepoint",
+    med_list = {'diabetes_tx___1': "insulin_pump_timepoint",
+                'diabetes_tx___2': "insulin_injections_timepoint",
+                "diabetes_meds_other___1": "metformin_timepoint",
                 "diabetes_meds_other___2": "tzd_timepoint",
                 "diabetes_meds_other___3": "glp1_agonist_timepoint",
                 "diabetes_meds_other___4": "sglti_timepoint",
@@ -73,25 +77,19 @@ def clean_crocodile():
                 "htn_med___6": "statin"}
     og_names = list(med_list.keys())
     med = med[["record_id"] + og_names]
-    med[og_names] = med[og_names].replace(
-        {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
     med.rename(med_list, axis=1, inplace=True)
     # RAASi
-    med = med.assign(raasi = np.maximum(pd.to_numeric(med["ace_inhibitor"]), pd.to_numeric(med["angiotensin_receptor_blocker"])))
-    med.drop(med[['ace_inhibitor', 'angiotensin_receptor_blocker']], axis=1, inplace=True)
-    med["raasi_timepoint"].replace(
-    {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med = med.assign(raasi_timepoint=np.maximum(pd.to_numeric(
+        med["ace_inhibitor"]), pd.to_numeric(med["angiotensin_receptor_blocker"])))
     # Metformin
-    med["diabetes_med_other___1"].replace(
-        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med.rename({"diabetes_med_other___1": "metformin_timepoint"},
                axis=1, inplace=True)
     # Insulin
-    med = med.assign(insulin_med = np.maximum(pd.to_numeric(med["diabetes_tx___1"]), pd.to_numeric(med["diabetes_tx___2"])))
-    med.drop(med[['diabetes_tx___1', 'diabetes_tx___2']], axis=1, inplace=True)
-    med["insulin_med_timepoint"].replace(
-    {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
-
+    med = med.assign(insulin_med_timepoint=np.maximum(pd.to_numeric(
+        med["insulin_pump_timepoint"]), pd.to_numeric(med["insulin_injections_timepoint"])))
+    # Replace 0/1 values with yes/no
+    med.iloc[:, 1:] = med.iloc[:, 1:].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
 
     # --------------------------------------------------------------------------
     # Physical exam
@@ -131,7 +129,8 @@ def clean_crocodile():
                "visit_uptresult", "baseline_labs", "pilabs_yn", "pi_copeptin", "pi_renin", "pi_angiotensin2", "pi_osmo_s", "pi_osmo_u", "pi_lithium_s", "pi_lithium_u", "metabolomics_yn", "kim_yn", "pi_kim_ykl40", "pi_kim_ngal", "pi_kim_kim1", "pi_kim_il18", "pi_kim_tnfr1", "pi_kim_tnfr2"], axis=1, inplace=True)
     labs.columns = labs.columns.str.replace(
         r"visit_|bl_", "", regex=True)
-    labs.rename({"uacr": "acr_u", "a1c": "hba1c"}, axis=1, inplace=True)
+    labs.rename({"uacr": "acr_u", "a1c": "hba1c",
+                "na_u": "sodium_u", "na_s": "sodium_s"}, axis=1, inplace=True)
     labs["procedure"] = "labs"
 
     # --------------------------------------------------------------------------
@@ -238,6 +237,7 @@ def clean_crocodile():
     biopsy.columns = biopsy.columns.str.replace(r"bx_", "", regex=True)
     biopsy.columns = biopsy.columns.str.replace(r"labs_", "", regex=True)
     biopsy.columns = biopsy.columns.str.replace(r"vitals_", "", regex=True)
+    biopsy.rename({"hg": "hemoglobin"}, inplace=True, axis=1)
     biopsy["procedure"] = "kidney_biopsy"
 
     # --------------------------------------------------------------------------
@@ -281,4 +281,3 @@ def clean_crocodile():
     df.replace(rep, "", inplace=True)
     # Print final data
     return df
-

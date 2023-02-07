@@ -118,22 +118,29 @@ def harmonize_data():
         pd.to_numeric(harmonized["microalbumin_u"], errors="coerce") * 100 / \
         pd.to_numeric(harmonized["creatinine_u"], errors="coerce")
     # FFA suppression negative to be 0
-    harmonized["ffa_suppression"] = harmonized["ffa_suppression"].where(harmonized["ffa_suppression"]>0,0)
-    harmonized["p1_ffa_suppression"] = harmonized["p1_ffa_suppression"].where(harmonized["p1_ffa_suppression"]>0,0)
-    harmonized["p2_ffa_suppression"] = harmonized["p2_ffa_suppression"].where(harmonized["p2_ffa_suppression"]>0,0)
+    harmonized["ffa_suppression"] = harmonized["ffa_suppression"].where(
+        harmonized["ffa_suppression"] > 0, 0)
+    harmonized["p1_ffa_suppression"] = harmonized["p1_ffa_suppression"].where(
+        harmonized["p1_ffa_suppression"] > 0, 0)
+    harmonized["p2_ffa_suppression"] = harmonized["p2_ffa_suppression"].where(
+        harmonized["p2_ffa_suppression"] > 0, 0)
     # FFA suppression combined
     harmonized = \
-      harmonized.assign(ffa_suppression_combined = \
-      harmonized["ffa_suppression"].where(harmonized["ffa_suppression"].notnull(),harmonized["p2_ffa_suppression"]))
+        harmonized.assign(ffa_suppression_combined=harmonized["ffa_suppression"].where(
+            harmonized["ffa_suppression"].notnull(), harmonized["p2_ffa_suppression"]))
     # Fasting Insulin
-    harmonized[["insulin_minus_20", "insulin_minus_10", "insulin_minus_5", "insulin_0"]] = harmonized[["insulin_minus_20", "insulin_minus_10", "insulin_minus_5", "insulin_0"]].apply(pd.to_numeric)
+    harmonized[["insulin_minus_20", "insulin_minus_10", "insulin_minus_5", "insulin_0"]] = harmonized[[
+        "insulin_minus_20", "insulin_minus_10", "insulin_minus_5", "insulin_0"]].apply(pd.to_numeric)
     harmonized["fasting_insulin"] = \
-        harmonized[["insulin_minus_20", "insulin_minus_10", "insulin_minus_5", "insulin_0"]].apply(lambda x: x.mean(), axis=1)
+        harmonized[["insulin_minus_20", "insulin_minus_10",
+                    "insulin_minus_5", "insulin_0"]].apply(lambda x: x.mean(), axis=1)
     # Fasting FFA
     harmonized["fasting_ffa"] = \
-        harmonized[["ffa_minus_20", "ffa_minus_10", "ffa_minus_5", "ffa_0"]].apply(lambda x: x.mean(), axis=1)
+        harmonized[["ffa_minus_20", "ffa_minus_10", "ffa_minus_5", "ffa_0"]].apply(
+            lambda x: x.mean(), axis=1)
     # Adipose IR (fasting_insulin * fasting_ffa)
-    harmonized = harmonized.assign(adipose_ir = harmonized["fasting_ffa"] * harmonized["fasting_insulin"])
+    harmonized = harmonized.assign(
+        adipose_ir=harmonized["fasting_ffa"] * harmonized["fasting_insulin"])
 
     # Sort columns
     id_cols = ["record_id", "co_enroll_id", "study", "dob", "diabetes_dx_date",

@@ -15,16 +15,18 @@ def clean_improve():
     import os
     home_dir = os.path.expanduser("~")
     os.chdir(home_dir + "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
-    import sys
     import redcap
     import pandas as pd
+    import numpy as np
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
     try:
-      tokens = pd.read_csv("/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+        tokens = pd.read_csv(
+            "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     except FileNotFoundError:
-      tokens = pd.read_csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+        tokens = pd.read_csv(
+            "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "IMPROVE", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -68,31 +70,34 @@ def clean_improve():
     # Medications
     # --------------------------------------------------------------------------
 
-    var = ["subject_id", "study_visit", "diabetes_med_other"]
+    var = ["subject_id", "study_visit", "diabetes_med",
+           "diabetes_med_other", "htn_med_type"]
     med = pd.DataFrame(proj.export_records(fields=var))
     # SGLT2i (diabetes_med_other___4), RAASi (htn_med_type___1, htn_med_type___2), Metformin (diabetes_med_other___1)
-    med = med[["subject_id", "diabetes_med_other___4", "htn_med_type___1", "htn_med_type___2", "diabetes_med_other___1", "diabetes_med___1", "diabetes_med___2"]]
+    med = med[["subject_id", "diabetes_med_other___3", "htn_med_type___1",
+               "htn_med_type___2", "diabetes_med___1", "diabetes_med___2"]]
     # SGLT2i
-    med["diabetes_med_other___4"].replace(
+    med["diabetes_med_other___3"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
-    med.rename({"diabetes_med_other___4": "sglti_timepoint"},
+    med.rename({"diabetes_med_other___3": "sglti_timepoint"},
                axis=1, inplace=True)
     # RAASi
-    med = med.assign(raasi = np.maximum(pd.to_numeric(med["htn_med_type___1"]), pd.to_numeric(med["htn_med_type___2"])))
-    med.drop(med[['htn_med_type___1', 'htn_med_type___2']], axis=1, inplace=True)
+    med = med.assign(raasi_timepoint=np.maximum(pd.to_numeric(
+        med["htn_med_type___1"]), pd.to_numeric(med["htn_med_type___2"])))
+    med.drop(med[['htn_med_type___1', 'htn_med_type___2']],
+             axis=1, inplace=True)
     med["raasi_timepoint"].replace(
-    {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     # Metformin
     med["diabetes_med___1"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med.rename({"diabetes_med___1": "metformin_timepoint"},
                axis=1, inplace=True)
     # Insulin
-    med["diabetes_med_2"].replace(
+    med["diabetes_med___2"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
-    med.rename({"diabetes_med_2": "insulin_med_timepoint"},
+    med.rename({"diabetes_med___2": "insulin_med_timepoint"},
                axis=1, inplace=True)
-
 
     # --------------------------------------------------------------------------
     # Physical exam
@@ -173,7 +178,7 @@ def clean_improve():
         r"_neg_", "_minus_", regex=True)
     mmtt.rename({"wt": "weight", "ht": "height", "waist": "waistcm",
                 "hip": "hipcm", "hr": "pulse", "sys_bp": "sbp",
-                 "dia_bp": "dbp", "hba1c_base": "hba1c"},
+                 "dia_bp": "dbp", "hba1c_base": "hba1c", "na_base": "sodium_base"},
                 inplace=True, axis=1)
     mmtt["procedure"] = "mmtt"
     # FFA
@@ -222,7 +227,9 @@ def clean_improve():
     clamp.rename({"cystatin_c": "cystatin_c_s", "urine_mab": "microalbumin_u",
                   "serum_creatinine": "creatinine_s", "acr_baseline": "acr_u",
                   "urine_mab_baseline": "microalbumin_u",
-                  "urine_cre_baseline": "creatinine_u"
+                  "urine_cre_baseline": "creatinine_u",
+                  "serum_sodium": "sodium_s", "urine_sodium": "sodium_u",
+                  "pls": "pulse"
                   }, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
     clamp["insulin_sensitivity_method"] = "hyperglycemic_clamp"
@@ -297,6 +304,7 @@ def clean_improve():
     biopsy.columns = biopsy.columns.str.replace(r"bx_", "", regex=True)
     biopsy.columns = biopsy.columns.str.replace(r"labs_", "", regex=True)
     biopsy.columns = biopsy.columns.str.replace(r"vitals_", "", regex=True)
+    biopsy.rename({"hg": "hemoglobin"}, inplace=True, axis=1)
     biopsy["procedure"] = "kidney_biopsy"
 
     # MERGE
