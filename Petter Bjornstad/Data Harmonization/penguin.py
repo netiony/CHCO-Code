@@ -35,7 +35,7 @@ def clean_penguin():
     # Replace missing values
     rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999, -99999]
     rep = rep + [str(r) for r in rep]
-    
+
     # --------------------------------------------------------------------------
     # Demographics
     # --------------------------------------------------------------------------
@@ -43,7 +43,7 @@ def clean_penguin():
     dem_cols = ["record_id", "dob", "group", "sex", "race", "ethnicity"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
-    demo.replace(rep, "", inplace=True) # Replace missing values
+    demo.replace(rep, "", inplace=True)  # Replace missing values
     # Race columns combined into one
     demo = combine_checkboxes(demo, base_name="race", levels=[
         "American Indian or Alaskan Native",
@@ -70,7 +70,7 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "medical_history", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
-    med.replace(rep, "", inplace=True) # Replace missing values
+    med.replace(rep, "", inplace=True)  # Replace missing values
     med_list = {"htn_med___1": "ace_inhibitor",
                 "htn_med___2": "angiotensin_receptor_blocker",
                 "htn_med___3": "beta_blocker",
@@ -93,7 +93,7 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "physical_exam", "field_name"]]
     phys = pd.DataFrame(proj.export_records(fields=var))
-    phys.replace(rep, "", inplace=True) # Replace missing values
+    phys.replace(rep, "", inplace=True)  # Replace missing values
     phys.drop(["phys_age", "phys_normal", "phys_abnormal"],
               axis=1, inplace=True)
     phys["procedure"] = "physical_exam"
@@ -107,7 +107,7 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "screening_labs", "field_name"]]
     screen = pd.DataFrame(proj.export_records(fields=var))
-    screen.replace(rep, "", inplace=True) # Replace missing values
+    screen.replace(rep, "", inplace=True)  # Replace missing values
     screen.drop(["screen_creat_lab", "screen_upt", "screen_menstrual"],
                 axis=1, inplace=True)
     screen.columns = screen.columns.str.replace(
@@ -122,7 +122,7 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_baseline_vitalslabs", "field_name"]]
     labs = pd.DataFrame(proj.export_records(fields=var))
-    labs.replace(rep, "", inplace=True) # Replace missing values
+    labs.replace(rep, "", inplace=True)  # Replace missing values
     labs.drop(["baseline_vitals", "visit_upt", "visit_uptresult",
                "baseline_labs", "u24_labs", "pilabs_yn", "metabolomics_yn", "kim_yn"], axis=1, inplace=True)
     labs.columns = labs.columns.str.replace(
@@ -137,9 +137,11 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_dxa_scan", "field_name"]]
     dxa = pd.DataFrame(proj.export_records(fields=var))
-    dxa.replace(rep, "", inplace=True) # Replace missing values
+    dxa.replace(rep, "", inplace=True)  # Replace missing values
     dxa.rename({"bodyfat_percent": "body_fat",
-                "leanmass_percent": "lean_mass", "fatmass_kg": "fat_kg", "leanmass_kg": "lean_kg", "trunkmass_kg": "trunk_kg",
+                "leanmass_percent": "lean_mass", "fatmass_kg": "fat_kg",
+                "leanmass_kg": "lean_kg", "trunkmass_kg": "trunk_kg",
+                "trunkmass_percent": "trunk_mass",
                 "bmd": "bone_mineral_density"}, axis=True, inplace=True)
     dxa.columns = dxa.columns.str.replace(
         r"dxa_", "", regex=True)
@@ -155,7 +157,7 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_he_clamp", "field_name"]]
     clamp = pd.DataFrame(proj.export_records(fields=var))
-    clamp.replace(rep, "", inplace=True) # Replace missing values
+    clamp.replace(rep, "", inplace=True)  # Replace missing values
     # Format
     clamp.drop(["clamp_yn", "clamp_d20", "clamp_ffa",
                 "clamp_insulin", "hct_yn", "clamp_bg"], axis=1, inplace=True)
@@ -210,7 +212,7 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "pet_scan", "field_name"]]
     pet = pd.DataFrame(proj.export_records(fields=var))
-    pet.replace(rep, "", inplace=True) # Replace missing values
+    pet.replace(rep, "", inplace=True)  # Replace missing values
     pet.drop(["petcom_yn"], axis=1, inplace=True)
     pet.columns = pet.columns.str.replace(r"pet_", "", regex=True)
     pet["procedure"] = "pet_scan"
@@ -222,7 +224,7 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "fmri", "field_name"]]
     mri = pd.DataFrame(proj.export_records(fields=var))
-    mri.replace(rep, "", inplace=True) # Replace missing values
+    mri.replace(rep, "", inplace=True)  # Replace missing values
     mri["procedure"] = "fmri"
 
     # MERGE
@@ -246,5 +248,8 @@ def clean_penguin():
     df = df[id_cols + other_cols]
     # SORT
     df.sort_values(["record_id", "date", "procedure"], inplace=True)
+    # Drop empty columns
+    df.replace("", np.nan, inplace=True)
+    df.dropna(how='all', axis=1, inplace=True)
     # Return final data
     return df

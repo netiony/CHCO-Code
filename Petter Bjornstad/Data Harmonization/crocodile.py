@@ -35,7 +35,7 @@ def clean_crocodile():
     # Replace missing values
     rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999, -99999]
     rep = rep + [str(r) for r in rep]
-    
+
     # --------------------------------------------------------------------------
     # Demographics
     # --------------------------------------------------------------------------
@@ -44,7 +44,7 @@ def clean_crocodile():
                 "group", "sex", "race", "ethnicity"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
-    demo.replace(rep, "", inplace=True) # Replace missing values
+    demo.replace(rep, "", inplace=True)  # Replace missing values
     demo["co_enroll_id"] = ""
     # Race columns combined into one
     demo = combine_checkboxes(demo, base_name="race", levels=[
@@ -66,7 +66,7 @@ def clean_crocodile():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "medical_history", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
-    med.replace(rep, "", inplace=True) # Replace missing values
+    med.replace(rep, "", inplace=True)  # Replace missing values
     med_list = {'diabetes_tx___1': "insulin_pump_timepoint",
                 'diabetes_tx___2': "insulin_injections_timepoint",
                 "diabetes_meds_other___1": "metformin_timepoint",
@@ -103,7 +103,7 @@ def clean_crocodile():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "physical_exam", "field_name"]]
     phys = pd.DataFrame(proj.export_records(fields=var))
-    phys.replace(rep, "", inplace=True) # Replace missing values
+    phys.replace(rep, "", inplace=True)  # Replace missing values
     phys["procedure"] = "physical_exam"
     phys.drop(["phys_normal", "phys_abnormal"], axis=1, inplace=True)
     phys.columns = phys.columns.str.replace(r"phys_", "", regex=True)
@@ -116,7 +116,7 @@ def clean_crocodile():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "screening_labs", "field_name"]]
     screen = pd.DataFrame(proj.export_records(fields=var))
-    screen.replace(rep, "", inplace=True) # Replace missing values
+    screen.replace(rep, "", inplace=True)  # Replace missing values
     screen.drop(["prescreen_a1c", "prescreen_a1c_date",
                 "screen_menstrual", "screen_upt"], axis=1, inplace=True)
     screen.columns = screen.columns.str.replace(
@@ -132,7 +132,7 @@ def clean_crocodile():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_baseline_vitalslabs", "field_name"]]
     labs = pd.DataFrame(proj.export_records(fields=var))
-    labs.replace(rep, "", inplace=True) # Replace missing values
+    labs.replace(rep, "", inplace=True)  # Replace missing values
     labs.drop(["baseline_vitals", "visit_upt",
                "visit_uptresult", "baseline_labs", "pilabs_yn", "pi_copeptin", "pi_renin", "pi_angiotensin2", "pi_osmo_s", "pi_osmo_u", "pi_lithium_s", "pi_lithium_u", "metabolomics_yn", "kim_yn", "pi_kim_ykl40", "pi_kim_ngal", "pi_kim_kim1", "pi_kim_il18", "pi_kim_tnfr1", "pi_kim_tnfr2"], axis=1, inplace=True)
     labs.columns = labs.columns.str.replace(
@@ -148,7 +148,7 @@ def clean_crocodile():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_boldasl_mri", "field_name"]]
     mri = pd.DataFrame(proj.export_records(fields=var))
-    mri.replace(rep, "", inplace=True) # Replace missing values
+    mri.replace(rep, "", inplace=True)  # Replace missing values
     mri.columns = mri.columns.str.replace(
         r"mri_", "", regex=True)
     mri.rename({"volume_right": "right_kidney_volume_ml", "volume_left": "left_kidney_volume_ml"},
@@ -162,7 +162,7 @@ def clean_crocodile():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_dxa_scan", "field_name"]]
     dxa = pd.DataFrame(proj.export_records(fields=var))
-    dxa.replace(rep, "", inplace=True) # Replace missing values
+    dxa.replace(rep, "", inplace=True)  # Replace missing values
     dxa.columns = dxa.columns.str.replace(
         r"dxa_|_percent", "", regex=True)
     dxa.rename({"bodyfat": "body_fat", "leanmass": "lean_mass",
@@ -181,7 +181,7 @@ def clean_crocodile():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_he_clamp", "field_name"]]
     clamp = pd.DataFrame(proj.export_records(fields=var))
-    clamp.replace(rep, "", inplace=True) # Replace missing values
+    clamp.replace(rep, "", inplace=True)  # Replace missing values
     # Format
     clamp.drop(["clamp_yn", "clamp_d20", "clamp_ffa",
                 "clamp_insulin", "hct_yn", "clamp_bg"], axis=1, inplace=True)
@@ -221,7 +221,7 @@ def clean_crocodile():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_renal_clearance_testing", "field_name"]]
     rct = pd.DataFrame(proj.export_records(fields=var))
-    rct.replace(rep, "", inplace=True) # Replace missing values
+    rct.replace(rep, "", inplace=True)  # Replace missing values
     rename = {"gfr_raw": "gfr_raw_plasma_urine", "gfr_bsa": "gfr_bsa_plasma_urine",
               "erpf_raw": "erpf_raw_plasma_urine", "erpf": "erpf_bsa_plasma_urine",
               "gfr_15mgmin": "gfr_raw_plasma", "gfrbsa": "gfr_bsa_plasma",
@@ -243,7 +243,7 @@ def clean_crocodile():
                  "mes_volume_con", "glom_nuc_count", "mes_nuc_count", "art_intima",
                  "art_media", "pod_nuc_density", "pod_cell_volume"]
     biopsy = pd.DataFrame(proj.export_records(fields=var))
-    biopsy.replace(rep, "", inplace=True) # Replace missing values
+    biopsy.replace(rep, "", inplace=True)  # Replace missing values
     biopsy.drop([col for col in biopsy.columns if '_yn' in col] +
                 [col for col in biopsy.columns if 'procedure_' in col],
                 axis=1, inplace=True)
@@ -260,7 +260,7 @@ def clean_crocodile():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "optional_pet_scan", "field_name"]]
     pet = pd.DataFrame(proj.export_records(fields=var))
-    pet.replace(rep, "", inplace=True) # Replace missing values
+    pet.replace(rep, "", inplace=True)  # Replace missing values
     pet.drop(["petcon_yn"], axis=1, inplace=True)
     pet.columns = pet.columns.str.replace(r"pet_", "", regex=True)
     pet["procedure"] = "pet_scan"
@@ -289,5 +289,8 @@ def clean_crocodile():
     df.sort_values(["record_id", "date", "procedure"], inplace=True)
     # Rename IDs
     df["record_id"] = ["CRC-" + str(i).zfill(2) for i in df["record_id"]]
+    # Drop empty columns
+    df.replace("", np.nan, inplace=True)
+    df.dropna(how='all', axis=1, inplace=True)
     # Print final data
     return df

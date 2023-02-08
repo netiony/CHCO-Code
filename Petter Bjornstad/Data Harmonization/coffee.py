@@ -44,7 +44,7 @@ def clean_coffee():
                 "gender", "race", "ethnicity"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
-    demo.replace(rep, "", inplace=True) # Replace missing values
+    demo.replace(rep, "", inplace=True)  # Replace missing values
     demo["co_enroll_id"] = ""
     demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date"},
                 inplace=True, axis=1)
@@ -75,7 +75,7 @@ def clean_coffee():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "medical_history_casper", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
-    med.replace(rep, "", inplace=True) # Replace missing values
+    med.replace(rep, "", inplace=True)  # Replace missing values
     # SGLT2i (diabetes_med_other___4), RAASi (htn_med_type___1, htn_med_type___2), Metformin (diabetes_med_other___1)
     med = med[["subject_id", "diabetes_med_other___4", "htn_med_type___1",
                "htn_med_type___2", "diabetes_med_other___1", "diabetes_med___1", "diabetes_med___2"]]
@@ -111,7 +111,7 @@ def clean_coffee():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "physical_exam_casper", "field_name"]]
     phys = pd.DataFrame(proj.export_records(fields=var))
-    phys.replace(rep, "", inplace=True) # Replace missing values
+    phys.replace(rep, "", inplace=True)  # Replace missing values
     phys["procedure"] = "physical_exam"
     phys.drop(["phys_norm", "phys_no", "breast_tanner",
                "testicular_volume", "lmp", "screen_bmi_percentile", "male_activity_factor", "fem_activity_factor", "schofield_male", "schofield_female"], axis=1, inplace=True)
@@ -126,7 +126,7 @@ def clean_coffee():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "screening_labs_casper", "field_name"]]
     screen = pd.DataFrame(proj.export_records(fields=var))
-    screen.replace(rep, "", inplace=True) # Replace missing values
+    screen.replace(rep, "", inplace=True)  # Replace missing values
     screen.drop(['a1c_pre', 'a1c_pre_date', "screen_pregnant"],
                 axis=1, inplace=True)
     screen.columns = screen.columns.str.replace(
@@ -143,7 +143,7 @@ def clean_coffee():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "clamp", "field_name"]]
     clamp = pd.DataFrame(proj.export_records(fields=var))
-    clamp.replace(rep, "", inplace=True) # Replace missing values
+    clamp.replace(rep, "", inplace=True)  # Replace missing values
     # Format
     clamp.drop(["baseline", "fasting_labs", "bg_labs", "urine_labs", "hct_lab",
                 "cs_clamp_date"],
@@ -168,7 +168,7 @@ def clean_coffee():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "outcomes", "field_name"]]
     out = pd.DataFrame(proj.export_records(fields=var))
-    out.replace(rep, "", inplace=True) # Replace missing values
+    out.replace(rep, "", inplace=True)  # Replace missing values
     out.drop(["kidney_outcomes", "egfr", "metab_outcomes",
               "asl_outcomes", "bold_outcomes"],
              axis=1, inplace=True)
@@ -202,5 +202,8 @@ def clean_coffee():
     rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999, -99999]
     rep = rep + [str(r) for r in rep]
     df.replace(rep, "", inplace=True)
+    # Drop empty columns
+    df.replace("", np.nan, inplace=True)
+    df.dropna(how='all', axis=1, inplace=True)
     # Return final data
     return df

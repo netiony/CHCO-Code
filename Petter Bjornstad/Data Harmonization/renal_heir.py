@@ -44,7 +44,7 @@ def clean_renal_heir():
                 "group", "gender", "race", "ethnicity"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
-    demo.replace(rep, "", inplace=True) # Replace missing values
+    demo.replace(rep, "", inplace=True)  # Replace missing values
     demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date"},
                 inplace=True, axis=1)
     dem_cols[3] = "diabetes_dx_date"
@@ -69,12 +69,13 @@ def clean_renal_heir():
     # --------------------------------------------------------------------------
 
     var = ["subject_id"] + ["sglt2i"] + [v for v in meta.loc[meta["form_name"]
-                                                == "medical_history", "field_name"]]
+                                                             == "medical_history", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
-    med.replace(rep, "", inplace=True) # Replace missing values
+    med.replace(rep, "", inplace=True)  # Replace missing values
 
     # Just SGLT2i for now
-    med = med[["subject_id", "sglt2i", "diabetes_med_other___3", "diabetes_med___3"]]
+    med = med[["subject_id", "sglt2i",
+               "diabetes_med_other___3", "diabetes_med___3"]]
     med.replace({0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med.rename({"diabetes_med_other___3": "sglti_timepoint",
                 "sglt2i": "sglt2i_ever"}, axis=1, inplace=True)
@@ -91,7 +92,7 @@ def clean_renal_heir():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "physical_exam", "field_name"]]
     phys = pd.DataFrame(proj.export_records(fields=var))
-    phys.replace(rep, "", inplace=True) # Replace missing values
+    phys.replace(rep, "", inplace=True)  # Replace missing values
     phys["procedure"] = "physical_exam"
     phys.drop(["male_activity_factor", "fem_activity_factor", "schofield_male",
                "schofield_female", "phys_norm", "phys_no", "breast_tanner", "testicular_volume", "lmp", "screen_bmi_percentile"], axis=1, inplace=True)
@@ -106,7 +107,7 @@ def clean_renal_heir():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "screening_labs", "field_name"]]
     screen = pd.DataFrame(proj.export_records(fields=var))
-    screen.replace(rep, "", inplace=True) # Replace missing values
+    screen.replace(rep, "", inplace=True)  # Replace missing values
     screen.drop(["a1c_pre", "a1c_pre_date", "screen_pregnant"],
                 axis=1, inplace=True)
     screen.columns = screen.columns.str.replace(
@@ -123,7 +124,7 @@ def clean_renal_heir():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "body_composition_dxa", "field_name"]]
     dxa = pd.DataFrame(proj.export_records(fields=var))
-    dxa.replace(rep, "", inplace=True) # Replace missing values
+    dxa.replace(rep, "", inplace=True)  # Replace missing values
     dxa.columns = dxa.columns.str.replace(
         r"dexa_", "", regex=True)
     dxa_cols = dxa.columns[2:].to_list()
@@ -138,7 +139,7 @@ def clean_renal_heir():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "clamp", "field_name"]]
     clamp = pd.DataFrame(proj.export_records(fields=var))
-    clamp.replace(rep, "", inplace=True) # Replace missing values
+    clamp.replace(rep, "", inplace=True)  # Replace missing values
     # Format
     clamp.drop(["baseline", "fasting_labs", "urine_labs", "hct_lab",
                 "bg_labs", "ffa_lab", "cpep_lab", "insulin_labs"], axis=1, inplace=True)
@@ -146,9 +147,11 @@ def clean_renal_heir():
         r"clamp_", "", regex=True)
     clamp.rename({"serum_creatinine": "creatinine_s",
                   "serum_sodium": "sodium_s",
+                  "urine_sodium": "sodium_u",
                   "cystatin_c": "cystatin_c_s",
                   "urine_mab_baseline": "microalbumin_u",
-                  "urine_cre_baseline": "creatinine_u"},
+                  "urine_cre_baseline": "creatinine_u",
+                  "pls": "pulse"},
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
     clamp["procedure"] = "clamp"
@@ -201,7 +204,7 @@ def clean_renal_heir():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "outcomes", "field_name"]]
     out = pd.DataFrame(proj.export_records(fields=var))
-    out.replace(rep, "", inplace=True) # Replace missing values
+    out.replace(rep, "", inplace=True)  # Replace missing values
     out.drop(["kidney_outcomes", "egfr", "metab_outcomes", "asl_outcomes"],
              axis=1, inplace=True)
     out.columns = out.columns.str.replace(
@@ -224,13 +227,14 @@ def clean_renal_heir():
                  "mes_volume_con", "glom_nuc_count", "mes_nuc_count", "art_intima",
                  "art_media", "pod_nuc_density", "pod_cell_volume"]
     biopsy = pd.DataFrame(proj.export_records(fields=var))
-    biopsy.replace(rep, "", inplace=True) # Replace missing values
+    biopsy.replace(rep, "", inplace=True)  # Replace missing values
     biopsy.drop([col for col in biopsy.columns if '_yn' in col] +
                 [col for col in biopsy.columns if 'procedure_' in col],
                 axis=1, inplace=True)
     biopsy.columns = biopsy.columns.str.replace(r"bx_", "", regex=True)
     biopsy.columns = biopsy.columns.str.replace(r"labs_", "", regex=True)
     biopsy.columns = biopsy.columns.str.replace(r"vitals_", "", regex=True)
+    biopsy.rename({"hg": "hemoglobin"}, axis=1, inplace=True)
     biopsy["procedure"] = "kidney_biopsy"
 
     # MERGE
@@ -253,5 +257,8 @@ def clean_renal_heir():
     df.sort_values(["subject_id", "date", "procedure"], inplace=True)
     # Rename subject identifier
     df.rename({"subject_id": "record_id"}, axis=1, inplace=True)
+    # Drop empty columns
+    df.replace("", np.nan, inplace=True)
+    df.dropna(how='all', axis=1, inplace=True)
     # Return final data
     return df
