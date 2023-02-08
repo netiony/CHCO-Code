@@ -118,12 +118,9 @@ def harmonize_data():
         pd.to_numeric(harmonized["microalbumin_u"], errors="coerce") * 100 / \
         pd.to_numeric(harmonized["creatinine_u"], errors="coerce")
     # FFA suppression negative to be 0
-    harmonized["ffa_suppression"] = harmonized["ffa_suppression"].where(
-        harmonized["ffa_suppression"] > 0, 0)
-    harmonized["p1_ffa_suppression"] = harmonized["p1_ffa_suppression"].where(
-        harmonized["p1_ffa_suppression"] > 0, 0)
-    harmonized["p2_ffa_suppression"] = harmonized["p2_ffa_suppression"].where(
-        harmonized["p2_ffa_suppression"] > 0, 0)
+    harmonized["ffa_suppression"] = np.where(harmonized["ffa_suppression"]<0, 0, harmonized["ffa_suppression"])
+    harmonized["p1_ffa_suppression"] = np.where(harmonized["p1_ffa_suppression"]<0, 0, harmonized["p1_ffa_suppression"])
+    harmonized["p2_ffa_suppression"] = np.where(harmonized["p2_ffa_suppression"]<0, 0, harmonized["p2_ffa_suppression"])
     # FFA suppression combined
     harmonized = \
         harmonized.assign(ffa_suppression_combined=harmonized["ffa_suppression"].where(
