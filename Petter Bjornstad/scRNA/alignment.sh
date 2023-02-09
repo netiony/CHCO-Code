@@ -15,12 +15,18 @@ cd /mnt/HD2/Tim/scRNA
 #     --sjdbGTFfile Miscellaneous/refdata-gex-GRCh38-2020-A/genes/genes.gtf
 # STARsolo for alignment (per Phil's recommendation)
 # See instructions at https://github.com/alexdobin/STAR/blob/master/docs/STARsolo.md
+# List files in STARsolo format
+R2=$(find Data_Raw/ -type f -name "*_R2_*" | tr '\n' ',')
+R1=$(find Data_Raw/ -type f -name "*_R1_*" | tr '\n' ',')
+# Run everything with STAR
 STAR \
-    --genomeDir /mnt/HD2/Tim/scRNA/Miscellaneous/indexed_reference \
-    --readFilesIn Data_Raw/3433-EO-1_GATAACCT-GTTTCTAA_S84_R1_001.fastq.gz Data_Raw/3433-EO-1_GATAACCT-GTTTCTAA_S84_R2_001.fastq.gz \
+    --genomeDir Miscellaneous/indexed_reference \
+    --outFileNamePrefix Data_Clean/Aligned/ \
+    --readFilesIn $R2 $R1 \
     --readFilesCommand zcat \
     --soloUMIlen 12 \
     --soloType CB_UMI_Simple \
-    --soloCBwhitelist ~/GitHub/cellranger/lib/python/cellranger/barcodes/3M-february-2018.txt
+    --soloCBwhitelist Miscellaneous/3M-february-2018.txt \
+    --runThreadN 36
 # Sync everything to the shared drive
 rsync -av --delete /mnt/HD2/Tim/scRNA/ /home/tim/UCD/PEDS/RI\ Biostatistics\ Core/Shared/Shared\ Projects/Laura/Peds\ Endo/Petter\ Bjornstad/scRNA
