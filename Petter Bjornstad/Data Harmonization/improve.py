@@ -104,6 +104,8 @@ def clean_improve():
     med.rename({"diabetes_med___2": "insulin_med_timepoint"},
                axis=1, inplace=True)
 
+    med["procedure"] = "medications"
+
     # --------------------------------------------------------------------------
     # Physical exam
     # --------------------------------------------------------------------------
@@ -115,7 +117,9 @@ def clean_improve():
     phys.replace(rep, "", inplace=True)  # Replace missing values
     phys["procedure"] = "physical_exam"
     phys.drop(redcap_cols + ["phys_norm", "phys_no", "breast_tanner",
-                             "testicular_volume", "lmp", "screen_bmi_percentile", "activity_factor_male", "activity_factor_female", "schofield_male", "schofield_female"], axis=1, inplace=True)
+                             "testicular_volume", "lmp", "screen_bmi_percentile",
+                             "activity_factor_male", "activity_factor_female",
+                             "schofield_male", "schofield_female"], axis=1, inplace=True)
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
     phys.rename({"sys_bp": "sbp", "dys_bp": "dbp",
                  "waist_circumference": "waistcm",

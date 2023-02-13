@@ -103,6 +103,7 @@ def clean_coffee():
              axis=1, inplace=True)
     med["insulin_med_timepoint"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med["procedure"] = "medications"
 
     # --------------------------------------------------------------------------
     # Physical exam

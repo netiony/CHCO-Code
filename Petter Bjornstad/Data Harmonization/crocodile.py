@@ -95,6 +95,7 @@ def clean_crocodile():
     # Replace 0/1 values with yes/no
     med.iloc[:, 1:] = med.iloc[:, 1:].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
+    med["procedure"] = "medications"
 
     # --------------------------------------------------------------------------
     # Physical exam

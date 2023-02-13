@@ -85,6 +85,8 @@ def clean_renal_heir():
     med.rename({"diabetes_med___3": "insulin_med_timepoint"},
                axis=1, inplace=True)
 
+    med["procedure"] = "medications"
+
     # --------------------------------------------------------------------------
     # Physical exam
     # --------------------------------------------------------------------------
