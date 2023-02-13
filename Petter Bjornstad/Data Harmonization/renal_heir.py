@@ -84,8 +84,8 @@ def clean_renal_heir():
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med.rename({"diabetes_med___3": "insulin_med_timepoint"},
                axis=1, inplace=True)
-
     med["procedure"] = "medications"
+    med["visit"] = "screening"
 
     # --------------------------------------------------------------------------
     # Physical exam
@@ -101,6 +101,7 @@ def clean_renal_heir():
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
     phys.rename({"sys_bp": "sbp", "dys_bp": "dbp",
                 "waist_circumference": "waistcm", "hip_circumference": "hipcm"}, inplace=True, axis=1)
+    phys["visit"] = "screening"
 
     # --------------------------------------------------------------------------
     # Screening labs
@@ -118,6 +119,7 @@ def clean_renal_heir():
                    "urine_mab": "microalbumin_u", "urine_cre": "creatinine_u"},
                   axis=1, inplace=True)
     screen["procedure"] = "screening"
+    screen["visit"] = "screening"
 
     # --------------------------------------------------------------------------
     # DXA Scan
@@ -133,6 +135,7 @@ def clean_renal_heir():
     dxa.rename(dict(zip(dxa_cols, ["dexa_" + d for d in dxa_cols])),
                axis=1, inplace=True)
     dxa["procedure"] = "dxa"
+    dxa["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Clamp
@@ -157,6 +160,7 @@ def clean_renal_heir():
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
     clamp["procedure"] = "clamp"
+    clamp["visit"] = "baseline"
     clamp["insulin_sensitivity_method"] = "hyperglycemic_clamp"
     # M
     num_vars = ["d20_infusion", "weight"]
@@ -215,6 +219,7 @@ def clean_renal_heir():
               "rpf": "erpf_raw_plasma", "rpf_bsa": "erpf_bsa_plasma"}
     out.rename(rename, axis=1, inplace=True)
     out["procedure"] = "kidney_outcomes"
+    out["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Kidney Biopsy
@@ -238,6 +243,7 @@ def clean_renal_heir():
     biopsy.columns = biopsy.columns.str.replace(r"vitals_", "", regex=True)
     biopsy.rename({"hg": "hemoglobin"}, axis=1, inplace=True)
     biopsy["procedure"] = "kidney_biopsy"
+    biopsy["visit"] = "baseline"
 
     # MERGE
     df = pd.concat([phys, screen], join='outer', ignore_index=True)
@@ -249,7 +255,6 @@ def clean_renal_heir():
     df = pd.merge(df, demo, how="outer")
     df = df.copy()
     # REORGANIZE
-    df["visit"] = "baseline"
     df["study"] = "RENAL-HEIR"
     id_cols = ["subject_id", "co_enroll_id", "study"] + \
         dem_cols[2:] + ["visit", "procedure", "date"]

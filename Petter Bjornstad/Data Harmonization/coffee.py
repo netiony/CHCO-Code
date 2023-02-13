@@ -104,6 +104,7 @@ def clean_coffee():
     med["insulin_med_timepoint"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med["procedure"] = "medications"
+    med["visit"] = "screening"
 
     # --------------------------------------------------------------------------
     # Physical exam
@@ -119,6 +120,7 @@ def clean_coffee():
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
     phys.rename({"sys_bp": "sbp", "dys_bp": "dbp", "waist_circumference": "waistcm",
                 "hip_circumference": "hipcm"}, inplace=True, axis=1)
+    phys["visit"] = "screening"
 
     # --------------------------------------------------------------------------
     # Screening labs
@@ -136,6 +138,7 @@ def clean_coffee():
                    "urine_cre": "creatinine_u", "urine_mab": "microalbumin_u"},
                   axis=1, inplace=True)
     screen["procedure"] = "screening"
+    screen["visit"] = "screening"
 
     # --------------------------------------------------------------------------
     # Clamp
@@ -161,6 +164,7 @@ def clean_coffee():
     clamp[num_vars] = clamp[num_vars].apply(
         pd.to_numeric, errors='coerce')
     clamp["raw_m"] = (clamp["d20_infusion"] * 190 / 60) / clamp["weight"]
+    clamp["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Outcomes
@@ -188,7 +192,6 @@ def clean_coffee():
     df = pd.merge(df, demo, how="outer")
     df = df.copy()
     # REORGANIZE
-    df["visit"] = "baseline"
     df["study"] = "COFFEE"
     id_cols = ["subject_id", "co_enroll_id", "study"] + \
         dem_cols[1:] + ["visit", "procedure", "date"]

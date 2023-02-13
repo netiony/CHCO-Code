@@ -49,7 +49,7 @@ def harmonize_data():
     # Fix levels of categorical variables
     harmonized["visit"] = \
         pd.Categorical(harmonized["visit"],
-                       categories=['baseline', 'pre_surgery',
+                       categories=['screening', 'baseline', 'pre_surgery',
                                    '3_months_post_surgery', '12_months_post_surgery'],
                        ordered=True)
     harmonized["race"].replace(
@@ -118,9 +118,12 @@ def harmonize_data():
         pd.to_numeric(harmonized["microalbumin_u"], errors="coerce") * 100 / \
         pd.to_numeric(harmonized["creatinine_u"], errors="coerce")
     # FFA suppression negative to be 0
-    harmonized["ffa_suppression"] = np.where(harmonized["ffa_suppression"]<0, 0, harmonized["ffa_suppression"])
-    harmonized["p1_ffa_suppression"] = np.where(harmonized["p1_ffa_suppression"]<0, 0, harmonized["p1_ffa_suppression"])
-    harmonized["p2_ffa_suppression"] = np.where(harmonized["p2_ffa_suppression"]<0, 0, harmonized["p2_ffa_suppression"])
+    harmonized["ffa_suppression"] = np.where(
+        harmonized["ffa_suppression"] < 0, 0, harmonized["ffa_suppression"])
+    harmonized["p1_ffa_suppression"] = np.where(
+        harmonized["p1_ffa_suppression"] < 0, 0, harmonized["p1_ffa_suppression"])
+    harmonized["p2_ffa_suppression"] = np.where(
+        harmonized["p2_ffa_suppression"] < 0, 0, harmonized["p2_ffa_suppression"])
     # FFA suppression combined
     harmonized = \
         harmonized.assign(ffa_suppression_combined=harmonized["ffa_suppression"].where(

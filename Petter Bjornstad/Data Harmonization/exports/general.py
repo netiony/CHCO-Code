@@ -17,8 +17,8 @@ from datetime import datetime
 import pandas as pd
 # Get dataset
 df = harmonize_data()
-# Write
-df.to_csv("~/temp.csv", index=False)
+df.to_csv("~/temp.csv")
+# # Write
 # df.to_csv("/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", index=False)
 # # Update for Michigan
 # time = datetime.now().strftime('%Y_%m_%d_%I%M%p')

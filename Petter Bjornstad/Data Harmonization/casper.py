@@ -23,12 +23,8 @@ def clean_casper():
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
-    try:
-        tokens = pd.read_csv(
-            "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
-    except FileNotFoundError:
-        tokens = pd.read_csv(
-            "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+    tokens = pd.read_csv(
+        "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "CASPER", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -64,7 +60,9 @@ def clean_casper():
     # Same for ethnicity
     demo = combine_checkboxes(demo,
                               base_name="ethnicity",
-                              levels=["Hispanic or Latino", "Not Hispanic or Latino", "Unknown/Not Reported"])
+                              levels=["Hispanic or Latino",
+                                      "Not Hispanic or Latino",
+                                      "Unknown/Not Reported"])
     # Relevel sex and group
     demo["sex"].replace({1: "Male", 0: "Female", 3: "Other",
                         "1": "Male", "0": "Female", "3": "Other"}, inplace=True)
@@ -73,6 +71,7 @@ def clean_casper():
     # --------------------------------------------------------------------------
     # Medications
     # --------------------------------------------------------------------------
+
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "medical_history", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
@@ -105,6 +104,7 @@ def clean_casper():
     med["insulin_med_timepoint"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med["procedure"] = "medications"
+    med["visit"] = "screening"
 
     # --------------------------------------------------------------------------
     # Physical exam
@@ -123,6 +123,7 @@ def clean_casper():
     phys.rename({"sys_bp": "sbp", "dys_bp": "dbp",
                  "waist_circumference": "waistcm",
                  "hip_circumference": "hipcm"}, inplace=True, axis=1)
+    phys["visit"] = "screening"
 
     # --------------------------------------------------------------------------
     # Screening labs
@@ -139,7 +140,10 @@ def clean_casper():
     screen.rename({"serum_creatinine": "creatinine_s", "urine_acr": "acr_u",
                    "urine_cre": "creatinine_u", "urine_mab": "microalbumin_u"},
                   axis=1, inplace=True)
-    screen["procedure"] = "screening"
+    screen["procedure"] = "screening_labs"
+    # Assume medication review done at screening
+    med["date"] = screen["date"]
+    screen["visit"] = "screening"
 
     # --------------------------------------------------------------------------
     # Clamp
@@ -155,10 +159,13 @@ def clean_casper():
                axis=1, inplace=True)
     clamp.columns = clamp.columns.str.replace(
         r"clamp_", "", regex=True)
-    clamp.rename({"cystatin_c": "cystatin_c_s", "serum_creatinine": "creatinine_s", "urine_mab_baseline": "microalbumin_u",
-                 "urine_cre_baseline": "creatinine_u", "pls": "pulse", "urine_sodium": "sodium_u",
-                  "serum_sodium": "sodium_s"}, inplace=True, axis=1)
+    clamp.rename({"cystatin_c": "cystatin_c_s", "serum_creatinine": "creatinine_s",
+                  "urine_mab_baseline": "microalbumin_u",
+                 "urine_cre_baseline": "creatinine_u", "pls": "pulse",
+                  "urine_sodium": "sodium_u", "serum_sodium": "sodium_s"},
+                 inplace=True, axis=1)
     clamp["procedure"] = "clamp"
+    clamp["visit"] = "baseline"
     clamp["insulin_sensitivity_method"] = "hyperglycemic_clamp"
     clamp["ffa_method"] = "hyperglycemic_clamp"
     # No insulin, c peptide, or FFA
@@ -181,6 +188,7 @@ def clean_casper():
     dxa.rename(dict(zip(dxa_cols, ["dexa_" + d for d in dxa_cols])),
                axis=1, inplace=True)
     dxa["procedure"] = "dxa"
+    dxa["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Outcomes
@@ -199,6 +207,7 @@ def clean_casper():
               "rpf": "erpf_raw_plasma", "rpf_bsa": "erpf_bsa_plasma"}
     out.rename(rename, axis=1, inplace=True)
     out["procedure"] = "kidney_outcomes"
+    out["visit"] = "baseline"
 
     # MERGE
     df = pd.concat([phys, screen], join='outer', ignore_index=True)
@@ -209,7 +218,6 @@ def clean_casper():
     df = pd.merge(df, demo, how="outer")
     df = df.copy()
     # REORGANIZE
-    df["visit"] = "baseline"
     df["study"] = "CASPER"
     id_cols = ["subject_id", "co_enroll_id", "study"] + \
         dem_cols[1:] + ["visit", "procedure", "date"]

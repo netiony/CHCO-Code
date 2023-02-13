@@ -79,7 +79,7 @@ def clean_improve():
     med = pd.DataFrame(proj.export_records(fields=var))
     med.replace(rep, "", inplace=True)  # Replace missing values
     # SGLT2i (diabetes_med_other___4), RAASi (htn_med_type___1, htn_med_type___2), Metformin (diabetes_med_other___1)
-    med = med[["subject_id", "diabetes_med_other___3", "htn_med_type___1",
+    med = med[["subject_id", "study_visit", "diabetes_med_other___3", "htn_med_type___1",
                "htn_med_type___2", "diabetes_med___1", "diabetes_med___2"]]
     # SGLT2i
     med["diabetes_med_other___3"].replace(
@@ -103,7 +103,6 @@ def clean_improve():
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med.rename({"diabetes_med___2": "insulin_med_timepoint"},
                axis=1, inplace=True)
-
     med["procedure"] = "medications"
 
     # --------------------------------------------------------------------------

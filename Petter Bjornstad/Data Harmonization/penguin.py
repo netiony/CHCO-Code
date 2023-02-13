@@ -87,6 +87,7 @@ def clean_penguin():
     med.iloc[:, 1:] = med.iloc[:, 1:].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
     med["procedure"] = "medications"
+    med["visit"] = "screening"
 
     # --------------------------------------------------------------------------
     # Physical exam
@@ -101,6 +102,7 @@ def clean_penguin():
     phys["procedure"] = "physical_exam"
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
     phys.rename({"sysbp": "sbp", "diasbp": "dbp"}, inplace=True, axis=1)
+    phys["visit"] = "screening"
 
     # --------------------------------------------------------------------------
     # Screening labs
@@ -116,6 +118,7 @@ def clean_penguin():
         r"screen_|labs_", "", regex=True)
     screen.rename({"creat_s": "creatinine_s"}, axis=1, inplace=True)
     screen["procedure"] = "screening"
+    screen["visit"] = "screening"
 
     # --------------------------------------------------------------------------
     # Baseline labs
@@ -131,6 +134,7 @@ def clean_penguin():
         r"visit_|bl_", "", regex=True)
     labs.rename({"a1c": "hba1c", "uacr": "acr_u"}, axis=1, inplace=True)
     labs["procedure"] = "labs"
+    labs["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # DXA Scan
@@ -151,6 +155,7 @@ def clean_penguin():
     dxa.rename(dict(zip(dxa_cols, ["dexa_" + d for d in dxa_cols])),
                axis=1, inplace=True)
     dxa["procedure"] = "dxa"
+    dxa["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Clamp
@@ -174,6 +179,7 @@ def clean_penguin():
     clamp.columns = clamp.columns.str.replace(
         r"glucose_minus", "glucose_minus_", regex=True)
     clamp["procedure"] = "clamp"
+    clamp["visit"] = "baseline"
     clamp["insulin_sensitivity_method"] = "hyperinsulinemic_euglycemic_clamp"
     # FFA
     # See /home/timvigers/Work/CHCO/Petter Bjornstad/IHD/Background/Renal Heir Equations.docx
@@ -206,6 +212,7 @@ def clean_penguin():
     rct.rename(rename, axis=1, inplace=True)
     rct = rct[["record_id"] + list(rename.values())]
     rct["procedure"] = "renal_clearance_testing"
+    rct["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # PET scan
@@ -218,6 +225,7 @@ def clean_penguin():
     pet.drop(["petcom_yn"], axis=1, inplace=True)
     pet.columns = pet.columns.str.replace(r"pet_", "", regex=True)
     pet["procedure"] = "pet_scan"
+    pet["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # fMRI
@@ -228,6 +236,7 @@ def clean_penguin():
     mri = pd.DataFrame(proj.export_records(fields=var))
     mri.replace(rep, "", inplace=True)  # Replace missing values
     mri["procedure"] = "fmri"
+    mri["visit"] = "baseline"
 
     # MERGE
     df = pd.concat([phys, screen], join='outer', ignore_index=True)
@@ -241,7 +250,6 @@ def clean_penguin():
     df = pd.merge(df, demo, how="outer")
     df = df.copy()
     # REORGANIZE
-    df["visit"] = "baseline"
     df["study"] = "PENGUIN"
     id_cols = ["record_id", "co_enroll_id", "study"] + \
         dem_cols[1:] + ["visit", "procedure", "date"]

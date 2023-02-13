@@ -96,6 +96,7 @@ def clean_crocodile():
     med.iloc[:, 1:] = med.iloc[:, 1:].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
     med["procedure"] = "medications"
+    med["visit"] = "screening"
 
     # --------------------------------------------------------------------------
     # Physical exam
@@ -109,6 +110,7 @@ def clean_crocodile():
     phys.drop(["phys_normal", "phys_abnormal"], axis=1, inplace=True)
     phys.columns = phys.columns.str.replace(r"phys_", "", regex=True)
     phys.rename({"sysbp": "sbp", "diasbp": "dbp"}, inplace=True, axis=1)
+    phys["visit"] = "screening"
 
     # --------------------------------------------------------------------------
     # Screening labs
@@ -125,6 +127,7 @@ def clean_crocodile():
     screen.rename({"creat_s": "creatinine_s", "uacr": "acr_u", "a1c": "hba1c",
                    "creat_u": "creatinine_u", "hg": "hemoglobin"}, axis=1, inplace=True)
     screen["procedure"] = "screening"
+    screen["visit"] = "screening"
 
     # --------------------------------------------------------------------------
     # Labs
@@ -141,6 +144,7 @@ def clean_crocodile():
     labs.rename({"uacr": "acr_u", "a1c": "hba1c",
                 "na_u": "sodium_u", "na_s": "sodium_s"}, axis=1, inplace=True)
     labs["procedure"] = "labs"
+    labs["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # BOLD/ASL MRI
@@ -155,6 +159,7 @@ def clean_crocodile():
     mri.rename({"volume_right": "right_kidney_volume_ml", "volume_left": "left_kidney_volume_ml"},
                axis=1, inplace=True)
     mri["procedure"] = "bold_mri"
+    mri["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # DXA Scan
@@ -174,6 +179,7 @@ def clean_crocodile():
     dxa.rename(dict(zip(dxa_cols, ["dexa_" + d for d in dxa_cols])),
                axis=1, inplace=True)
     dxa["procedure"] = "dxa"
+    dxa["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Clamp
@@ -198,6 +204,7 @@ def clean_crocodile():
     clamp.columns = clamp.columns.str.replace(
         r"glucose_minus", "glucose_minus_", regex=True)
     clamp["procedure"] = "clamp"
+    clamp["visit"] = "baseline"
     clamp["insulin_sensitivity_method"] = "hyperinsulinemic_euglycemic_clamp"
     # FFA
     ffa = [c for c in clamp.columns if "ffa_" in c]
@@ -230,6 +237,7 @@ def clean_crocodile():
     rct.rename(rename, axis=1, inplace=True)
     rct = rct[["record_id"] + list(rename.values())]
     rct["procedure"] = "renal_clearance_testing"
+    rct["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Kidney Biopsy
@@ -253,6 +261,7 @@ def clean_crocodile():
     biopsy.columns = biopsy.columns.str.replace(r"vitals_", "", regex=True)
     biopsy.rename({"hg": "hemoglobin"}, inplace=True, axis=1)
     biopsy["procedure"] = "kidney_biopsy"
+    biopsy["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # PET scan
@@ -265,6 +274,7 @@ def clean_crocodile():
     pet.drop(["petcon_yn"], axis=1, inplace=True)
     pet.columns = pet.columns.str.replace(r"pet_", "", regex=True)
     pet["procedure"] = "pet_scan"
+    pet["visit"] = "baseline"
 
     # MERGE
     df = pd.concat([phys, screen], join='outer', ignore_index=True)
@@ -279,7 +289,6 @@ def clean_crocodile():
     df = pd.merge(df, demo, how="outer")
     df = df.copy()
     # REORGANIZE
-    df["visit"] = "baseline"
     df["study"] = "CROCODILE"
     id_cols = ["record_id", "co_enroll_id", "study"] + \
         dem_cols[1:] + ["visit", "procedure", "date"]
