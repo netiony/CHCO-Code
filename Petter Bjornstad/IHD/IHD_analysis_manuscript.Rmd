@@ -9,6 +9,7 @@ output:
     toc: yes
     toc_depth: 3
     toc_float: yes
+    toc_loc: left
 ---
 
 ```{r setup, include=FALSE}
@@ -48,28 +49,29 @@ var_dat <- read.csv("./data_dictionary_master.csv", na.strings = c(" ", "", "-99
 
 # clean data
 clean_dat <- dat %>%
+  mutate(across('co_enroll_id', str_replace, 'IT2D-', 'IT_')) %>%
+  mutate(record_id = case_when(!is.na(co_enroll_id) ~ 
+                                 paste0(pmin(record_id, co_enroll_id), pmax(record_id, co_enroll_id)), 
+                          T ~ record_id)) %>%
   group_by(record_id) %>%
-  fill(names(dat))%>%
+  fill(names(dat)) %>%
   summarise_all(last)
 clean_dat$group <- as.factor(clean_dat$group)
 
-ffa_insulin_dat_clean <- clean_dat %>%
-  mutate(ffa_suppression = case_when(ffa_suppression < 0 ~ 0, T~ffa_suppression)) %>%
-  mutate(p1_ffa_suppression = case_when(p1_ffa_suppression < 0 ~ 0, T~ p1_ffa_suppression)) %>%
-  mutate(p2_ffa_suppression = case_when(p2_ffa_suppression < 0 ~ 0, T~ p2_ffa_suppression)) %>%
-  mutate(ffa_suppression_combined = case_when(is.na(ffa_suppression)~p2_ffa_suppression, T~ffa_suppression)) %>%
-  group_by(record_id, visit) %>%
-  mutate(fasting_insulin = mean(c(insulin_minus_20, insulin_minus_10, insulin_minus_5, insulin_0), na.rm = TRUE)) %>%
-  mutate(fasting_ffa = mean(c(ffa_minus_20, ffa_minus_10, ffa_minus_5, ffa_0), na.rm = TRUE)) %>%
-  mutate(adipose_ir = fasting_insulin*fasting_ffa)
+# Calculate GIR
+# http://www-users.med.cornell.edu/~spon/picu/calc/glucinfr.htm
+clean_dat %<>%
+  mutate(gir=(d20_infusion*20*1000)/(weight*60*100))
 
 # Label variables
-rownames(var_dat) <- var_dat$variable_name 
+rownames(var_dat) <- var_dat$variable_name
 var_dat %<>% select("label")
 var_dat <- t(var_dat) %>% as.data.frame(var_dat)
+rownames(var_dat) <- "label"
 var_dat <- var_dat[intersect(names(clean_dat), names(var_dat))]
 var_dat[setdiff(names(clean_dat), names(var_dat))] <- " "
-label(clean_dat) = var_dat[match(names(clean_dat), names(var_dat))]
+Hmisc::label(clean_dat) = as.list(var_dat[match(names(clean_dat), names(var_dat))])
+label(clean_dat$gir) <- "Glucose Infusion Rate (mg/kg/min)"
 
 # make dataframe with only T2D and obese
 clean_dat_T2D_obese <- clean_dat %>% filter(group %in% c("Type 2 Diabetes","Obese Control"))
@@ -83,23 +85,44 @@ clean_dat_T2D_obese$sex <- as.factor(clean_dat_T2D_obese$sex)
 1. We did not find oxygen availability in the dataset.
 2. For albuminuria, we used variable "ACR_baseline" - is that correct?
 
+1. What variables are 'O2_Consumption._cortex', 'O2_Consumption_medulla','O2_Consumption_Kidney' in the harmonized dataset? Should they be separated by left/right?
+2. Calculate GIR using D20 infusion?
+
 # Results
 
-## Descriptive statistics
+## Descriptive statistics of all participants
 
 ```{r echo=FALSE, include=FALSE}
-t1 <- table1(~sex + age + race +  ethnicity +  hba1c + height +  weight +  bmi +  dexa_body_fat +  waistcm + cholesterol +  hdl +  ldl +  triglycerides +  sbp +  dbp + map +  creatinine_s +  cystatin_c_s + gfr_raw_plasma_urine +  gfr_bsa_plasma_urine +  erpf_raw_plasma_urine + erpf_bsa_plasma_urine +  gfr_raw_plasma +  gfr_bsa_plasma +  erpf_raw_plasma +  erpf_bsa_plasma +  bold_r_pf_cortex +  bold_r_pf_medulla + bold_r_pf_kidney | group, data=clean_dat)
+t1 <- table1(~sex + age + race +  ethnicity +  hba1c + height +  weight +  bmi +  dexa_body_fat +  waistcm + cholesterol +  hdl +  ldl +  triglycerides +  sbp +  dbp + map +  creatinine_s +  cystatin_c_s + gfr_raw_plasma +  gfr_bsa_plasma +  erpf_raw_plasma +  erpf_bsa_plasma +  fsoc_r_cortex + fsoc_r_medulla + fsoc_r_kidney + fsoc_l_cortex + fsoc_l_medulla + fsoc_l_kidney + ffa_suppression_combined| group, data=clean_dat)
 t1 <- print(t1, showAllLevels=T)
 
-t_erpf <- table1(~gfr_raw_plasma_urine +  gfr_bsa_plasma_urine +  erpf_raw_plasma_urine + erpf_bsa_plasma_urine +  gfr_raw_plasma +  gfr_bsa_plasma +  erpf_raw_plasma +  erpf_bsa_plasma | group, data=clean_dat)
+t_erpf <- table1(~ gfr_raw_plasma +  gfr_bsa_plasma +  erpf_raw_plasma +  erpf_bsa_plasma | group, data=clean_dat)
 t_erpf <- print(t_erpf, showAllLevels=T)
 ```
 
+```{r}
+t1
+t_erpf
+```
 
+## Descriptive statistics of obese control and T2D participants
+
+```{r echo=FALSE, include=FALSE}
+t1_T2D_obese <- table1(~sex + age + race +  ethnicity +  hba1c + height +  weight +  bmi +  dexa_body_fat +  waistcm + cholesterol +  hdl +  ldl +  triglycerides +  sbp +  dbp + map +  creatinine_s +  cystatin_c_s +  gfr_raw_plasma +  gfr_bsa_plasma +  erpf_raw_plasma +  erpf_bsa_plasma +  fsoc_r_cortex + fsoc_r_medulla + fsoc_r_kidney + fsoc_l_cortex + fsoc_l_medulla + fsoc_l_kidney + ffa_suppression_combined| group, data=clean_dat_T2D_obese)
+t1_T2D_obese <- print(t1_T2D_obese, showAllLevels=T)
+
+t_erpf_T2D_obese <- table1(~ gfr_raw_plasma +  gfr_bsa_plasma +  erpf_raw_plasma +  erpf_bsa_plasma | group, data=clean_dat_T2D_obese)
+t_erpf_T2D_obese <- print(t_erpf_T2D_obese, showAllLevels=T)
+```
+
+```{r}
+t1_T2D_obese
+t_erpf_T2D_obese
+```
 ## Measures of insulin sensitivity, adjusted for sex
 
 ```{r echo=FALSE,comment=''}
-sivars <- c("steady_state_cpeptide","steady_state_insulin","d20_infusion","airg","di","ffa_suppression")
+sivars <- c("steady_state_cpeptide","steady_state_insulin","gir","airg","di","ffa_suppression")
 
 # group comparisons adjusted for sex
 for (v in sivars) {
@@ -115,7 +138,7 @@ for (v in sivars) {
 ## GFR and ERPF, adjusted for sex and A1c
 
 ```{r echo=FALSE,comment=''}
-gfr_erpf_vars <- c('gfr_raw_plasma_urine', 'gfr_bsa_plasma_urine', 'erpf_raw_plasma_urine','erpf_bsa_plasma_urine', 'gfr_raw_plasma', 'gfr_bsa_plasma', 'erpf_raw_plasma', 'erpf_bsa_plasma')
+gfr_erpf_vars <- c('gfr_raw_plasma', 'gfr_bsa_plasma', 'erpf_raw_plasma', 'erpf_bsa_plasma')
 
 # group comparisons adjusted for sex
 for (v in gfr_erpf_vars) {
@@ -147,7 +170,7 @@ for (v in o2_vars) {
 ## FFA suppression vs. albuminuria and renal oxygen consumption
 
 ```{r echo=FALSE,comment=''}
-ffa_vars <- c("fsoc_r_cortex", "fsoc_r_medulla", "fsoc_r_kidney", "fsoc_l_cortex", "fsoc_l_medulla", "fsoc_l_kidney","acr_baseline")
+ffa_vars <- c("fsoc_r_cortex", "fsoc_r_medulla", "fsoc_r_kidney", "fsoc_l_cortex", "fsoc_l_medulla", "fsoc_l_kidney","acr_baseline", "glomerular_pressure", "eff_arteriolar_resistance")
 
 # group comparisons adjusted for sex
 for (v in ffa_vars) {
