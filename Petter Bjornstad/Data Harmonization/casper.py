@@ -15,8 +15,9 @@ __status__ = "Dev"
 def clean_casper():
     # Libraries
     import os
-    home_dir = os.path.expanduser("~")
-    os.chdir(home_dir + "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+    import sys
+    sys.path.insert(0, os.path.expanduser('~') +
+                    "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import redcap
     import pandas as pd
     import numpy as np
@@ -42,7 +43,8 @@ def clean_casper():
                 "gender", "race", "ethnicity"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
-    demo.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    demo.replace(rep, np.nan, inplace=True)
     demo["co_enroll_id"] = ""
     demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date"},
                 inplace=True, axis=1)
@@ -75,7 +77,8 @@ def clean_casper():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "medical_history", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
-    med.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    med.replace(rep, np.nan, inplace=True)
     # SGLT2i (diabetes_med_other___4), RAASi (htn_med_type___1, htn_med_type___2), Metformin (diabetes_med_other___1)
     med = med[["subject_id", "diabetes_med_other___4", "htn_med_type___1",
                "htn_med_type___2", "diabetes_med_other___1", "diabetes_med___1", "diabetes_med___2"]]
@@ -104,7 +107,7 @@ def clean_casper():
     med["insulin_med_timepoint"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med["procedure"] = "medications"
-    med["visit"] = "screening"
+    med["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Physical exam
@@ -113,7 +116,8 @@ def clean_casper():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "physical_exam", "field_name"]]
     phys = pd.DataFrame(proj.export_records(fields=var))
-    phys.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    phys.replace(rep, np.nan, inplace=True)
     phys["procedure"] = "physical_exam"
     phys.drop(["phys_norm", "phys_no", "breast_tanner",
                "testicular_volume", "lmp", "screen_bmi_percentile",
@@ -123,7 +127,7 @@ def clean_casper():
     phys.rename({"sys_bp": "sbp", "dys_bp": "dbp",
                  "waist_circumference": "waistcm",
                  "hip_circumference": "hipcm"}, inplace=True, axis=1)
-    phys["visit"] = "screening"
+    phys["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Screening labs
@@ -132,7 +136,8 @@ def clean_casper():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "screening_labs", "field_name"]]
     screen = pd.DataFrame(proj.export_records(fields=var))
-    screen.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    screen.replace(rep, np.nan, inplace=True)
     screen.drop(['a1c_pre', 'a1c_pre_date', "screen_pregnant"],
                 axis=1, inplace=True)
     screen.columns = screen.columns.str.replace(
@@ -143,7 +148,7 @@ def clean_casper():
     screen["procedure"] = "screening_labs"
     # Assume medication review done at screening
     med["date"] = screen["date"]
-    screen["visit"] = "screening"
+    screen["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Clamp
@@ -152,7 +157,8 @@ def clean_casper():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "clamp", "field_name"]]
     clamp = pd.DataFrame(proj.export_records(fields=var))
-    clamp.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    clamp.replace(rep, np.nan, inplace=True)
     # Format
     clamp.drop(["baseline", "fasting_labs", "bg_labs", "urine_labs", "hct_lab",
                 "a1c_clamp_time", "clamp_a1c", "clamp_a1c_date"],
@@ -181,7 +187,8 @@ def clean_casper():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "body_composition_dxa", "field_name"]]
     dxa = pd.DataFrame(proj.export_records(fields=var))
-    dxa.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    dxa.replace(rep, np.nan, inplace=True)
     dxa.columns = dxa.columns.str.replace(
         r"dexa_", "", regex=True)
     dxa_cols = dxa.columns[2:].to_list()
@@ -197,17 +204,25 @@ def clean_casper():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "outcomes", "field_name"]]
     out = pd.DataFrame(proj.export_records(fields=var))
-    out.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    out.replace(rep, np.nan, inplace=True)
     out.drop(["kidney_outcomes", "egfr", "metab_outcomes",
               "asl_outcomes", "bold_outcomes"],
              axis=1, inplace=True)
-    out.columns = out.columns.str.replace(
-        r"mri_", "", regex=True)
+    # Kidney outcomes like GFR, etc. were collected with the clamp, not
+    # necessarily the day of the MRI
+    mri_cols = [c for c in out.columns if ("bold_" in c) or ("asl_" in c)]
+    mri = out[["subject_id", "mri_date"] + mri_cols].copy()
+    mri.rename({"mri_date": "date"}, axis=1, inplace=True)
+    out = out[list(set(out.columns).difference(mri_cols))]
     rename = {"gfr": "gfr_raw_plasma", "gfr_bsa": "gfr_bsa_plasma",
               "rpf": "erpf_raw_plasma", "rpf_bsa": "erpf_bsa_plasma"}
     out.rename(rename, axis=1, inplace=True)
+    out["date"] = clamp["date"]
     out["procedure"] = "kidney_outcomes"
     out["visit"] = "baseline"
+    mri["procedure"] = "bold_mri"
+    mri["visit"] = "baseline"
 
     # MERGE
     df = pd.concat([phys, screen], join='outer', ignore_index=True)
@@ -215,6 +230,7 @@ def clean_casper():
     df = pd.concat([df, dxa], join='outer', ignore_index=True)
     df = pd.concat([df, clamp], join='outer', ignore_index=True)
     df = pd.concat([df, out], join='outer', ignore_index=True)
+    df = pd.concat([df, mri], join='outer', ignore_index=True)
     df = pd.merge(df, demo, how="outer")
     df = df.copy()
     # REORGANIZE

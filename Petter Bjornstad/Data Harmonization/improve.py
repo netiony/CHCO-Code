@@ -13,20 +13,17 @@ __status__ = "Dev"
 def clean_improve():
     # Libraries
     import os
-    home_dir = os.path.expanduser("~")
-    os.chdir(home_dir + "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+    import sys
+    sys.path.insert(0, os.path.expanduser('~') +
+                    "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import redcap
     import pandas as pd
     import numpy as np
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
-    try:
-        tokens = pd.read_csv(
-            "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
-    except FileNotFoundError:
-        tokens = pd.read_csv(
-            "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+    tokens = pd.read_csv(
+        "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "IMPROVE", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -37,7 +34,7 @@ def clean_improve():
                    "redcap_repeat_instrument", "redcap_repeat_instance"]
     # Replace missing values
     rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999, -99999]
-    rep = rep + [str(r) for r in rep]
+    rep = rep + [str(r) for r in rep] + [""]
 
     # --------------------------------------------------------------------------
     # Demographics
@@ -48,7 +45,8 @@ def clean_improve():
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols,
                                             events=["screening_arm_1"]))
-    demo.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    demo.replace(rep, np.nan, inplace=True)
     demo["group"] = "Type 2 Diabetes"
     demo.drop(redcap_cols, axis=1, inplace=True)
     demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date"},
@@ -74,12 +72,13 @@ def clean_improve():
     # Medications
     # --------------------------------------------------------------------------
 
-    var = ["subject_id", "study_visit", "diabetes_med",
+    var = ["subject_id", "study_visit", "med_date", "diabetes_med",
            "diabetes_med_other", "htn_med_type"]
     med = pd.DataFrame(proj.export_records(fields=var))
-    med.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    med.replace(rep, np.nan, inplace=True)
     # SGLT2i (diabetes_med_other___4), RAASi (htn_med_type___1, htn_med_type___2), Metformin (diabetes_med_other___1)
-    med = med[["subject_id", "study_visit", "diabetes_med_other___3", "htn_med_type___1",
+    med = med[["subject_id", "study_visit", "med_date", "diabetes_med_other___3", "htn_med_type___1",
                "htn_med_type___2", "diabetes_med___1", "diabetes_med___2"]]
     # SGLT2i
     med["diabetes_med_other___3"].replace(
@@ -103,7 +102,11 @@ def clean_improve():
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med.rename({"diabetes_med___2": "insulin_med_timepoint"},
                axis=1, inplace=True)
+    med.rename({"med_date": "date"},
+               axis=1, inplace=True)
     med["procedure"] = "medications"
+    # Drop rows with all missing
+    med.dropna(thresh=3, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Physical exam
@@ -113,8 +116,8 @@ def clean_improve():
                                                                == "physical_exam", "field_name"]]
     phys = pd.DataFrame(proj.export_records(
         fields=var, events=["screening_arm_1"]))
-    phys.replace(rep, "", inplace=True)  # Replace missing values
-    phys["procedure"] = "physical_exam"
+    # Replace missing values
+    phys.replace(rep, np.nan, inplace=True)
     phys.drop(redcap_cols + ["phys_norm", "phys_no", "breast_tanner",
                              "testicular_volume", "lmp", "screen_bmi_percentile",
                              "activity_factor_male", "activity_factor_female",
@@ -123,6 +126,9 @@ def clean_improve():
     phys.rename({"sys_bp": "sbp", "dys_bp": "dbp",
                  "waist_circumference": "waistcm",
                  "hip_circumference": "hipcm"}, inplace=True, axis=1)
+    phys["procedure"] = "physical_exam"
+    # Drop rows with all missing
+    phys.dropna(thresh=3, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Screening labs
@@ -132,7 +138,7 @@ def clean_improve():
                                                                == "screening_labs", "field_name"]]
     screen = pd.DataFrame(proj.export_records(fields=var,
                                               events=["screening_arm_1"]))
-    screen.replace(rep, "", inplace=True)  # Replace missing values
+    screen.replace(rep, np.nan, inplace=True)  # Replace missing values
     screen.drop(redcap_cols + ['a1c_pre', 'a1c_pre_date', "screen_pregnant"],
                 axis=1, inplace=True)
     screen.columns = screen.columns.str.replace(
@@ -141,6 +147,8 @@ def clean_improve():
                    "urine_cre": "creatinine_u", "urine_mab": "microalbumin_u"},
                   axis=1, inplace=True)
     screen["procedure"] = "screening"
+    # Drop rows with all missing
+    screen.dropna(thresh=3, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Accelerometry
@@ -149,12 +157,14 @@ def clean_improve():
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "accelerometry", "field_name"]]
     accel = pd.DataFrame(proj.export_records(fields=var))
-    accel.replace(rep, "", inplace=True)  # Replace missing values
+    accel.replace(rep, np.nan, inplace=True)  # Replace missing values
     accel = accel.loc[accel["acc_wear_percent"] != ""]
     accel.drop(redcap_cols + ["study_visit_accel"], axis=1, inplace=True)
     accel.columns = accel.columns.str.replace(
         r"acc_|accel_", "", regex=True)
     accel["procedure"] = "accelerometry"
+    # Drop rows with all missing
+    accel.dropna(thresh=4, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Cardio/Abdominal MRI
@@ -163,13 +173,15 @@ def clean_improve():
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "cardioabdominal_mri", "field_name"]]
     mri = pd.DataFrame(proj.export_records(fields=var))
-    mri.replace(rep, "", inplace=True)  # Replace missing values
+    mri.replace(rep, np.nan, inplace=True)  # Replace missing values
     mri.drop(redcap_cols + ["mri_cardio", "mri_abdo",
                             "mri_aortic", "study_visit_mri"],
              axis=1, inplace=True)
     mri.columns = mri.columns.str.replace(
         r"mri_|visit_", "", regex=True)
     mri["procedure"] = "cardio_abdominal_mri"
+    # Drop rows with all missing
+    mri.dropna(thresh=4, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # MMTT + Metabolic Cart
@@ -178,7 +190,7 @@ def clean_improve():
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "mmtt_metabolic_cart", "field_name"]]
     mmtt = pd.DataFrame(proj.export_records(fields=var))
-    mmtt.replace(rep, "", inplace=True)  # Replace missing values
+    mmtt.replace(rep, np.nan, inplace=True)  # Replace missing values
     # Drop unnecessary columns
     mmtt.drop(redcap_cols + ["study_visit_mttt", "mmtt_vitals", "mmtt_pregnant",
                              "mmtt_lmp", "mmtt_brmr", "mmtt_60rmr", "mmtt_base_labs", "mmtt_ffa_labs", "mmtt_insulin",
@@ -206,6 +218,8 @@ def clean_improve():
     mmtt["ffa_suppression"] = (
         (mmtt["baseline_ffa"] - mmtt["steady_state_ffa"]) / mmtt["baseline_ffa"]) * 100
     mmtt["ffa_method"] = "mmtt"
+    # Drop rows with all missing
+    mmtt.dropna(thresh=5, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # DXA
@@ -214,7 +228,8 @@ def clean_improve():
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "body_composition_dxa_bod_pod", "field_name"]]
     dxa = pd.DataFrame(proj.export_records(fields=var))
-    dxa.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    dxa.replace(rep, np.nan, inplace=True)
     dxa.drop(redcap_cols + ["study_visit_bodycomp", "dxa_complete",
                             "bodpod_complete"],
              axis=1, inplace=True)
@@ -226,6 +241,8 @@ def clean_improve():
                 "bod_pod_fat_mass": "bod_pod_fat_kg",
                 "bodcomp_date": "date"}, axis=1, inplace=True)
     dxa["procedure"] = "dxa"
+    # Drop rows with all missing
+    dxa.dropna(thresh=4, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Clamp
@@ -234,10 +251,12 @@ def clean_improve():
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "clamp", "field_name"]]
     clamp = pd.DataFrame(proj.export_records(fields=var))
-    clamp.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    clamp.replace(rep, np.nan, inplace=True)
     # Format
     clamp.drop(redcap_cols + ["study_visit_clamp", "baseline", "fasting_labs",
-                              "bg_labs", "ns_bolus", "urine_labs", "cpep_lab"],
+                              "bg_labs", "ns_bolus", "urine_labs", "cpep_lab",
+                              "iohexol_bolus", "pah_bolus", "hct_lab", "insulin_labs"],
                axis=1, inplace=True)
     clamp.columns = clamp.columns.str.replace(
         r"clamp_", "", regex=True)
@@ -252,8 +271,7 @@ def clean_improve():
     clamp["insulin_sensitivity_method"] = "hyperglycemic_clamp"
     # M
     num_vars = ["d20_infusion", "weight"]
-    clamp[num_vars] = clamp[num_vars].apply(
-        pd.to_numeric, errors='coerce')
+    clamp[num_vars] = clamp[num_vars].apply(pd.to_numeric, errors='coerce')
     clamp["raw_m"] = (clamp["d20_infusion"] * 190 / 60) / clamp["weight"]
     # No FFA
     # Insulin
@@ -274,7 +292,9 @@ def clean_improve():
         pd.to_numeric, errors='coerce')
     clamp["steady_state_cpeptide"] = clamp[['cpeptide_220', 'cpeptide_230',
                                             'cpeptide_240', 'cpeptide_245',
-                                            'cpeptide_249', 'cpeptide_250', 'cpeptide_252', 'cpeptide_253', 'cpeptide_254', 'cpeptide_255']].mean(axis=1)
+                                            'cpeptide_249', 'cpeptide_250',
+                                            'cpeptide_252', 'cpeptide_253',
+                                            'cpeptide_254', 'cpeptide_255']].mean(axis=1)
     # ACPRg
     clamp["acprg"] = clamp[['cpeptide_2', 'cpeptide_4',
                             'cpeptide_6', 'cpeptide_8', 'cpeptide_10']].mean(axis=1) - clamp[['cpeptide_minus_10', 'cpeptide_minus_5']].mean(axis=1)
@@ -282,8 +302,10 @@ def clean_improve():
     clamp["airg"] = clamp[['insulin_2', 'insulin_4',
                            'insulin_6', 'insulin_8', 'insulin_10']].mean(axis=1) * 6 - clamp[['insulin_minus_10', 'insulin_minus_5']].mean(axis=1) * 6
     # DI
-    clamp["di"] = \
-        (clamp["raw_m"] / clamp["steady_state_insulin"]) * clamp["airg"]
+    clamp["di"] = (clamp["raw_m"] /
+                   clamp["steady_state_insulin"]) * clamp["airg"]
+    # Drop rows with all missing
+    clamp.dropna(thresh=5, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Outcomes
@@ -292,16 +314,25 @@ def clean_improve():
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "outcomes", "field_name"]]
     out = pd.DataFrame(proj.export_records(fields=var))
-    out.replace(rep, "", inplace=True)  # Replace missing values
-    out.drop(redcap_cols + ["kidney_outcomes", "egfr", "metab_outcomes",
+    out.replace(rep, np.nan, inplace=True)  # Replace missing values
+    out.drop(redcap_cols + ["kidney_outcomes", "egfr", "metab_outcomes", "study_visit_outcomes",
                             "asl_outcomes", "bold_outcomes", "adc_outcomes"],
              axis=1, inplace=True)
-    out.columns = out.columns.str.replace(
-        r"mri_", "", regex=True)
+    # Kidney outcomes like GFR, etc. were collected with the clamp, not
+    # necessarily the day of the MRI
+    mri_cols = [c for c in out.columns if ("bold_" in c) or ("asl_" in c)]
+    mri = out[["subject_id", "study_visit", "mri_date"] + mri_cols].copy()
+    mri.rename({"mri_date": "date"}, axis=1, inplace=True)
+    out = out[list(set(out.columns).difference(mri_cols))]
     rename = {"gfr": "gfr_raw_plasma", "gfr_bsa": "gfr_bsa_plasma",
-              "rpf": "erpf_raw_plasma", "erpf_bsa": "erpf_bsa_plasma"}
+              "rpf": "erpf_raw_plasma", "rpf_bsa": "erpf_bsa_plasma"}
     out.rename(rename, axis=1, inplace=True)
+    out["date"] = clamp["date"]
     out["procedure"] = "kidney_outcomes"
+    mri["procedure"] = "bold_mri"
+    # Drop rows with all missing
+    out.dropna(thresh=4, axis=0, inplace=True)
+    mri.dropna(thresh=4, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Kidney Biopsy
@@ -316,7 +347,8 @@ def clean_improve():
                  "mes_volume_con", "glom_nuc_count", "mes_nuc_count", "art_intima",
                  "art_media", "pod_nuc_density", "pod_cell_volume"]
     biopsy = pd.DataFrame(proj.export_records(fields=var))
-    biopsy.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    biopsy.replace(rep, np.nan, inplace=True)
     biopsy.drop(redcap_cols + [col for col in biopsy.columns if '_yn' in col] +
                 [col for col in biopsy.columns if 'procedure_' in col],
                 axis=1, inplace=True)
@@ -325,17 +357,19 @@ def clean_improve():
     biopsy.columns = biopsy.columns.str.replace(r"vitals_", "", regex=True)
     biopsy.rename({"hg": "hemoglobin"}, inplace=True, axis=1)
     biopsy["procedure"] = "kidney_biopsy"
+    # Drop rows with all missing
+    biopsy.dropna(thresh=4, axis=0, inplace=True)
 
     # MERGE
-    df = pd.concat([phys, screen], join='outer', ignore_index=True)
-    df = pd.concat([df, med], join='outer', ignore_index=True)
-    df = pd.concat([df, accel], join='outer', ignore_index=True)
+    df = pd.concat([accel, med], join='outer', ignore_index=True)
     df = pd.concat([df, mri], join='outer', ignore_index=True)
     df = pd.concat([df, mmtt], join='outer', ignore_index=True)
     df = pd.concat([df, dxa], join='outer', ignore_index=True)
     df = pd.concat([df, clamp], join='outer', ignore_index=True)
     df = pd.concat([df, out], join='outer', ignore_index=True)
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
+    df = pd.concat([df, screen], join='outer', ignore_index=True)
+    df = pd.concat([df, phys], join='outer', ignore_index=True)
     df = pd.merge(df, demo, how="outer")
     df = df.copy()
     # REORGANIZE
@@ -350,7 +384,7 @@ def clean_improve():
     df.sort_values(
         ["subject_id", "visit", "date", "procedure"], inplace=True)
     # Change study visit names
-    df["visit"].replace({'': "baseline", '1': "pre_surgery",
+    df["visit"].replace({np.nan: "baseline", '1': "baseline",
                          '2': "3_months_post_surgery",
                               '3': "12_months_post_surgery"}, inplace=True)
     # Rename subject identifier

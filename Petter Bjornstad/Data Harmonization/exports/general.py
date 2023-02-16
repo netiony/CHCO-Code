@@ -10,14 +10,16 @@ __maintainer__ = "Tim Vigers"
 __email__ = "timothy.vigers@cuanschutz.edu"
 __status__ = "Dev"
 import os
-os.chdir(os.path.expanduser('~'))
-os.chdir("GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+import sys
+sys.path.insert(0, os.path.expanduser('~') +
+                "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
 from data_harmonization import harmonize_data
 from datetime import datetime
 import pandas as pd
 # Get dataset
 df = harmonize_data()
-df.to_csv("~/temp.csv")
+df = df[df["study"] == "IMPROVE"]
+df.to_csv("~/Documents/temp.csv", index=False)
 # # Write
 # df.to_csv("/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", index=False)
 # # Update for Michigan

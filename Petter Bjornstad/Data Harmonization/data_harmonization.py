@@ -17,8 +17,9 @@ __status__ = "Dev"
 def harmonize_data():
     # Libraries
     import os
-    home_dir = os.path.expanduser("~")
-    os.chdir(home_dir + "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+    import sys
+    sys.path.insert(0, os.path.expanduser('~') +
+                    "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import pandas as pd
     import numpy as np
     from natsort import natsorted, ns

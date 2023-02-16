@@ -13,8 +13,9 @@ __status__ = "Dev"
 def clean_coffee():
     # Libraries
     import os
-    home_dir = os.path.expanduser("~")
-    os.chdir(home_dir + "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+    import sys
+    sys.path.insert(0, os.path.expanduser('~') +
+                    "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import redcap
     import pandas as pd
     import numpy as np
@@ -44,7 +45,8 @@ def clean_coffee():
                 "gender", "race", "ethnicity"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
-    demo.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    demo.replace(rep, np.nan, inplace=True)
     demo["co_enroll_id"] = ""
     demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date"},
                 inplace=True, axis=1)
@@ -75,7 +77,8 @@ def clean_coffee():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "medical_history_casper", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
-    med.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    med.replace(rep, np.nan, inplace=True)
     # SGLT2i (diabetes_med_other___4), RAASi (htn_med_type___1, htn_med_type___2), Metformin (diabetes_med_other___1)
     med = med[["subject_id", "diabetes_med_other___4", "htn_med_type___1",
                "htn_med_type___2", "diabetes_med_other___1", "diabetes_med___1", "diabetes_med___2"]]
@@ -104,7 +107,7 @@ def clean_coffee():
     med["insulin_med_timepoint"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med["procedure"] = "medications"
-    med["visit"] = "screening"
+    med["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Physical exam
@@ -113,14 +116,16 @@ def clean_coffee():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "physical_exam_casper", "field_name"]]
     phys = pd.DataFrame(proj.export_records(fields=var))
-    phys.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    phys.replace(rep, np.nan, inplace=True)
     phys["procedure"] = "physical_exam"
     phys.drop(["phys_norm", "phys_no", "breast_tanner",
-               "testicular_volume", "lmp", "screen_bmi_percentile", "male_activity_factor", "fem_activity_factor", "schofield_male", "schofield_female"], axis=1, inplace=True)
+               "testicular_volume", "lmp", "screen_bmi_percentile", "male_activity_factor",
+               "fem_activity_factor", "schofield_male", "schofield_female"], axis=1, inplace=True)
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
     phys.rename({"sys_bp": "sbp", "dys_bp": "dbp", "waist_circumference": "waistcm",
                 "hip_circumference": "hipcm"}, inplace=True, axis=1)
-    phys["visit"] = "screening"
+    phys["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Screening labs
@@ -129,7 +134,8 @@ def clean_coffee():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "screening_labs_casper", "field_name"]]
     screen = pd.DataFrame(proj.export_records(fields=var))
-    screen.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    screen.replace(rep, np.nan, inplace=True)
     screen.drop(['a1c_pre', 'a1c_pre_date', "screen_pregnant"],
                 axis=1, inplace=True)
     screen.columns = screen.columns.str.replace(
@@ -137,8 +143,10 @@ def clean_coffee():
     screen.rename({"serum_creatinine": "creatinine_s", "urine_acr": "acr_u",
                    "urine_cre": "creatinine_u", "urine_mab": "microalbumin_u"},
                   axis=1, inplace=True)
+    # Assume medication review done at screening
+    med["date"] = screen["date"]
+    screen["visit"] = "baseline"
     screen["procedure"] = "screening"
-    screen["visit"] = "screening"
 
     # --------------------------------------------------------------------------
     # Clamp
@@ -147,7 +155,8 @@ def clean_coffee():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "clamp", "field_name"]]
     clamp = pd.DataFrame(proj.export_records(fields=var))
-    clamp.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    clamp.replace(rep, np.nan, inplace=True)
     # Format
     clamp.drop(["baseline", "fasting_labs", "bg_labs", "urine_labs", "hct_lab",
                 "cs_clamp_date"],
@@ -173,22 +182,32 @@ def clean_coffee():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "outcomes", "field_name"]]
     out = pd.DataFrame(proj.export_records(fields=var))
-    out.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    out.replace(rep, np.nan, inplace=True)
     out.drop(["kidney_outcomes", "egfr", "metab_outcomes",
               "asl_outcomes", "bold_outcomes"],
              axis=1, inplace=True)
-    out.columns = out.columns.str.replace(
-        r"mri_", "", regex=True)
+    # Kidney outcomes like GFR, etc. were collected with the clamp, not
+    # necessarily the day of the MRI
+    mri_cols = [c for c in out.columns if ("bold_" in c) or ("asl_" in c)]
+    mri = out[["subject_id", "mri_date"] + mri_cols].copy()
+    mri.rename({"mri_date": "date"}, axis=1, inplace=True)
+    out = out[list(set(out.columns).difference(mri_cols))]
     rename = {"gfr_abs": "gfr_raw_plasma", "gfr_adj": "gfr_bsa_plasma",
               "rpf_abs": "erpf_raw_plasma", "rpf_adj": "erpf_bsa_plasma"}
     out.rename(rename, axis=1, inplace=True)
+    out["date"] = clamp["date"]
     out["procedure"] = "kidney_outcomes"
+    out["visit"] = "baseline"
+    mri["procedure"] = "bold_mri"
+    mri["visit"] = "baseline"
 
     # MERGE
     df = pd.concat([phys, screen], join='outer', ignore_index=True)
     df = pd.concat([df, med], join='outer', ignore_index=True)
     df = pd.concat([df, clamp], join='outer', ignore_index=True)
     df = pd.concat([df, out], join='outer', ignore_index=True)
+    df = pd.concat([df, mri], join='outer', ignore_index=True)
     df = pd.merge(df, demo, how="outer")
     df = df.copy()
     # REORGANIZE
@@ -205,7 +224,6 @@ def clean_coffee():
     # Replace missing values
     rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999, -99999]
     rep = rep + [str(r) for r in rep]
-    df.replace(rep, "", inplace=True)
     # Drop empty columns
     df.replace("", np.nan, inplace=True)
     df.dropna(how='all', axis=1, inplace=True)

@@ -13,8 +13,9 @@ __status__ = "Dev"
 def clean_renal_heir():
     # Libraries
     import os
-    home_dir = os.path.expanduser("~")
-    os.chdir(home_dir + "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+    import sys
+    sys.path.insert(0, os.path.expanduser('~') +
+                    "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import redcap
     import pandas as pd
     import numpy as np
@@ -44,7 +45,8 @@ def clean_renal_heir():
                 "group", "gender", "race", "ethnicity"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
-    demo.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    demo.replace(rep, np.nan, inplace=True)
     demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date"},
                 inplace=True, axis=1)
     dem_cols[3] = "diabetes_dx_date"
@@ -71,7 +73,8 @@ def clean_renal_heir():
     var = ["subject_id"] + ["sglt2i"] + [v for v in meta.loc[meta["form_name"]
                                                              == "medical_history", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
-    med.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    med.replace(rep, np.nan, inplace=True)
 
     # Just SGLT2i for now
     med = med[["subject_id", "sglt2i",
@@ -85,7 +88,7 @@ def clean_renal_heir():
     med.rename({"diabetes_med___3": "insulin_med_timepoint"},
                axis=1, inplace=True)
     med["procedure"] = "medications"
-    med["visit"] = "screening"
+    med["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Physical exam
@@ -94,14 +97,15 @@ def clean_renal_heir():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "physical_exam", "field_name"]]
     phys = pd.DataFrame(proj.export_records(fields=var))
-    phys.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    phys.replace(rep, np.nan, inplace=True)
     phys["procedure"] = "physical_exam"
     phys.drop(["male_activity_factor", "fem_activity_factor", "schofield_male",
                "schofield_female", "phys_norm", "phys_no", "breast_tanner", "testicular_volume", "lmp", "screen_bmi_percentile"], axis=1, inplace=True)
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
     phys.rename({"sys_bp": "sbp", "dys_bp": "dbp",
                 "waist_circumference": "waistcm", "hip_circumference": "hipcm"}, inplace=True, axis=1)
-    phys["visit"] = "screening"
+    phys["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Screening labs
@@ -110,7 +114,8 @@ def clean_renal_heir():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "screening_labs", "field_name"]]
     screen = pd.DataFrame(proj.export_records(fields=var))
-    screen.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    screen.replace(rep, np.nan, inplace=True)
     screen.drop(["a1c_pre", "a1c_pre_date", "screen_pregnant"],
                 axis=1, inplace=True)
     screen.columns = screen.columns.str.replace(
@@ -119,7 +124,7 @@ def clean_renal_heir():
                    "urine_mab": "microalbumin_u", "urine_cre": "creatinine_u"},
                   axis=1, inplace=True)
     screen["procedure"] = "screening"
-    screen["visit"] = "screening"
+    screen["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # DXA Scan
@@ -128,7 +133,8 @@ def clean_renal_heir():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "body_composition_dxa", "field_name"]]
     dxa = pd.DataFrame(proj.export_records(fields=var))
-    dxa.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    dxa.replace(rep, np.nan, inplace=True)
     dxa.columns = dxa.columns.str.replace(
         r"dexa_", "", regex=True)
     dxa_cols = dxa.columns[2:].to_list()
@@ -144,7 +150,8 @@ def clean_renal_heir():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "clamp", "field_name"]]
     clamp = pd.DataFrame(proj.export_records(fields=var))
-    clamp.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    clamp.replace(rep, np.nan, inplace=True)
     # Format
     clamp.drop(["baseline", "fasting_labs", "urine_labs", "hct_lab",
                 "bg_labs", "ffa_lab", "cpep_lab", "insulin_labs"], axis=1, inplace=True)
@@ -210,7 +217,8 @@ def clean_renal_heir():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "outcomes", "field_name"]]
     out = pd.DataFrame(proj.export_records(fields=var))
-    out.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    out.replace(rep, np.nan, inplace=True)
     out.drop(["kidney_outcomes", "egfr", "metab_outcomes", "asl_outcomes"],
              axis=1, inplace=True)
     out.columns = out.columns.str.replace(
@@ -234,7 +242,8 @@ def clean_renal_heir():
                  "mes_volume_con", "glom_nuc_count", "mes_nuc_count", "art_intima",
                  "art_media", "pod_nuc_density", "pod_cell_volume"]
     biopsy = pd.DataFrame(proj.export_records(fields=var))
-    biopsy.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    biopsy.replace(rep, np.nan, inplace=True)
     biopsy.drop([col for col in biopsy.columns if '_yn' in col] +
                 [col for col in biopsy.columns if 'procedure_' in col],
                 axis=1, inplace=True)

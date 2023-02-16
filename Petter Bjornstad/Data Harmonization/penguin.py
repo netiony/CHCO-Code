@@ -13,8 +13,9 @@ __status__ = "Dev"
 def clean_penguin():
     # Libraries
     import os
-    home_dir = os.path.expanduser("~")
-    os.chdir(home_dir + "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+    import sys
+    sys.path.insert(0, os.path.expanduser('~') +
+                    "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
     import redcap
     import pandas as pd
     import numpy as np
@@ -43,7 +44,8 @@ def clean_penguin():
     dem_cols = ["record_id", "dob", "group", "sex", "race", "ethnicity"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
-    demo.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    demo.replace(rep, np.nan, inplace=True)
     # Race columns combined into one
     demo = combine_checkboxes(demo, base_name="race", levels=[
         "American Indian or Alaskan Native",
@@ -70,7 +72,8 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "medical_history", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
-    med.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    med.replace(rep, np.nan, inplace=True)
     med_list = {"htn_med___1": "ace_inhibitor",
                 "htn_med___2": "angiotensin_receptor_blocker",
                 "htn_med___3": "beta_blocker",
@@ -87,7 +90,7 @@ def clean_penguin():
     med.iloc[:, 1:] = med.iloc[:, 1:].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
     med["procedure"] = "medications"
-    med["visit"] = "screening"
+    med["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Physical exam
@@ -96,13 +99,14 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "physical_exam", "field_name"]]
     phys = pd.DataFrame(proj.export_records(fields=var))
-    phys.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    phys.replace(rep, np.nan, inplace=True)
     phys.drop(["phys_age", "phys_normal", "phys_abnormal"],
               axis=1, inplace=True)
     phys["procedure"] = "physical_exam"
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
     phys.rename({"sysbp": "sbp", "diasbp": "dbp"}, inplace=True, axis=1)
-    phys["visit"] = "screening"
+    phys["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Screening labs
@@ -111,14 +115,15 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "screening_labs", "field_name"]]
     screen = pd.DataFrame(proj.export_records(fields=var))
-    screen.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    screen.replace(rep, np.nan, inplace=True)
     screen.drop(["screen_creat_lab", "screen_upt", "screen_menstrual"],
                 axis=1, inplace=True)
     screen.columns = screen.columns.str.replace(
         r"screen_|labs_", "", regex=True)
     screen.rename({"creat_s": "creatinine_s"}, axis=1, inplace=True)
     screen["procedure"] = "screening"
-    screen["visit"] = "screening"
+    screen["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Baseline labs
@@ -127,7 +132,8 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_baseline_vitalslabs", "field_name"]]
     labs = pd.DataFrame(proj.export_records(fields=var))
-    labs.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    labs.replace(rep, np.nan, inplace=True)
     labs.drop(["baseline_vitals", "visit_upt", "visit_uptresult",
                "baseline_labs", "u24_labs", "pilabs_yn", "metabolomics_yn", "kim_yn"], axis=1, inplace=True)
     labs.columns = labs.columns.str.replace(
@@ -143,7 +149,8 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_dxa_scan", "field_name"]]
     dxa = pd.DataFrame(proj.export_records(fields=var))
-    dxa.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    dxa.replace(rep, np.nan, inplace=True)
     dxa.rename({"bodyfat_percent": "body_fat",
                 "leanmass_percent": "lean_mass", "fatmass_kg": "fat_kg",
                 "leanmass_kg": "lean_kg", "trunkmass_kg": "trunk_kg",
@@ -164,7 +171,8 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_he_clamp", "field_name"]]
     clamp = pd.DataFrame(proj.export_records(fields=var))
-    clamp.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    clamp.replace(rep, np.nan, inplace=True)
     # Format
     clamp.drop(["clamp_yn", "clamp_d20", "clamp_ffa",
                 "clamp_insulin", "hct_yn", "clamp_bg"], axis=1, inplace=True)
@@ -221,7 +229,8 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "pet_scan", "field_name"]]
     pet = pd.DataFrame(proj.export_records(fields=var))
-    pet.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    pet.replace(rep, np.nan, inplace=True)
     pet.drop(["petcom_yn"], axis=1, inplace=True)
     pet.columns = pet.columns.str.replace(r"pet_", "", regex=True)
     pet["procedure"] = "pet_scan"
@@ -234,7 +243,8 @@ def clean_penguin():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "fmri", "field_name"]]
     mri = pd.DataFrame(proj.export_records(fields=var))
-    mri.replace(rep, "", inplace=True)  # Replace missing values
+    # Replace missing values
+    mri.replace(rep, np.nan, inplace=True)
     mri["procedure"] = "fmri"
     mri["visit"] = "baseline"
 
