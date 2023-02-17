@@ -56,11 +56,15 @@ def clean_improve():
     dem_cols[7] = "sglt2i_ever"
     # Race columns combined into one
     demo = combine_checkboxes(demo, base_name="race", levels=[
-        "American Indian or Alaskan Native", "Asian", "Hawaiian or Pacific Islander", "Black or African American", "White", "Unknown", "Other"])
+        "American Indian or Alaskan Native", "Asian",
+        "Hawaiian or Pacific Islander", "Black or African American",
+        "White", "Unknown", "Other"])
     # Same for ethnicity
     demo = combine_checkboxes(demo,
                               base_name="ethnicity",
-                              levels=["Hispanic or Latino", "Not Hispanic or Latino", "Unknown/Not Reported"])
+                              levels=["Hispanic or Latino",
+                                      "Not Hispanic or Latino",
+                                      "Unknown/Not Reported"])
     # Relevel sex and group
     demo["sex"].replace({1: "Male", 0: "Female", 2: "Other",
                         "1": "Male", "0": "Female", "2": "Other"}, inplace=True)
@@ -180,7 +184,8 @@ def clean_improve():
     var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
                                                                == "mmtt_metabolic_cart", "field_name"]]
     mmtt = pd.DataFrame(proj.export_records(fields=var))
-    mmtt.replace(rep, np.nan, inplace=True)  # Replace missing values
+    # Replace missing values
+    mmtt.replace(rep, np.nan, inplace=True)
     # Drop unnecessary columns
     mmtt.drop(redcap_cols + ["study_visit_mttt", "mmtt_vitals", "mmtt_pregnant",
                              "mmtt_lmp", "mmtt_brmr", "mmtt_60rmr", "mmtt_base_labs", "mmtt_ffa_labs", "mmtt_insulin",
