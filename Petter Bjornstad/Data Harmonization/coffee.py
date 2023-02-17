@@ -22,12 +22,8 @@ def clean_coffee():
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
-    try:
-        tokens = pd.read_csv(
-            "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
-    except FileNotFoundError:
-        tokens = pd.read_csv(
-            "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+    tokens = pd.read_csv(
+        "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "COFFEE", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -35,7 +31,7 @@ def clean_coffee():
     meta = pd.DataFrame(proj.metadata)
     # Replace missing values
     rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999, -99999]
-    rep = rep + [str(r) for r in rep]
+    rep = rep + [str(r) for r in rep] + [""]
 
     # --------------------------------------------------------------------------
     # Demographics
@@ -202,7 +198,21 @@ def clean_coffee():
     mri["procedure"] = "bold_mri"
     mri["visit"] = "baseline"
 
-    # MERGE
+    # --------------------------------------------------------------------------
+    # Missingness
+    # --------------------------------------------------------------------------
+
+    med.dropna(thresh=4, axis=0, inplace=True)
+    phys.dropna(thresh=4, axis=0, inplace=True)
+    screen.dropna(thresh=4, axis=0, inplace=True)
+    mri.dropna(thresh=4, axis=0, inplace=True)
+    clamp.dropna(thresh=6, axis=0, inplace=True)
+    out.dropna(thresh=4, axis=0, inplace=True)
+
+    # --------------------------------------------------------------------------
+    # Merge
+    # --------------------------------------------------------------------------
+
     df = pd.concat([phys, screen], join='outer', ignore_index=True)
     df = pd.concat([df, med], join='outer', ignore_index=True)
     df = pd.concat([df, clamp], join='outer', ignore_index=True)
@@ -210,7 +220,11 @@ def clean_coffee():
     df = pd.concat([df, mri], join='outer', ignore_index=True)
     df = pd.merge(df, demo, how="outer")
     df = df.copy()
-    # REORGANIZE
+
+    # --------------------------------------------------------------------------
+    # Reorganize
+    # --------------------------------------------------------------------------
+
     df["study"] = "COFFEE"
     id_cols = ["subject_id", "co_enroll_id", "study"] + \
         dem_cols[1:] + ["visit", "procedure", "date"]
@@ -218,14 +232,10 @@ def clean_coffee():
     other_cols = natsorted(other_cols, alg=ns.IGNORECASE)
     df = df[id_cols + other_cols]
     # SORT
-    df.sort_values(["subject_id", "date", "procedure"], inplace=True)
+    df.sort_values(["subject_id", "procedure"], inplace=True)
     # Rename subject identifier
     df.rename({"subject_id": "record_id"}, axis=1, inplace=True)
-    # Replace missing values
-    rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999, -99999]
-    rep = rep + [str(r) for r in rep]
     # Drop empty columns
-    df.replace("", np.nan, inplace=True)
     df.dropna(how='all', axis=1, inplace=True)
     # Return final data
     return df

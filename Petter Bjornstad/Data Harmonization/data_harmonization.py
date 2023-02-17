@@ -152,6 +152,9 @@ def harmonize_data():
     # Sort rows
     harmonized.sort_values(
         ["study", "record_id", "visit", "procedure", "date"], inplace=True)
+    # Format dates nicely
+    harmonized[dates] = harmonized[dates].apply(
+        lambda x: x.dt.strftime('%Y-%m-%d'))
     # Return
     harmonized = harmonized.astype(object)
     return harmonized

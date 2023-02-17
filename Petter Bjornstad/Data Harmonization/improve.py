@@ -23,7 +23,8 @@ def clean_improve():
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
-    tokens = pd.read_csv("/Users/timvigers/Desktop/api_tokens.csv")
+    tokens = pd.read_csv(
+        "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "IMPROVE", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -341,7 +342,8 @@ def clean_improve():
     # Replace missing values
     biopsy.replace(rep, np.nan, inplace=True)
     biopsy.drop(redcap_cols + [col for col in biopsy.columns if '_yn' in col] +
-                [col for col in biopsy.columns if 'procedure_' in col],
+                [col for col in biopsy.columns if 'procedure_' in col] +
+                ["core_diagnostic", "core_hypo_cryo", "core_oct", "core_rna"],
                 axis=1, inplace=True)
     biopsy.columns = biopsy.columns.str.replace(r"bx_", "", regex=True)
     biopsy.columns = biopsy.columns.str.replace(r"labs_", "", regex=True)

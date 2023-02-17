@@ -22,12 +22,8 @@ def clean_crocodile():
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
-    try:
-        tokens = pd.read_csv(
-            "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
-    except FileNotFoundError:
-        tokens = pd.read_csv(
-            "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+    tokens = pd.read_csv(
+        "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "CROCODILE", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -35,7 +31,7 @@ def clean_crocodile():
     meta = pd.DataFrame(proj.metadata)
     # Replace missing values
     rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999, -99999]
-    rep = rep + [str(r) for r in rep]
+    rep = rep + [str(r) for r in rep] + [""]
 
     # --------------------------------------------------------------------------
     # Demographics
@@ -232,6 +228,7 @@ def clean_crocodile():
     clamp["p2_ffa_suppression"] = (
         (clamp["baseline_ffa"] - clamp["p2_steady_state_ffa"]) / clamp["baseline_ffa"]) * 100
     clamp["ffa_method"] = "hyperinsulinemic_euglycemic_clamp"
+    clamp["date"] = labs["date"]
 
     # --------------------------------------------------------------------------
     # Renal Clearance Testing
@@ -250,6 +247,7 @@ def clean_crocodile():
     rct = rct[["record_id"] + list(rename.values())]
     rct["procedure"] = "renal_clearance_testing"
     rct["visit"] = "baseline"
+    rct["date"] = labs["date"]
 
     # --------------------------------------------------------------------------
     # Kidney Biopsy
@@ -267,7 +265,8 @@ def clean_crocodile():
     # Replace missing values
     biopsy.replace(rep, np.nan, inplace=True)
     biopsy.drop([col for col in biopsy.columns if '_yn' in col] +
-                [col for col in biopsy.columns if 'procedure_' in col],
+                [col for col in biopsy.columns if 'procedure_' in col] +
+                ["core_diagnostic", "core_hypo_cryo", "core_oct", "core_rna"],
                 axis=1, inplace=True)
     biopsy.columns = biopsy.columns.str.replace(r"bx_", "", regex=True)
     biopsy.columns = biopsy.columns.str.replace(r"labs_", "", regex=True)
@@ -290,7 +289,25 @@ def clean_crocodile():
     pet["procedure"] = "pet_scan"
     pet["visit"] = "baseline"
 
-    # MERGE
+    # --------------------------------------------------------------------------
+    # Missingness
+    # --------------------------------------------------------------------------
+
+    med.dropna(thresh=5, axis=0, inplace=True)
+    phys.dropna(thresh=4, axis=0, inplace=True)
+    screen.dropna(thresh=4, axis=0, inplace=True)
+    labs.dropna(thresh=4, axis=0, inplace=True)
+    mri.dropna(thresh=4, axis=0, inplace=True)
+    dxa.dropna(thresh=4, axis=0, inplace=True)
+    clamp.dropna(thresh=6, axis=0, inplace=True)
+    rct.dropna(thresh=4, axis=0, inplace=True)
+    biopsy.dropna(thresh=4, axis=0, inplace=True)
+    pet.dropna(thresh=4, axis=0, inplace=True)
+
+    # --------------------------------------------------------------------------
+    # Merge
+    # --------------------------------------------------------------------------
+
     df = pd.concat([phys, screen], join='outer', ignore_index=True)
     df = pd.concat([df, med], join='outer', ignore_index=True)
     df = pd.concat([df, labs], join='outer', ignore_index=True)
@@ -302,19 +319,22 @@ def clean_crocodile():
     df = pd.concat([df, pet], join='outer', ignore_index=True)
     df = pd.merge(df, demo, how="outer")
     df = df.copy()
-    # REORGANIZE
+
+    # --------------------------------------------------------------------------
+    # Reorganize
+    # --------------------------------------------------------------------------
+
     df["study"] = "CROCODILE"
     id_cols = ["record_id", "co_enroll_id", "study"] + \
         dem_cols[1:] + ["visit", "procedure", "date"]
     other_cols = df.columns.difference(id_cols, sort=False).tolist()
     other_cols = natsorted(other_cols, alg=ns.IGNORECASE)
     df = df[id_cols + other_cols]
-    # SORT
+    # Sort
     df.sort_values(["record_id", "date", "procedure"], inplace=True)
     # Rename IDs
     df["record_id"] = ["CRC-" + str(i).zfill(2) for i in df["record_id"]]
     # Drop empty columns
-    df.replace("", np.nan, inplace=True)
     df.dropna(how='all', axis=1, inplace=True)
     # Print final data
     return df

@@ -33,7 +33,7 @@ def clean_casper():
     meta = pd.DataFrame(proj.metadata)
     # Replace missing values
     rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999, -99999]
-    rep = rep + [str(r) for r in rep]
+    rep = rep + [str(r) for r in rep] + [""]
 
     # --------------------------------------------------------------------------
     # Demographics
@@ -81,7 +81,8 @@ def clean_casper():
     med.replace(rep, np.nan, inplace=True)
     # SGLT2i (diabetes_med_other___4), RAASi (htn_med_type___1, htn_med_type___2), Metformin (diabetes_med_other___1)
     med = med[["subject_id", "diabetes_med_other___4", "htn_med_type___1",
-               "htn_med_type___2", "diabetes_med_other___1", "diabetes_med___1", "diabetes_med___2"]]
+               "htn_med_type___2", "diabetes_med_other___1", "diabetes_med___1",
+               "diabetes_med___2"]]
     # SGLT2i
     med["diabetes_med_other___4"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
@@ -224,7 +225,22 @@ def clean_casper():
     mri["procedure"] = "bold_mri"
     mri["visit"] = "baseline"
 
-    # MERGE
+    # --------------------------------------------------------------------------
+    # Missingness
+    # --------------------------------------------------------------------------
+
+    med.dropna(thresh=4, axis=0, inplace=True)
+    phys.dropna(thresh=3, axis=0, inplace=True)
+    screen.dropna(thresh=3, axis=0, inplace=True)
+    mri.dropna(thresh=4, axis=0, inplace=True)
+    dxa.dropna(thresh=4, axis=0, inplace=True)
+    clamp.dropna(thresh=6, axis=0, inplace=True)
+    out.dropna(thresh=4, axis=0, inplace=True)
+
+    # --------------------------------------------------------------------------
+    # Merge
+    # --------------------------------------------------------------------------
+
     df = pd.concat([phys, screen], join='outer', ignore_index=True)
     df = pd.concat([df, med], join='outer', ignore_index=True)
     df = pd.concat([df, dxa], join='outer', ignore_index=True)
@@ -233,19 +249,22 @@ def clean_casper():
     df = pd.concat([df, mri], join='outer', ignore_index=True)
     df = pd.merge(df, demo, how="outer")
     df = df.copy()
-    # REORGANIZE
+
+    # --------------------------------------------------------------------------
+    # Reorganize
+    # --------------------------------------------------------------------------
+
     df["study"] = "CASPER"
     id_cols = ["subject_id", "co_enroll_id", "study"] + \
         dem_cols[1:] + ["visit", "procedure", "date"]
     other_cols = df.columns.difference(id_cols, sort=False).tolist()
     other_cols = natsorted(other_cols, alg=ns.IGNORECASE)
     df = df[id_cols + other_cols]
-    # SORT
-    df.sort_values(["subject_id", "date", "procedure"], inplace=True)
+    # Sort
+    df.sort_values(["subject_id", "procedure"], inplace=True)
     # Rename subject identifier
     df.rename({"subject_id": "record_id"}, axis=1, inplace=True)
     # Drop empty columns
-    df.replace("", np.nan, inplace=True)
     df.dropna(how='all', axis=1, inplace=True)
     # Return final data
     return df

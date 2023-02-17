@@ -22,12 +22,8 @@ def clean_renal_heir():
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
-    try:
-        tokens = pd.read_csv(
-            "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
-    except FileNotFoundError:
-        tokens = pd.read_csv(
-            "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+    tokens = pd.read_csv(
+        "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "Renal-HEIR", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -35,7 +31,7 @@ def clean_renal_heir():
     meta = pd.DataFrame(proj.metadata)
     # Replace missing values
     rep = [-97, -98, -99, -997, -998, -999, -9997, -9998, -9999, -99999]
-    rep = rep + [str(r) for r in rep]
+    rep = rep + [str(r) for r in rep] + [""]
 
     # --------------------------------------------------------------------------
     # Demographics
@@ -75,7 +71,6 @@ def clean_renal_heir():
     med = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
     med.replace(rep, np.nan, inplace=True)
-
     # Just SGLT2i for now
     med = med[["subject_id", "sglt2i",
                "diabetes_med_other___3", "diabetes_med___3"]]
@@ -106,6 +101,7 @@ def clean_renal_heir():
     phys.rename({"sys_bp": "sbp", "dys_bp": "dbp",
                 "waist_circumference": "waistcm", "hip_circumference": "hipcm"}, inplace=True, axis=1)
     phys["visit"] = "baseline"
+    med["date"] = phys["date"]
 
     # --------------------------------------------------------------------------
     # Screening labs
@@ -221,13 +217,18 @@ def clean_renal_heir():
     out.replace(rep, np.nan, inplace=True)
     out.drop(["kidney_outcomes", "egfr", "metab_outcomes", "asl_outcomes"],
              axis=1, inplace=True)
-    out.columns = out.columns.str.replace(
-        r"mri_", "", regex=True)
+    # Kidney outcomes like GFR, etc. were collected with the clamp, not
+    # necessarily the day of the MRI
+    bold_mri_cols = [c for c in out.columns if ("bold_" in c) or ("asl_" in c)]
+    bold_mri = out[["subject_id", "mri_date"] + bold_mri_cols].copy()
+    bold_mri.rename({"mri_date": "date"}, axis=1, inplace=True)
+    out = out[list(set(out.columns).difference(bold_mri_cols))]
     rename = {"gfr": "gfr_raw_plasma", "gfr_bsa": "gfr_bsa_plasma",
               "rpf": "erpf_raw_plasma", "rpf_bsa": "erpf_bsa_plasma"}
     out.rename(rename, axis=1, inplace=True)
+    out["date"] = clamp["date"]
     out["procedure"] = "kidney_outcomes"
-    out["visit"] = "baseline"
+    bold_mri["procedure"] = "bold_mri"
 
     # --------------------------------------------------------------------------
     # Kidney Biopsy
@@ -245,7 +246,8 @@ def clean_renal_heir():
     # Replace missing values
     biopsy.replace(rep, np.nan, inplace=True)
     biopsy.drop([col for col in biopsy.columns if '_yn' in col] +
-                [col for col in biopsy.columns if 'procedure_' in col],
+                [col for col in biopsy.columns if 'procedure_' in col] +
+                ["core_diagnostic", "core_hypo_cryo", "core_oct", "core_rna"],
                 axis=1, inplace=True)
     biopsy.columns = biopsy.columns.str.replace(r"bx_", "", regex=True)
     biopsy.columns = biopsy.columns.str.replace(r"labs_", "", regex=True)
@@ -254,27 +256,47 @@ def clean_renal_heir():
     biopsy["procedure"] = "kidney_biopsy"
     biopsy["visit"] = "baseline"
 
-    # MERGE
+    # --------------------------------------------------------------------------
+    # Missingness
+    # --------------------------------------------------------------------------
+
+    med.dropna(thresh=4, axis=0, inplace=True)
+    phys.dropna(thresh=4, axis=0, inplace=True)
+    screen.dropna(thresh=4, axis=0, inplace=True)
+    dxa.dropna(thresh=4, axis=0, inplace=True)
+    clamp.dropna(thresh=6, axis=0, inplace=True)
+    out.dropna(thresh=4, axis=0, inplace=True)
+    bold_mri.dropna(thresh=4, axis=0, inplace=True)
+    biopsy.dropna(thresh=4, axis=0, inplace=True)
+
+    # --------------------------------------------------------------------------
+    # Merge
+    # --------------------------------------------------------------------------
+
     df = pd.concat([phys, screen], join='outer', ignore_index=True)
     df = pd.concat([df, med], join='outer', ignore_index=True)
     df = pd.concat([df, dxa], join='outer', ignore_index=True)
     df = pd.concat([df, clamp], join='outer', ignore_index=True)
     df = pd.concat([df, out], join='outer', ignore_index=True)
+    df = pd.concat([df, bold_mri], join='outer', ignore_index=True)
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
     df = pd.merge(df, demo, how="outer")
     df = df.copy()
-    # REORGANIZE
+
+    # --------------------------------------------------------------------------
+    # Reorganize
+    # --------------------------------------------------------------------------
+
     df["study"] = "RENAL-HEIR"
     id_cols = ["subject_id", "co_enroll_id", "study"] + \
         dem_cols[2:] + ["visit", "procedure", "date"]
     other_cols = df.columns.difference(id_cols, sort=False).tolist()
     df = df[id_cols + other_cols]
-    # SORT
-    df.sort_values(["subject_id", "date", "procedure"], inplace=True)
+    # Sort
+    df.sort_values(["subject_id", "procedure"], inplace=True)
     # Rename subject identifier
     df.rename({"subject_id": "record_id"}, axis=1, inplace=True)
     # Drop empty columns
-    df.replace("", np.nan, inplace=True)
     df.dropna(how='all', axis=1, inplace=True)
     # Return final data
     return df
