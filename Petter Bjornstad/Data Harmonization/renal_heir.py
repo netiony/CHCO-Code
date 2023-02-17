@@ -228,7 +228,9 @@ def clean_renal_heir():
     out.rename(rename, axis=1, inplace=True)
     out["date"] = clamp["date"]
     out["procedure"] = "kidney_outcomes"
+    out["visit"] = "baseline"
     bold_mri["procedure"] = "bold_mri"
+    bold_mri["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Kidney Biopsy
