@@ -19,11 +19,11 @@ def clean_improve():
     import redcap
     import pandas as pd
     import numpy as np
+    from datetime import timedelta
     from natsort import natsorted, ns
     from harmonization_functions import combine_checkboxes
     # REDCap project variables
-    tokens = pd.read_csv(
-        "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+    tokens = pd.read_csv("/Users/timvigers/Desktop/api_tokens.csv")
     uri = "https://redcap.ucdenver.edu/api/"
     token = tokens.loc[tokens["Study"] == "IMPROVE", "Token"].iloc[0]
     proj = redcap.Project(url=uri, token=token)
@@ -105,8 +105,6 @@ def clean_improve():
     med.rename({"med_date": "date"},
                axis=1, inplace=True)
     med["procedure"] = "medications"
-    # Drop rows with all missing
-    med.dropna(thresh=3, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Physical exam
@@ -127,8 +125,6 @@ def clean_improve():
                  "waist_circumference": "waistcm",
                  "hip_circumference": "hipcm"}, inplace=True, axis=1)
     phys["procedure"] = "physical_exam"
-    # Drop rows with all missing
-    phys.dropna(thresh=3, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Screening labs
@@ -147,8 +143,6 @@ def clean_improve():
                    "urine_cre": "creatinine_u", "urine_mab": "microalbumin_u"},
                   axis=1, inplace=True)
     screen["procedure"] = "screening"
-    # Drop rows with all missing
-    screen.dropna(thresh=3, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Accelerometry
@@ -163,8 +157,6 @@ def clean_improve():
     accel.columns = accel.columns.str.replace(
         r"acc_|accel_", "", regex=True)
     accel["procedure"] = "accelerometry"
-    # Drop rows with all missing
-    accel.dropna(thresh=4, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Cardio/Abdominal MRI
@@ -180,8 +172,6 @@ def clean_improve():
     mri.columns = mri.columns.str.replace(
         r"mri_|visit_", "", regex=True)
     mri["procedure"] = "cardio_abdominal_mri"
-    # Drop rows with all missing
-    mri.dropna(thresh=4, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # MMTT + Metabolic Cart
@@ -218,8 +208,6 @@ def clean_improve():
     mmtt["ffa_suppression"] = (
         (mmtt["baseline_ffa"] - mmtt["steady_state_ffa"]) / mmtt["baseline_ffa"]) * 100
     mmtt["ffa_method"] = "mmtt"
-    # Drop rows with all missing
-    mmtt.dropna(thresh=5, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # DXA
@@ -241,8 +229,6 @@ def clean_improve():
                 "bod_pod_fat_mass": "bod_pod_fat_kg",
                 "bodcomp_date": "date"}, axis=1, inplace=True)
     dxa["procedure"] = "dxa"
-    # Drop rows with all missing
-    dxa.dropna(thresh=4, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Clamp
@@ -304,8 +290,10 @@ def clean_improve():
     # DI
     clamp["di"] = (clamp["raw_m"] /
                    clamp["steady_state_insulin"]) * clamp["airg"]
-    # Drop rows with all missing
-    clamp.dropna(thresh=5, axis=0, inplace=True)
+    # Accelerometry done 1 day before clamp
+    accel["date"] = [pd.to_datetime(d) - timedelta(days=1)
+                     for d in clamp["date"]]
+    accel["date"] = accel["date"].dt.strftime('%m/%d/%Y')
 
     # --------------------------------------------------------------------------
     # Outcomes
@@ -320,19 +308,17 @@ def clean_improve():
              axis=1, inplace=True)
     # Kidney outcomes like GFR, etc. were collected with the clamp, not
     # necessarily the day of the MRI
-    mri_cols = [c for c in out.columns if ("bold_" in c) or ("asl_" in c)]
-    mri = out[["subject_id", "study_visit", "mri_date"] + mri_cols].copy()
-    mri.rename({"mri_date": "date"}, axis=1, inplace=True)
-    out = out[list(set(out.columns).difference(mri_cols))]
+    bold_mri_cols = [c for c in out.columns if ("bold_" in c) or ("asl_" in c)]
+    bold_mri = out[["subject_id", "study_visit",
+                    "mri_date"] + bold_mri_cols].copy()
+    bold_mri.rename({"mri_date": "date"}, axis=1, inplace=True)
+    out = out[list(set(out.columns).difference(bold_mri_cols))]
     rename = {"gfr": "gfr_raw_plasma", "gfr_bsa": "gfr_bsa_plasma",
               "rpf": "erpf_raw_plasma", "rpf_bsa": "erpf_bsa_plasma"}
     out.rename(rename, axis=1, inplace=True)
     out["date"] = clamp["date"]
     out["procedure"] = "kidney_outcomes"
-    mri["procedure"] = "bold_mri"
-    # Drop rows with all missing
-    out.dropna(thresh=4, axis=0, inplace=True)
-    mri.dropna(thresh=4, axis=0, inplace=True)
+    bold_mri["procedure"] = "bold_mri"
 
     # --------------------------------------------------------------------------
     # Kidney Biopsy
@@ -357,22 +343,44 @@ def clean_improve():
     biopsy.columns = biopsy.columns.str.replace(r"vitals_", "", regex=True)
     biopsy.rename({"hg": "hemoglobin"}, inplace=True, axis=1)
     biopsy["procedure"] = "kidney_biopsy"
-    # Drop rows with all missing
+
+    # --------------------------------------------------------------------------
+    # Missingness
+    # --------------------------------------------------------------------------
+
+    med.dropna(thresh=3, axis=0, inplace=True)
+    phys.dropna(thresh=3, axis=0, inplace=True)
+    screen.dropna(thresh=3, axis=0, inplace=True)
+    accel.dropna(thresh=4, axis=0, inplace=True)
+    mri.dropna(thresh=4, axis=0, inplace=True)
+    mmtt.dropna(thresh=5, axis=0, inplace=True)
+    dxa.dropna(thresh=4, axis=0, inplace=True)
+    clamp.dropna(thresh=5, axis=0, inplace=True)
+    out.dropna(thresh=4, axis=0, inplace=True)
+    bold_mri.dropna(thresh=4, axis=0, inplace=True)
     biopsy.dropna(thresh=4, axis=0, inplace=True)
 
-    # MERGE
+    # --------------------------------------------------------------------------
+    # Merge
+    # --------------------------------------------------------------------------
+
     df = pd.concat([accel, med], join='outer', ignore_index=True)
     df = pd.concat([df, mri], join='outer', ignore_index=True)
     df = pd.concat([df, mmtt], join='outer', ignore_index=True)
     df = pd.concat([df, dxa], join='outer', ignore_index=True)
     df = pd.concat([df, clamp], join='outer', ignore_index=True)
+    df = pd.concat([df, bold_mri], join='outer', ignore_index=True)
     df = pd.concat([df, out], join='outer', ignore_index=True)
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
     df = pd.concat([df, screen], join='outer', ignore_index=True)
     df = pd.concat([df, phys], join='outer', ignore_index=True)
     df = pd.merge(df, demo, how="outer")
     df = df.copy()
-    # REORGANIZE
+
+    # --------------------------------------------------------------------------
+    # Reorganize
+    # --------------------------------------------------------------------------
+
     df.rename({"study_visit": "visit"}, axis=1, inplace=True)
     df["study"] = "IMPROVE"
     id_cols = ["subject_id", "study"] + \
@@ -380,17 +388,21 @@ def clean_improve():
     other_cols = df.columns.difference(id_cols, sort=False).tolist()
     other_cols = natsorted(other_cols, alg=ns.IGNORECASE)
     df = df[id_cols + other_cols]
-    # SORT
-    df.sort_values(
-        ["subject_id", "visit", "date", "procedure"], inplace=True)
     # Change study visit names
     df["visit"].replace({np.nan: "baseline", '1': "baseline",
                          '2': "3_months_post_surgery",
                               '3': "12_months_post_surgery"}, inplace=True)
+    df["visit"] = pd.Categorical(df["visit"],
+                                 categories=["baseline", "3_months_post_surgery",
+                                 "12_months_post_surgery"],
+                                 ordered=True)
+    # Fix subject IDs
+    df["subject_id"] = df["subject_id"].str.replace(r"2D-", "_", regex=True)
+    # Sort
+    df.sort_values(["subject_id", "visit", "procedure"], inplace=True)
     # Rename subject identifier
     df.rename({"subject_id": "record_id"}, axis=1, inplace=True)
     # Drop empty columns
-    df.replace("", np.nan, inplace=True)
     df.dropna(how='all', axis=1, inplace=True)
     # Return final data
     return df
