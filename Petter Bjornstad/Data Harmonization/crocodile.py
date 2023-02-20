@@ -161,7 +161,8 @@ def clean_crocodile():
     mri.replace(rep, np.nan, inplace=True)
     mri.columns = mri.columns.str.replace(
         r"mri_", "", regex=True)
-    mri.rename({"volume_right": "right_kidney_volume_ml", "volume_left": "left_kidney_volume_ml"},
+    mri.rename({"volume_right": "right_kidney_volume_ml",
+                "volume_left": "left_kidney_volume_ml"},
                axis=1, inplace=True)
     mri["procedure"] = "bold_mri"
     mri["visit"] = "baseline"
@@ -200,7 +201,8 @@ def clean_crocodile():
     clamp.drop(["clamp_yn", "clamp_d20", "clamp_ffa",
                 "clamp_insulin", "hct_yn", "clamp_bg"], axis=1, inplace=True)
     clamp.rename({"clamp_wt": "weight", "clamp_ht": "height",
-                  "cystatin_c": "cystatin_c_s"},
+                  "cystatin_c": "cystatin_c_s", "hct_210": "hematocrit_210",
+                  "acr_baseline": "acr_u_am", "acr_250": "acr_u_pm"},
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
     clamp.columns = clamp.columns.str.replace(

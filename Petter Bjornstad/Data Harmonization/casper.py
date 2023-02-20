@@ -169,7 +169,8 @@ def clean_casper():
     clamp.rename({"cystatin_c": "cystatin_c_s", "serum_creatinine": "creatinine_s",
                   "urine_mab_baseline": "microalbumin_u",
                  "urine_cre_baseline": "creatinine_u", "pls": "pulse",
-                  "urine_sodium": "sodium_u", "serum_sodium": "sodium_s"},
+                  "urine_sodium": "sodium_u", "serum_sodium": "sodium_s",
+                  "acr_baseline": "acr_u_am", "acr_250": "acr_u_pm"},
                  inplace=True, axis=1)
     clamp["procedure"] = "clamp"
     clamp["visit"] = "baseline"
@@ -214,7 +215,9 @@ def clean_casper():
     # necessarily the day of the MRI
     mri_cols = [c for c in out.columns if ("bold_" in c) or ("asl_" in c)]
     mri = out[["subject_id", "mri_date"] + mri_cols].copy()
-    mri.rename({"mri_date": "date"}, axis=1, inplace=True)
+    mri.rename({"mri_date": "date",
+                "asl_left": "pcasl3d_left",
+                "asl_right": "pcasl3d_right"}, axis=1, inplace=True)
     out = out[list(set(out.columns).difference(mri_cols))]
     rename = {"gfr": "gfr_raw_plasma", "gfr_bsa": "gfr_bsa_plasma",
               "rpf": "erpf_raw_plasma", "rpf_bsa": "erpf_bsa_plasma"}

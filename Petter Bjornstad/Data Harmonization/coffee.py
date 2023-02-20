@@ -159,8 +159,11 @@ def clean_coffee():
                axis=1, inplace=True)
     clamp.columns = clamp.columns.str.replace(
         r"clamp_|cf_", "", regex=True)
-    clamp.rename({"cystatin_c": "cystatin_c_s", "serum_creatinine": "creatinine_s", "pls": "pulse",
-                 "urine_sodium": "sodium_u", "serum_sodium": "sodium_s"}, inplace=True, axis=1)
+    clamp.rename({"cystatin_c": "cystatin_c_s", "serum_creatinine": "creatinine_s",
+                  "pls": "pulse", "urine_sodium": "sodium_u",
+                  "serum_sodium": "sodium_s", "acr_baseline": "acr_u_am",
+                  "acr_250": "acr_u_pm"
+                  }, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
     clamp["insulin_sensitivity_method"] = "hyperglycemic_clamp"
     clamp["ffa_method"] = "hyperglycemic_clamp"
@@ -187,7 +190,9 @@ def clean_coffee():
     # necessarily the day of the MRI
     mri_cols = [c for c in out.columns if ("bold_" in c) or ("asl_" in c)]
     mri = out[["subject_id", "mri_date"] + mri_cols].copy()
-    mri.rename({"mri_date": "date"}, axis=1, inplace=True)
+    mri.rename({"mri_date": "date",
+                "asl_left": "pcasl3d_left",
+                "asl_right": "pcasl3d_right"}, axis=1, inplace=True)
     out = out[list(set(out.columns).difference(mri_cols))]
     rename = {"gfr_abs": "gfr_raw_plasma", "gfr_adj": "gfr_bsa_plasma",
               "rpf_abs": "erpf_raw_plasma", "rpf_adj": "erpf_bsa_plasma"}

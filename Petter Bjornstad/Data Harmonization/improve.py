@@ -257,7 +257,7 @@ def clean_improve():
                   "urine_mab_baseline": "microalbumin_u",
                   "urine_cre_baseline": "creatinine_u",
                   "serum_sodium": "sodium_s", "urine_sodium": "sodium_u",
-                  "pls": "pulse"
+                  "pls": "pulse", "acr_baseline": "acr_u_am", "acr_250": "acr_u_pm"
                   }, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
     clamp["insulin_sensitivity_method"] = "hyperglycemic_clamp"
@@ -317,7 +317,9 @@ def clean_improve():
     bold_mri_cols = [c for c in out.columns if ("bold_" in c) or ("asl_" in c)]
     bold_mri = out[["subject_id", "study_visit",
                     "mri_date"] + bold_mri_cols].copy()
-    bold_mri.rename({"mri_date": "date"}, axis=1, inplace=True)
+    bold_mri.rename({"mri_date": "date",
+                     "asl_left": "pcasl3d_left",
+                     "asl_right": "pcasl3d_right"}, axis=1, inplace=True)
     out = out[list(set(out.columns).difference(bold_mri_cols))]
     rename = {"gfr": "gfr_raw_plasma", "gfr_bsa": "gfr_bsa_plasma",
               "rpf": "erpf_raw_plasma", "rpf_bsa": "erpf_bsa_plasma"}
