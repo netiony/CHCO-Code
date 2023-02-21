@@ -161,24 +161,26 @@ def clean_coffee():
         r"clamp_|cf_", "", regex=True)
     clamp.rename({"cystatin_c": "cystatin_c_s", "serum_creatinine": "creatinine_s",
                   "pls": "pulse", "urine_sodium": "sodium_u",
-                  "serum_sodium": "sodium_s", "acr_baseline": "acr_u_am",
+                  "serum_sodium": "sodium_s", "acr_baseline": "acr_u",
                   "acr_250": "acr_u_pm"
                   }, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
     clamp["insulin_sensitivity_method"] = "hyperglycemic_clamp"
     clamp["ffa_method"] = "hyperglycemic_clamp"
     # No insulin, c peptide, or FFA
-    num_vars = ["d20_infusion", "weight"]
+    num_vars = ["d20_infusion", "weight", "hematocrit_minus_5", "hematocrit_90", "hematocrit_120"]
     clamp[num_vars] = clamp[num_vars].apply(
         pd.to_numeric, errors='coerce')
     clamp["raw_m"] = (clamp["d20_infusion"] * 190 / 60) / clamp["weight"]
     clamp["visit"] = "baseline"
+    # Hematocrit average
+    clamp["hematocrit_avg"] = clamp[["hematocrit_minus_5", "hematocrit_90", "hematocrit_120"]].mean(axis=1)
 
     # --------------------------------------------------------------------------
     # Outcomes
     # --------------------------------------------------------------------------
 
-    var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
+    var = ["subject_id"] + ["hematocrit_minus_5"] + ["hematocrit_90"] + ["hematocrit_120"] + ["map"] + ["clamp_map"] + ["total_protein"] + [v for v in meta.loc[meta["form_name"]
                                                 == "outcomes", "field_name"]]
     out = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
@@ -197,8 +199,38 @@ def clean_coffee():
     rename = {"gfr_abs": "gfr_raw_plasma", "gfr_adj": "gfr_bsa_plasma",
               "rpf_abs": "erpf_raw_plasma", "rpf_adj": "erpf_bsa_plasma"}
     out.rename(rename, axis=1, inplace=True)
+    # Calculate variables
+    out_vars = ["gfr_raw_plasma", "erpf_raw_plasma", "total_protein", "map", "clamp_map", 
+                "hematocrit_minus_5", "hematocrit_90", "hematocrit_120"]
+    out[out_vars] = out[out_vars].apply(pd.to_numeric, errors='coerce')
+    out["map"] = out[["map", "clamp_map"]].mean(axis=1)
+    out["hematocrit_avg"] = out[["hematocrit_minus_5", "hematocrit_90", "hematocrit_120"]].mean(axis=1)
+    out["erpf_raw_plasma_seconds"] = out["erpf_raw_plasma"]/60
+    out["gfr_raw_plasma_seconds"] = out["gfr_raw_plasma"]/60
+    # Filtration Fraction
+    out["ff"] = out["gfr_raw_plasma"]/out["erpf_raw_plasma"] 
+    # Kfg for group (T1D/T2D kfg: 0.1012, Control kfg: 0.1733)
+    out["kfg"] = 0.1012
+    # Filtration pressure across glomerular capillaries
+    out["deltapf"] = (out["gfr_raw_plasma"]/60)/out["kfg"] 
+    # Plasma protein mean concentration
+    out["cm"] = (out["total_protein"]/out["ff"])*np.log(1/(1-out["ff"])) 
+    # Pi G (Oncotic pressure)
+    out["pg"] = 5*(out["cm"]-2)
+    # Glomerular Pressure
+    out["glomerular_pressure"] = out["pg"] + out["deltapf"] + 10
+    # Renal Blood Flow
+    out["rbf"] = (out["erpf_raw_plasma"]) / (1 - out["hematocrit_avg"]/100)
+    out["rbf_seconds"] = (out["erpf_raw_plasma_seconds"]) / (1 - out["hematocrit_avg"]/100)
+    # Renal Vascular Resistance (mmHg*l^-1*min^-1)
+    out["rvr"] = out["map"] / out["rbf"]
+    # Efferent Arteriorlar Resistance 
+    out["re"] = (out["gfr_raw_plasma_seconds"]) / (out["kfg"] * (out["rbf_seconds"] - (out["gfr_raw_plasma_seconds"]))) * 1328
+    out.drop(["gfr_raw_plasma_seconds", "rbf_seconds", "gfr_raw_plasma_seconds", "erpf_raw_plasma_seconds", 
+              "total_protein", "map", "clamp_map", "hematocrit_minus_5", "hematocrit_90", "hematocrit_120", "hematocrit_avg"],
+             axis=1, inplace=True)
     out["date"] = clamp["date"]
-    out["procedure"] = "kidney_outcomes"
+    out["procedure"] = "clamp"
     out["visit"] = "baseline"
     mri["procedure"] = "bold_mri"
     mri["visit"] = "baseline"

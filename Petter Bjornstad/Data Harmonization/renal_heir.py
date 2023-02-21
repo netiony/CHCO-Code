@@ -38,15 +38,16 @@ def clean_renal_heir():
     # --------------------------------------------------------------------------
 
     dem_cols = ["subject_id", "co_enroll_id", "dob", "diagnosis",
-                "group", "gender", "race", "ethnicity"]
+                "group", "gender", "race", "ethnicity", "sglt2i"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
     # Replace missing values
     demo.replace(rep, np.nan, inplace=True)
-    demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date"},
+    demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date", "sglt2i": "sglt2i_ever"},
                 inplace=True, axis=1)
     dem_cols[3] = "diabetes_dx_date"
     dem_cols[5] = "sex"
+    dem_cols[8] = "sglt2i_ever"
     # Race columns combined into one
     demo = combine_checkboxes(demo, base_name="race", levels=[
         "American Indian or Alaskan Native", "Asian", "Hawaiian or Pacific Islander", "Black or African American", "White", "Unknown", "Other"])
@@ -61,22 +62,22 @@ def clean_renal_heir():
                            4: "Lean Control",
                            "2": "Type 2 Diabetes", "3": "Obese Control",
                            "4": "Lean Control"}, inplace=True)
+    demo["sglt2i_ever"].replace({1: "Yes", 0: "No", "1": "Yes", "0": "No", np.NaN: "No"},
+                       inplace=True)
 
     # --------------------------------------------------------------------------
     # Medications
     # --------------------------------------------------------------------------
 
-    var = ["subject_id"] + ["sglt2i"] + [v for v in meta.loc[meta["form_name"]
+    var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                              == "medical_history", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
     med.replace(rep, np.nan, inplace=True)
     # Just SGLT2i for now
-    med = med[["subject_id", "sglt2i",
-               "diabetes_med_other___3", "diabetes_med___3"]]
+    med = med[["subject_id", "diabetes_med_other___3", "diabetes_med___3"]]
     med.replace({0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
-    med.rename({"diabetes_med_other___3": "sglti_timepoint",
-                "sglt2i": "sglt2i_ever"}, axis=1, inplace=True)
+    med.rename({"diabetes_med_other___3": "sglti_timepoint"}, axis=1, inplace=True)
     # Insulin
     med["diabetes_med___3"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
@@ -205,12 +206,17 @@ def clean_renal_heir():
     # DI
     clamp["di"] = \
         (clamp["raw_m"] / clamp["steady_state_insulin"]) * clamp["airg"]
+    # Hematocrit average
+    hematocrit_vars = ["hematocrit_90", "hematocrit_120"]
+    clamp[hematocrit_vars] = clamp[hematocrit_vars].apply(
+        pd.to_numeric, errors='coerce')
+    clamp["hematocrit_avg"] = clamp[["hematocrit_90", "hematocrit_120"]].mean(axis=1)
 
     # --------------------------------------------------------------------------
     # Outcomes
     # --------------------------------------------------------------------------
 
-    var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
+    var = ["subject_id"] + ["group"] + ["hematocrit_90"] + ["hematocrit_120"] + ["map"] + ["clamp_map"] + ["total_protein"] + [v for v in meta.loc[meta["form_name"]
                                                 == "outcomes", "field_name"]]
     out = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
@@ -228,8 +234,38 @@ def clean_renal_heir():
     rename = {"gfr": "gfr_raw_plasma", "gfr_bsa": "gfr_bsa_plasma",
               "rpf": "erpf_raw_plasma", "rpf_bsa": "erpf_bsa_plasma"}
     out.rename(rename, axis=1, inplace=True)
+    
+    # Calculate variables
+    out_vars = ["gfr_raw_plasma", "erpf_raw_plasma", "total_protein", "map", "clamp_map", "hematocrit_90", "hematocrit_120"]
+    out[out_vars] = out[out_vars].apply(pd.to_numeric, errors='coerce')
+    out["map"] = out[["map", "clamp_map"]].mean(axis=1)
+    out["hematocrit_avg"] = out[["hematocrit_90", "hematocrit_120"]].mean(axis=1)
+    out["erpf_raw_plasma_seconds"] = out["erpf_raw_plasma"]/60
+    out["gfr_raw_plasma_seconds"] = out["gfr_raw_plasma"]/60
+    # Filtration Fraction
+    out["ff"] = out["gfr_raw_plasma"]/out["erpf_raw_plasma"] 
+    # Kfg for group (T1D/T2D kfg: 0.1012, Control kfg: 0.1733)
+    out["kfg"] = np.select([out["group"].eq("2"), out["group"].eq("3"), out["group"].eq("4")], [0.1012, 0.1733, 0.1733]) 
+    # Filtration pressure across glomerular capillaries
+    out["deltapf"] = (out["gfr_raw_plasma"]/60)/out["kfg"] 
+    # Plasma protein mean concentration
+    out["cm"] = (out["total_protein"]/out["ff"])*np.log(1/(1-out["ff"])) 
+    # Pi G (Oncotic pressure)
+    out["pg"] = 5*(out["cm"]-2)
+    # Glomerular Pressure
+    out["glomerular_pressure"] = out["pg"] + out["deltapf"] + 10
+    # Renal Blood Flow
+    out["rbf"] = (out["erpf_raw_plasma"]) / (1 - out["hematocrit_avg"]/100)
+    out["rbf_seconds"] = (out["erpf_raw_plasma_seconds"]) / (1 - out["hematocrit_avg"]/100)
+    # Renal Vascular Resistance (mmHg*l^-1*min^-1)
+    out["rvr"] = out["map"] / out["rbf"]
+    # Efferent Arteriorlar Resistance 
+    out["re"] = (out["gfr_raw_plasma_seconds"]) / (out["kfg"] * (out["rbf_seconds"] - (out["gfr_raw_plasma_seconds"]))) * 1328
+    out.drop(["gfr_raw_plasma_seconds", "rbf_seconds", "gfr_raw_plasma_seconds", "erpf_raw_plasma_seconds", 
+            "total_protein", "map", "clamp_map", "hematocrit_90", "hematocrit_120", "hematocrit_avg"],
+             axis=1, inplace=True)
     out["date"] = clamp["date"]
-    out["procedure"] = "kidney_outcomes"
+    out["procedure"] = "clamp"
     out["visit"] = "baseline"
     bold_mri["procedure"] = "bold_mri"
     bold_mri["visit"] = "baseline"

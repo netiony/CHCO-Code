@@ -137,7 +137,7 @@ def clean_penguin():
     labs.columns = labs.columns.str.replace(
         r"visit_|bl_", "", regex=True)
     labs.rename({"a1c": "hba1c", "uacr": "acr_u"}, axis=1, inplace=True)
-    labs["procedure"] = "labs"
+    labs["procedure"] = "clamp"
     labs["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
@@ -174,7 +174,7 @@ def clean_penguin():
     # Format
     clamp.drop(["clamp_yn", "clamp_d20", "clamp_ffa",
                 "clamp_insulin", "hct_yn", "clamp_bg"], axis=1, inplace=True)
-    clamp.rename({"clamp_wt": "weight", "clamp_ht": "height"},
+    clamp.rename({"clamp_wt": "weight", "clamp_ht": "height", "hct_210": "hematocrit_avg"},
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
     clamp.columns = clamp.columns.str.replace(
@@ -209,7 +209,7 @@ def clean_penguin():
     # Renal Clearance Testing
     # --------------------------------------------------------------------------
 
-    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+    var = ["record_id"] + ["group"] + ["bl_tot_protein"] + ["hct_210"] + ["visit_map"] + ["phys_map"] + [v for v in meta.loc[meta["form_name"]
                                                == "study_visit_renal_clearance_testing", "field_name"]]
     rct = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
@@ -219,11 +219,37 @@ def clean_penguin():
               "gfr_15mgmin": "gfr_raw_plasma", "gfrbsa": "gfr_bsa_plasma",
               "erpf_pah_85": "erpf_raw_plasma", "erpfbsa": "erpf_bsa_plasma"}
     rct.rename(rename, axis=1, inplace=True)
-    rct = rct[["record_id"] + list(rename.values())]
-    rct["procedure"] = "renal_clearance_testing"
+    # Calculate variables
+    rct_vars = ["gfr_raw_plasma", "erpf_raw_plasma", "bl_tot_protein", "visit_map", "phys_map", "hct_210"]
+    rct[rct_vars] = rct[rct_vars].apply(pd.to_numeric, errors='coerce')
+    rct["map"] = rct[["visit_map", "phys_map"]].mean(axis=1)
+    rct["erpf_raw_plasma_seconds"] = rct["erpf_raw_plasma"]/60
+    rct["gfr_raw_plasma_seconds"] = rct["gfr_raw_plasma"]/60
+    # Filtration Fraction
+    rct["ff"] = rct["gfr_raw_plasma"]/rct["erpf_raw_plasma"] 
+    # Kfg for group (T1D/T2D kfg: 0.1012, Control kfg: 0.1733)
+    rct["kfg"] = np.select([rct["group"].eq("1"), rct["group"].eq("2")], [0.1012, 0.1733]) 
+    # Filtration pressure across glomerular capillaries
+    rct["deltapf"] = (rct["gfr_raw_plasma"]/60)/rct["kfg"] 
+    # Plasma protein mean concentration
+    rct["cm"] = (rct["bl_tot_protein"]/rct["ff"])*np.log(1/(1-rct["ff"])) 
+    # Pi G (Oncotic pressure)
+    rct["pg"] = 5*(rct["cm"]-2)
+    # Glomerular Pressure
+    rct["glomerular_pressure"] = rct["pg"] + rct["deltapf"] + 10
+    # Renal Blood Flow
+    rct["rbf"] = (rct["erpf_raw_plasma"]) / (1 - rct["hct_210"]/100)
+    rct["rbf_seconds"] = (rct["erpf_raw_plasma_seconds"]) / (1 - rct["hct_210"]/100)
+    # Renal Vascular Resistance (mmHg*l^-1*min^-1)
+    rct["rvr"] = rct["map"] / rct["rbf"]
+    # Efferent Arteriorlar Resistance 
+    rct["re"] = (rct["gfr_raw_plasma_seconds"]) / (rct["kfg"] * (rct["rbf_seconds"] - (rct["gfr_raw_plasma_seconds"]))) * 1328
+    # Reduce rct dataset
+    rct = rct[["record_id", "ff", "kfg", "deltapf", "cm", "pg", "glomerular_pressure", "rbf", "rvr", "re"] + list(rename.values())] 
+    rct["procedure"] = "clamp"
     rct["visit"] = "baseline"
     rct["date"] = labs["date"]
-
+    
     # --------------------------------------------------------------------------
     # PET scan
     # --------------------------------------------------------------------------
