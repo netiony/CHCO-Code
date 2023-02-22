@@ -69,7 +69,7 @@ def clean_improve():
     # Relevel sex and group
     demo["sex"].replace({1: "Male", 0: "Female", 2: "Other",
                         "1": "Male", "0": "Female", "2": "Other"}, inplace=True)
-    demo["sglt2i"].replace({1: "Yes", 0: "No", "1": "Yes", "0": "No"},
+    demo["sglt2i"].replace({1: "Yes", 0: "No", "1": "Yes", "0": "No", np.NaN: "No"},
                            inplace=True)
     demo.rename({"sglt2i": "sglt2i_ever"}, axis=1, inplace=True)
 

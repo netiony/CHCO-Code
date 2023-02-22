@@ -160,7 +160,9 @@ def clean_renal_heir():
                   "cystatin_c": "cystatin_c_s",
                   "urine_mab_baseline": "microalbumin_u",
                   "urine_cre_baseline": "creatinine_u",
-                  "pls": "pulse", "acr_baseline": "acr_u_am", "acr_250": "acr_u_pm"},
+                  "pls": "pulse", 
+                  "acr_baseline": "acr_u", 
+                  "acr_250": "acr_u_pm"},
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
     clamp["procedure"] = "clamp"
@@ -262,7 +264,7 @@ def clean_renal_heir():
     # Efferent Arteriorlar Resistance 
     out["re"] = (out["gfr_raw_plasma_seconds"]) / (out["kfg"] * (out["rbf_seconds"] - (out["gfr_raw_plasma_seconds"]))) * 1328
     out.drop(["gfr_raw_plasma_seconds", "rbf_seconds", "gfr_raw_plasma_seconds", "erpf_raw_plasma_seconds", 
-            "total_protein", "map", "clamp_map", "hematocrit_90", "hematocrit_120", "hematocrit_avg"],
+            "total_protein", "map", "clamp_map", "hematocrit_90", "hematocrit_120", "hematocrit_avg", "group"],
              axis=1, inplace=True)
     out["date"] = clamp["date"]
     out["procedure"] = "clamp"
