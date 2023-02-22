@@ -132,7 +132,7 @@ def clean_penguin():
     labs = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
     labs.replace(rep, np.nan, inplace=True)
-    labs.drop(["baseline_vitals", "visit_upt", "visit_uptresult",
+    labs.drop(["baseline_vitals", "visit_upt", "visit_uptresult", "visit_weight", "visit_height", 
                "baseline_labs", "u24_labs", "pilabs_yn", "metabolomics_yn", "kim_yn"], axis=1, inplace=True)
     labs.columns = labs.columns.str.replace(
         r"visit_|bl_", "", regex=True)
@@ -203,7 +203,6 @@ def clean_penguin():
     clamp["p2_ffa_suppression"] = (
         (clamp["baseline_ffa"] - clamp["p2_steady_state_ffa"]) / clamp["baseline_ffa"]) * 100
     clamp["ffa_method"] = "hyperinsulinemic_euglycemic_clamp"
-    clamp["date"] = labs["date"]
 
     # --------------------------------------------------------------------------
     # Renal Clearance Testing
@@ -248,8 +247,7 @@ def clean_penguin():
     rct = rct[["record_id", "ff", "kfg", "deltapf", "cm", "pg", "glomerular_pressure", "rbf", "rvr", "re"] + list(rename.values())] 
     rct["procedure"] = "clamp"
     rct["visit"] = "baseline"
-    rct["date"] = labs["date"]
-    
+
     # --------------------------------------------------------------------------
     # PET scan
     # --------------------------------------------------------------------------
@@ -293,13 +291,14 @@ def clean_penguin():
     # --------------------------------------------------------------------------
     # Merge
     # --------------------------------------------------------------------------
-
+    # Procedure = clamp
+    clamp_merge = pd.merge(clamp, labs, how="outer")
+    clamp_merge = pd.merge(clamp_merge, rct,  how="outer")
+    # Everything else
     df = pd.concat([phys, screen], join='outer', ignore_index=True)
     df = pd.concat([df, med], join='outer', ignore_index=True)
-    df = pd.concat([df, labs], join='outer', ignore_index=True)
     df = pd.concat([df, dxa], join='outer', ignore_index=True)
-    df = pd.concat([df, clamp], join='outer', ignore_index=True)
-    df = pd.concat([df, rct], join='outer', ignore_index=True)
+    df = pd.concat([df, clamp_merge], join='outer', ignore_index=True)
     df = pd.concat([df, pet], join='outer', ignore_index=True)
     df = pd.concat([df, mri], join='outer', ignore_index=True)
     df = pd.merge(df, demo, how="outer")

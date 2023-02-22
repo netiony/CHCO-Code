@@ -141,7 +141,7 @@ def clean_crocodile():
     labs = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
     labs.replace(rep, np.nan, inplace=True)
-    labs.drop(["baseline_vitals", "visit_upt",
+    labs.drop(["baseline_vitals", "visit_upt", "visit_weight", "visit_height",
                "visit_uptresult", "baseline_labs", "pilabs_yn", "pi_copeptin", "pi_renin", "pi_angiotensin2", "pi_osmo_s", "pi_osmo_u", "pi_lithium_s", "pi_lithium_u", "metabolomics_yn", "kim_yn", "pi_kim_ykl40", "pi_kim_ngal", "pi_kim_kim1", "pi_kim_il18", "pi_kim_tnfr1", "pi_kim_tnfr2"], axis=1, inplace=True)
     labs.columns = labs.columns.str.replace(
         r"visit_|bl_", "", regex=True)
@@ -230,7 +230,6 @@ def clean_crocodile():
     clamp["p2_ffa_suppression"] = (
         (clamp["baseline_ffa"] - clamp["p2_steady_state_ffa"]) / clamp["baseline_ffa"]) * 100
     clamp["ffa_method"] = "hyperinsulinemic_euglycemic_clamp"
-    clamp["date"] = labs["date"]
 
     # --------------------------------------------------------------------------
     # Renal Clearance Testing
@@ -276,7 +275,6 @@ def clean_crocodile():
     rct = rct[["record_id", "ff", "kfg", "deltapf", "cm", "pg", "glomerular_pressure", "rbf", "rvr", "re"] + list(rename.values())] 
     rct["procedure"] = "clamp"
     rct["visit"] = "baseline"
-    rct["date"] = labs["date"]    
 
     # --------------------------------------------------------------------------
     # Kidney Biopsy
@@ -336,17 +334,18 @@ def clean_crocodile():
     # --------------------------------------------------------------------------
     # Merge
     # --------------------------------------------------------------------------
-
+    # Procedure = clamp
+    clamp_merge = pd.merge(clamp, labs, how="outer")
+    clamp_merge = pd.merge(clamp_merge, rct,  how="outer")
+    # Everything else
     df = pd.concat([phys, screen], join='outer', ignore_index=True)
     df = pd.concat([df, med], join='outer', ignore_index=True)
-    df = pd.concat([df, labs], join='outer', ignore_index=True)
     df = pd.concat([df, mri], join='outer', ignore_index=True)
     df = pd.concat([df, dxa], join='outer', ignore_index=True)
-    df = pd.concat([df, clamp], join='outer', ignore_index=True)
-    df = pd.concat([df, rct], join='outer', ignore_index=True)
+    df = pd.concat([df, clamp_merge], join='outer', ignore_index=True)
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
     df = pd.concat([df, pet], join='outer', ignore_index=True)
-    df = pd.merge(df, demo, how="outer")
+    df = pd.merge(df, demo, on='record_id', how="outer")
     df = df.copy()
 
     # --------------------------------------------------------------------------

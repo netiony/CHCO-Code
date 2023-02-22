@@ -253,7 +253,7 @@ def clean_coffee():
     df = pd.concat([phys, screen], join='outer', ignore_index=True)
     df = pd.concat([df, med], join='outer', ignore_index=True)
     df = pd.concat([df, clamp], join='outer', ignore_index=True)
-    df = pd.concat([df, out], join='outer', ignore_index=True)
+    df = pd.merge(df, out, how='outer')
     df = pd.concat([df, mri], join='outer', ignore_index=True)
     df = pd.merge(df, demo, how="outer")
     df = df.copy()

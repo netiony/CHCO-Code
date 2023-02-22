@@ -319,7 +319,7 @@ def clean_renal_heir():
     df = pd.concat([df, med], join='outer', ignore_index=True)
     df = pd.concat([df, dxa], join='outer', ignore_index=True)
     df = pd.concat([df, clamp], join='outer', ignore_index=True)
-    df = pd.concat([df, out], join='outer', ignore_index=True)
+    df = pd.merge(df, out, how='outer')
     df = pd.concat([df, bold_mri], join='outer', ignore_index=True)
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
     df = pd.merge(df, demo, how="outer")
