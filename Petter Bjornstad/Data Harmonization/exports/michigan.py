@@ -18,17 +18,16 @@ from datetime import datetime
 import pandas as pd
 # Get dataset
 df = harmonize_data()
-df.to_csv("~/temp.csv", index=False)
-# # Write
-# df.to_csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", index=False)
-# # Update for Michigan
-# time = datetime.now().strftime('%Y_%m_%d_%I%M%p')
-# # Re-save dictionary
-# dictionary = pd.read_csv(
-#     "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv")
-# dictionary.to_csv("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/Michigan/CHCO_Sample_IDs_Clinical/chco_data_dictionary_" +
-#                   time + ".csv", index=False)
-# # Save cleaned data (de-identified)
-# df = df.drop(["dob"], axis=1)
-# df.to_csv("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/Michigan/CHCO_Sample_IDs_Clinical/chco_harmonized_dataset_" +
-#           time + ".csv", index=False)
+# Write
+df.to_csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", index=False)
+# Update for Michigan
+time = datetime.now().strftime('%Y_%m_%d_%I%M%p')
+# Re-save dictionary
+dictionary = pd.read_csv(
+    "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv")
+dictionary.to_csv("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/Michigan/CHCO_Sample_IDs_Clinical/chco_data_dictionary_" +
+                  time + ".csv", index=False)
+# Save cleaned data (de-identified)
+df = df.drop(["dob"], axis=1)
+df.to_csv("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/Michigan/CHCO_Sample_IDs_Clinical/chco_harmonized_dataset_" +
+          time + ".csv", index=False)
