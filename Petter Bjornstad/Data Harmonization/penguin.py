@@ -37,7 +37,7 @@ def clean_penguin():
     # Demographics
     # --------------------------------------------------------------------------
 
-    dem_cols = ["record_id", "dob", "group", "sex", "race", "ethnicity"]
+    dem_cols = ["record_id", "dob", "group", "sex", "race", "ethnicity", "participation_status"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
     # Replace missing values
@@ -61,6 +61,7 @@ def clean_penguin():
     demo["diabetes_dx_date"] = np.nan
     demo["co_enroll_id"] = np.nan
     demo["group"] = "PKD"
+    demo["participation_status"].replace({"1": "Participated", "2": "Removed", "3": "Will Participate"}, inplace=True)
 
     # --------------------------------------------------------------------------
     # Medications

@@ -38,7 +38,7 @@ def clean_coffee():
     # --------------------------------------------------------------------------
 
     dem_cols = ["subject_id", "dob", "diagnosis",
-                "gender", "race", "ethnicity"]
+                "gender", "race", "ethnicity", "participation_status"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
     # Replace missing values
@@ -65,6 +65,7 @@ def clean_coffee():
     demo["sex"].replace({1: "Male", 0: "Female", 3: "Other",
                         "1": "Male", "0": "Female", "3": "Other"}, inplace=True)
     demo["group"] = "Type 1 Diabetes"
+    demo["participation_status"].replace({"1": "Participated", "2": "Removed", "3": "Will Participate"}, inplace=True)
 
     # --------------------------------------------------------------------------
     # Medications

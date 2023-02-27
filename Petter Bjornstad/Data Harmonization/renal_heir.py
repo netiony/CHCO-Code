@@ -38,7 +38,7 @@ def clean_renal_heir():
     # --------------------------------------------------------------------------
 
     dem_cols = ["subject_id", "co_enroll_id", "dob", "diagnosis",
-                "group", "gender", "race", "ethnicity", "sglt2i"]
+                "group", "gender", "race", "ethnicity", "sglt2i", "participation_status"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
     # Replace missing values
@@ -55,7 +55,7 @@ def clean_renal_heir():
     demo = combine_checkboxes(demo,
                               base_name="ethnicity",
                               levels=["Hispanic or Latino", "Not Hispanic or Latino", "Unknown/Not Reported"])
-    # Relevel sex and group
+    # Relevel sex and group and participation status
     demo["sex"].replace({1: "Male", 0: "Female", 2: "Other",
                         "1": "Male", "0": "Female", "2": "Other"}, inplace=True)
     demo["group"].replace({2: "Type 2 Diabetes", 3: "Obese Control",
@@ -64,6 +64,7 @@ def clean_renal_heir():
                            "4": "Lean Control"}, inplace=True)
     demo["sglt2i_ever"].replace({1: "Yes", 0: "No", "1": "Yes", "0": "No", np.NaN: "No"},
                        inplace=True)
+    demo["participation_status"].replace({"1": "Participated", "2": "Removed", "3": "Will Participate"}, inplace=True)
 
     # --------------------------------------------------------------------------
     # Medications

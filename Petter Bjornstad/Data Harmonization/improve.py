@@ -42,7 +42,7 @@ def clean_improve():
     # --------------------------------------------------------------------------
 
     dem_cols = ["subject_id", "co_enroll_id", "dob", "diagnosis",
-                "gender", "race", "ethnicity", "sglt2i"]
+                "gender", "race", "ethnicity", "sglt2i", "participation_status"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols,
                                             events=["screening_arm_1"]))
@@ -72,6 +72,7 @@ def clean_improve():
     demo["sglt2i"].replace({1: "Yes", 0: "No", "1": "Yes", "0": "No", np.NaN: "No"},
                            inplace=True)
     demo.rename({"sglt2i": "sglt2i_ever"}, axis=1, inplace=True)
+    demo["participation_status"].replace({"1": "Participated", "2": "Removed", "3": "Will Participate"}, inplace=True)
 
     # --------------------------------------------------------------------------
     # Medications
