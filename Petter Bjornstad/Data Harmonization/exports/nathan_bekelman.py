@@ -10,18 +10,19 @@ __maintainer__ = "Tim Vigers"
 __email__ = "timothy.vigers@cuanschutz.edu"
 __status__ = "Dev"
 import os
-os.chdir(os.path.expanduser('~'))
-os.chdir("GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
+import sys
+sys.path.insert(0, os.path.expanduser('~') +
+                "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization")
 from data_harmonization import harmonize_data
 from datetime import datetime
 import pandas as pd
 # Get dataset
 df = harmonize_data()
 # Select
-df = df[["record_id", "co_enroll_id", "study", "dob", "diabetes_dx_date", "sex",
-        "race", "ethnicity", "visit", "gfr_bsa_plasma", "gfr_bsa_plasma_urine",
-         "gfr_raw_plasma", "gfr_raw_plasma_urine", "eGFR_bedside_Schwartz",
-         "eGFR_CKD_epi", "eGFR_fas_cr"]]
+df = df[["record_id", "co_enroll_id", "study", "age", "diabetes_dx_date", "sex",
+        "race", "ethnicity", "visit", "creatinine_s", "gfr_bsa_plasma",
+         "gfr_bsa_plasma_urine", "gfr_raw_plasma", "gfr_raw_plasma_urine",
+         "eGFR_bedside_Schwartz", "eGFR_CKD_epi", "eGFR_fas_cr"]]
 # Group rows by visit, get non-missing values
 # Also, limit to baseline visits
 df["visit"] = df["visit"].replace({"pre_surgery": "baseline"})
