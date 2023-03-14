@@ -19,8 +19,8 @@ import pandas as pd
 # Get dataset
 df = harmonize_data()
 # Select
-df = df[["record_id", "co_enroll_id", "study", "age", "diabetes_dx_date", "sex",
-        "race", "ethnicity", "visit", "creatinine_s", "gfr_bsa_plasma",
+df = df[["record_id", "co_enroll_id", "study", "diabetes_dx_date", "age", "height",
+         "sex", "race", "ethnicity", "visit", "creatinine_s", "gfr_bsa_plasma",
          "gfr_bsa_plasma_urine", "gfr_raw_plasma", "gfr_raw_plasma_urine",
          "eGFR_bedside_Schwartz", "eGFR_CKD_epi", "eGFR_fas_cr"]]
 # Group rows by visit, get non-missing values
