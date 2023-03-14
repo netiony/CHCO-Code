@@ -79,7 +79,9 @@ def clean_crocodile():
                 "htn_med___3": "beta_blocker",
                 "htn_med___4": "ca_channel_blocker",
                 "htn_med___5": "diuretic",
-                "htn_med___6": "statin"}
+                "htn_med___6": "statin",
+                "pump_basal_rate": "pump_basal_rate", 
+                "cgm_yn": "cgm_yn"}
     og_names = list(med_list.keys())
     med = med[["record_id"] + og_names]
     med.rename(med_list, axis=1, inplace=True)
