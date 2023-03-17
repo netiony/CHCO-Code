@@ -25,11 +25,12 @@ library(knitr)
 library(tableone)
 library(car)
 library(tdROC)
+library(fuzzyjoin)
 
 knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
 
 # get REDCap data and exclude HCs
-source("E:\\Christine Chan\\Prospective analysis\\Data raw\\CGMInHealthyControls-DataForProspectiveAn_R_2021-06-02_0929.r")
+source("/Volumes/Peds Endo/Christine Chan/Prospective analysis/Data raw/CGMInHealthyControls-DataForProspectiveAn_R_2021-06-02_0929.r")
 data <- data[data$group_category != 1,]
 #write.csv(data$subject_id,"C:\\temp\\IDs.csv",row.names = F)
 # get rid of double data entry
@@ -55,7 +56,7 @@ data <- data %>% arrange(MRN,date_cgm_placement) %>% group_by(MRN) %>% filter(ro
 data$date_of_birth[data$MRN==899717] <- "2002-11-14"
 
 # read in insulin data - will merge later
-ins <- read.csv("E:\\Christine Chan\\Prospective analysis\\Data raw\\Insulin Start date and prospective data-- Eileen cleanup.csv",
+ins <- read.csv("/Volumes/Peds Endo/Christine Chan/Prospective analysis/Data raw/Insulin Start date and prospective data-- Eileen cleanup.csv",
                 na.strings = c(""," ",NA))
 
 # there can be duplicates in this file - keep the one with earliest date of consent
@@ -93,7 +94,7 @@ data1 <- data
 data1$Encounter_date <- as.Date(data1$date_of_visit,format="%m/%d/%Y")
 
 # read in PFTs
-pfts <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2022_07_22.xlsx",sheet="PFTs")
+pfts <- read_xlsx("/Volumes/Peds Endo/Christine Chan/Prospective analysis/Data raw/Updated Full List for Elin_Data_Updated2022_07_22.xlsx",sheet="PFTs")
 pfts$Encounter_date <- as.Date(pfts$`Encounter date`)
 pfts$`Encounter date` <- NULL
 pfts$`First Name` <- NULL
@@ -127,23 +128,49 @@ data2$FEV1.per.pred <- ifelse(is.na(data2$FEV1.per.pred),data2$fev1_percent,data
 data2$FVC.per.pred <- ifelse(is.na(data2$FVC.per.pred),data2$fvc,data2$FVC.per.pred)
 data2$fev1_percent <- NULL
 data2$fvc <- NULL
+data2$date_cgm_placement <- as.POSIXct(data2$date_cgm_placement, format="%m/%d/%Y")
+data2$date_cgm_placement_minus_90 <- data2$date_cgm_placement - (90*60*60*24)
+data2$date_cgm_placement_plus_14 <- data2$date_cgm_placement + (14*60*60*24)
 #write.csv(data2,'C:\\temp\\data2.csv')
 
 # read in OGTT and A1c data
-ogtt <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2022_07_22.xlsx",sheet="OGTTandA1C")
+ogtt <- read_xlsx("/Volumes/Peds Endo/Christine Chan/Prospective analysis/Data raw/Updated Full List for Elin_Data_Updated2022_07_22.xlsx",sheet="OGTTandA1C")
 ogtt$Encounter_date <- as.Date(ogtt$`Date of Test`)
-ogtt$`Date of Test` <- NULL
+#ogtt$`Date of Test` <- NULL
 ogtt$`Date of Consent` <- NULL
 ogtt$`First Name` <- NULL
 ogtt$`Last Name` <- NULL
 ogtt <- unique(ogtt)
 # keep OGTTs where MRN matches data2, then merge
 ogtt_keep <- ogtt[ogtt$MRN %in% data2$MRN,]
-data3 <- merge(data2,ogtt_keep,by=c("MRN","Encounter_date"),all.x = T,all.y = T)
-#write.csv(data3,'C:\\temp\\data3.csv')
+
+# separate OGTT and A1c data
+a1c_keep <- ogtt_keep[,c("MRN","Encounter_date","Hbg A1C")]
+# merge A1c with exact date match
+data3 <- merge(data2,a1c_keep,by=c("MRN","Encounter_date"),all.x = T,all.y = F)
+
+# for OGTTs, first filter out missing records
+ogtt_keep <- ogtt_keep %>% select(!`Hbg A1C`)
+ogtt_keep <- ogtt_keep %>% filter(!is.na(`OGTT Fasting`) & !is.na(`OGTT 1 Hour`) & !is.na(`OGTT 2 Hour`))
+# then do a fuzzy join allowing OGTTs up to 90 days prior, 14 days after
+data3 <- fuzzy_left_join(data3, ogtt_keep,
+                                 by = c("MRN" = "MRN",
+                                        'date_cgm_placement_minus_90' = "Date of Test",
+                                        'date_cgm_placement_plus_14' = 'Date of Test'),
+                                 match_fun = list(`==`, `<=`,`>=`))
+data3$MRN <- data3$MRN.x
+data3$MRN.x <- NULL
+data3$MRN.y <- NULL
+data3$Encounter_date <- data3$Encounter_date.x
+data3$Encounter_date.x <- NULL
+data3$Encounter_date.y <- NULL
+
+# why are there now 85 people not on insulin at baseline?
+# are there less missing data now?
+# not really, still only 25 with data
 
 # read in sputum data
-sputum <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2022_07_22.xlsx",sheet="Sputum")
+sputum <- read_xlsx("/Volumes/Peds Endo/Christine Chan/Prospective analysis/Data raw/Updated Full List for Elin_Data_Updated2022_07_22.xlsx",sheet="Sputum")
 sputum$Encounter_date <- as.Date(sputum$CultureDate)
 sputum$CultureDate <- NULL
 sputum$first_name <- NULL
@@ -156,7 +183,7 @@ data4 <- merge(data3,sputum_keep,by=c("MRN","Encounter_date"),all.x = T,all.y = 
 #write.csv(data4,'C:\\temp\\data4.csv')
 
 # read in modulator data
-mods <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2022_07_22.xlsx",sheet="Modulators")
+mods <- read_xlsx("/Volumes/Peds Endo/Christine Chan/Prospective analysis/Data raw/Updated Full List for Elin_Data_Updated2022_07_22.xlsx",sheet="Modulators")
 mods$`First Name` <- NULL
 mods$`Last Name` <- NULL
 mods$`Date of Consent` <- NULL
@@ -174,7 +201,7 @@ data5$earliest_mod <- NA
 data5$earliest_mod <- pmin(data5$`Earliest Kalydeco Date`,data5$`Earliest Orkambi Date`,data5$`Earliest Symdeko Date`,data5$`Earliest Trikafta Date`,na.rm = T)
 
 # read in admits
-admits <- read_xlsx("E:\\Christine Chan\\Prospective analysis\\Data raw\\Updated Full List for Elin_Data_Updated2022_07_22.xlsx",sheet="Admits_List")
+admits <- read_xlsx("/Volumes/Peds Endo/Christine Chan/Prospective analysis/Data raw/Updated Full List for Elin_Data_Updated2022_07_22.xlsx",sheet="Admits_List")
 admits$`First Name` <- NULL
 admits$`Last Name` <- NULL
 admits$`Date of Consent` <- NULL
@@ -460,7 +487,7 @@ data9$CFRD_date[data9$MRN==952250] <- "2015-03-27"
 data9$has_CFRD_base <- ifelse(data9$MRN==952250,1,data9$has_CFRD_base)
 
 # read in older CGM data for 4 participants and update these variables
-newcgm <- read.csv("E:\\Christine Chan\\Prospective analysis\\Data raw\\Corrected outcome data\\Extra CGM upload\\REDCap Upload.csv")
+newcgm <- read.csv("/Volumes/Peds Endo/Christine Chan/Prospective analysis/Data raw/Corrected outcome data/Extra CGM upload/REDCap Upload.csv")
 newcgm$subject_id <- paste0('0',newcgm$subject_id)
 newcgm_keep <- newcgm[,colnames(newcgm) %in% colnames(data)]
 vars_to_replace <- colnames(newcgm_keep)[-1]
@@ -480,7 +507,7 @@ data9[which(data9$MRN==1289450),vars_to_replace] <-  newcgm_keep[newcgm_keep$sub
 check_poc <- data9[,c("MRN","Encounter_date","OGTT 2 Hour","lab_ogtt_2_hour_glucose","poc_2_hour_glucose","OGTT Fasting","lab_ogtt_fasting","poc_fasting_glucose")]
 check_poc <- check_poc[(!is.na(check_poc$poc_2_hour_glucose) & is.na(check_poc$`OGTT 2 Hour`) & is.na(check_poc$lab_ogtt_2_hour_glucose)) | 
                          (!is.na(check_poc$poc_fasting_glucose) & is.na(check_poc$`OGTT Fasting`) & is.na(check_poc$lab_ogtt_fasting)),]
-write.csv(check_poc,"E:\\Christine Chan\\Prospective analysis\\Data clean\\checking_POC_glucose.csv",row.names = F)
+write.csv(check_poc,"/Volumes/Peds Endo/Christine Chan/Prospective analysis/Data clean/checking_POC_glucose.csv",row.names = F)
 
 # get rid of days <0
 data9 <- data9 %>% filter(days>=0)
@@ -499,6 +526,12 @@ base$low_bmi_pft[base$bmiZ_tertile==1 & base$low_pft==1] <- 1
 base <- base %>% select(MRN,bmiZ_tertile,low_pft,low_bmi_pft)
 data9 <- merge(data9, base, by="MRN",all.x = T, all.y = T)
 
+# write file with missing OGTTs at baseline
+x <- data9 %>% filter(days==0) %>% select(MRN,date_cgm_placement,date_cgm_placement_minus_90,
+                                          date_cgm_placement_plus_14,`Date of Test`,`OGTT Fasting`,`OGTT 1 Hour`,
+                                          `OGTT 2 Hour`)
+write.csv(x,"/Volumes/Peds Endo/Christine Chan/Prospective analysis/Data clean/check_missing_OGTT_baseline.csv")
+
 # final datasets - with and without insulin, 1 year, 3 years, all time points
 final_alltime_withins <- data9 
 final_1yr_withins <- data9 %>% filter(days<=365)
@@ -516,11 +549,11 @@ dfs <- c("final_alltime_withins","final_1yr_withins","final_3yr_withins","final_
 # write dataset of CGM placement data, all OGTT variables, insulin start date, baseline insulin status, insulin status after baseline, baseline CFRD, CFRD after baseline
 checkoutcomes <- data9[,c("MRN","date_cgm_placement","Encounter_date","OGTT Fasting","lab_ogtt_fasting","OGTT 2 Hour","lab_ogtt_2_hour_glucose",
                           "insulin_start_date","on_ins_base","ins_after_base","CFRD_date","has_CFRD_base","CFRD_after_base")]
-write.csv(checkoutcomes,'E:\\Christine Chan\\Prospective analysis\\Data clean\\check_outcomes.csv',row.names = F)
+write.csv(checkoutcomes,'/Volumes/Peds Endo/Christine Chan/Prospective analysis/Data clean/check_outcomes.csv',row.names = F)
 
 # check missingness of fsOGTT variables in REDCap
 checkfsogtt <- data9[,c("MRN","subject_id","Encounter_date","isi_ins","isi_c_pept","ogtt_auc_2_hour","odi_ins","odi_cpep","odi_ins_and_cpep")]
-write.csv(checkfsogtt,'E:\\Christine Chan\\Prospective analysis\\Data clean\\check_fsogtt.csv',row.names = F)
+write.csv(checkfsogtt,'/Volumes/Peds Endo/Christine Chan/Prospective analysis/Data clean/check_fsogtt.csv',row.names = F)
 
 ```
 
