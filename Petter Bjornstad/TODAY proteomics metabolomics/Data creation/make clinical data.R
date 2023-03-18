@@ -1,4 +1,5 @@
 library(dplyr)
+library(stringr)
 
 if(Sys.info()["sysname"] == "Windows"){
   home_dir = "E:/Petter Bjornstad/TODAY subaward"
@@ -296,6 +297,7 @@ VISIT_keep <- VISIT %>% select(releaseid,visit,bmi)
 CBL <- read.csv("./Clinical data/TODAY/CBL.csv")
 CBL$visit <- CBL$mvisit
 CBL_keep <- CBL %>% select(releaseid,visit,ins0min)
+CBL_keep <- CBL_keep %>% filter(!visit=="R")
 
 # TODAY ADDCBL - coDI
 ADDCBL <- read.csv("./Clinical data/TODAY/ADDCBL.csv")
@@ -316,6 +318,14 @@ CBL_TODAY2$ins0min <- CBL_TODAY2$ins
 CBL_TODAY2_KEEP <- CBL_TODAY2 %>% select(releaseid, visit, ins0min, codi)
 
 # merge all data
+long <- rbind(BASELINE_keep,VISIT_keep,VISIT_TODAY2_KEEP)
+long <- merge(long,CBL_keep,by=c("releaseid","visit"),all.x = T, all.y = T)
+long <- merge(long,ADDCBL_keep,by=c("releaseid","visit"),all.x = T, all.y = T)
+long <- merge(long,VISIT_TODAY2_KEEP,by=c("releaseid","visit"),all.x = T, all.y = T)
+long <- merge(long,CBL_TODAY2_KEEP,by=c("releaseid","visit"),all.x = T, all.y = T)
+# add a numeric visit variable
+long$visit_num <- as.numeric(str_sub(long$visit,2,length(long$visit)))
+# need to check .x and .y variables
 
 # calculated variables - eIS
 
