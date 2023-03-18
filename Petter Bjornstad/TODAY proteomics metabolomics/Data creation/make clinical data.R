@@ -319,13 +319,12 @@ CBL_TODAY2_KEEP <- CBL_TODAY2 %>% select(releaseid, visit, ins0min, codi)
 
 # merge all data
 long <- rbind(BASELINE_keep,VISIT_keep,VISIT_TODAY2_KEEP)
-long <- merge(long,CBL_keep,by=c("releaseid","visit"),all.x = T, all.y = T)
-long <- merge(long,ADDCBL_keep,by=c("releaseid","visit"),all.x = T, all.y = T)
-long <- merge(long,VISIT_TODAY2_KEEP,by=c("releaseid","visit"),all.x = T, all.y = T)
-long <- merge(long,CBL_TODAY2_KEEP,by=c("releaseid","visit"),all.x = T, all.y = T)
+labs <- merge(CBL_keep,ADDCBL_keep,by=c("releaseid","visit"),all.x = T, all.y = T)
+labs <- rbind(labs,CBL_TODAY2_KEEP)
+long <- merge(long,labs,by=c("releaseid","visit"),all.x = T, all.y = T)
 # add a numeric visit variable
 long$visit_num <- as.numeric(str_sub(long$visit,2,length(long$visit)))
-# need to check .x and .y variables
+# need to commit changes - not sure why it won't work
 
 # calculated variables - eIS
 
