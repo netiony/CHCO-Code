@@ -278,5 +278,45 @@ yr10risk$log_trig <- log(yr10risk$trig)
 # Save
 save(yr10risk,file = "./Clinical data/TODAY/yr10risk.Rdata")
 
+###############################################################
+# create longitudinal datasets from TODAY and TODAY2          #
+###############################################################
 
+# TODAY BASELINE - baseline BMI 
+BASELINE <- read.csv("./Clinical data/TODAY/BASELINE.csv")
+BASELINE$visit <- "M00"
+BASELINE_keep <- BASELINE %>% select(releaseid,visit,bmi)
 
+# TODAY VISIT - BMI 
+VISIT <- read.csv("./Clinical data/TODAY/VISIT.csv")
+VISIT$visit <- VISIT$mvisit
+VISIT_keep <- VISIT %>% select(releaseid,visit,bmi)
+
+# TODAY CBL - eIS
+CBL <- read.csv("./Clinical data/TODAY/CBL.csv")
+CBL$visit <- CBL$mvisit
+CBL_keep <- CBL %>% select(releaseid,visit,ins0min)
+
+# TODAY ADDCBL - coDI
+ADDCBL <- read.csv("./Clinical data/TODAY/ADDCBL.csv")
+ADDCBL$visit <- ADDCBL$mvisit
+ADDCBL_keep <- ADDCBL %>% select(releaseid,visit,codi)
+
+# TODAY2 VISIT - BMI and waist circ
+VISIT_TODAY2 <- read.csv("./Clinical data/TODAY2/VISIT.csv")
+VISIT_TODAY2$releaseid <- VISIT_TODAY2$RELEASEID
+VISIT_TODAY2$bmi <- VISIT_TODAY2$BMI
+VISIT_TODAY2$visit <- VISIT_TODAY2$PVISIT
+VISIT_TODAY2_KEEP <- VISIT_TODAY2 %>% select(releaseid, visit, bmi)
+
+# TODAY2 CBL - eIS and coDI
+CBL_TODAY2 <- read.csv("./Clinical data/TODAY2/CBL.csv")
+CBL_TODAY2$visit <- CBL_TODAY2$pvisit
+CBL_TODAY2$ins0min <- CBL_TODAY2$ins
+CBL_TODAY2_KEEP <- CBL_TODAY2 %>% select(releaseid, visit, ins0min, codi)
+
+# merge all data
+
+# calculated variables - eIS
+
+# write file
