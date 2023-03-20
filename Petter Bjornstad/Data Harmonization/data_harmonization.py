@@ -118,6 +118,20 @@ def harmonize_data():
     harmonized["acr_u"] = \
         pd.to_numeric(harmonized["microalbumin_u"], errors="coerce") * 100 / \
         pd.to_numeric(harmonized["creatinine_u"], errors="coerce")
+    # Albuminuria
+    alb = []
+    for a in harmonized["acr_u"]:
+        if a < 30:
+            alb.append("A1")
+        elif a >= 30 and a <= 300:
+            alb.append("A2")
+        elif a > 300:
+            alb.append("A3")
+        else:
+            alb.append(np.nan)
+    harmonized["albuminuria_cat"] = alb
+    harmonized["elevated_albuminuria"] = pd.cut(
+        harmonized["acr_u"], [-float("inf"), 30, float("inf")], right=False, labels=["No", "Yes"])
     # FFA suppression negative to be 0
     harmonized["ffa_suppression"] = np.where(
         harmonized["ffa_suppression"] < 0, 0, harmonized["ffa_suppression"])
