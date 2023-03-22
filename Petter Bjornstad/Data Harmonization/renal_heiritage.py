@@ -37,17 +37,21 @@ def clean_renal_heiritage():
     # Demographics
     # --------------------------------------------------------------------------
 
-    dem_cols = ["record_id", "dob", "group", "sex", "race", "ethnicity", "sglt2i", 
-                "participation_status"]
+    dem_cols = ["record_id", "dob", "group_rh2", "sex", "race", "ethnicity", "sglt2i", 
+                "participation_status", "rh_id"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
     demo = demo.loc[demo["redcap_event_name"].str.startswith('screen', na=False)]
     demo.drop(["redcap_event_name"], inplace=True, axis=1)
     # Replace missing values
     demo.replace(rep, np.nan, inplace=True)
-    demo.rename({"sglt2i": "sglt2i_ever"},
+    demo.rename({"sglt2i": "sglt2i_ever",
+                  "rh_id": "co_enroll_id",
+                  "group_rh2": "group"},
                 inplace=True, axis=1)
+    dem_cols[2] = "group"
     dem_cols[6] = "sglt2i_ever"
+    dem_cols[8] = "co_enroll_id"
     # Race columns combined into one
     demo = combine_checkboxes(demo, base_name="race", levels=[
         "American Indian or Alaskan Native", "Asian", "Hawaiian or Pacific Islander", "Black or African American", "White", "Unknown", "Other"])
@@ -61,6 +65,7 @@ def clean_renal_heiritage():
     demo["group"].replace({1: "Type 2 Diabetes", 2: "Obese Control", 3: "Lean Control",
                            "1": "Type 2 Diabetes", "2": "Obese Control",
                            "3": "Lean Control"}, inplace=True)
+    demo["group_risk"] = np.where(demo.group.str.contains("lean", case=False), "Low", "High")
     demo["sglt2i_ever"].replace({1: "Yes", 0: "No", "1": "Yes", "0": "No", np.NaN: "No"},
                        inplace=True)
     demo["participation_status"].replace({"1": "Participated", "2": "Removed", "3": "Will Participate"}, inplace=True)
@@ -115,10 +120,10 @@ def clean_renal_heiritage():
     annual_labs.replace(rep, np.nan, inplace=True)
     # Format
     annual_labs["procedure"] = "labs"
-    annual_labs["visit"] = "annual"
-    annual_labs.drop(["annual_labs"], axis=1, inplace=True)
+    annual_labs["visit"] = "annual_" + annual_labs["study_visit_annual"].map(str)
+    annual_labs.drop(["annual_labs", "redcap_repeat_instance", "redcap_repeat_instrument", "study_visit_annual"], axis=1, inplace=True)
     annual_labs.columns = annual_labs.columns.str.replace(
-        r"an_", "", regex=True)
+        r"an_|annual_lab_", "", regex=True)
     annual_labs.rename({"uacr": "acr_u"},
                  inplace=True, axis=1)
 
@@ -126,7 +131,7 @@ def clean_renal_heiritage():
     # Renal Clearance Testing
     # --------------------------------------------------------------------------
 
-    var = ["record_id"] + ["group"] + ["phys_map"] + [v for v in meta.loc[meta["form_name"] == 
+    var = ["record_id"] + ["group_rh2"] + ["phys_map"] + [v for v in meta.loc[meta["form_name"] == 
     "study_visit_renal_clearance_testing", "field_name"]] +[v for v in meta.loc[meta["form_name"] == 
     "renal_clearance_baseline_labs", "field_name"]]
     rct = pd.DataFrame(proj.export_records(fields=var))
@@ -150,7 +155,7 @@ def clean_renal_heiritage():
     # Filtration Fraction
     rct["ff"] = rct["gfr_raw_plasma"]/rct["erpf_raw_plasma"] 
     # Kfg for group (T1D/T2D kfg: 0.1012, Control kfg: 0.1733)
-    rct["kfg"] = np.select([rct["group"].eq("1"), rct["group"].eq("2"), rct["group"].eq("3")], [0.1012, 0.1733, 0.1733]) 
+    rct["kfg"] = np.select([rct["group_rh2"].eq("1"), rct["group_rh2"].eq("2"), rct["group_rh2"].eq("3")], [0.1012, 0.1733, 0.1733]) 
     # Filtration pressure across glomerular capillaries
     rct["deltapf"] = (rct["gfr_raw_plasma"]/60)/rct["kfg"] 
     # Plasma protein mean concentration
@@ -168,7 +173,7 @@ def clean_renal_heiritage():
     rct["re"] = (rct["gfr_raw_plasma_seconds"]) / (rct["kfg"] * (rct["rbf_seconds"] - (rct["gfr_raw_plasma_seconds"]))) * 1328
     # Reduce rct dataset
     rct.drop(["rbf_seconds", "erpf_raw_plasma_seconds"], axis=1, inplace=True)
-    rct["procedure"] = "clamp"
+    rct["procedure"] = "renal_clearnace_test"
     rct["visit"] = "baseline"
     
     # --------------------------------------------------------------------------
