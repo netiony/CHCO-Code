@@ -69,6 +69,7 @@ def clean_casper():
     demo["sex"].replace({1: "Male", 0: "Female", 3: "Other",
                         "1": "Male", "0": "Female", "3": "Other"}, inplace=True)
     demo["group"] = "Type 1 Diabetes"
+    demo["group_risk"] = np.where(demo.group.str.contains("lean", case=False), "Low", "High")
     demo["participation_status"].replace({"1": "Participated", "2": "Removed", "3": "Will Participate"}, inplace=True)
 
     # --------------------------------------------------------------------------

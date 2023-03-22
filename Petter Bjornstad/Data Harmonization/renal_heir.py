@@ -62,6 +62,7 @@ def clean_renal_heir():
                            4: "Lean Control",
                            "2": "Type 2 Diabetes", "3": "Obese Control",
                            "4": "Lean Control"}, inplace=True)
+    demo["group_risk"] = np.where(demo.group.str.contains("lean", case=False), "Low", "High")
     demo["sglt2i_ever"].replace({1: "Yes", 0: "No", "1": "Yes", "0": "No", np.NaN: "No"},
                        inplace=True)
     demo["participation_status"].replace({"1": "Participated", "2": "Removed", "3": "Will Participate"}, inplace=True)

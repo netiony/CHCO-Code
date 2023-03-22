@@ -71,6 +71,7 @@ def clean_improve():
                         "1": "Male", "0": "Female", "2": "Other"}, inplace=True)
     demo["sglt2i"].replace({1: "Yes", 0: "No", "1": "Yes", "0": "No", np.NaN: "No"},
                            inplace=True)
+    demo["group_risk"] = np.where(demo.group.str.contains("lean", case=False), "Low", "High")
     demo.rename({"sglt2i": "sglt2i_ever"}, axis=1, inplace=True)
     demo["participation_status"].replace({"1": "Participated", "2": "Removed", "3": "Will Participate"}, inplace=True)
 

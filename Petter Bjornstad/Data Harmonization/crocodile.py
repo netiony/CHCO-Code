@@ -56,6 +56,7 @@ def clean_crocodile():
                         "1": "Male", "2": "Female", "3": "Other"}, inplace=True)
     demo["group"].replace({1: "Type 1 Diabetes", 2: "Lean Control",
                            "1": "Type 1 Diabetes", "2": "Lean Control"}, inplace=True)
+    demo["group_risk"] = np.where(demo.group.str.contains("lean", case=False), "Low", "High")
     demo["participation_status"].replace({"1": "Participated", "2": "Removed", "3": "Will Participate"}, inplace=True)
 
     # --------------------------------------------------------------------------
