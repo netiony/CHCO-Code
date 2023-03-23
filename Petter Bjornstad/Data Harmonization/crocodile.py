@@ -56,6 +56,7 @@ def clean_crocodile():
                         "1": "Male", "2": "Female", "3": "Other"}, inplace=True)
     demo["group"].replace({1: "Type 1 Diabetes", 2: "Lean Control",
                            "1": "Type 1 Diabetes", "2": "Lean Control"}, inplace=True)
+    demo["group_risk"] = np.where(demo.group.str.contains("lean", case=False), "Low", "High")
     demo["participation_status"].replace({"1": "Participated", "2": "Removed", "3": "Will Participate"}, inplace=True)
 
     # --------------------------------------------------------------------------
@@ -272,10 +273,12 @@ def clean_crocodile():
     rct["rbf_seconds"] = (rct["erpf_raw_plasma_seconds"]) / (1 - rct["hct_210"]/100)
     # Renal Vascular Resistance (mmHg*l^-1*min^-1)
     rct["rvr"] = rct["map"] / rct["rbf"]
-    # Efferent Arteriorlar Resistance 
+    # Efferent Arteriolar Resistance 
     rct["re"] = (rct["gfr_raw_plasma_seconds"]) / (rct["kfg"] * (rct["rbf_seconds"] - (rct["gfr_raw_plasma_seconds"]))) * 1328
+    # Afferent Arteriolar resistant
+    rct["ra"] = ((rct["map"] - rct["glomerular_pressure"]) / rct["rbf"]) * 1328    
     # Reduce rct dataset
-    rct = rct[["record_id", "ff", "kfg", "deltapf", "cm", "pg", "glomerular_pressure", "rbf", "rvr", "re"] + list(rename.values())] 
+    rct = rct[["record_id", "ff", "kfg", "deltapf", "cm", "pg", "glomerular_pressure", "rbf", "rvr", "ra", "re"] + list(rename.values())] 
     rct["procedure"] = "clamp"
     rct["visit"] = "baseline"
 
