@@ -324,8 +324,8 @@ labs <- rbind(labs,CBL_TODAY2_KEEP)
 long <- merge(long,labs,by=c("releaseid","visit"),all.x = T, all.y = T)
 # add a numeric visit variable
 long$visit_num <- as.numeric(str_sub(long$visit,2,length(long$visit)))
-# need to commit changes - not sure why it won't work
-
 # calculated variables - eIS
+long$si_1_ins0 <- 1/long$ins0min
 
 # write file
+save(long,file = "./Clinical data/TODAY/clinical_data_long.Rdata")
