@@ -62,6 +62,7 @@ def clean_renal_heir():
                            4: "Lean Control",
                            "2": "Type 2 Diabetes", "3": "Obese Control",
                            "4": "Lean Control"}, inplace=True)
+    demo["group_risk"] = np.where(demo.group.str.contains("lean", case=False), "Low", "High")
     demo["sglt2i_ever"].replace({1: "Yes", 0: "No", "1": "Yes", "0": "No", np.NaN: "No"},
                        inplace=True)
     demo["participation_status"].replace({"1": "Participated", "2": "Removed", "3": "Will Participate"}, inplace=True)
@@ -262,8 +263,10 @@ def clean_renal_heir():
     out["rbf_seconds"] = (out["erpf_raw_plasma_seconds"]) / (1 - out["hematocrit_avg"]/100)
     # Renal Vascular Resistance (mmHg*l^-1*min^-1)
     out["rvr"] = out["map"] / out["rbf"]
-    # Efferent Arteriorlar Resistance 
+    # Efferent Arteriolar Resistance 
     out["re"] = (out["gfr_raw_plasma_seconds"]) / (out["kfg"] * (out["rbf_seconds"] - (out["gfr_raw_plasma_seconds"]))) * 1328
+    # Afferent Arteriolar resistant
+    out["ra"] = ((out["map"] - out["glomerular_pressure"]) / out["rbf"]) * 1328    
     out.drop(["gfr_raw_plasma_seconds", "rbf_seconds", "gfr_raw_plasma_seconds", "erpf_raw_plasma_seconds", 
             "total_protein", "map", "clamp_map", "hematocrit_90", "hematocrit_120", "hematocrit_avg", "group"],
              axis=1, inplace=True)

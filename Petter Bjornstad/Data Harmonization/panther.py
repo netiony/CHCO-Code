@@ -67,6 +67,7 @@ def clean_panther():
     demo["sglt2i"].replace({1: "Yes", 0: "No", "1": "Yes", "0": "No", np.NaN: "No"},
                            inplace=True)
     demo["group"].replace({"1": "Type 2 Diabetes", "2": "Obese Control", "3": "Lean Control"}, inplace=True)
+    demo["group_risk"] = np.where(demo.group.str.contains("lean", case=False), "Low", "High")
     demo.rename({"sglt2i": "sglt2i_ever"}, axis=1, inplace=True)
     demo["participation_status"].replace({"1": "Participated", "2": "Removed", "3": "Will Participate"}, inplace=True)
 
@@ -237,8 +238,10 @@ def clean_panther():
     rct["rbf_seconds"] = (rct["erpf_raw_plasma_seconds"]) / (1 - rct["hct"]/100)
     # Renal Vascular Resistance (mmHg*l^-1*min^-1)
     rct["rvr"] = rct["map"] / rct["rbf"]
-    # Efferent Arteriorlar Resistance 
+    # Efferent Arteriolar Resistance 
     rct["re"] = (rct["gfr_raw_plasma_seconds"]) / (rct["kfg"] * (rct["rbf_seconds"] - (rct["gfr_raw_plasma_seconds"]))) * 1328
+    # Afferent Arteriolar resistant
+    rct["ra"] = ((rct["map"] - rct["glomerular_pressure"]) / rct["rbf"]) * 1328    
     # Reduce rct dataset
     rct.drop(["rbf_seconds", "erpf_raw_plasma_seconds", "group", "pilabs_yn", 
               "metabolomics_yn", "kim_yn", "rc_labs", "map"], axis=1, inplace=True)

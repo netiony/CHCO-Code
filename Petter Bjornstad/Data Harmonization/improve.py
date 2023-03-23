@@ -71,6 +71,7 @@ def clean_improve():
                         "1": "Male", "0": "Female", "2": "Other"}, inplace=True)
     demo["sglt2i"].replace({1: "Yes", 0: "No", "1": "Yes", "0": "No", np.NaN: "No"},
                            inplace=True)
+    demo["group_risk"] = np.where(demo.group.str.contains("lean", case=False), "Low", "High")
     demo.rename({"sglt2i": "sglt2i_ever"}, axis=1, inplace=True)
     demo["participation_status"].replace({"1": "Participated", "2": "Removed", "3": "Will Participate"}, inplace=True)
 
@@ -354,8 +355,10 @@ def clean_improve():
     out["rbf_seconds"] = (out["erpf_raw_plasma_seconds"]) / (1 - out["hematocrit_avg"]/100)
     # Renal Vascular Resistance (mmHg*l^-1*min^-1)
     out["rvr"] = out["map"] / out["rbf"]
-    # Efferent Arteriorlar Resistance 
+    # Efferent Arteriolar Resistance 
     out["re"] = (out["gfr_raw_plasma_seconds"]) / (out["kfg"] * (out["rbf_seconds"] - (out["gfr_raw_plasma_seconds"]))) * 1328
+    # Afferent Arteriolar resistant
+    out["ra"] = ((out["map"] - out["glomerular_pressure"]) / out["rbf"]) * 1328    
     out.drop(["gfr_raw_plasma_seconds", "rbf_seconds", "gfr_raw_plasma_seconds", "erpf_raw_plasma_seconds",
               "hematocrit_90" , "hematocrit_120" , "map" , "clamp_map" , "total_protein" , "hematocrit_avg"],
              axis=1, inplace=True)
