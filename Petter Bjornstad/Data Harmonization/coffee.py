@@ -226,8 +226,10 @@ def clean_coffee():
     out["rbf_seconds"] = (out["erpf_raw_plasma_seconds"]) / (1 - out["hematocrit_avg"]/100)
     # Renal Vascular Resistance (mmHg*l^-1*min^-1)
     out["rvr"] = out["map"] / out["rbf"]
-    # Efferent Arteriorlar Resistance 
+    # Efferent Arteriolar Resistance 
     out["re"] = (out["gfr_raw_plasma_seconds"]) / (out["kfg"] * (out["rbf_seconds"] - (out["gfr_raw_plasma_seconds"]))) * 1328
+    # Afferent Arteriolar resistant
+    out["ra"] = ((out["map"] - out["glomerular_pressure"]) / out["rbf"]) * 1328
     out.drop(["gfr_raw_plasma_seconds", "rbf_seconds", "gfr_raw_plasma_seconds", "erpf_raw_plasma_seconds", 
               "total_protein", "map", "clamp_map", "hematocrit_minus_5", "hematocrit_90", "hematocrit_120", "hematocrit_avg"],
              axis=1, inplace=True)

@@ -355,8 +355,10 @@ def clean_improve():
     out["rbf_seconds"] = (out["erpf_raw_plasma_seconds"]) / (1 - out["hematocrit_avg"]/100)
     # Renal Vascular Resistance (mmHg*l^-1*min^-1)
     out["rvr"] = out["map"] / out["rbf"]
-    # Efferent Arteriorlar Resistance 
+    # Efferent Arteriolar Resistance 
     out["re"] = (out["gfr_raw_plasma_seconds"]) / (out["kfg"] * (out["rbf_seconds"] - (out["gfr_raw_plasma_seconds"]))) * 1328
+    # Afferent Arteriolar resistant
+    out["ra"] = ((out["map"] - out["glomerular_pressure"]) / out["rbf"]) * 1328    
     out.drop(["gfr_raw_plasma_seconds", "rbf_seconds", "gfr_raw_plasma_seconds", "erpf_raw_plasma_seconds",
               "hematocrit_90" , "hematocrit_120" , "map" , "clamp_map" , "total_protein" , "hematocrit_avg"],
              axis=1, inplace=True)

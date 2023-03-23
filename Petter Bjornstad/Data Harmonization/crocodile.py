@@ -273,10 +273,12 @@ def clean_crocodile():
     rct["rbf_seconds"] = (rct["erpf_raw_plasma_seconds"]) / (1 - rct["hct_210"]/100)
     # Renal Vascular Resistance (mmHg*l^-1*min^-1)
     rct["rvr"] = rct["map"] / rct["rbf"]
-    # Efferent Arteriorlar Resistance 
+    # Efferent Arteriolar Resistance 
     rct["re"] = (rct["gfr_raw_plasma_seconds"]) / (rct["kfg"] * (rct["rbf_seconds"] - (rct["gfr_raw_plasma_seconds"]))) * 1328
+    # Afferent Arteriolar resistant
+    rct["ra"] = ((rct["map"] - rct["glomerular_pressure"]) / rct["rbf"]) * 1328    
     # Reduce rct dataset
-    rct = rct[["record_id", "ff", "kfg", "deltapf", "cm", "pg", "glomerular_pressure", "rbf", "rvr", "re"] + list(rename.values())] 
+    rct = rct[["record_id", "ff", "kfg", "deltapf", "cm", "pg", "glomerular_pressure", "rbf", "rvr", "ra", "re"] + list(rename.values())] 
     rct["procedure"] = "clamp"
     rct["visit"] = "baseline"
 
