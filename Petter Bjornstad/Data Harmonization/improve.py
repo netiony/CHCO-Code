@@ -357,8 +357,9 @@ def clean_improve():
     out["rvr"] = out["map"] / out["rbf"]
     # Efferent Arteriolar Resistance 
     out["re"] = (out["gfr_raw_plasma_seconds"]) / (out["kfg"] * (out["rbf_seconds"] - (out["gfr_raw_plasma_seconds"]))) * 1328
-    # Afferent Arteriolar resistant
-    out["ra"] = ((out["map"] - out["glomerular_pressure"]) / out["rbf"]) * 1328    
+    # Afferent Arteriolar Resistance
+    out["ra"] = ((out["map"] - out["glomerular_pressure"]) / out["rbf_seconds"]) * 1328    
+    out.loc[~(out['ra'] > 0), 'ra']=np.nan    
     out.drop(["gfr_raw_plasma_seconds", "rbf_seconds", "gfr_raw_plasma_seconds", "erpf_raw_plasma_seconds",
               "hematocrit_90" , "hematocrit_120" , "map" , "clamp_map" , "total_protein" , "hematocrit_avg"],
              axis=1, inplace=True)

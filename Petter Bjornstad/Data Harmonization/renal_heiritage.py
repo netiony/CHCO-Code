@@ -171,8 +171,9 @@ def clean_renal_heiritage():
     rct["rvr"] = rct["map"] / rct["rbf"]
     # Efferent Arteriolar Resistance 
     rct["re"] = (rct["gfr_raw_plasma_seconds"]) / (rct["kfg"] * (rct["rbf_seconds"] - (rct["gfr_raw_plasma_seconds"]))) * 1328
-    # Afferent Arteriolar resistant
-    rct["ra"] = ((rct["map"] - rct["glomerular_pressure"]) / rct["rbf"]) * 1328    
+    # Afferent Arteriolar Resistance
+    rct["ra"] = ((rct["map"] - rct["glomerular_pressure"]) / rct["rbf_seconds"]) * 1328  
+    rct.loc[~(rct['ra'] > 0), 'ra']=np.nan    
     # Reduce rct dataset
     rct.drop(["rbf_seconds", "erpf_raw_plasma_seconds"], axis=1, inplace=True)
     rct["procedure"] = "renal_clearnace_test"
