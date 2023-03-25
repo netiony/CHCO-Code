@@ -1,0 +1,341 @@
+---
+title: "TODAY Somalogic Pathway Analyses: Linear models for insulin sensitivity variables"
+author: "Tim Vigers"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
+    self-contained: true
+    code-fold: true
+    fig-width: 8
+    fig-height: 10
+---
+
+```{r include=FALSE}
+library(readxl)
+library(clusterProfiler)
+library(ReactomePA)
+library(enrichplot)
+library(EnhancedVolcano)
+```
+
+# Enrichment
+
+Enrichment analyses were performed on nominally significant proteins using the R package `clusterProfiler` and a gene set ranked by log FC. Entrez gene IDs were used for all annotation. All genes in the `org.Hs.eg.db` were used as background for GO enrichment analysis. All duplicate gene/protein names were removed from the differentially expressed gene list.
+
+```{r}
+# Make a funciton for pathway analysis
+# Need a genelist in the format used by clusterProfiler, with names in UniProt form
+pathway_analysis = function(de_genes){
+  # Remove duplicates and fix names
+  de_genes = de_genes[!is.na(names(de_genes))]
+  names(de_genes) = sub("\\|.*","",names(de_genes))
+  de_genes = de_genes[which(!duplicated(names(de_genes)))]
+  # GSEA with KEGG
+  gseaKEGG = gseKEGG(geneList = de_genes[unique(names(de_genes))],
+                     keyType = 'uniprot',pvalueCutoff = 1)
+  gsea_upset = upsetplot(gseaKEGG) + ggtitle("GSEA Upset Plot")
+  ridge = ridgeplot(gseaKEGG) + ggtitle("GSEA Ridge Plot")
+ # gseap = gseaplot2(gseaKEGG,geneSetID = 1:nrow(gseaKEGG@result)) + 
+ #   ggtitle("GSEA Plot")
+  gsea_heat = heatplot(gseaKEGG,foldChange=de_genes) + ggtitle("GSEA Heatmap")
+  # Convert to gene names (some won't match unfortunately)
+  eg = bitr(names(de_genes), fromType="UNIPROT", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+  de_genes = de_genes[which(names(de_genes) %in% eg$UNIPROT)]
+  names(de_genes) = eg$ENTREZID[match(names(de_genes),eg$UNIPROT)]
+  # GO enrichment
+  ego = enrichGO(names(de_genes),OrgDb = 'org.Hs.eg.db')
+  bar = barplot(ego,showCategory=20) + ggtitle("GO Enrichment Bar Plot")
+  dot = dotplot(ego,showCategory=20) + ggtitle("GO Enrichment Dot Plot")
+  # Convert to gene symbols
+  egox = setReadable(ego, 'org.Hs.eg.db', 'ENTREZID')
+  # More plots!
+  cnet = cnetplot(egox, foldChange=de_genes) + ggtitle("GO Enrichment Network Plot")
+  circos = cnetplot(egox, foldChange=de_genes, circular = TRUE, colorEdge = TRUE) + 
+    ggtitle("GO Enrichment Circos Plot")
+  heat = heatplot(egox, foldChange=de_genes) + ggtitle("GO Enrichment Heatmap")
+  egop = pairwise_termsim(ego)
+  emap = emapplot(egop) + ggtitle("GO Enrichment Map")
+  upset = upsetplot(egop) + ggtitle("GO Enrichment Upset Plot")
+  # Return those beautiful plots
+  return(list("gsea_upset" = gsea_upset,"ridge" = ridge,"gseap" = NULL,
+              "gsea_heat" = gsea_heat,"bar" = bar,"dot" = dot,"cnet" = cnet,
+              "circos" = circos,"heat" = heat,"emap" = emap,"upset" = upset))
+}
+# Function for comparing two gene lists
+# de_gene_list is a list of multiple gene sets
+pathway_comparison = function(de_gene_list){
+  # Format names
+  de_gene_list = lapply(de_gene_list, function(l){
+    n = names(l)
+    n = sub("\\|.*","",n)
+    eg = bitr(n, fromType="UNIPROT", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+    n = eg$ENTREZID[match(n,eg$UNIPROT)]
+    n = n[!is.na(n)]
+    dups = n[duplicated(n)]
+    n = n[!n %in% dups]
+    return(n)
+  })
+  # Compare with GO enrichment
+  ck = compareCluster(geneClusters = de_gene_list,
+                      fun='enrichGO', OrgDb='org.Hs.eg.db')
+  # Gene names
+  ckx = setReadable(ck, OrgDb = "org.Hs.eg.db", keyType="ENTREZID")
+  # Plots
+  dot = dotplot(ckx) + ggtitle("Cluster Comparison Dot Plot")
+  net = cnetplot(ckx) + ggtitle("Cluster Comparison Network Plot")
+  xx = pairwise_termsim(ckx)
+  emap = emapplot(xx) + ggtitle("Cluster Comparison Enrichment Map")
+  # Return
+  return(list("dot" = dot,"net" = net,"emap" = emap))
+}
+# Volcano plot
+volcano = function(df,lab = "Target",xcol = "logFC",ycol = "P.Value",top = 15,
+                           xlimit = c(-1, 1),ylimit = c(0, -log10(10e-7)),
+                   xlabel = bquote(~Log ~ "fold change"),
+                           pCutoff = 0.05){
+  df = as.data.frame(df)
+  df = df[order(df[,ycol]),]
+  df$logp = -log10(df[,ycol])
+  df$fc = df[,xcol]
+  df$sig = df[,ycol] <= pCutoff
+  p = ggplot(data = df,aes(x = fc,y = logp,color = sig)) + 
+    geom_hline(yintercept = -log10(pCutoff),linetype = "dashed") +
+    geom_point(size=2) + 
+    geom_label_repel(data=df[1:top,],aes(label=Target),color = "black",
+                     max.overlaps = 15,size=6) +
+    scale_color_manual(values = c("grey","#3e6dbf")) +
+    xlab(xlabel) + ylab(bquote(~-Log[10] ~ italic(P))) +
+    theme_bw() +
+    theme(legend.position = "none",
+          axis.text=element_text(size=15),
+          axis.title=element_text(size=20)) 
+  return(p)
+}
+```
+
+# Baseline (moderated adjusted linear models)
+
+```{r}
+#f = "/Volumes/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx"
+f <- "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma baseline unadjusted insulin sensitivity.xlsx"
+```
+
+## Baseline BMI
+
+```{r warning=FALSE,message=FALSE}
+# changed "estimate" to "logFC" and "p.value" to "P.value" but not sure why that would be needed?
+# might be best to change code block below back and then create new variables with original names
+
+# Prepare gene list
+bmi = read_excel(f,sheet = "BMI0_moderated_FDR")
+volcano(bmi,xcol = "logFC",ycol = "P.Value",xlabel = "LogFC")
+bmi = bmi[bmi$P.Value <= 0.05,]
+de_genes_bmi = log(bmi$logFC)
+names(de_genes_bmi) = bmi$UniProt
+de_genes_bmi = sort(de_genes_bmi, decreasing = TRUE)
+# Pathway analysis
+bmi_p = pathway_analysis(de_genes_bmi)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+bmi_p$bar
+bmi_p$dot
+bmi_p$cnet
+bmi_p$circos
+bmi_p$heat
+bmi_p$emap
+bmi_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+bmi_p$gsea_upset
+bmi_p$ridge
+# bmi_p$gseap
+bmi_p$gsea_heat
+```
+
+## Baseline eIS
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+eis = read_excel(f,sheet = "si_1_ins00_moderated_FDR")
+volcano(eis,xcol = "estimate",ycol = "p.value",xlabel = "Estimate")
+eis = eis[eis$p.value <= 0.05,]
+de_genes_eis = log(eis$estimate)
+names(de_genes_eis) = eis$UniProt
+de_genes_eis = sort(de_genes_eis, decreasing = TRUE)
+# Pathway analysis
+eis_p = pathway_analysis(de_genes_eis)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+eis_p$bar
+eis_p$dot
+eis_p$cnet
+eis_p$circos
+eis_p$heat
+eis_p$emap
+eis_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+eis_p$gsea_upset
+eis_p$ridge
+#eis_p$gseap
+eis_p$gsea_heat
+```
+
+## Baseline C-peptide oDI
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+codi = read_excel(f,sheet = "codi0_moderated_FDR")
+volcano(codi,xcol = "estimate",ycol = "p.value",xlabel = "Estimate")
+codi = codi[codi$p.value <= 0.05,]
+de_genes_codi = log(codi$estimate)
+names(de_genes_codi) = codi$UniProt
+de_genes_codi = sort(de_genes_codi, decreasing = TRUE)
+# Pathway analysis
+codi_p = pathway_analysis(de_genes_codi)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+codi_p$bar
+codi_p$dot
+codi_p$cnet
+codi_p$circos
+codi_p$heat
+codi_p$emap
+codi_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+codi_p$gsea_upset
+codi_p$ridge
+# codi_p$gseap
+codi_p$gsea_heat
+```
+
+
+change below
+
+
+## Change in BMI
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+bmislope = read_excel(f,sheet = "slopebmi_moderated_FDR")
+volcano(bmislope,xcol = "estimate",ycol = "p.value",xlabel = "Estimate")
+bmislope = bmislope[bmislope$p.value <= 0.05,]
+de_genes_bmislope = log(bmislope$estimate)
+names(de_genes_bmislope) = bmislope$UniProt
+de_genes_bmislope = sort(de_genes_bmislope, decreasing = TRUE)
+# Pathway analysis
+bmislope_p = pathway_analysis(de_genes_bmislope)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+bmislope_p$bar
+bmislope_p$dot
+bmislope_p$cnet
+bmislope_p$circos
+bmislope_p$heat
+bmislope_p$emap
+bmislope_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+bmislope_p$gsea_upset
+bmislope_p$ridge
+# bmislope_p$gseap
+bmislope_p$gsea_heat
+```
+
+## Change in eIS
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+eisslope = read_excel(f,sheet = "slopesi_1_ins0_moderated_FDR")
+volcano(eisslope,xcol = "estimate",ycol = "p.value",xlabel = "Estimate")
+eisslope = eisslope[eisslope$p.value <= 0.05,]
+de_genes_eisslope = log(eisslope$estimate)
+names(de_genes_eisslope) = eisslope$UniProt
+de_genes_eisslope = sort(de_genes_eisslope, decreasing = TRUE)
+# Pathway analysis
+eisslope_p = pathway_analysis(de_genes_eisslope)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+eisslope_p$bar
+eisslope_p$dot
+eisslope_p$cnet
+eisslope_p$circos
+eisslope_p$heat
+eisslope_p$emap
+eisslope_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+eisslope_p$gsea_upset
+eisslope_p$ridge
+#eisslope_p$gseap
+eisslope_p$gsea_heat
+```
+
+## Change in C-peptide oDI
+
+```{r warning=FALSE,message=FALSE}
+# Prepare gene list
+codislope = read_excel(f,sheet = "codislope0_moderated_FDR")
+volcano(codislope,xcol = "estimate",ycol = "p.value",xlabel = "Estimate")
+codislope = codislope[codislope$p.value <= 0.05,]
+de_genes_codislope = log(codislope$estimate)
+names(de_genes_codislope) = codislope$UniProt
+de_genes_codislope = sort(de_genes_codislope, decreasing = TRUE)
+# Pathway analysis
+codislope_p = pathway_analysis(de_genes_codislope)
+```
+
+### Gene ontology (GO) enrichment analysis
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+codislope_p$bar
+codislope_p$dot
+codislope_p$cnet
+codislope_p$circos
+codislope_p$heat
+codislope_p$emap
+codislope_p$upset
+```
+
+### Gene set enrichment analysis (GSEA) with KEGG
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+codislope_p$gsea_upset
+codislope_p$ridge
+# codislope_p$gseap
+codislope_p$gsea_heat
+```
