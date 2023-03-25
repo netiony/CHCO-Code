@@ -148,11 +148,16 @@ saveRDS(so, file = "/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Proje
 ```
 
 ```{r scRNA cleaning}
+#| cache: true
 # Read in scRNA object
 so <- readRDS("/Volumes/Peds Endo/Petter Bjornstad/Proteomics and DKD/Data_Clean/scrna.RDS")
 # Limit to RH/IMPROVE baseline visit
-so$michigan_id = sub("_BL","",so$michigan_id)
-so <- so[, so@meta.data[["michigan_id"]] %in% df$record_id]
+so = so[,!grepl("_12M",so$michigan_id)]
+# Remove HC with igA
+so = so[,so$T2D_HC_Phil %in% c("T2Di","T2D","HC")]
+# General cell types
+so$generaltype = sub("_.*","",so$LR_clusters)
+Idents(so) = so$generaltype
 # Normalize and scale
 so <- NormalizeData(so)
 so <- ScaleData(so, features = rownames(so))
@@ -261,20 +266,29 @@ umap_plot <- function(seurat_object = so, vars) {
   # Plot each gene
   invisible(lapply(entrez, function(e) {
     p <- FeaturePlot(seurat_object, features = e)
-    p <- LabelClusters(plot = p, id = "ident")
+    p <- LabelClusters(plot = p, id = "generaltype")
     print(p)
   }))
 }
 # DE function
-de = function(seurat_object = so,outcome){
-  
+de = function(seurat_object = so,outcome,ref_group,vars){
+  # Get Entrez Gene IDs
+  entrez <- analytes$EntrezGeneSymbol[match(vars, analytes$AptName)]
+  entrez <- entrez[entrez %in% rownames(so)]
+  # Find cells where most highly expressed
+  cells = FetchData(so,vars = entrez)
+  cells$type = so$generaltype
+  cells = cells %>% group_by(type) %>%
+    summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE))) %>%
+    column_to_rownames("type")
+  max = lapply(cells,function(c){
+    rownames(cells)[which.max(c)]
+  })
+  # DE testing
+  m = FindMarkers(so,features = "NELL1",ident.1 = ref_group,
+                  group.by = outcome,subset.ident = max[2])
+  p = VlnPlot(so,features = "NELL1",group.by = outcome,idents = max[2],pt.size=0.01,log = F)
 }
-```
-
-# Data Summary
-
-```{r}
-skimr::skim(df %>% select(-contains("seq")))
 ```
 
 # MAC
@@ -592,3 +606,8 @@ soma_olink_plots(top_olink = top_glyc_a1c_olink, data = urine)
 ```{r message=FALSE,warning=FALSE}
 umap_plot(so, top_glyc_a1c)
 ```
+
+# Questions
+
+1. To determine which cell types are expressing the genes of interest the most, do we want to look at average expression or proportion of cells with detectable expression? These may usually be the same thing, but not necessarily if one groups of cells all express at a low level and another expresses in a few cells at a very high level.
+    - Do we want to look at cells expressing over a certain threshold?
