@@ -203,7 +203,9 @@ def clean_improve():
     mmtt.columns = mmtt.columns.str.replace(r"cpep_", "cpeptide_", regex=True)
     mmtt.rename({"wt": "weight", "ht": "height", "waist": "waistcm",
                 "hip": "hipcm", "hr": "pulse", "sys_bp": "sbp",
-                 "dia_bp": "dbp", "hba1c_base": "hba1c", "na_base": "sodium_base"},
+                 "dia_bp": "dbp", "hba1c_base": "hba1c", "na_base": "sodium_base",
+                 "totprot_base": "tot_protein", "glucose_base": "glucose_bl",
+                 "gluc_base": "glucose_bl_cmp"},
                 inplace=True, axis=1)
     mmtt["procedure"] = "mmtt"
     # FFA
@@ -254,12 +256,18 @@ def clean_improve():
                axis=1, inplace=True)
     clamp.columns = clamp.columns.str.replace(
         r"clamp_", "", regex=True)
-    clamp.rename({"cystatin_c": "cystatin_c_s", "urine_mab": "microalbumin_u",
-                  "serum_creatinine": "creatinine_s", "acr_baseline": "acr_u",
+    clamp.rename({"cystatin_c": "cystatin_c_s", 
+                  "urine_mab": "microalbumin_u",
+                  "serum_creatinine": "creatinine_s", 
+                  "acr_baseline": "acr_u",
                   "urine_mab_baseline": "microalbumin_u",
                   "urine_cre_baseline": "creatinine_u",
-                  "serum_sodium": "sodium_s", "urine_sodium": "sodium_u",
-                  "pls": "pulse", "acr_250": "acr_u_pm"
+                  "serum_sodium": "sodium_s", 
+                  "urine_sodium": "sodium_u",
+                  "pls": "pulse", 
+                  "acr_250": "acr_u_pm", 
+                  "total_protein": "tot_protein",
+                  "glucose_bl": "urine_glucose_bl"
                   }, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
     clamp["insulin_sensitivity_method"] = "hyperglycemic_clamp"
@@ -329,7 +337,8 @@ def clean_improve():
                      "asl_right": "pcasl3d_right"}, axis=1, inplace=True)
     out = out[list(set(out.columns).difference(bold_mri_cols))]
     rename = {"gfr": "gfr_raw_plasma", "gfr_bsa": "gfr_bsa_plasma",
-              "rpf": "erpf_raw_plasma", "erpf_bsa": "erpf_bsa_plasma"}
+              "rpf": "erpf_raw_plasma", "erpf_bsa": "erpf_bsa_plasma",
+              "pah_bsa": "pah_clear_bsa", "abs_pah": "pah_clear_abs"}
     out.rename(rename, axis=1, inplace=True)
     # Calculate variables
     out_vars = ["gfr_raw_plasma", "erpf_raw_plasma", "total_protein", "map", "clamp_map", "hematocrit_90", "hematocrit_120"]
@@ -360,7 +369,7 @@ def clean_improve():
     # Afferent Arteriolar Resistance
     out["ra"] = ((out["map"] - out["glomerular_pressure"]) / out["rbf_seconds"]) * 1328    
     out.loc[~(out['ra'] > 0), 'ra']=np.nan    
-    out.drop(["gfr_raw_plasma_seconds", "rbf_seconds", "gfr_raw_plasma_seconds", "erpf_raw_plasma_seconds",
+    out.drop(["gfr_raw_plasma_seconds", "rbf_seconds", "erpf_raw_plasma_seconds",
               "hematocrit_90" , "hematocrit_120" , "map" , "clamp_map" , "total_protein" , "hematocrit_avg"],
              axis=1, inplace=True)
     out["date"] = clamp["date"]

@@ -164,7 +164,7 @@ def clean_coffee():
     clamp.rename({"cystatin_c": "cystatin_c_s", "serum_creatinine": "creatinine_s",
                   "pls": "pulse", "urine_sodium": "sodium_u",
                   "serum_sodium": "sodium_s", "acr_baseline": "acr_u",
-                  "acr_250": "acr_u_pm"
+                  "acr_250": "acr_u_pm", "total_protein": "tot_protein"
                   }, inplace=True, axis=1)
     clamp["procedure"] = "clamp"
     clamp["insulin_sensitivity_method"] = "hyperglycemic_clamp"
@@ -199,7 +199,8 @@ def clean_coffee():
                 "asl_right": "pcasl3d_right"}, axis=1, inplace=True)
     out = out[list(set(out.columns).difference(mri_cols))]
     rename = {"gfr_abs": "gfr_raw_plasma", "gfr_adj": "gfr_bsa_plasma",
-              "rpf_abs": "erpf_raw_plasma", "rpf_adj": "erpf_bsa_plasma"}
+              "rpf_abs": "erpf_raw_plasma", "rpf_adj": "erpf_bsa_plasma",
+              "abs_pah_clear": "pah_clear_abs"}
     out.rename(rename, axis=1, inplace=True)
     # Calculate variables
     out_vars = ["gfr_raw_plasma", "erpf_raw_plasma", "total_protein", "map", "clamp_map", 

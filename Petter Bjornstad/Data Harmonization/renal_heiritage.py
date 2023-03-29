@@ -199,7 +199,7 @@ def clean_renal_heiritage():
                                                 == "study_visit_boldasl_mri", "field_name"]]
     out = pd.DataFrame(proj.export_records(fields=var))
     out = out.loc[out["redcap_event_name"].str.startswith("kidney_and", na=False)]
-    out.drop(["redcap_event_name"], axis=1, inplace=True)
+    out.drop(["redcap_event_name", "adc_outcomes"], axis=1, inplace=True)
     # Replace missing values
     out.replace(rep, np.nan, inplace=True)
     # Kidney outcomes like GFR, etc. were collected with the clamp, not
@@ -207,6 +207,7 @@ def clean_renal_heiritage():
     bold_mri_cols = [c for c in out.columns if ("bold_" in c) or ("asl_" in c)]
     bold_mri = out[["record_id"] + bold_mri_cols].copy()
     out = out[list(set(out.columns).difference(bold_mri_cols))]
+    bold_mri.drop(["bold_outcomes"], axis=1, inplace=True)
     rename = {"volume_left": "left_kidney_volume_ml",
               "volume_right": "right_kidney_volume_ml"}
     out.rename(rename, axis=1, inplace=True)

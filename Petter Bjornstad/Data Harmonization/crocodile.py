@@ -146,11 +146,17 @@ def clean_crocodile():
     # Replace missing values
     labs.replace(rep, np.nan, inplace=True)
     labs.drop(["baseline_vitals", "visit_upt", "visit_weight", "visit_height",
-               "visit_uptresult", "baseline_labs", "pilabs_yn", "pi_copeptin", "pi_renin", "pi_angiotensin2", "pi_osmo_s", "pi_osmo_u", "pi_lithium_s", "pi_lithium_u", "metabolomics_yn", "kim_yn", "pi_kim_ykl40", "pi_kim_ngal", "pi_kim_kim1", "pi_kim_il18", "pi_kim_tnfr1", "pi_kim_tnfr2"], axis=1, inplace=True)
+               "visit_uptresult", "baseline_labs", "pilabs_yn", "pi_copeptin", 
+               "pi_renin", "pi_angiotensin2", "pi_osmo_s", "pi_osmo_u", "pi_lithium_s", 
+               "pi_lithium_u", "metabolomics_yn", "kim_yn", "pi_kim_ykl40", "pi_kim_ngal", 
+               "pi_kim_kim1", "pi_kim_il18", "pi_kim_tnfr1", "pi_kim_tnfr2"], axis=1, inplace=True)
     labs.columns = labs.columns.str.replace(
         r"visit_|bl_", "", regex=True)
-    labs.rename({"uacr": "acr_u", "a1c": "hba1c",
-                "na_u": "sodium_u", "na_s": "sodium_s"}, axis=1, inplace=True)
+    labs.rename({"uacr": "acr_u", 
+                "a1c": "hba1c",
+                "na_u": "sodium_u", 
+                "na_s": "sodium_s",
+                "glucose_u": "urine_glucose_bl"}, axis=1, inplace=True)
     labs["procedure"] = "clamp"
     labs["visit"] = "baseline"
 
@@ -204,9 +210,12 @@ def clean_crocodile():
     # Format
     clamp.drop(["clamp_yn", "clamp_d20", "clamp_ffa",
                 "clamp_insulin", "hct_yn", "clamp_bg"], axis=1, inplace=True)
-    clamp.rename({"clamp_wt": "weight", "clamp_ht": "height",
-                  "cystatin_c": "cystatin_c_s", "hct_210": "hematocrit_210",
-                  "acr_baseline": "acr_u", "acr_250": "acr_u_pm"},
+    clamp.rename({"clamp_wt": "weight", 
+                  "clamp_ht": "height",
+                  "cystatin_c": "cystatin_c_s", 
+                  "hct_210": "hematocrit_210",
+                  "acr_baseline": "acr_u", 
+                  "acr_250": "acr_u_pm"},
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
     clamp.columns = clamp.columns.str.replace(

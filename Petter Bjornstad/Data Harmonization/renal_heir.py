@@ -164,7 +164,9 @@ def clean_renal_heir():
                   "urine_cre_baseline": "creatinine_u",
                   "pls": "pulse", 
                   "acr_baseline": "acr_u", 
-                  "acr_250": "acr_u_pm"},
+                  "acr_250": "acr_u_pm",
+                  "total_protein": "tot_protein",
+                  "glucose_bl": "urine_glucose_bl"},
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
     clamp["procedure"] = "clamp"
@@ -225,7 +227,7 @@ def clean_renal_heir():
     out = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
     out.replace(rep, np.nan, inplace=True)
-    out.drop(["kidney_outcomes", "egfr", "metab_outcomes", "asl_outcomes"],
+    out.drop(["kidney_outcomes", "egfr", "metab_outcomes", "asl_outcomes", "adc_outcomes"],
              axis=1, inplace=True)
     # Kidney outcomes like GFR, etc. were collected with the clamp, not
     # necessarily the day of the MRI
@@ -234,6 +236,7 @@ def clean_renal_heir():
     bold_mri.rename({"mri_date": "date",
                      "asl_left": "pcasl3d_left",
                      "asl_right": "pcasl3d_right"}, axis=1, inplace=True)
+    bold_mri.drop(["bold_outcomes"], axis=1, inplace=True)
     out = out[list(set(out.columns).difference(bold_mri_cols))]
     rename = {"gfr": "gfr_raw_plasma", "gfr_bsa": "gfr_bsa_plasma",
               "rpf": "erpf_raw_plasma", "rpf_bsa": "erpf_bsa_plasma"}

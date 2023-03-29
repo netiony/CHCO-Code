@@ -137,7 +137,10 @@ def clean_penguin():
                "baseline_labs", "u24_labs", "pilabs_yn", "metabolomics_yn", "kim_yn"], axis=1, inplace=True)
     labs.columns = labs.columns.str.replace(
         r"visit_|bl_", "", regex=True)
-    labs.rename({"a1c": "hba1c", "uacr": "acr_u"}, axis=1, inplace=True)
+    labs.rename({"a1c": "hba1c", 
+                "uacr": "acr_u",
+                "glucose_u": "urine_glucose_bl"
+                }, axis=1, inplace=True)
     labs["procedure"] = "clamp"
     labs["visit"] = "baseline"
 
