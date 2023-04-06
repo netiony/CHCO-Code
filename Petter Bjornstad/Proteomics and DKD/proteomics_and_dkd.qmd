@@ -4,7 +4,7 @@ author: "Laura Pyle & Tim Vigers"
 date: "today"
 date-format: long
 format:
-  pdf:
+  html:
     toc: true
     toc-depth: 5
     code-fold: true
@@ -80,18 +80,10 @@ top_glyc_a1c <- top_glyc_a1c %>%
   filter(adj.p.value <= 0.05) %>%
   slice_max(abs(estimate), n = 5) %>%
   pull(AptName)
-# Import proteomics data for RH and IMPROVE
-load("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Renal HERITAGE/Somalogic data/analytes.Rdata")
-load("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Renal HERITAGE/Somalogic data/rh_soma.Rdata")
-load("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/IMPROVE T2D/Somalogic data/improve_soma.Rdata")
-# Format and combine
-improve_soma <- improve_soma %>% select(SampleDescription, TimePoint, contains("seq."))
-rh_soma <- rh_soma %>% select(SampleDescription, TimePoint, contains("seq."))
-soma <- rbind(improve_soma, rh_soma)
 # Import and clean data
 df <- read.csv("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv",na.strings = "")
 df = df %>% filter(study %in% c("CROCODILE","IMPROVE","RENAL-HEIR"),
-                   !grepl("IT2D",co_enroll_id)) %>%
+                   !grepl("IT2D",co_enroll_id),participation_status=="Participated") %>%
   select(record_id,co_enroll_id,visit,group, age, sex,race_ethnicity, 
          diabetes_duration,albuminuria_cat,
          bmi, hba1c, sbp, triglycerides, 
@@ -106,6 +98,16 @@ df = df %>% filter(study %in% c("CROCODILE","IMPROVE","RENAL-HEIR"),
             across(where(is.factor),~last(na.omit(.x))),
             across(where(is.numeric),~mean(.x,na.rm = T)),.groups = "drop") %>%
   mutate_all(~ifelse(is.nan(.), NA, .))
+# Import proteomics data for RH and IMPROVE
+load("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Renal HERITAGE/Somalogic data/analytes.Rdata")
+load("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Renal HERITAGE/Somalogic data/rh_soma.Rdata")
+load("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/IMPROVE T2D/Somalogic data/improve_soma.Rdata")
+# Format and combine
+improve_soma <- improve_soma %>% select(SampleDescription, TimePoint, contains("seq."))
+rh_soma <- rh_soma %>% select(SampleDescription, TimePoint, contains("seq."))
+soma <- rbind(improve_soma, rh_soma)
+# Transform
+soma[,3:ncol(soma)] = lapply(soma[,3:ncol(soma)],log)
 # Merge clinical and SOMA data
 soma <- soma %>%
   rename(record_id = "SampleDescription", visit = "TimePoint") %>%
@@ -126,6 +128,9 @@ load("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds
 load("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Renal HERITAGE/Olink Data/rh_olink_urine.Rdata")
 olink_plasma <- rbind(improve_olink_plasma, rh_olink_plasma)
 olink_urine <- rbind(improve_olink_urine, rh_olink_urine)
+# Log transform
+olink_plasma[,3:ncol(olink_plasma)]
+olink_urine[,3:ncol(olink_urine)]
 # Add visit column, format IDs
 olink_plasma$visit <- sapply(str_split(olink_plasma$record_id, "_"), "[", 3)
 olink_plasma <- olink_plasma %>%
@@ -186,12 +191,12 @@ Idents(so) <- so$generaltype
 # Define correlation function
 cor_and_plot_soma <- function(data = df, vars) {
   # Format matrix
-  d <- data[, c(vars, "acr_u")]
+  d <- data[data$group=="Type 2 Diabetes", c(vars, "acr_u")]
   n <- c(analytes$Target[match(vars, analytes$AptName)], "UACR")
   n[duplicated(n)] <- paste0(n[duplicated(n)], "(2)")
   names(d) <- n
   # Correlations
-  M <- corr.test(d, normal = F, method = "spearman")
+  M <- corr.test(data.matrix(d), normal = F, method = "spearman")
   corrplot(M$r,
     p.mat = M$p, method = "circle", type = "lower", insig = "blank",
     addCoef.col = "white", diag = FALSE
@@ -220,7 +225,7 @@ soma_olink_plots <- function(top_olink, data) {
     title <- analytes$TargetFullName[analytes$AptName == n]
     plots <- lapply(top_olink[n][[1]], function(o) {
       panel <- olink_map$Panel[olink_map$OlinkID == o]
-      p <- ggplot(data, aes_string(x = n, y = o)) +
+      p <- ggplot(data[data$group=="Type 2 Diabetes",], aes_string(x = n, y = o)) +
         geom_point(alpha = 0.5) +
         stat_poly_line(se = F) +
         stat_poly_eq(
@@ -242,15 +247,15 @@ cor_and_plot_olink <- function(plasma_df = plasma, urine_df = urine, vars) {
   # Get Olink names
   vars <- as.character(vars)
   # Format matrices
-  plasma_df <- plasma_df[, c(vars, "acr_u")]
-  urine_df <- urine_df[, c(vars, "acr_u")]
+  plasma_df <- plasma_df[plasma_df$group=="Type 2 Diabetes", c(vars, "acr_u")]
+  urine_df <- urine_df[urine_df$group=="Type 2 Diabetes", c(vars, "acr_u")]
   # Gene names
   n <- c(olink_map$Assay[match(vars, olink_map$OlinkID)], "UACR")
   n[duplicated(n)] <- paste0(n[duplicated(n)], "(2)")
   names(plasma_df) <- n
   names(urine_df) <- n
   # Plasma correlations
-  M_plasma <- corr.test(plasma_df, normal = F, method = "spearman")
+  M_plasma <- corr.test(data.matrix(plasma_df), normal = F, method = "spearman")
   corrplot(M_plasma$r,
     p.mat = M_plasma$p, method = "circle", type = "lower",
     insig = "blank", addCoef.col = "white", diag = FALSE, title = "Plasma"
@@ -260,7 +265,7 @@ cor_and_plot_olink <- function(plasma_df = plasma, urine_df = urine, vars) {
   emphasize.strong.cells(which(M_plasma$p <= 0.05, arr.ind = TRUE))
   pander(r)
   # urine correlations
-  M_urine <- corr.test(urine_df, normal = F, method = "spearman")
+  M_urine <- corr.test(data.matrix(urine_df), normal = F, method = "spearman")
   corrplot(M_urine$r,
     p.mat = M_urine$p, method = "circle", type = "lower",
     insig = "blank", addCoef.col = "white", diag = FALSE, title = "Urine"
@@ -317,12 +322,6 @@ de = function(seurat_object = so,outcome,ref_group,vars){
   }))
   pander(de_table)
 }
-```
-
-# Table 1
-
-```{r}
-
 ```
 
 # MAC
