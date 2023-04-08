@@ -6,7 +6,7 @@ if(Sys.info()["sysname"] == "Windows"){
 } else if (Sys.info()["sysname"] == "Linux"){
   home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
 } else if (Sys.info()["sysname"] == "Darwin"){
-  home_dir = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
+  home_dir = "/Volumes/Peds Endo/Petter Bjornstad/TODAY subaward"
 }
 
 setwd(home_dir)
@@ -239,7 +239,8 @@ baserisk <- merge(BASELINE, basecbl, by="releaseid", all.x=T, ally=T)
 baserisk <- merge(baserisk, baseaddcbl, by="releaseid", all.x=T, ally=T)
 baserisk$si_1_ins0 <- 1/baserisk$ins0min
 baserisk$log_trig <- log(baserisk$Trig)
-baserisk <- baserisk %>% select(releaseid, HbA1c, log_trig, sbp, uacid, si_1_ins0, UAlbCreat, bmi, HDL, codi)
+baserisk <- baserisk %>% select(releaseid, HbA1c, log_trig, sbp, uacid, si_1_ins0, UAlbCreat, bmi, HDL, codi,
+                                EstCreatClear,SerumCreat)
 baserisk <- merge(baserisk,keepPAT,by="releaseid",all.x = T,all.y = F)
 baserisk$age <- NULL
 baserisk <- merge(baserisk,AGEBASE,by="releaseid",all.x = T,all.y = F)
