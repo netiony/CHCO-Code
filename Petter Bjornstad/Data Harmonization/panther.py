@@ -123,7 +123,7 @@ def clean_panther():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"].str.startswith("ivgtt"), "field_name"]]
     ivgtt = pd.DataFrame(proj.export_records(fields=var, events=["baseline_arm_1","year_1_arm_1"]))
     ivgtt["redcap_event_name"].replace(
-        {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1"}, inplace=True)
+        {"baseline_arm_1": "baseline", "year_1_arm_1": "year_1"}, inplace=True)
     ivgtt = ivgtt.rename(columns={"redcap_event_name": "visit"})    
     ivgtt.replace(rep, np.nan, inplace=True)  # Replace missing values
     ivgtt.drop({"bl_lipid", "visit_upt", "visit_uptresult", "visit_npo", "visit_bgl_250",
@@ -135,13 +135,21 @@ def clean_panther():
         r"neg", "minus_", regex=True)
     ivgtt.columns = ivgtt.columns.str.replace(
         r"ins_", "insulin_", regex=True)        
-    ivgtt.rename({"bl_bg": "fbg", "bl_adipo": "adipo_base", "bl_leptin": "leptin_base",
-              "bl_glucose": "glucose_bl", "bl_insulin": "fasting_insulin",
-              "bl_cpep": "cpeptide", "ast": "gotast_base", "alt": "gptalt_base",
-              "bl_cholesterol": "chol_base", 
-              "bl_triglycerides": "triglycerides", "bl_hdl": "hdl_base", 
-              "bl_ldl": "ldl_base", "bl_nonhdl": "nonhdl_base",
-              "bls_d25_st": "d25_bolus_time", "bls_ins_st": "insulin_bolus_time"},
+    ivgtt.rename({"am_bg": "fbg", 
+                  "bl_adipo": "adipo_base", 
+                  "bl_leptin": "leptin_base",
+                  "bl_glucose": "glucose_bl", 
+                  "bl_insulin": "fasting_insulin",
+                  "bl_cpep": "cpeptide", 
+                  "ast": "gotast_base", 
+                  "alt": "gptalt_base",
+                  "bl_cholesterol": "chol_base", 
+                  "bl_triglycerides": "triglycerides", 
+                  "bl_hdl": "hdl_base", 
+                  "bl_ldl": "ldl_base", 
+                  "bl_nonhdl": "nonhdl_base",
+                  "bls_d25_st": "d25_bolus_time", 
+                  "bls_ins_st": "insulin_bolus_time"},
               axis=1, inplace=True)
     # Insulin
     ins=list(ivgtt.loc[:, ivgtt.columns.str.startswith("insulin_")].columns.values)
@@ -179,7 +187,7 @@ def clean_panther():
                                                                == "study_visit_dxa_scan", "field_name"]]
     dxa = pd.DataFrame(proj.export_records(fields=var, events=["baseline_arm_1","year_1_arm_1"]))
     dxa["redcap_event_name"].replace(
-        {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1"}, inplace=True)
+        {"baseline_arm_1": "baseline", "year_1_arm_1": "year_1"}, inplace=True)
     dxa = dxa.rename(columns={"redcap_event_name": "visit"})       
     # Replace missing values
     dxa.replace(rep, np.nan, inplace=True)
@@ -189,7 +197,7 @@ def clean_panther():
                 "dexa_age": "age", "dexa_height": "height", "dexa_weight": "weight",
                 "bodyfat_percent": "dexa_body_fat", "lean_mass_percent": "dexa_lean_mass",
                 "trunkmass_percent": "dexa_trunk_mass", "fatmass_kg": "dexa_fat_kg", 
-                "leanmass_kg": "dean_lean_kg", "trunkmass_kg": "dexa_trunk_kg"}, axis=1, inplace=True)
+                "leanmass_kg": "dexa_lean_kg", "trunkmass_kg": "dexa_trunk_kg"}, axis=1, inplace=True)
     dxa["procedure"] = "dxa"
 
     # --------------------------------------------------------------------------
@@ -200,10 +208,14 @@ def clean_panther():
     "study_visit_renal_clearance_testing", "field_name"]] +[v for v in meta.loc[meta["form_name"] == 
     "renal_clearance_baseline_labs", "field_name"]]
     rct = pd.DataFrame(proj.export_records(fields=var))
-    rct = rct.groupby('record_id', as_index=False).max()
-    rct.drop(["redcap_event_name"], inplace=True, axis=1)
     # Replace missing values
     rct.replace(rep, np.nan, inplace=True)
+    rct["group"] = rct.groupby(["record_id"])["group"].ffill()
+    rct = rct.loc[rct["redcap_event_name"] != "screening_arm_1"]
+    rct["redcap_event_name"].replace(
+        {"baseline_arm_1": "baseline", "year_1_arm_1": "year_1"}, inplace=True)
+    rct = rct.rename(columns={"redcap_event_name": "visit"})       
+    rct["procedure"] = "renal_clearance_testing"
     rename = {"gfr_raw": "gfr_raw_plasma_urine", "gfr_bsa": "gfr_bsa_plasma_urine",
               "erpf_raw": "erpf_raw_plasma_urine", "erpf": "erpf_bsa_plasma_urine",
               "gfr_15mgmin": "gfr_raw_plasma", "gfrbsa": "gfr_bsa_plasma",
@@ -213,8 +225,9 @@ def clean_panther():
               "iohexol_yn": "iohexol_bolus", "pah_yn": "pah_bolus", "bolus_pah": "pah_vol",
               "infusion_pah": "pah_infusion_vol", "pah_bol_com": "pah_time"}
     rct.rename(rename, axis=1, inplace=True)
+    rct = rct[rct.columns[~rct.columns.str.endswith('_yn')]]
     rct.columns = rct.columns.str.replace(
-        r"bl_|pi_", "", regex=True)
+        r"bl_|pi_|kim_", "", regex=True)
     # Calculate variables
     rct_vars = ["gfr_raw_plasma", "erpf_raw_plasma", "tot_protein", "map", "hct"]
     rct[rct_vars] = rct[rct_vars].apply(pd.to_numeric, errors='coerce')
@@ -243,11 +256,11 @@ def clean_panther():
     rct["ra"] = ((rct["map"] - rct["glomerular_pressure"]) / rct["rbf_seconds"]) * 1328    
     rct.loc[~(rct['ra'] > 0), 'ra']=np.nan    
     # Reduce rct dataset
-    rct.drop(["rbf_seconds", "erpf_raw_plasma_seconds", "group", "pilabs_yn", 
-              "metabolomics_yn", "kim_yn", "rc_labs", "map"], axis=1, inplace=True)
-    rct["procedure"] = "clamp"
-    rct["visit"] = "baseline"
-    
+    rename = {"hct": "hematocrit"}
+    rct.rename(rename, axis=1, inplace=True)
+    rct.drop(["rbf_seconds", "erpf_raw_plasma_seconds", "group", "rc_labs", "map", "kfg", 
+              "gfr_raw_plasma_seconds"], axis=1, inplace=True)
+
     # --------------------------------------------------------------------------
     # CGM
     # --------------------------------------------------------------------------
