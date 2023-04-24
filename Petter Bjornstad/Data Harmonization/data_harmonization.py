@@ -29,6 +29,8 @@ def harmonize_data():
     from improve import clean_improve
     from penguin import clean_penguin
     from renal_heir import clean_renal_heir
+    from renal_heiritage import clean_renal_heiritage
+    from panther import clean_panther
     from harmonization_functions import calc_egfr
     # Use individual data functions to import cleaned DFs
     casper = clean_casper()
@@ -37,6 +39,8 @@ def harmonize_data():
     improve = clean_improve()
     penguin = clean_penguin()
     renal_heir = clean_renal_heir()
+    renal_heiritage = clean_renal_heiritage()
+    panther = clean_panther()
     # Merge
     harmonized = pd.concat([casper, coffee], join='outer', ignore_index=True)
     harmonized = pd.concat([harmonized, crocodile],
@@ -47,6 +51,14 @@ def harmonize_data():
                            join='outer', ignore_index=True)
     harmonized = pd.concat([harmonized, renal_heir],
                            join='outer', ignore_index=True)
+    harmonized = pd.concat([harmonized, renal_heiritage],
+                           join='outer', ignore_index=True)
+    harmonized = pd.concat([harmonized, panther],
+                           join='outer', ignore_index=True)
+    harmonized = pd.concat([harmonized, panda],
+                           join='outer', ignore_index=True)
+
+
     # Fix levels of categorical variables
     harmonized["visit"] = \
         pd.Categorical(harmonized["visit"],

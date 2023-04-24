@@ -81,7 +81,8 @@ def clean_panther():
     med.replace(rep, np.nan, inplace=True)
     # Visit ID
     med["redcap_event_name"].replace(
-        {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1"}, inplace=True)
+        {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1"}, 
+        inplace=True)
     med = med.rename(columns={"redcap_event_name": "visit"})
     # Meds by regex
     med["sglt2i_timepoint"]=med.apply(lambda x: x.str.contains('sgl|canag|dapagl|empag|floz', case=False).any(), axis=1)
@@ -92,7 +93,7 @@ def clean_panther():
     meds=["sglt2i_timepoint", "raasi_timepoint", "metformin_timepoint", "insulin_med_timepoint"]
     med[meds]= med[meds].applymap(lambda x: "Yes" if x else "No")
     # SGLT2i, RAASi, Metformin
-    med = med[["record_id", "visit", "sglt2i_timepoint", "raasi_timepoint", "metformin_timepoint", "insulin_med_timepoint"]]
+    med = med[["record_id", "visit", "sglt2i_timepoint", "raasi_timepoint", "metformin_timepoint", "insulin_med_timepoint"]].copy()
     med["procedure"] = "medications"
 
     # --------------------------------------------------------------------------
@@ -110,8 +111,8 @@ def clean_panther():
     phys.replace(rep, np.nan, inplace=True)
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
     phys.rename({"sysbp": "sbp", "diasbp": "dbp"}, inplace=True, axis=1)
-    phys.drop(["norm", "abnormal"], axis=1, inplace=True)
-    phys=phys.loc[:, ~phys.columns.str.startswith("tan_")]
+    phys.drop(["norm", "abnormal", "age"], axis=1, inplace=True)
+    phys=phys.loc[:, ~phys.columns.str.startswith("tan_")].copy()
     phys["acan"].replace({"1": "Yes", "0": "No"}, inplace=True)
     phys["acan_sev"].replace({"1": "Mild", "2": "Moderate", "3": "Severe"}, inplace=True)
     phys["procedure"] = "physical_exam"
@@ -194,10 +195,11 @@ def clean_panther():
     dxa.columns = dxa.columns.str.replace(
         r"dxa_", "dexa_", regex=True)
     dxa.rename({"bmd": "dexa_bone_mineral_density", "dexa_date": "date",
-                "dexa_age": "age", "dexa_height": "height", "dexa_weight": "weight",
+                "dexa_height": "height", "dexa_weight": "weight",
                 "bodyfat_percent": "dexa_body_fat", "lean_mass_percent": "dexa_lean_mass",
                 "trunkmass_percent": "dexa_trunk_mass", "fatmass_kg": "dexa_fat_kg", 
                 "leanmass_kg": "dexa_lean_kg", "trunkmass_kg": "dexa_trunk_kg"}, axis=1, inplace=True)
+    dxa.drop(["dexa_age"], axis=1, inplace=True)
     dxa["procedure"] = "dxa"
 
     # --------------------------------------------------------------------------
@@ -211,7 +213,7 @@ def clean_panther():
     # Replace missing values
     rct.replace(rep, np.nan, inplace=True)
     rct["group"] = rct.groupby(["record_id"])["group"].ffill()
-    rct = rct.loc[rct["redcap_event_name"] != "screening_arm_1"]
+    rct = rct.loc[rct["redcap_event_name"] != "screening_arm_1"].copy()
     rct["redcap_event_name"].replace(
         {"baseline_arm_1": "baseline", "year_1_arm_1": "year_1"}, inplace=True)
     rct = rct.rename(columns={"redcap_event_name": "visit"})       
@@ -225,7 +227,7 @@ def clean_panther():
               "iohexol_yn": "iohexol_bolus", "pah_yn": "pah_bolus", "bolus_pah": "pah_vol",
               "infusion_pah": "pah_infusion_vol", "pah_bol_com": "pah_time"}
     rct.rename(rename, axis=1, inplace=True)
-    rct = rct[rct.columns[~rct.columns.str.endswith('_yn')]]
+    rct = rct[rct.columns[~rct.columns.str.endswith('_yn')]].copy()
     rct.columns = rct.columns.str.replace(
         r"bl_|pi_|kim_", "", regex=True)
     # Calculate variables
@@ -291,7 +293,7 @@ def clean_panther():
     # necessarily the day of the MRI
     bold_mri_cols = [c for c in out.columns if ("bold_" in c) or ("asl_" in c)]
     bold_mri = out[["record_id", "visit"] + bold_mri_cols].copy()
-    out = out[list(set(out.columns).difference(bold_mri_cols))]
+    out = out[list(set(out.columns).difference(bold_mri_cols))].copy()
     rename = {"volume_left": "left_kidney_volume_ml",
               "volume_right": "right_kidney_volume_ml",
               "mri_date": "date"}

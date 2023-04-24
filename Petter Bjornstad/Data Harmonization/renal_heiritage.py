@@ -41,7 +41,7 @@ def clean_renal_heiritage():
                 "participation_status", "rh_id"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
-    demo = demo.loc[demo["redcap_event_name"].str.startswith('screen', na=False)]
+    demo = demo.loc[demo["redcap_event_name"].str.startswith('screen', na=False)].copy()
     demo.drop(["redcap_event_name"], inplace=True, axis=1)
     # Replace missing values
     demo.replace(rep, np.nan, inplace=True)
@@ -98,7 +98,7 @@ def clean_renal_heiritage():
     phys.replace(rep, np.nan, inplace=True)
     phys["procedure"] = "physical_exam"
     phys.drop(["male_activity_factor", "fem_activity_factor", "schofield_male",
-               "schofield_female", "phys_norm", "screen_bmi_percentile"], axis=1, inplace=True)
+               "schofield_female", "phys_norm", "screen_bmi_percentile", "phys_age"], axis=1, inplace=True)
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
     phys.rename({"sysbp": "sbp", "diasbp": "dbp",
                 "waist_circumference": "waistcm", 
@@ -198,7 +198,7 @@ def clean_renal_heiritage():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "study_visit_boldasl_mri", "field_name"]]
     out = pd.DataFrame(proj.export_records(fields=var))
-    out = out.loc[out["redcap_event_name"].str.startswith("kidney_and", na=False)]
+    out = out.loc[out["redcap_event_name"].str.startswith("kidney_and", na=False)].copy()
     out.drop(["redcap_event_name", "adc_outcomes"], axis=1, inplace=True)
     # Replace missing values
     out.replace(rep, np.nan, inplace=True)
@@ -207,11 +207,9 @@ def clean_renal_heiritage():
     bold_mri_cols = [c for c in out.columns if ("bold_" in c) or ("asl_" in c)]
     bold_mri = out[["record_id"] + bold_mri_cols].copy()
     out = out[list(set(out.columns).difference(bold_mri_cols))]
-    bold_mri.drop(["bold_outcomes"], axis=1, inplace=True)
     rename = {"volume_left": "left_kidney_volume_ml",
               "volume_right": "right_kidney_volume_ml"}
     out.rename(rename, axis=1, inplace=True)
-    
     out["procedure"] = "clamp"
     out["visit"] = "baseline"
     bold_mri["procedure"] = "bold_mri"
@@ -302,7 +300,7 @@ def clean_renal_heiritage():
     df = pd.concat([df, pet], join='outer', ignore_index=True)
     df = pd.concat([df, neuro], join='outer', ignore_index=True)
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
-    df = pd.merge(df, demo, how="outer")
+    df = pd.merge(df, demo, on='record_id', how="outer")
     df = df.copy()
 
     # --------------------------------------------------------------------------
