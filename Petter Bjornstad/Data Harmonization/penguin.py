@@ -206,6 +206,16 @@ def clean_penguin():
         (clamp["baseline_ffa"] - clamp["p1_steady_state_ffa"]) / clamp["baseline_ffa"]) * 100
     clamp["p2_ffa_suppression"] = (
         (clamp["baseline_ffa"] - clamp["p2_steady_state_ffa"]) / clamp["baseline_ffa"]) * 100
+    # Insulin
+    insulin = [c for c in clamp.columns if "insulin_" in c]
+    clamp[insulin] = clamp[insulin].apply(
+        pd.to_numeric, errors='coerce')
+    clamp["baseline_insulin"] = \
+        clamp[['insulin_minus_20', 'insulin_minus_10', 'insulin_0']].mean(axis=1)
+    clamp["p1_steady_state_insulin"] = \
+        clamp[['insulin_70', 'insulin_80', 'insulin_90']].mean(axis=1)
+    clamp["p2_steady_state_insulin"] = \
+        clamp[['insulin_250', 'insulin_260', 'insulin_270']].mean(axis=1)
     clamp["ffa_method"] = "hyperinsulinemic_euglycemic_clamp"
 
     # --------------------------------------------------------------------------
