@@ -56,8 +56,10 @@ def clean_crocodile():
                         "1": "Male", "2": "Female", "3": "Other"}, inplace=True)
     demo["group"].replace({1: "Type 1 Diabetes", 2: "Lean Control",
                            "1": "Type 1 Diabetes", "2": "Lean Control"}, inplace=True)
-    demo["group_risk"] = np.where(demo.group.str.contains("lean", case=False), "Low", "High")
-    demo["participation_status"].replace({"1": "Participated", "2": "Removed", "3": "Will Participate"}, inplace=True)
+    demo["group_risk"] = np.where(
+        demo.group.str.contains("lean", case=False), "Low", "High")
+    demo["participation_status"].replace(
+        {"1": "Participated", "2": "Removed", "3": "Will Participate"}, inplace=True)
 
     # --------------------------------------------------------------------------
     # Medications
@@ -81,7 +83,7 @@ def clean_crocodile():
                 "htn_med___4": "ca_channel_blocker",
                 "htn_med___5": "diuretic",
                 "htn_med___6": "statin",
-                "pump_basal_rate": "pump_basal_rate", 
+                "pump_basal_rate": "pump_basal_rate",
                 "cgm_yn": "cgm_yn"}
     og_names = list(med_list.keys())
     med = med[["record_id"] + og_names]
@@ -146,17 +148,17 @@ def clean_crocodile():
     # Replace missing values
     labs.replace(rep, np.nan, inplace=True)
     labs.drop(["baseline_vitals", "visit_upt", "visit_weight", "visit_height",
-               "visit_uptresult", "baseline_labs", "pilabs_yn", "pi_copeptin", 
-               "pi_renin", "pi_angiotensin2", "pi_osmo_s", "pi_osmo_u", "pi_lithium_s", 
-               "pi_lithium_u", "metabolomics_yn", "kim_yn", "pi_kim_ykl40", "pi_kim_ngal", 
+               "visit_uptresult", "baseline_labs", "pilabs_yn", "pi_copeptin",
+               "pi_renin", "pi_angiotensin2", "pi_osmo_s", "pi_osmo_u", "pi_lithium_s",
+               "pi_lithium_u", "metabolomics_yn", "kim_yn", "pi_kim_ykl40", "pi_kim_ngal",
                "pi_kim_kim1", "pi_kim_il18", "pi_kim_tnfr1", "pi_kim_tnfr2"], axis=1, inplace=True)
     labs.columns = labs.columns.str.replace(
         r"visit_|bl_", "", regex=True)
-    labs.rename({"uacr": "acr_u", 
+    labs.rename({"uacr": "acr_u",
                 "a1c": "hba1c",
-                "na_u": "sodium_u", 
-                "na_s": "sodium_s",
-                "glucose_u": "urine_glucose_bl"}, axis=1, inplace=True)
+                 "na_u": "sodium_u",
+                 "na_s": "sodium_s",
+                 "glucose_u": "urine_glucose_bl"}, axis=1, inplace=True)
     labs["procedure"] = "clamp"
     labs["visit"] = "baseline"
 
@@ -210,11 +212,11 @@ def clean_crocodile():
     # Format
     clamp.drop(["clamp_yn", "clamp_d20", "clamp_ffa",
                 "clamp_insulin", "hct_yn", "clamp_bg"], axis=1, inplace=True)
-    clamp.rename({"clamp_wt": "weight", 
+    clamp.rename({"clamp_wt": "weight",
                   "clamp_ht": "height",
-                  "cystatin_c": "cystatin_c_s", 
+                  "cystatin_c": "cystatin_c_s",
                   "hct_210": "hematocrit_210",
-                  "acr_baseline": "acr_u", 
+                  "acr_baseline": "acr_u",
                   "acr_250": "acr_u_pm"},
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
@@ -247,7 +249,8 @@ def clean_crocodile():
     clamp[insulin] = clamp[insulin].apply(
         pd.to_numeric, errors='coerce')
     clamp["baseline_insulin"] = \
-        clamp[['insulin_minus_20', 'insulin_minus_10', 'insulin_0']].mean(axis=1)
+        clamp[['insulin_minus_20', 'insulin_minus_10', 'insulin_0']].mean(
+            axis=1)
     clamp["p1_steady_state_insulin"] = \
         clamp[['insulin_70', 'insulin_80', 'insulin_90']].mean(axis=1)
     clamp["p2_steady_state_insulin"] = \
@@ -259,7 +262,7 @@ def clean_crocodile():
     # --------------------------------------------------------------------------
 
     var = ["record_id"] + ["group"] + ["bl_tot_protein"] + ["hct_210"] + ["visit_map"] + ["phys_map"] + [v for v in meta.loc[meta["form_name"]
-                                               == "study_visit_renal_clearance_testing", "field_name"]]
+                                                                                                                             == "study_visit_renal_clearance_testing", "field_name"]]
     rct = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
     rct.replace(rep, np.nan, inplace=True)
@@ -268,37 +271,44 @@ def clean_crocodile():
               "gfr_15mgmin": "gfr_raw_plasma", "gfrbsa": "gfr_bsa_plasma",
               "erpf_pah_85": "erpf_raw_plasma", "erpfbsa": "erpf_bsa_plasma"}
     rct.rename(rename, axis=1, inplace=True)
-    
+
     # Calculate variables
-    rct_vars = ["gfr_raw_plasma", "erpf_raw_plasma", "bl_tot_protein", "visit_map", "phys_map", "hct_210"]
+    rct_vars = ["gfr_raw_plasma", "erpf_raw_plasma",
+                "bl_tot_protein", "visit_map", "phys_map", "hct_210"]
     rct[rct_vars] = rct[rct_vars].apply(pd.to_numeric, errors='coerce')
     rct["map"] = rct[["visit_map", "phys_map"]].mean(axis=1)
-    rct["erpf_raw_plasma_seconds"] = rct["erpf_raw_plasma"]/60
-    rct["gfr_raw_plasma_seconds"] = rct["gfr_raw_plasma"]/60
+    rct["erpf_raw_plasma_seconds"] = rct["erpf_raw_plasma"] / 60
+    rct["gfr_raw_plasma_seconds"] = rct["gfr_raw_plasma"] / 60
     # Filtration Fraction
-    rct["ff"] = rct["gfr_raw_plasma"]/rct["erpf_raw_plasma"] 
+    rct["ff"] = rct["gfr_raw_plasma"] / rct["erpf_raw_plasma"]
     # Kfg for group (T1D/T2D kfg: 0.1012, Control kfg: 0.1733)
-    rct["kfg"] = np.select([rct["group"].eq("1"), rct["group"].eq("2")], [0.1012, 0.1733]) 
+    rct["kfg"] = np.select(
+        [rct["group"].eq("1"), rct["group"].eq("2")], [0.1012, 0.1733])
     # Filtration pressure across glomerular capillaries
-    rct["deltapf"] = (rct["gfr_raw_plasma"]/60)/rct["kfg"] 
+    rct["deltapf"] = (rct["gfr_raw_plasma"] / 60) / rct["kfg"]
     # Plasma protein mean concentration
-    rct["cm"] = (rct["bl_tot_protein"]/rct["ff"])*np.log(1/(1-rct["ff"])) 
+    rct["cm"] = (rct["bl_tot_protein"] / rct["ff"]) * \
+        np.log(1 / (1 - rct["ff"]))
     # Pi G (Oncotic pressure)
-    rct["pg"] = 5*(rct["cm"]-2)
+    rct["pg"] = 5 * (rct["cm"] - 2)
     # Glomerular Pressure
     rct["glomerular_pressure"] = rct["pg"] + rct["deltapf"] + 10
     # Renal Blood Flow
-    rct["rbf"] = (rct["erpf_raw_plasma"]) / (1 - rct["hct_210"]/100)
-    rct["rbf_seconds"] = (rct["erpf_raw_plasma_seconds"]) / (1 - rct["hct_210"]/100)
+    rct["rbf"] = (rct["erpf_raw_plasma"]) / (1 - rct["hct_210"] / 100)
+    rct["rbf_seconds"] = (rct["erpf_raw_plasma_seconds"]
+                          ) / (1 - rct["hct_210"] / 100)
     # Renal Vascular Resistance (mmHg*l^-1*min^-1)
     rct["rvr"] = rct["map"] / rct["rbf"]
-    # Efferent Arteriolar Resistance 
-    rct["re"] = (rct["gfr_raw_plasma_seconds"]) / (rct["kfg"] * (rct["rbf_seconds"] - (rct["gfr_raw_plasma_seconds"]))) * 1328
+    # Efferent Arteriolar Resistance
+    rct["re"] = (rct["gfr_raw_plasma_seconds"]) / (rct["kfg"] *
+                                                   (rct["rbf_seconds"] - (rct["gfr_raw_plasma_seconds"]))) * 1328
     # Afferent Arteriolar Resistance
-    rct["ra"] = ((rct["map"] - rct["glomerular_pressure"]) / rct["rbf_seconds"]) * 1328    
-    rct.loc[~(rct['ra'] > 0), 'ra']=np.nan    
+    rct["ra"] = ((rct["map"] - rct["glomerular_pressure"]) /
+                 rct["rbf_seconds"]) * 1328
+    rct.loc[~(rct['ra'] > 0), 'ra'] = np.nan
     # Reduce rct dataset
-    rct = rct[["record_id", "ff", "kfg", "deltapf", "cm", "pg", "glomerular_pressure", "rbf", "rvr", "ra", "re"] + list(rename.values())] 
+    rct = rct[["record_id", "ff", "kfg", "deltapf", "cm", "pg",
+               "glomerular_pressure", "rbf", "rvr", "ra", "re"] + list(rename.values())]
     rct["procedure"] = "clamp"
     rct["visit"] = "baseline"
 
@@ -343,6 +353,18 @@ def clean_crocodile():
     pet["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
+    # Neuro markers
+    # --------------------------------------------------------------------------
+
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                               == "biomarkers", "field_name"]]
+    neuro = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    neuro.replace(rep, np.nan, inplace=True)
+    neuro["procedure"] = "neuro_markers"
+    neuro["visit"] = "baseline"
+
+    # --------------------------------------------------------------------------
     # Missingness
     # --------------------------------------------------------------------------
 
@@ -356,13 +378,14 @@ def clean_crocodile():
     rct.dropna(thresh=4, axis=0, inplace=True)
     biopsy.dropna(thresh=4, axis=0, inplace=True)
     pet.dropna(thresh=4, axis=0, inplace=True)
+    neuro.dropna(thresh=2, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Merge
     # --------------------------------------------------------------------------
     # Procedure = clamp
     clamp_merge = pd.merge(clamp, labs, how="outer")
-    clamp_merge = pd.merge(clamp_merge, rct,  how="outer")
+    clamp_merge = pd.merge(clamp_merge, rct, how="outer")
     # Everything else
     df = pd.concat([phys, screen], join='outer', ignore_index=True)
     df = pd.concat([df, med], join='outer', ignore_index=True)
@@ -371,6 +394,7 @@ def clean_crocodile():
     df = pd.concat([df, clamp_merge], join='outer', ignore_index=True)
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
     df = pd.concat([df, pet], join='outer', ignore_index=True)
+    df = pd.concat([df, neuro], join='outer', ignore_index=True)
     df = pd.merge(df, demo, on='record_id', how="outer")
     df = df.copy()
 

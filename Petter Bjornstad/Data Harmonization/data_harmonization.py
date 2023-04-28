@@ -3,7 +3,9 @@ This code is designed to pull data from multiple REDCap projects and harmonize
 the data in a single dataset. Some studies are cross-sectional but include
 measures at multiple visits, and some studies are longitudinal. So, this code
 outputs data in a "semi-long" format with one row per study procedure, and a
-visit column for longitudinal clustering. The data cleaning process for each individual dataset is a separate function, and this function puts them together and performs some formatting tweaks.
+visit column for longitudinal clustering. The data cleaning process for each 
+individual dataset is a separate function, and this function puts them together 
+and performs some formatting tweaks.
 """
 __author__ = ["Tim Vigers", "Ye Ji Choi"]
 __credits__ = ["Tim Vigers", "Ye Ji Choi"]
@@ -39,8 +41,8 @@ def harmonize_data():
     improve = clean_improve()
     penguin = clean_penguin()
     renal_heir = clean_renal_heir()
-    renal_heiritage = clean_renal_heiritage()
-    panther = clean_panther()
+    # renal_heiritage = clean_renal_heiritage()
+    # panther = clean_panther()
     # Merge
     harmonized = pd.concat([casper, coffee], join='outer', ignore_index=True)
     harmonized = pd.concat([harmonized, crocodile],
@@ -51,13 +53,12 @@ def harmonize_data():
                            join='outer', ignore_index=True)
     harmonized = pd.concat([harmonized, renal_heir],
                            join='outer', ignore_index=True)
-    harmonized = pd.concat([harmonized, renal_heiritage],
-                           join='outer', ignore_index=True)
-    harmonized = pd.concat([harmonized, panther],
-                           join='outer', ignore_index=True)
-    harmonized = pd.concat([harmonized, panda],
-                           join='outer', ignore_index=True)
-
+    # harmonized = pd.concat([harmonized, renal_heiritage],
+    #                        join='outer', ignore_index=True)
+    # harmonized = pd.concat([harmonized, panther],
+    #                        join='outer', ignore_index=True)
+    # harmonized = pd.concat([harmonized, panda],
+    #                        join='outer', ignore_index=True)
 
     # Fix levels of categorical variables
     harmonized["visit"] = \
