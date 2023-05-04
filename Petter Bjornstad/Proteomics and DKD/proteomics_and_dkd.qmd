@@ -4,9 +4,11 @@ author: "Laura Pyle, Ye Ji Choi & Tim Vigers"
 date: "today"
 date-format: long
 format: docx
+dpi: 1200
 editor: source
 execute:
   echo: false
+  message: false
 ---
 
 ```{r libraries}
@@ -144,9 +146,9 @@ df <- df %>%
   ) %>%
   group_by(record_id, visit) %>%
   summarise(across(where(is.character), ~ last(na.omit(.x))),
-    across(where(is.factor), ~ last(na.omit(.x))),
-    across(where(is.numeric), ~ mean(.x, na.rm = T)),
-    .groups = "drop"
+            across(where(is.factor), ~ last(na.omit(.x))),
+            across(where(is.numeric), ~ mean(.x, na.rm = T)),
+            .groups = "drop"
   ) %>%
   mutate_all(~ ifelse(is.nan(.), NA, .))
 # Import proteomics data for RH and IMPROVE
@@ -210,19 +212,22 @@ df <- df %>% filter(visit == "baseline")
 # Combine
 plasma <- left_join(df, olink_plasma, by = c("record_id", "visit"))
 urine <- left_join(df, olink_urine, by = c("record_id", "visit"))
+# Limit df to those with all data
+ids = intersect(soma$record_id,olink_plasma$record_id)
+df = df %>% filter(record_id %in% ids)
 # Read in scRNA object
 so <- readRDS("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/Data_Raw/PB_68samples_harmonyIntegration_092322_Fadhl.RDS")
 # Strip computations
 so <- DietSeurat(so)
 # Limit to RH/IMPROVE baseline visit
 so <- so[, !grepl("_12M", so$michigan_id)]
-# Remove HC with igA
-so <- so[, so$T2D_HC_Phil %in% c("T2Di", "T2D", "HC")]
+# Limit to those with SOMA and Olink
+so <- so[, sub("_BL","",so$michigan_id) %in% ids]
 # Combined groups
 so$diabetes <- sub("i", "", so$T2D_HC_Phil)
 so$SGLT2i <- factor(so$T2D_HC_Phil,
-  levels = c("HC", "T2D", "T2Di"),
-  labels = c("No", "No", "Yes")
+                    levels = c("HC", "T2D", "T2Di"),
+                    labels = c("No", "No", "Yes")
 )
 so$acr_u_cat <- cut_number(so$acr_u, n = 2, labels = c("Low UACR", "High UACR"))
 # Normalize and scale
@@ -243,14 +248,8 @@ Idents(so) <- so$generaltype
 ```{r functions}
 # Define correlation function
 cor_and_plot_soma <- function(data = df, vars) {
-  cat("\n")
-  cat("### In all participants with SOMAScan")
-  cat("\n")
   # Format matrix
-  d <- data[
-    data$group == "Type 2 Diabetes",
-    c(vars, "acr_u", "map", "gfr_raw_plasma", "gfr_bsa_plasma")
-  ]
+  d <- data[,c(vars, "acr_u", "map", "gfr_raw_plasma", "gfr_bsa_plasma")]
   n <- c(
     analytes$Target[match(vars, analytes$AptName)],
     "acr_u", "map", "gfr_raw_plasma", "gfr_bsa_plasma"
@@ -260,46 +259,13 @@ cor_and_plot_soma <- function(data = df, vars) {
   # Correlations
   M <- corr.test(data.matrix(d), normal = F, method = "spearman")
   corrplot(round(M$r,3),
-    p.mat = M$p, method = "circle", type = "lower", insig = "blank",
-    addCoef.col = "white", diag = FALSE
+           p.mat = M$p, method = "circle", type = "lower", insig = "blank",
+           addCoef.col = "white", diag = FALSE
   )
   # Print a nice looking table
   r <- data.frame(round(M$r,3))
   emphasize.strong.cells(which(M$p <= 0.05, arr.ind = TRUE))
   pander(r, caption = "Coefficients")
-  # Print p values
-  p <- data.frame(M$p)
-  p[] <- sapply(round(p,3), format.pval, eps = 0.001)
-  pander(p, caption = "P values")
-  # Same results but limit to those with Olink data
-  cat("\n")
-  cat("### In participants with both SOMAScan and Olink")
-  cat("\n")
-  # Format matrix
-  d <- data[
-    data$group == "Type 2 Diabetes" & data$record_id %in% olink_plasma$record_id,
-    c(vars, "acr_u", "map", "gfr_raw_plasma", "gfr_bsa_plasma")
-  ]
-  n <- c(
-    analytes$Target[match(vars, analytes$AptName)],
-    "acr_u", "map", "gfr_raw_plasma", "gfr_bsa_plasma"
-  )
-  n[duplicated(n)] <- paste0(n[duplicated(n)], "(2)")
-  names(d) <- n
-  # Correlations
-  M <- corr.test(data.matrix(d), normal = F, method = "spearman")
-  corrplot(round(M$r,3),
-    p.mat = M$p, method = "circle", type = "lower", insig = "blank",
-    addCoef.col = "white", diag = FALSE
-  )
-  # Print a nice looking table
-  r <- data.frame(round(M$r,3))
-  emphasize.strong.cells(which(M$p <= 0.05, arr.ind = TRUE))
-  pander(r, caption = "Coefficients")
-  # Print p values
-  p <- data.frame(M$p)
-  p[] <- sapply(round(p,3), format.pval, eps = 0.001)
-  pander(p, caption = "P values")
 }
 # Function for converting SOMAScan to Olink
 soma_to_olink <- function(soma_ids) {
@@ -315,29 +281,7 @@ soma_to_olink <- function(soma_ids) {
   return(ids)
 }
 # Plot agreement
-soma_olink_plots <- function(top_olink, data) {
-  # Linear model plots
-  invisible(lapply(names(top_olink), function(n) {
-    title <- analytes$TargetFullName[analytes$AptName == n]
-    plots <- lapply(top_olink[n][[1]], function(o) {
-      panel <- olink_map$Panel[olink_map$OlinkID == o]
-      p <- ggplot(data[data$group == "Type 2 Diabetes", ], aes_string(x = n, y = o)) +
-        geom_point(alpha = 0.5) +
-        stat_poly_line(se = F) +
-        stat_poly_eq(
-          aes(label = paste(after_stat(eq.label),
-            after_stat(rr.label),
-            after_stat(p.value.label),
-            sep = "*\", \"*"
-          )),
-          label.y = 0.2, label.x = 0.9
-        ) +
-        theme_bw() +
-        ylab(paste0(o, " [", panel, "]")) +
-        ggtitle(title)
-      print(p)
-    })
-  }))
+soma_olink_corr <- function(top_olink, data) {
   # Correlations
   M <- corr.test(x= data.matrix(data[,names(top_olink)]),
                  y = data.matrix(data[,as.character(top_olink)]), 
@@ -350,10 +294,10 @@ soma_olink_plots <- function(top_olink, data) {
   p <- data.frame(M$p)
   p[] <- sapply(round(p,3), format.pval, eps = 0.001)
   pander(p, caption = "P values")
-  
 }
 # Correlate Olink with UACR
-cor_and_plot_olink <- function(plasma_df = plasma, urine_df = urine, vars) {
+cor_and_plot_olink <- function(plasma_df = plasma, 
+                               urine_df = urine, vars) {
   # Get Olink names
   vars <- as.character(vars)
   # Format matrices
@@ -374,31 +318,23 @@ cor_and_plot_olink <- function(plasma_df = plasma, urine_df = urine, vars) {
   # Plasma correlations
   M_plasma <- corr.test(data.matrix(plasma_df), normal = F, method = "spearman")
   corrplot(M_plasma$r,
-    p.mat = M_plasma$p, method = "circle", type = "lower",
-    insig = "blank", addCoef.col = "white", diag = FALSE, title = "Plasma"
+           p.mat = M_plasma$p, method = "circle", type = "lower",
+           insig = "blank", addCoef.col = "white", diag = FALSE, title = "Plasma"
   )
   # Print nice looking table
   r <- data.frame(M_plasma$r)
   emphasize.strong.cells(which(M_plasma$p <= 0.05, arr.ind = TRUE))
   print(pander(r, caption = "Plasma coefficients"))
-  # Print p values
-  p <- data.frame(M_plasma$p)
-  p[] <- sapply(round(p,3), format.pval, eps = 0.001)
-  print(pander(p, caption = "Plasma p values"))
   # Urine correlations
   M_urine <- corr.test(data.matrix(urine_df), normal = F, method = "spearman")
   corrplot(M_urine$r,
-    p.mat = M_urine$p, method = "circle", type = "lower",
-    insig = "blank", addCoef.col = "white", diag = FALSE, title = "Urine"
+           p.mat = M_urine$p, method = "circle", type = "lower",
+           insig = "blank", addCoef.col = "white", diag = FALSE, title = "Urine"
   )
   # Print nice looking table
   r <- data.frame(M_urine$r)
   emphasize.strong.cells(which(M_urine$p <= 0.05, arr.ind = TRUE))
   print(pander(r, caption = "Urine coefficients"))
-  # Print p values
-  p <- data.frame(M_urine$p)
-  p[] <- sapply(round(p,3), format.pval, eps = 0.001)
-  print(pander(p, caption = "Urine p values"))
 }
 # UMAP function
 umap_plot <- function(seurat_object = so, vars) {
@@ -430,23 +366,26 @@ de <- function(seurat_object = so, outcome, ref_group, vars) {
   })
   # DE testing
   de_tables <- lapply(names(max), function(n) {
-    m <- FindMarkers(seurat_object,
-      features = n, ident.1 = ref_group,
-      group.by = outcome, subset.ident = max[[n]],
-      min.pct = 0, logfc.threshold = 0, verbose = F
-    )
-    m <- data.frame(m)
-    m$celltype <- max[[n]]
+    m <- 
+        tryCatch(FindMarkers(seurat_object,features = n, ident.1 = ref_group,
+                    group.by = outcome, subset.ident = max[[n]],
+                    logfc.threshold = 0, verbose = F),
+                 error=function(err) NA,warning=function(war) NA)
+    if(any(!is.na(m))) {
+      m <- data.frame(m)
+      m$celltype <- max[[n]]
+    }
     return(m)
   })
+  de_tables = de_tables[!is.na(de_tables)]
   # Combine rows and print
   de_table <- data.frame(do.call(rbind, de_tables))
   de_table <- de_table[order(de_table$p_val), ]
   # Plots
-  invisible(lapply(names(max), function(n) {
+  invisible(lapply(rownames(de_table), function(n) {
     p <- VlnPlot(seurat_object,
-      features = n, group.by = outcome,
-      idents = max[[n]], pt.size = 0.01, log = F
+                 features = n, group.by = outcome,
+                 idents = max[[n]], pt.size = 0.01, log = F
     )
     print(p)
   }))
@@ -487,16 +426,16 @@ scRNA_corr <- function(seurat_object = so, vars) {
     prot_olink <- olink[[prot_soma]]
     # Plot linear model
     t <- left_join(df[, c("record_id", prot_soma)], avg_exp,
-      by = join_by(record_id)
+                   by = join_by(record_id)
     )
     p_soma <- ggplot(t, aes_string(x = n, y = prot_soma)) +
       geom_point(alpha = 0.5) +
       stat_poly_line(se = F) +
       stat_poly_eq(
         aes(label = paste(after_stat(eq.label),
-          after_stat(rr.label),
-          after_stat(p.value.label),
-          sep = "*\", \"*"
+                          after_stat(rr.label),
+                          after_stat(p.value.label),
+                          sep = "*\", \"*"
         ))
       ) +
       xlab(paste0("Mean ", n, " expression in ", max[[n]])) +
@@ -508,16 +447,16 @@ scRNA_corr <- function(seurat_object = so, vars) {
     if (!is.null(prot_olink)) {
       # Plasma
       t <- left_join(plasma[, c("record_id", prot_olink)], avg_exp,
-        by = join_by(record_id)
+                     by = join_by(record_id)
       )
       p_plasma <- ggplot(t, aes_string(x = n, y = prot_olink)) +
         geom_point(alpha = 0.5) +
         stat_poly_line(se = F) +
         stat_poly_eq(
           aes(label = paste(after_stat(eq.label),
-            after_stat(rr.label),
-            after_stat(p.value.label),
-            sep = "*\", \"*"
+                            after_stat(rr.label),
+                            after_stat(p.value.label),
+                            sep = "*\", \"*"
           ))
         ) +
         xlab(paste0("Mean ", n, " expression in ", max[[n]])) +
@@ -528,16 +467,16 @@ scRNA_corr <- function(seurat_object = so, vars) {
       print(p_plasma)
       # Urine
       t <- left_join(urine[, c("record_id", prot_olink)], avg_exp,
-        by = join_by(record_id)
+                     by = join_by(record_id)
       )
       p_urine <- ggplot(t, aes_string(x = n, y = prot_olink)) +
         geom_point(alpha = 0.5) +
         stat_poly_line(se = F) +
         stat_poly_eq(
           aes(label = paste(after_stat(eq.label),
-            after_stat(rr.label),
-            after_stat(p.value.label),
-            sep = "*\", \"*"
+                            after_stat(rr.label),
+                            after_stat(p.value.label),
+                            sep = "*\", \"*"
           ))
         ) +
         xlab(paste0("Mean ", n, " expression in ", max[[n]])) +
@@ -599,8 +538,8 @@ pathway_analysis <- function(de_genes, log_t = T) {
   sig <- which(gsea@result$p.adjust <= 0.05)
   if (length(sig) > 0) {
     gseap <- gseaplot2(gsea,
-      geneSetID = sig,
-      pvalue_table = TRUE, ES_geom = "dot"
+                       geneSetID = sig,
+                       pvalue_table = TRUE, ES_geom = "dot"
     )
   } else {
     gseap <- NULL
@@ -609,8 +548,8 @@ pathway_analysis <- function(de_genes, log_t = T) {
   gseax <- setReadable(gsea, "org.Hs.eg.db", "ENTREZID")
   # More plots!
   cnet <- cnetplot(gseax,
-    foldChange = de_genes, colorEdge = T,
-    node_label = "category"
+                   foldChange = de_genes, colorEdge = T,
+                   node_label = "category"
   )
   # Return those beautiful plots
   return(list(
@@ -643,27 +582,29 @@ pathway_comparison <- function(de_gene_list) {
 # Participant characteristics
 
 ```{r message = FALSE}
-ids <- unique(sub("_BL|_12M", "", c(
-  olink_plasma$record_id, olink_urine$record_id,
-  soma$record_id, so@meta.data[["michigan_id"]]
-)))
 df %>%
-  filter(record_id %in% ids) %>%
   mutate(
     race_ethnicity_condensed = case_when(
       race == "White" & startsWith(ethnicity, "Not") ~ "Non-Hispanic White",
-      race == "Black or African American" & startsWith(ethnicity, "Not") ~ "Non-Hispanic Black",
+      race == "Black or African American" & startsWith(ethnicity, "Not") ~ 
+        "Non-Hispanic Black",
       ethnicity == "Hispanic or Latino" ~ "Hispanic",
       T ~ "Other"
     ),
-    soma = case_when(record_id %in% unique(sub("_BL|_12M", "", soma$record_id)) ~ "Yes", T ~ "No"),
-    olink_plasma = case_when(record_id %in% unique(sub("_BL|_12M", "", olink_plasma$record_id)) ~ "Yes", T ~ "No"),
-    olink_urine = case_when(record_id %in% unique(sub("_BL|_12M", "", olink_urine$record_id)) ~ "Yes", T ~ "No"),
-    ssRNA = case_when(record_id %in% unique(sub("_BL|_12M", "", so@meta.data[["michigan_id"]])) ~ "Yes", T ~ "No")
+    soma = case_when(record_id %in% unique(sub("_BL|_12M", "", soma$record_id)) ~ 
+                       "Yes", T ~ "No"),
+    olink_plasma = case_when(record_id %in% unique(sub("_BL|_12M", "", 
+                                                       olink_plasma$record_id)) ~ 
+                               "Yes", T ~ "No"),
+    olink_urine = case_when(record_id %in% unique(sub("_BL|_12M", "", 
+                                                      olink_urine$record_id)) ~ 
+                              "Yes", T ~ "No"),
+    scRNA = case_when(record_id %in% unique(sub("_BL|_12M", "", 
+                                                so@meta.data[["michigan_id"]])) ~ 
+                        "Yes", T ~ "No")
   ) %>%
   select(
-    group, age, sex, race_ethnicity_condensed, diabetes_duration, hba1c, bmi, acr_u, albuminuria_cat,
-    soma, olink_plasma, olink_urine, ssRNA
+    group, age, sex, race_ethnicity_condensed, diabetes_duration, hba1c, bmi, acr_u, albuminuria_cat, soma, olink_plasma, olink_urine, scRNA
   ) %>%
   tbl_summary(by = group) %>%
   add_p(list(all_continuous() ~ "aov")) %>%
@@ -676,7 +617,7 @@ df %>%
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MAC were: `r toString(analytes$TargetFullName[match(top_mac,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_mac,analytes$AptName)])`, respectively).
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 cor_and_plot_soma(vars = top_mac)
 ```
 
@@ -684,7 +625,7 @@ cor_and_plot_soma(vars = top_mac)
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MIC were: `r toString(analytes$TargetFullName[match(top_mic,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_mic,analytes$AptName)])`, respectively).
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 cor_and_plot_soma(vars = top_mic)
 ```
 
@@ -692,7 +633,7 @@ cor_and_plot_soma(vars = top_mic)
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_hyp,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_hyp,analytes$AptName)])`, respectively).
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 cor_and_plot_soma(vars = top_hyp)
 ```
 
@@ -700,7 +641,7 @@ cor_and_plot_soma(vars = top_hyp)
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for rapid eGFR decline were: `r toString(analytes$TargetFullName[match(top_rapid,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_rapid,analytes$AptName)])`, respectively).
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 cor_and_plot_soma(vars = top_rapid)
 ```
 
@@ -708,7 +649,7 @@ cor_and_plot_soma(vars = top_rapid)
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_htn,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_htn,analytes$AptName)])`, respectively).
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 cor_and_plot_soma(vars = top_htn)
 ```
 
@@ -716,7 +657,7 @@ cor_and_plot_soma(vars = top_htn)
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension (with SBP) were: `r toString(analytes$TargetFullName[match(top_htn_sbp,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_htn_sbp,analytes$AptName)])`, respectively).
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 cor_and_plot_soma(vars = top_htn_sbp)
 ```
 
@@ -728,15 +669,15 @@ The proteins with the largest absolute effect size and adjusted p value $\leq 0.
 
 ### Plasma
 
-```{r warning=FALSE,results='asis'}
+```{r warning=FALSE,results='asis', dpi=1200}
 top_mac_olink <- soma_to_olink(top_mac)
-soma_olink_plots(top_olink = top_mac_olink, data = plasma)
+soma_olink_corr(top_olink = top_mac_olink, data = plasma)
 ```
 
 ### Urine
 
-```{r warning=FALSE,results='asis'}
-soma_olink_plots(top_olink = top_mac_olink, data = urine)
+```{r warning=FALSE,results='asis', dpi=1200}
+soma_olink_corr(top_olink = top_mac_olink, data = urine)
 ```
 
 ## MIC
@@ -745,15 +686,15 @@ The proteins with the largest absolute effect size and adjusted p value $\leq 0.
 
 ### Plasma
 
-```{r warning=FALSE,results='asis'}
+```{r warning=FALSE,results='asis', dpi=1200}
 top_mic_olink <- soma_to_olink(top_mic)
-soma_olink_plots(top_olink = top_mic_olink, data = plasma)
+soma_olink_corr(top_olink = top_mic_olink, data = plasma)
 ```
 
 ### Urine
 
-```{r warning=FALSE,results='asis'}
-soma_olink_plots(top_olink = top_mic_olink, data = urine)
+```{r warning=FALSE,results='asis', dpi=1200}
+soma_olink_corr(top_olink = top_mic_olink, data = urine)
 ```
 
 ## HYP
@@ -762,15 +703,15 @@ The proteins with the largest absolute effect size and adjusted p value $\leq 0.
 
 ### Plasma
 
-```{r warning=FALSE,results='asis'}
+```{r warning=FALSE,results='asis', dpi=1200}
 top_hyp_olink <- soma_to_olink(top_hyp)
-soma_olink_plots(top_olink = top_hyp_olink, data = plasma)
+soma_olink_corr(top_olink = top_hyp_olink, data = plasma)
 ```
 
 ### Urine
 
-```{r warning=FALSE,results='asis'}
-soma_olink_plots(top_olink = top_hyp_olink, data = urine)
+```{r warning=FALSE,results='asis', dpi=1200}
+soma_olink_corr(top_olink = top_hyp_olink, data = urine)
 ```
 
 ## RAPID
@@ -783,15 +724,15 @@ The proteins with the largest absolute effect size and adjusted p value $\leq 0.
 
 ### Plasma
 
-```{r warning=FALSE,results='asis'}
+```{r warning=FALSE,results='asis', dpi=1200}
 top_htn_olink <- soma_to_olink(top_htn)
-soma_olink_plots(top_olink = top_htn_olink, data = plasma)
+soma_olink_corr(top_olink = top_htn_olink, data = plasma)
 ```
 
 ### Urine
 
-```{r warning=FALSE,results='asis'}
-soma_olink_plots(top_olink = top_htn_olink, data = urine)
+```{r warning=FALSE,results='asis', dpi=1200}
+soma_olink_corr(top_olink = top_htn_olink, data = urine)
 ```
 
 ## HTN with SBP
@@ -804,7 +745,7 @@ Top proteins from SOMAScan were not available in Olink.
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MAC were: `r toString(analytes$TargetFullName[match(top_mac,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_mac,analytes$AptName)])`, respectively).
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 cor_and_plot_olink(vars = top_mac_olink)
 ```
 
@@ -812,7 +753,7 @@ cor_and_plot_olink(vars = top_mac_olink)
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MIC were: `r toString(analytes$TargetFullName[match(top_mic,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_mic,analytes$AptName)])`, respectively).
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 cor_and_plot_olink(vars = top_mic_olink)
 ```
 
@@ -820,7 +761,7 @@ cor_and_plot_olink(vars = top_mic_olink)
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_hyp,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_hyp,analytes$AptName)])`, respectively).
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 cor_and_plot_olink(vars = top_hyp_olink)
 ```
 
@@ -828,7 +769,7 @@ cor_and_plot_olink(vars = top_hyp_olink)
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension (with SBP) were: `r toString(analytes$TargetFullName[match(top_htn_sbp,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_htn_sbp,analytes$AptName)])`, respectively).
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 cor_and_plot_olink(vars = top_htn_olink)
 ```
 
@@ -850,15 +791,9 @@ umap_plot(so, top_mac)
 
 ### Differential expression in the highest expressing cell type
 
-#### Diabetes status
-
-```{r results='asis'}
-de(outcome = "diabetes", ref_group = "HC", vars = top_mac)
-```
-
 #### SGLT2i status
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 de(outcome = "SGLT2i", ref_group = "No", vars = top_mac)
 ```
 
@@ -866,7 +801,7 @@ de(outcome = "SGLT2i", ref_group = "No", vars = top_mac)
 
 There are only 3 participants with UACR >= 30, so participants were divided into two groups: below ("Low") and above ("High") the median. Median UACR was 6.21.
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 de(outcome = "acr_u_cat", ref_group = "Low UACR", vars = top_mac)
 ```
 
@@ -882,15 +817,9 @@ umap_plot(so, top_mic)
 
 ### Differential expression in the highest expressing cell type
 
-#### Diabetes status
-
-```{r results='asis'}
-de(outcome = "diabetes", ref_group = "HC", vars = top_mic)
-```
-
 #### SGLT2i status
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 de(outcome = "SGLT2i", ref_group = "No", vars = top_mic)
 ```
 
@@ -898,7 +827,7 @@ de(outcome = "SGLT2i", ref_group = "No", vars = top_mic)
 
 There are only 3 participants with UACR >= 30, so participants were divided into two groups: below ("Low") and above ("High") the median. Median UACR was 6.21.
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 de(outcome = "acr_u_cat", ref_group = "Low UACR", vars = top_mic)
 ```
 
@@ -914,15 +843,9 @@ umap_plot(so, top_hyp)
 
 ### Differential expression in the highest expressing cell type
 
-#### Diabetes status
-
-```{r results='asis'}
-de(outcome = "diabetes", ref_group = "HC", vars = top_hyp)
-```
-
 #### SGLT2i status
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 de(outcome = "SGLT2i", ref_group = "No", vars = top_hyp)
 ```
 
@@ -930,7 +853,7 @@ de(outcome = "SGLT2i", ref_group = "No", vars = top_hyp)
 
 There are only 3 participants with UACR >= 30, so participants were divided into two groups: below ("Low") and above ("High") the median. Median UACR was 6.21.
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 de(outcome = "acr_u_cat", ref_group = "Low UACR", vars = top_hyp)
 ```
 
@@ -946,15 +869,9 @@ umap_plot(so, top_rapid)
 
 ### Differential expression in the highest expressing cell type
 
-#### Diabetes status
-
-```{r results='asis'}
-de(outcome = "diabetes", ref_group = "HC", vars = top_rapid)
-```
-
 #### SGLT2i status
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 de(outcome = "SGLT2i", ref_group = "No", vars = top_rapid)
 ```
 
@@ -962,7 +879,7 @@ de(outcome = "SGLT2i", ref_group = "No", vars = top_rapid)
 
 There are only 3 participants with UACR >= 30, so participants were divided into two groups: below ("Low") and above ("High") the median. Median UACR was 6.21.
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 de(outcome = "acr_u_cat", ref_group = "Low UACR", vars = top_rapid)
 ```
 
@@ -978,15 +895,9 @@ umap_plot(so, top_htn)
 
 ### Differential expression in the highest expressing cell type
 
-#### Diabetes status
-
-```{r results='asis'}
-de(outcome = "diabetes", ref_group = "HC", vars = top_htn)
-```
-
 #### SGLT2i status
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 de(outcome = "SGLT2i", ref_group = "No", vars = top_htn)
 ```
 
@@ -994,7 +905,7 @@ de(outcome = "SGLT2i", ref_group = "No", vars = top_htn)
 
 There are only 3 participants with UACR >= 30, so participants were divided into two groups: below ("Low") and above ("High") the median. Median UACR was 6.21.
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 de(outcome = "acr_u_cat", ref_group = "Low UACR", vars = top_htn)
 ```
 
@@ -1010,15 +921,9 @@ umap_plot(so, top_htn_sbp)
 
 ### Differential expression in the highest expressing cell type
 
-#### Diabetes status
-
-```{r results='asis'}
-de(outcome = "diabetes", ref_group = "HC", vars = top_htn_sbp)
-```
-
 #### SGLT2i status
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 de(outcome = "SGLT2i", ref_group = "No", vars = top_htn_sbp)
 ```
 
@@ -1026,7 +931,7 @@ de(outcome = "SGLT2i", ref_group = "No", vars = top_htn_sbp)
 
 There are only 3 participants with UACR >= 30, so participants were divided into two groups: below ("Low") and above ("High") the median. Median UACR was 6.21.
 
-```{r results='asis'}
+```{r results='asis', dpi=1200}
 de(outcome = "acr_u_cat", ref_group = "Low UACR", vars = top_htn_sbp)
 ```
 
@@ -1238,110 +1143,112 @@ scRNA_corr(vars = top_htn)
 scRNA_corr(vars = top_htn_sbp)
 ```
 
-# Save figures for manuscript
+<!-- # Save figures for manuscript -->
 
-## Figure 1
+<!-- ## Figure 1 -->
 
-```{r}
-fig1 <- (v_mic + v_mac + v_rapid) / (v_hyp + v_htn + plot_spacer())
-ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/Figure_1_1600x900.jpeg",
-  units = "px",
-  width = 1600, height = 900, scale = 2, plot = fig1, device = "jpeg"
-)
-```
+<!-- ```{r} -->
+<!-- fig1 <- (v_mic + v_mac + v_rapid) / (v_hyp + v_htn + plot_spacer()) -->
+<!-- ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/Figure_1_1600x900.jpeg", -->
+<!--   units = "px", -->
+<!--   width = 1600, height = 900, scale = 2, plot = fig1, device = "jpeg" -->
+<!-- ) -->
+<!-- ``` -->
 
-## Figure 2
+<!-- ## Figure 2 -->
 
-```{r}
-p_mic <- mic_p$dot +
-  ggtitle("Moderate Albuminuria") +
-  theme(plot.title = element_text(hjust = 0.5))
+<!-- ```{r} -->
+<!-- p_mic <- mic_p$dot + -->
+<!--   ggtitle("Moderate Albuminuria") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
 
-p_mac <- mac_p$dot +
-  ggtitle("Severe Albuminuria") +
-  theme(plot.title = element_text(hjust = 0.5))
+<!-- p_mac <- mac_p$dot + -->
+<!--   ggtitle("Severe Albuminuria") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
 
-p_rapid <- rapid_p$dot +
-  ggtitle("Rapid eGFR Decline") +
-  theme(plot.title = element_text(hjust = 0.5))
+<!-- p_rapid <- rapid_p$dot + -->
+<!--   ggtitle("Rapid eGFR Decline") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
 
-p_hyp <- hyp_p$dot +
-  ggtitle("Hyperfiltration") +
-  theme(plot.title = element_text(hjust = 0.5))
+<!-- p_hyp <- hyp_p$dot + -->
+<!--   ggtitle("Hyperfiltration") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
 
-p_htn <- htn_p$dot +
-  ggtitle("Hypertension") +
-  theme(plot.title = element_text(hjust = 0.5))
+<!-- p_htn <- htn_p$dot + -->
+<!--   ggtitle("Hypertension") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
 
-fig2 <- (p_mic + p_mac + p_rapid) / (p_hyp + p_htn + plot_spacer())
-fig2 <- fig2 + plot_layout(guides = "collect") &
-  theme(legend.position = "none")
-ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/Figure_2_1600x900.jpeg",
-  units = "px",
-  width = 1600, height = 900, scale = 3, plot = fig2, device = "jpeg"
-)
-```
+<!-- fig2 <- (p_mic + p_mac + p_rapid) / (p_hyp + p_htn + plot_spacer()) -->
+<!-- fig2 <- fig2 + plot_layout(guides = "collect") & -->
+<!--   theme(legend.position = "none") -->
+<!-- ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/Figure_2_1600x900.jpeg", -->
+<!--   units = "px", -->
+<!--   width = 1600, height = 900, scale = 3, plot = fig2, device = "jpeg" -->
+<!-- ) -->
+<!-- ``` -->
 
-## Figure 3
+<!-- ## Figure 3 -->
 
-```{r}
-p_mic <- mic_p_comp$dot +
-  ggtitle("Moderate Albuminuria") +
-  theme(plot.title = element_text(hjust = 0.5))
+<!-- ```{r} -->
+<!-- p_mic <- mic_p_comp$dot + -->
+<!--   ggtitle("Moderate Albuminuria") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
 
-p_mac <- mac_p_comp$dot +
-  ggtitle("Severe Albuminuria") +
-  theme(plot.title = element_text(hjust = 0.5))
+<!-- p_mac <- mac_p_comp$dot + -->
+<!--   ggtitle("Severe Albuminuria") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
 
-p_rapid <- rapid_p_comp$dot +
-  ggtitle("Rapid eGFR Decline") +
-  theme(plot.title = element_text(hjust = 0.5))
+<!-- p_rapid <- rapid_p_comp$dot + -->
+<!--   ggtitle("Rapid eGFR Decline") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
 
-p_hyp <- hyp_p_comp$dot +
-  ggtitle("Hyperfiltration") +
-  theme(plot.title = element_text(hjust = 0.5))
+<!-- p_hyp <- hyp_p_comp$dot + -->
+<!--   ggtitle("Hyperfiltration") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
 
-p_htn <- htn_p_comp$dot +
-  ggtitle("Hypertension") +
-  theme(plot.title = element_text(hjust = 0.5))
+<!-- p_htn <- htn_p_comp$dot + -->
+<!--   ggtitle("Hypertension") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
 
-fig3 <- (p_mic + p_mac + p_rapid) / (p_hyp + p_htn + plot_spacer())
-fig3 <- fig3 + plot_layout(guides = "collect") & theme(legend.position = "none")
-ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/Figure_3_1600x900.jpeg",
-  units = "px",
-  width = 1600, height = 900, scale = 5, plot = fig3, device = "jpeg"
-)
-```
+<!-- fig3 <- (p_mic + p_mac + p_rapid) / (p_hyp + p_htn + plot_spacer()) -->
+<!-- fig3 <- fig3 + plot_layout(guides = "collect") & theme(legend.position = "none") -->
+<!-- ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/Figure_3_1600x900.jpeg", -->
+<!--   units = "px", -->
+<!--   width = 1600, height = 900, scale = 5, plot = fig3, device = "jpeg" -->
+<!-- ) -->
+<!-- ``` -->
 
-## Supplemental Figure 1
+<!-- ## Supplemental Figure 1 -->
 
-Figure 3 as a network plot
+<!-- Figure 3 as a network plot -->
 
-```{r}
-p_mic <- mic_p_comp$net +
-  ggtitle("Moderate Albuminuria") +
-  theme(plot.title = element_text(hjust = 0.5))
+<!-- ```{r} -->
+<!-- p_mic <- mic_p_comp$net + -->
+<!--   ggtitle("Moderate Albuminuria") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
 
-p_mac <- mac_p_comp$net +
-  ggtitle("Severe Albuminuria") +
-  theme(plot.title = element_text(hjust = 0.5))
+<!-- p_mac <- mac_p_comp$net + -->
+<!--   ggtitle("Severe Albuminuria") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
 
-p_rapid <- rapid_p_comp$net +
-  ggtitle("Rapid eGFR Decline") +
-  theme(plot.title = element_text(hjust = 0.5))
+<!-- p_rapid <- rapid_p_comp$net + -->
+<!--   ggtitle("Rapid eGFR Decline") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
 
-p_hyp <- hyp_p_comp$net +
-  ggtitle("Hyperfiltration") +
-  theme(plot.title = element_text(hjust = 0.5))
+<!-- p_hyp <- hyp_p_comp$net + -->
+<!--   ggtitle("Hyperfiltration") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
 
-p_htn <- htn_p_comp$net +
-  ggtitle("Hypertension") +
-  theme(plot.title = element_text(hjust = 0.5))
+<!-- p_htn <- htn_p_comp$net + -->
+<!--   ggtitle("Hypertension") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) -->
 
-figs1 <- (p_mic + p_mac + p_rapid) / (p_hyp + p_htn + plot_spacer())
-figs1 <- figs1 + plot_layout(guides = "collect") & theme(legend.position = "none")
-ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/Figure_S1_1600x900.jpeg",
-  units = "px",
-  width = 1600, height = 900, scale = 5, plot = figs1, device = "jpeg"
-)
-```
+<!-- figs1 <- (p_mic + p_mac + p_rapid) / (p_hyp + p_htn + plot_spacer()) -->
+<!-- figs1 <- figs1 + plot_layout(guides = "collect") & theme(legend.position = "none") -->
+<!-- ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/Figure_S1_1600x900.jpeg", -->
+<!--   units = "px", -->
+<!--   width = 1600, height = 900, scale = 5, plot = figs1, device = "jpeg" -->
+<!-- ) -->
+<!-- ``` -->
+
+<!-- Temp -->
