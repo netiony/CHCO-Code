@@ -355,40 +355,58 @@ de <- function(seurat_object = so, outcome, ref_group, vars) {
   entrez <- entrez[entrez %in% rownames(seurat_object)]
   entrez <- unique(entrez)
   # Find cells where most highly expressed
-  cells <- FetchData(seurat_object, vars = entrez)
+  cells <- FetchData(seurat_object, vars = entrez,slot = "counts")
   cells$type <- seurat_object$generaltype
+  cell_count = data.frame(table(cells$type))
+  colnames(cell_count) = c("Cell.Type","n Cells")
   cells <- cells %>%
     group_by(type) %>%
-    summarise(across(where(is.numeric), ~ mean(.x > 0, na.rm = TRUE))) %>%
+    summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
     column_to_rownames("type")
   max <- lapply(cells, function(c) {
-    rownames(cells)[which.max(c)]
+    rownames(cells)[order(c,decreasing = T)[1:2]]
   })
   # DE testing
   de_tables <- lapply(names(max), function(n) {
-    m <- 
-        tryCatch(FindMarkers(seurat_object,features = n, ident.1 = ref_group,
-                    group.by = outcome, subset.ident = max[[n]],
-                    logfc.threshold = 0, verbose = F),
-                 error=function(err) NA,warning=function(war) NA)
-    if(any(!is.na(m))) {
-      m <- data.frame(m)
-      m$celltype <- max[[n]]
+    # Compare expression in two highest expressing cell types
+    c1 = tryCatch(FindMarkers(seurat_object,features = n, ident.1 = ref_group,
+                              group.by = outcome, subset.ident = max[[n]][1],
+                              logfc.threshold = 0, verbose = F),
+                  error=function(err) NULL,warning=function(war) NULL)
+    if(!is.null(c1)){
+      c1$`Cell Type` = max[[n]][1]
+      c1$`Gene` = n
     }
-    return(m)
+    c2 = tryCatch(FindMarkers(seurat_object,features = n, ident.1 = ref_group,
+                              group.by = outcome, subset.ident = max[[n]][2],
+                              logfc.threshold = 0, verbose = F),
+                  error=function(err) NULL,warning=function(war) NULL)
+    if(!is.null(c2)){
+      c2$`Cell Type` = max[[n]][2]
+      c2$`Gene` = n
+    }
+    # Merge tables if necessary
+    t = do.call(rbind,list(c1,c2))
+    return(t)
   })
-  de_tables = de_tables[!is.na(de_tables)]
   # Combine rows and print
   de_table <- data.frame(do.call(rbind, de_tables))
-  de_table <- de_table[order(de_table$p_val), ]
+  de_table <- de_table[order(de_table$Gene), ]
   # Plots
-  invisible(lapply(rownames(de_table), function(n) {
+  invisible(apply(de_table,1, function(r) {
+    g = r["Gene"]
+    i = r["Cell.Type"]
     p <- VlnPlot(seurat_object,
-                 features = n, group.by = outcome,
-                 idents = max[[n]], pt.size = 0.01, log = F
+                 features = g, group.by = outcome,
+                 idents = i, pt.size = 0.01, log = F
     )
+    p = p + ggtitle(paste(g,"in",i)) + 
+      theme(legend.position = "none",axis.title.x = element_blank())
     print(p)
   }))
+  de_table = de_table %>% select(Gene,Cell.Type,avg_log2FC,pct.1,pct.2,p_val,p_val_adj)
+  de_table=left_join(de_table,cell_count,by = join_by(Cell.Type))
+  rownames(de_table)=NULL
   pander(de_table)
 }
 # scRNA correlation with proteomics
@@ -403,20 +421,23 @@ scRNA_corr <- function(seurat_object = so, vars) {
   # Find cells where most highly expressed
   cells <- FetchData(seurat_object, vars = as.character(entrez))
   cells$type <- seurat_object$generaltype
+  cell_counts = data.frame(table(cells$type))
+  cell_perc <- cells %>%
+    group_by(type) %>%
+    summarise(across(where(is.numeric), ~ mean(.x>0, na.rm = TRUE))) %>%
+    column_to_rownames("type")
   cells <- cells %>%
     group_by(type) %>%
-    summarise(across(
-      where(is.numeric),
-      ~ mean(.x > 0, na.rm = TRUE)
-    )) %>%
+    summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
     column_to_rownames("type")
   max <- lapply(cells, function(c) {
-    rownames(cells)[which.max(c)]
+    rownames(cells)[order(c,decreasing = T)[1:2]]
   })
-  # Plot correlations
-  invisible(lapply(names(max), function(n) {
+  w = which(unlist(lapply(cell_perc,function(c){any(c>=0.1)})))
+  # Plot correlations in first cell type
+  invisible(lapply(names(max)[w], function(n) {
     # Expression by cell type and ID
-    avg_exp <- subset(seurat_object, idents = max[[n]])
+    avg_exp <- subset(seurat_object, idents = max[[n]][1])
     avg_exp <- AverageExpression(avg_exp, group.by = "michigan_id")
     avg_exp <- as.data.frame(avg_exp$RNA)
     avg_exp <- as.data.frame(t(avg_exp[rownames(avg_exp) == n, ]))
@@ -438,7 +459,7 @@ scRNA_corr <- function(seurat_object = so, vars) {
                           sep = "*\", \"*"
         ))
       ) +
-      xlab(paste0("Mean ", n, " expression in ", max[[n]])) +
+      xlab(paste0("Mean ", n, " expression in ", max[[n]][1])) +
       theme_bw()
     cat("\n")
     cat("### SOMAScan")
@@ -459,7 +480,7 @@ scRNA_corr <- function(seurat_object = so, vars) {
                             sep = "*\", \"*"
           ))
         ) +
-        xlab(paste0("Mean ", n, " expression in ", max[[n]])) +
+        xlab(paste0("Mean ", n, " expression in ", max[[n]][1])) +
         theme_bw()
       cat("\n")
       cat("### Plasma Olink")
@@ -479,7 +500,81 @@ scRNA_corr <- function(seurat_object = so, vars) {
                             sep = "*\", \"*"
           ))
         ) +
-        xlab(paste0("Mean ", n, " expression in ", max[[n]])) +
+        xlab(paste0("Mean ", n, " expression in ", max[[n]][1])) +
+        theme_bw()
+      cat("\n")
+      cat("### Urine Olink")
+      cat("\n")
+      print(p_urine)
+    }
+  }))
+  # Plot correlations in second cell type
+  invisible(lapply(names(max)[w], function(n) {
+    # Expression by cell type and ID
+    avg_exp <- subset(seurat_object, idents = max[[n]][2])
+    avg_exp <- AverageExpression(avg_exp, group.by = "michigan_id")
+    avg_exp <- as.data.frame(avg_exp$RNA)
+    avg_exp <- as.data.frame(t(avg_exp[rownames(avg_exp) == n, ]))
+    avg_exp$record_id <- sub("_BL", "", rownames(avg_exp))
+    # Get IDs
+    prot_soma <- names(entrez[which(entrez == n)])
+    prot_olink <- olink[[prot_soma]]
+    # Plot linear model
+    t <- left_join(df[, c("record_id", prot_soma)], avg_exp,
+                   by = join_by(record_id)
+    )
+    p_soma <- ggplot(t, aes_string(x = n, y = prot_soma)) +
+      geom_point(alpha = 0.5) +
+      stat_poly_line(se = F) +
+      stat_poly_eq(
+        aes(label = paste(after_stat(eq.label),
+                          after_stat(rr.label),
+                          after_stat(p.value.label),
+                          sep = "*\", \"*"
+        ))
+      ) +
+      xlab(paste0("Mean ", n, " expression in ", max[[n]][2])) +
+      theme_bw()
+    cat("\n")
+    cat("### SOMAScan")
+    cat("\n")
+    print(p_soma)
+    if (!is.null(prot_olink)) {
+      # Plasma
+      t <- left_join(plasma[, c("record_id", prot_olink)], avg_exp,
+                     by = join_by(record_id)
+      )
+      p_plasma <- ggplot(t, aes_string(x = n, y = prot_olink)) +
+        geom_point(alpha = 0.5) +
+        stat_poly_line(se = F) +
+        stat_poly_eq(
+          aes(label = paste(after_stat(eq.label),
+                            after_stat(rr.label),
+                            after_stat(p.value.label),
+                            sep = "*\", \"*"
+          ))
+        ) +
+        xlab(paste0("Mean ", n, " expression in ", max[[n]][2])) +
+        theme_bw()
+      cat("\n")
+      cat("### Plasma Olink")
+      cat("\n")
+      print(p_plasma)
+      # Urine
+      t <- left_join(urine[, c("record_id", prot_olink)], avg_exp,
+                     by = join_by(record_id)
+      )
+      p_urine <- ggplot(t, aes_string(x = n, y = prot_olink)) +
+        geom_point(alpha = 0.5) +
+        stat_poly_line(se = F) +
+        stat_poly_eq(
+          aes(label = paste(after_stat(eq.label),
+                            after_stat(rr.label),
+                            after_stat(p.value.label),
+                            sep = "*\", \"*"
+          ))
+        ) +
+        xlab(paste0("Mean ", n, " expression in ", max[[n]][2])) +
         theme_bw()
       cat("\n")
       cat("### Urine Olink")
@@ -785,7 +880,7 @@ The proteins with the largest absolute effect size and adjusted p value $\leq 0.
 
 ### Overall expression
 
-```{r message=FALSE,warning=FALSE}
+```{r message=FALSE,warning=FALSE,dpi=1200}
 umap_plot(so, top_mac)
 ```
 
@@ -811,7 +906,7 @@ The proteins with the largest absolute effect size and adjusted p value $\leq 0.
 
 ### Overall expression
 
-```{r message=FALSE,warning=FALSE}
+```{r message=FALSE,warning=FALSE,dpi=1200}
 umap_plot(so, top_mic)
 ```
 
@@ -837,7 +932,7 @@ The proteins with the largest absolute effect size and adjusted p value $\leq 0.
 
 ### Overall expression
 
-```{r message=FALSE,warning=FALSE}
+```{r message=FALSE,warning=FALSE,dpi=1200}
 umap_plot(so, top_hyp)
 ```
 
@@ -863,7 +958,7 @@ The proteins with the largest absolute effect size and adjusted p value $\leq 0.
 
 ### Overall expression
 
-```{r message=FALSE,warning=FALSE}
+```{r message=FALSE,warning=FALSE,dpi=1200}
 umap_plot(so, top_rapid)
 ```
 
@@ -889,7 +984,7 @@ The proteins with the largest absolute effect size and adjusted p value $\leq 0.
 
 ### Overall expression
 
-```{r message=FALSE,warning=FALSE}
+```{r message=FALSE,warning=FALSE,dpi=1200}
 umap_plot(so, top_htn)
 ```
 
@@ -915,7 +1010,7 @@ The proteins with the largest absolute effect size and adjusted p value $\leq 0.
 
 ### Overall expression
 
-```{r message=FALSE,warning=FALSE}
+```{r message=FALSE,warning=FALSE,dpi=1200}
 umap_plot(so, top_htn_sbp)
 ```
 
@@ -941,7 +1036,7 @@ de(outcome = "acr_u_cat", ref_group = "Low UACR", vars = top_htn_sbp)
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MAC were: `r toString(analytes$TargetFullName[match(top_mac,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_mac,analytes$AptName)])`, respectively).
 
-```{r warning=FALSE}
+```{r warning=FALSE,dpi=1200}
 v_mac <- volcano(top_mac_df)
 v_mac <- v_mac +
   ggtitle("Severe Albuminuria") +
@@ -969,7 +1064,7 @@ mac_p_comp$net
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MIC were: `r toString(analytes$TargetFullName[match(top_mic,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_mic,analytes$AptName)])`, respectively).
 
-```{r warning=FALSE}
+```{r warning=FALSE,dpi=1200}
 v_mic <- volcano(top_mic_df)
 v_mic <- v_mic +
   ggtitle("Moderate Albuminuria") +
@@ -997,7 +1092,7 @@ mic_p_comp$net
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_hyp,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_hyp,analytes$AptName)])`, respectively).
 
-```{r warning=FALSE}
+```{r warning=FALSE,dpi=1200}
 v_hyp <- volcano(top_hyp_df)
 v_hyp <- v_hyp +
   ggtitle("Hyperfiltration") +
@@ -1025,7 +1120,7 @@ hyp_p_comp$net
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for rapid eGFR decline were: `r toString(analytes$TargetFullName[match(top_rapid,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_rapid,analytes$AptName)])`, respectively).
 
-```{r warning=FALSE}
+```{r warning=FALSE,dpi=1200}
 v_rapid <- volcano(top_rapid_df)
 v_rapid <- v_rapid +
   ggtitle("Rapid eGFR Decline") +
@@ -1053,7 +1148,7 @@ rapid_p_comp$net
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_htn,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_htn,analytes$AptName)])`, respectively).
 
-```{r warning=FALSE}
+```{r warning=FALSE,dpi=1200}
 v_htn <- volcano(top_htn_df)
 v_htn <- v_htn +
   ggtitle("Hypertension") +
@@ -1081,7 +1176,7 @@ htn_p_comp$net
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension (with SBP) were: `r toString(analytes$TargetFullName[match(top_htn_sbp,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_htn_sbp,analytes$AptName)])`, respectively).
 
-```{r warning=FALSE}
+```{r warning=FALSE,dpi=1200}
 v_htn_sbp <- volcano(top_htn_sbp_df)
 v_htn_sbp <- v_htn_sbp +
   ggtitle("Hypertension (with SBP)") +
@@ -1109,37 +1204,37 @@ htn_sbp_p_comp$net
 
 ## MAC
 
-```{r warning=FALSE}
+```{r warning=FALSE,dpi=1200}
 scRNA_corr(vars = top_mac)
 ```
 
 ## MIC
 
-```{r warning=FALSE}
+```{r warning=FALSE,dpi=1200}
 scRNA_corr(vars = top_mic)
 ```
 
 ## HYP
 
-```{r warning=FALSE}
+```{r warning=FALSE,dpi=1200}
 scRNA_corr(vars = top_hyp)
 ```
 
 ## RAPID
 
-```{r warning=FALSE}
+```{r warning=FALSE,dpi=1200}
 scRNA_corr(vars = top_rapid)
 ```
 
 ## HTN
 
-```{r warning=FALSE}
+```{r warning=FALSE,dpi=1200}
 scRNA_corr(vars = top_htn)
 ```
 
 ## HTN with SBP
 
-```{r warning=FALSE}
+```{r warning=FALSE,dpi=1200}
 scRNA_corr(vars = top_htn_sbp)
 ```
 
