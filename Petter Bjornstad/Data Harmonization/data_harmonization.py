@@ -95,6 +95,8 @@ def harmonize_data():
     age = round((harmonized["date"] - harmonized["dob"]).dt.days / 365.25, 2)
     harmonized = pd.concat([harmonized, age], axis=1)
     harmonized.rename({0: "age"}, axis=1, inplace=True)
+    # BMI
+    harmonized["bmi"] = pd.to_numeric(harmonized["weight"])/((pd.to_numeric(harmonized["height"])/100)**2)
     # Diabetes duration
     disease_duration = \
         round((harmonized["date"] -
@@ -172,7 +174,7 @@ def harmonize_data():
 
     # Sort columns
     id_cols = ["record_id", "co_enroll_id", "study", "dob", "diabetes_dx_date",
-               "sex", "race", "ethnicity", "visit", "procedure", "date"]
+               "sex", "race", "ethnicity", "visit", "procedure", "date", "group"]
     other_cols = harmonized.columns.difference(id_cols, sort=False).tolist()
     other_cols = natsorted(other_cols, alg=ns.IGNORECASE)
     harmonized = harmonized[id_cols + other_cols]
