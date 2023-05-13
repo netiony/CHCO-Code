@@ -140,7 +140,7 @@ df <- df %>%
   ) %>%
   select(
     record_id, co_enroll_id, visit, group, age, sex, race, ethnicity,
-    diabetes_duration, albuminuria_cat,
+    diabetes_duration,sglti_timepoint,sglt2i_ever, elevated_albuminuria,
     bmi, hba1c, gfr_bsa_plasma, gfr_raw_plasma, gfr_bsa_plasma_urine,
     gfr_raw_plasma_urine, acr_u, map
   ) %>%
@@ -216,33 +216,33 @@ urine <- left_join(df, olink_urine, by = c("record_id", "visit"))
 ids = intersect(soma$record_id,olink_plasma$record_id)
 df = df %>% filter(record_id %in% ids)
 # Read in scRNA object
-so <- readRDS("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/Data_Raw/PB_68samples_harmonyIntegration_092322_Fadhl.RDS")
-# Strip computations
-so <- DietSeurat(so)
-# Limit to RH/IMPROVE baseline visit
-so <- so[, !grepl("_12M", so$michigan_id)]
-# Limit to those with SOMA and Olink
-so <- so[, sub("_BL","",so$michigan_id) %in% ids]
-# Combined groups
-so$diabetes <- sub("i", "", so$T2D_HC_Phil)
-so$SGLT2i <- factor(so$T2D_HC_Phil,
-                    levels = c("HC", "T2D", "T2Di"),
-                    labels = c("SGLT2i-", "SGLT2i-", "SGLT2i+")
-)
-so$acr_u_cat <- cut_number(so$acr_u, n = 2, labels = c("Low UACR", "High UACR"))
-# Normalize and scale
-so <- NormalizeData(so)
-so <- ScaleData(so, features = rownames(so))
-# PCA
-so <- RunPCA(so, features = VariableFeatures(object = so))
-# Cluster cells
-so <- FindNeighbors(so)
-so <- FindClusters(so)
-# Perform UMAP
-so <- RunUMAP(so, dims = 1:20)
-# General cell types as identifiers
-so$generaltype <- sub("_.*", "", so$LR_clusters)
-Idents(so) <- so$generaltype
+# so <- readRDS("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/Data_Raw/PB_68samples_harmonyIntegration_092322_Fadhl.RDS")
+# # Strip computations
+# so <- DietSeurat(so)
+# # Limit to RH/IMPROVE baseline visit
+# so <- so[, !grepl("_12M", so$michigan_id)]
+# # Limit to those with SOMA and Olink
+# so <- so[, sub("_BL","",so$michigan_id) %in% ids]
+# # Combined groups
+# so$diabetes <- sub("i", "", so$T2D_HC_Phil)
+# so$SGLT2i <- factor(so$T2D_HC_Phil,
+#                     levels = c("HC", "T2D", "T2Di"),
+#                     labels = c("SGLT2i-", "SGLT2i-", "SGLT2i+")
+# )
+# so$acr_u_cat <- cut_number(so$acr_u, n = 2, labels = c("Low UACR", "High UACR"))
+# # Normalize and scale
+# so <- NormalizeData(so)
+# so <- ScaleData(so, features = rownames(so))
+# # PCA
+# so <- RunPCA(so, features = VariableFeatures(object = so))
+# # Cluster cells
+# so <- FindNeighbors(so)
+# so <- FindClusters(so)
+# # Perform UMAP
+# so <- RunUMAP(so, dims = 1:20)
+# # General cell types as identifiers
+# so$generaltype <- sub("_.*", "", so$LR_clusters)
+# Idents(so) <- so$generaltype
 ```
 
 ```{r functions}
@@ -613,6 +613,11 @@ volcano <- function(data, lab = "Target", xcol = "estimate", ycol = "p.value", t
     theme(legend.position = "none")
   return(p)
 }
+# Compare soluble omics by SGLT2i status
+soluble_comp = function(data = df, vars){
+  data = data.frame(data)
+  
+}
 # GSEA
 pathway_analysis <- function(de_genes, log_t = T) {
   # log transform if necessary
@@ -655,17 +660,14 @@ pathway_analysis <- function(de_genes, log_t = T) {
 # Function for comparing two gene lists
 # de_gene_list is a named list of multiple gene sets
 pathway_comparison <- function(de_gene_list) {
-  # Format names - just enrichment for now
-  de_gene_list <- lapply(de_gene_list, function(l) {
-    n <- names(l)
-    n <- sub("\\|.*", "", n)
-    n <- n[!is.na(n)]
-    dups <- n[duplicated(n)]
-    n <- n[!n %in% dups]
-    return(n)
+  # Convert to dataframe
+  data = lapply(names(de_gene_list),function(n){
+    genes = names(de_gene_list[[n]])
+    t = data.frame("Entrez"=genes,"logFC"=de_gene_list[[n]],"Time"=n)
   })
+  data = do.call(rbind,data)
   # Compare with GO enrichment
-  ck <- compareCluster(geneClusters = de_gene_list, fun = "enrichPathway", readable = T)
+  ck <- compareCluster(Entrez~Time,data = data, fun='groupGO', OrgDb='org.Hs.eg.db')
   # Plots
   dot <- dotplot(ck)
   net <- cnetplot(ck)
@@ -699,7 +701,8 @@ df %>%
                         "Yes", T ~ "No")
   ) %>%
   select(
-    group, age, sex, race_ethnicity_condensed, diabetes_duration, hba1c, bmi, acr_u, albuminuria_cat, soma, olink_plasma, olink_urine, scRNA
+    group, age, sex, race_ethnicity_condensed, diabetes_duration, hba1c, bmi, 
+    acr_u, elevated_albuminuria, soma, olink_plasma, olink_urine, scRNA
   ) %>%
   tbl_summary(by = group) %>%
   add_p(list(all_continuous() ~ "aov")) %>%
@@ -1030,6 +1033,14 @@ There are only 3 participants with UACR >= 30, so participants were divided into
 de(outcome = "acr_u_cat", ref_group = "Low UACR", vars = top_htn_sbp)
 ```
 
+# Soluble omics in SGLT2i+ vs. SGLT2i-
+
+## MAC
+
+```{r}
+soluble_comp(vars = top_mac)
+```
+
 # TODAY pathway analysis
 
 ## MAC
@@ -1238,112 +1249,136 @@ scRNA_corr(vars = top_htn)
 scRNA_corr(vars = top_htn_sbp)
 ```
 
-<!-- # Save figures for manuscript -->
+# Save figures for manuscript
 
-<!-- ## Figure 1 -->
+## Figure 1
 
-<!-- ```{r} -->
-<!-- fig1 <- (v_mic + v_mac + v_rapid) / (v_hyp + v_htn + plot_spacer()) -->
-<!-- ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/Figure_1_1600x900.jpeg", -->
-<!--   units = "px", -->
-<!--   width = 1600, height = 900, scale = 2, plot = fig1, device = "jpeg" -->
-<!-- ) -->
-<!-- ``` -->
+```{r}
+fig1 <- (v_mic + v_mac + v_rapid) / (v_hyp + v_htn + plot_spacer())
+ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/Figure_1_1600x900.jpeg",
+  units = "px",
+  width = 1600, height = 900, scale = 2, plot = fig1, device = "jpeg"
+)
+```
 
-<!-- ## Figure 2 -->
+## Figure 2
 
-<!-- ```{r} -->
-<!-- p_mic <- mic_p$dot + -->
-<!--   ggtitle("Moderate Albuminuria") + -->
-<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+```{r}
+p_mic <- mic_p$dot +
+  ggtitle("Moderate Albuminuria") +
+  theme(plot.title = element_text(hjust = 0.5))
+ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/MIC_pathway_1600x900.jpeg",
+  units = "px",
+  width = 1600, height = 900, scale = 1.5, plot = p_mic, device = "jpeg"
+)
 
-<!-- p_mac <- mac_p$dot + -->
-<!--   ggtitle("Severe Albuminuria") + -->
-<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+p_mac <- mac_p$dot +
+  ggtitle("Severe Albuminuria") +
+  theme(plot.title = element_text(hjust = 0.5))
+ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/MAC_pathway_1600x900.jpeg",
+  units = "px",
+  width = 1600, height = 900, scale = 1.5, plot = p_mac, device = "jpeg"
+)
 
-<!-- p_rapid <- rapid_p$dot + -->
-<!--   ggtitle("Rapid eGFR Decline") + -->
-<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+p_rapid <- rapid_p$dot +
+  ggtitle("Rapid eGFR Decline") +
+  theme(plot.title = element_text(hjust = 0.5))
 
-<!-- p_hyp <- hyp_p$dot + -->
-<!--   ggtitle("Hyperfiltration") + -->
-<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+p_hyp <- hyp_p$dot +
+  ggtitle("Hyperfiltration") +
+  theme(plot.title = element_text(hjust = 0.5))
 
-<!-- p_htn <- htn_p$dot + -->
-<!--   ggtitle("Hypertension") + -->
-<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+p_htn <- htn_p$dot +
+  ggtitle("Hypertension") +
+  theme(plot.title = element_text(hjust = 0.5))
+ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/HTN_pathway_1600x900.jpeg",
+  units = "px",
+  width = 1600, height = 900, scale = 1.5, plot = p_htn, device = "jpeg"
+)
 
-<!-- fig2 <- (p_mic + p_mac + p_rapid) / (p_hyp + p_htn + plot_spacer()) -->
-<!-- fig2 <- fig2 + plot_layout(guides = "collect") & -->
-<!--   theme(legend.position = "none") -->
-<!-- ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/Figure_2_1600x900.jpeg", -->
-<!--   units = "px", -->
-<!--   width = 1600, height = 900, scale = 3, plot = fig2, device = "jpeg" -->
-<!-- ) -->
-<!-- ``` -->
+fig2 <- (p_mic + p_mac + p_rapid) / (p_hyp + p_htn + plot_spacer())
+fig2 <- fig2 + plot_layout(guides = "collect") &
+  theme(legend.position = "none")
+ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/Figure_2_1600x900.jpeg",
+  units = "px",
+  width = 1600, height = 900, scale = 3, plot = fig2, device = "jpeg"
+)
+```
 
-<!-- ## Figure 3 -->
+## Figure 3
 
-<!-- ```{r} -->
-<!-- p_mic <- mic_p_comp$dot + -->
-<!--   ggtitle("Moderate Albuminuria") + -->
-<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+```{r}
+p_mic <- mic_p_comp$dot +
+  ggtitle("Moderate Albuminuria") +
+  theme(plot.title = element_text(hjust = 0.5))
+ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/MIC_pathway_comp_1600x900.jpeg",
+  units = "px",
+  width = 1600, height = 900, scale = 2, plot = p_mic, device = "jpeg"
+)
 
-<!-- p_mac <- mac_p_comp$dot + -->
-<!--   ggtitle("Severe Albuminuria") + -->
-<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+p_mac <- mac_p_comp$dot +
+  ggtitle("Severe Albuminuria") +
+  theme(plot.title = element_text(hjust = 0.5))
+ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/MAC_pathway_comp_1600x900.jpeg",
+  units = "px",
+  width = 1600, height = 900, scale = 2, plot = p_mac, device = "jpeg"
+)
 
-<!-- p_rapid <- rapid_p_comp$dot + -->
-<!--   ggtitle("Rapid eGFR Decline") + -->
-<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+p_rapid <- rapid_p_comp$dot +
+  ggtitle("Rapid eGFR Decline") +
+  theme(plot.title = element_text(hjust = 0.5))
 
-<!-- p_hyp <- hyp_p_comp$dot + -->
-<!--   ggtitle("Hyperfiltration") + -->
-<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+p_hyp <- hyp_p_comp$dot +
+  ggtitle("Hyperfiltration") +
+  theme(plot.title = element_text(hjust = 0.5))
 
-<!-- p_htn <- htn_p_comp$dot + -->
-<!--   ggtitle("Hypertension") + -->
-<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+p_htn <- htn_p_comp$dot +
+  ggtitle("Hypertension") +
+  theme(plot.title = element_text(hjust = 0.5))
+ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/HTN_pathway_comp_1600x900.jpeg",
+  units = "px",
+  width = 1600, height = 900, scale = 2, plot = p_htn, device = "jpeg"
+)
 
-<!-- fig3 <- (p_mic + p_mac + p_rapid) / (p_hyp + p_htn + plot_spacer()) -->
-<!-- fig3 <- fig3 + plot_layout(guides = "collect") & theme(legend.position = "none") -->
-<!-- ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/Figure_3_1600x900.jpeg", -->
-<!--   units = "px", -->
-<!--   width = 1600, height = 900, scale = 5, plot = fig3, device = "jpeg" -->
-<!-- ) -->
-<!-- ``` -->
+fig3 <- (p_mic + p_mac + p_rapid) / (p_hyp + p_htn + plot_spacer())
+fig3 <- fig3 + plot_layout(guides = "collect") & theme(legend.position = "none")
+ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/Figure_3_1600x900.jpeg",
+  units = "px",
+  width = 1600, height = 900, scale = 5, plot = fig3, device = "jpeg"
+)
+```
 
-<!-- ## Supplemental Figure 1 -->
+## Supplemental Figure 1
 
-<!-- Figure 3 as a network plot -->
+Figure 3 as a network plot
 
-<!-- ```{r} -->
-<!-- p_mic <- mic_p_comp$net + -->
-<!--   ggtitle("Moderate Albuminuria") + -->
-<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+```{r}
+p_mic <- mic_p_comp$net +
+  ggtitle("Moderate Albuminuria") +
+  theme(plot.title = element_text(hjust = 0.5))
 
-<!-- p_mac <- mac_p_comp$net + -->
-<!--   ggtitle("Severe Albuminuria") + -->
-<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+p_mac <- mac_p_comp$net +
+  ggtitle("Severe Albuminuria") +
+  theme(plot.title = element_text(hjust = 0.5))
 
-<!-- p_rapid <- rapid_p_comp$net + -->
-<!--   ggtitle("Rapid eGFR Decline") + -->
-<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+p_rapid <- rapid_p_comp$net +
+  ggtitle("Rapid eGFR Decline") +
+  theme(plot.title = element_text(hjust = 0.5))
 
-<!-- p_hyp <- hyp_p_comp$net + -->
-<!--   ggtitle("Hyperfiltration") + -->
-<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+p_hyp <- hyp_p_comp$net +
+  ggtitle("Hyperfiltration") +
+  theme(plot.title = element_text(hjust = 0.5))
 
-<!-- p_htn <- htn_p_comp$net + -->
-<!--   ggtitle("Hypertension") + -->
-<!--   theme(plot.title = element_text(hjust = 0.5)) -->
+p_htn <- htn_p_comp$net +
+  ggtitle("Hypertension") +
+  theme(plot.title = element_text(hjust = 0.5))
 
-<!-- figs1 <- (p_mic + p_mac + p_rapid) / (p_hyp + p_htn + plot_spacer()) -->
-<!-- figs1 <- figs1 + plot_layout(guides = "collect") & theme(legend.position = "none") -->
-<!-- ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/Figure_S1_1600x900.jpeg", -->
-<!--   units = "px", -->
-<!--   width = 1600, height = 900, scale = 5, plot = figs1, device = "jpeg" -->
-<!-- ) -->
-<!-- ``` -->
+figs1 <- (p_mic + p_mac + p_rapid) / (p_hyp + p_htn + plot_spacer())
+figs1 <- figs1 + plot_layout(guides = "collect") & theme(legend.position = "none")
+ggsave("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/Figure_S1_1600x900.jpeg",
+  units = "px",
+  width = 1600, height = 900, scale = 5, plot = figs1, device = "jpeg"
+)
+```
 
-<!-- Temp -->
+# Compare 
