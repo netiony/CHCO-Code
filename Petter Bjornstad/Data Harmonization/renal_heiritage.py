@@ -38,7 +38,7 @@ def clean_renal_heiritage():
     # --------------------------------------------------------------------------
 
     dem_cols = ["record_id", "dob", "group_rh2", "sex", "race", "ethnicity", "sglt2i", 
-                "participation_status", "rh_id"]
+                "participation_status", "rh_id", "diabetes_dx_date"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
     demo = demo.loc[demo["redcap_event_name"].str.startswith('screen', na=False)].copy()
@@ -120,7 +120,7 @@ def clean_renal_heiritage():
     annual_labs.replace(rep, np.nan, inplace=True)
     # Format
     annual_labs["procedure"] = "labs"
-    annual_labs["visit"] = "annual_" + annual_labs["study_visit_annual"].map(str)
+    annual_labs["visit"] = "baseline"
     annual_labs.drop(["annual_labs", "redcap_repeat_instance", "redcap_repeat_instrument", "study_visit_annual"], axis=1, inplace=True)
     annual_labs.columns = annual_labs.columns.str.replace(
         r"an_|annual_lab_", "", regex=True)
@@ -135,6 +135,9 @@ def clean_renal_heiritage():
     "study_visit_renal_clearance_testing", "field_name"]] +[v for v in meta.loc[meta["form_name"] == 
     "renal_clearance_baseline_labs", "field_name"]]
     rct = pd.DataFrame(proj.export_records(fields=var))
+    numeric_cols = [col for col in rct.columns if col not in ['record_id', 'redcap_event_name'] 
+                    and not col.startswith('tm_') and not col.endswith(('_date', '_com', '_start'))]
+    rct[numeric_cols] = rct[numeric_cols].apply(pd.to_numeric)
     rct = rct.groupby('record_id', as_index=False).max()
     rct.drop(["redcap_event_name"], inplace=True, axis=1)
     # Replace missing values
@@ -143,7 +146,7 @@ def clean_renal_heiritage():
               "erpf_raw": "erpf_raw_plasma_urine", "erpf": "erpf_bsa_plasma_urine",
               "gfr_15mgmin": "gfr_raw_plasma", "gfrbsa": "gfr_bsa_plasma",
               "erpf_pah_85": "erpf_raw_plasma", "erpfbsa": "erpf_bsa_plasma",
-              "pahbsa": "pah_bsa", "phys_map": "map"}
+              "phys_map": "map"}
     rct.rename(rename, axis=1, inplace=True)
     rct.columns = rct.columns.str.replace(
         r"bl_", "", regex=True)
@@ -175,7 +178,7 @@ def clean_renal_heiritage():
     rct["ra"] = ((rct["map"] - rct["glomerular_pressure"]) / rct["rbf_seconds"]) * 1328  
     rct.loc[~(rct['ra'] > 0), 'ra']=np.nan    
     # Reduce rct dataset
-    rct.drop(["rbf_seconds", "erpf_raw_plasma_seconds"], axis=1, inplace=True)
+    rct.drop(["rbf_seconds", "erpf_raw_plasma_seconds", "redcap_repeat_instrument"], axis=1, inplace=True)
     rct["procedure"] = "renal_clearnace_test"
     rct["visit"] = "baseline"
     
@@ -280,7 +283,7 @@ def clean_renal_heiritage():
     med.dropna(thresh=4, axis=0, inplace=True)
     phys.dropna(thresh=4, axis=0, inplace=True)
     annual_labs.dropna(thresh=4, axis=0, inplace=True)
-    rct.dropna(thresh=4, axis=0, inplace=True)
+    rct.dropna(thresh=3, axis=0, inplace=True)
     dextran.dropna(thresh=4, axis=0, inplace=True)
     out.dropna(thresh=4, axis=0, inplace=True)
     bold_mri.dropna(thresh=4, axis=0, inplace=True)
@@ -294,6 +297,7 @@ def clean_renal_heiritage():
 
     df = pd.concat([phys, annual_labs], join='outer', ignore_index=True)
     df = pd.concat([df, med], join='outer', ignore_index=True)
+    df = pd.concat([df, rct], join='outer', ignore_index=True)
     df = pd.concat([df, dextran], join='outer', ignore_index=True)
     df = pd.merge(df, out, how='outer')
     df = pd.concat([df, bold_mri], join='outer', ignore_index=True)
