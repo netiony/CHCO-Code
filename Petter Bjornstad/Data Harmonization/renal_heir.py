@@ -151,6 +151,11 @@ def clean_renal_heir():
     clamp = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
     clamp.replace(rep, np.nan, inplace=True)
+    # PB suspects error in labs for blood samples at T=-10 for RH-72-T, omit from analysis (05/11/23)
+    clamp.loc[clamp['subject_id']=='RH-72-T', 'cpeptide_minus_10'] = np.nan
+    clamp.loc[clamp['subject_id']=='RH-72-T', 'insulin_minus_10'] = np.nan
+    clamp.loc[clamp['subject_id']=='RH-72-T', 'ffa_minus_10'] = np.nan
+    clamp.loc[clamp['subject_id']=='RH-72-T', 'glucose_minus_10'] = np.nan
     # Format
     clamp.drop(["baseline", "fasting_labs", "urine_labs", "hct_lab",
                 "bg_labs", "ffa_lab", "cpep_lab", "insulin_labs"], axis=1, inplace=True)
@@ -206,12 +211,17 @@ def clean_renal_heir():
     # ACPRg
     clamp["acprg"] = clamp[['cpeptide_2', 'cpeptide_4',
                             'cpeptide_6', 'cpeptide_8', 'cpeptide_10']].mean(axis=1) - clamp[['cpeptide_minus_10', 'cpeptide_minus_5']].mean(axis=1)
+    # Negative ACPRg to 0.01
+    clamp.loc[clamp["acprg"] < 0, "acprg"] = 0.01
     # AIRg
     clamp["airg"] = clamp[['insulin_2', 'insulin_4',
                            'insulin_6', 'insulin_8', 'insulin_10']].mean(axis=1) * 6 - clamp[['insulin_minus_10', 'insulin_minus_5']].mean(axis=1) * 6
+    # Negative AIRg to 0.01
+    clamp.loc[clamp["airg"] < 0, "airg"] = 0.01    
     # DI
     clamp["di"] = \
         (clamp["raw_m"] / clamp["steady_state_insulin"]) * clamp["airg"]
+
     # Hematocrit average
     hematocrit_vars = ["hematocrit_90", "hematocrit_120"]
     clamp[hematocrit_vars] = clamp[hematocrit_vars].apply(
@@ -227,7 +237,7 @@ def clean_renal_heir():
     out = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
     out.replace(rep, np.nan, inplace=True)
-    out.drop(["kidney_outcomes", "egfr", "metab_outcomes", "asl_outcomes", "adc_outcomes"],
+    out.drop(["kidney_outcomes", "egfr", "metab_outcomes", "asl_outcomes", "adc_outcomes", "tkv_outcomes"],
              axis=1, inplace=True)
     # Kidney outcomes like GFR, etc. were collected with the clamp, not
     # necessarily the day of the MRI
@@ -239,7 +249,9 @@ def clean_renal_heir():
     bold_mri.drop(["bold_outcomes"], axis=1, inplace=True)
     out = out[list(set(out.columns).difference(bold_mri_cols))]
     rename = {"gfr": "gfr_raw_plasma", "gfr_bsa": "gfr_bsa_plasma",
-              "rpf": "erpf_raw_plasma", "rpf_bsa": "erpf_bsa_plasma"}
+              "rpf": "erpf_raw_plasma", "rpf_bsa": "erpf_bsa_plasma",
+              "volume_right": "right_kidney_volume_ml",
+              "volume_left": "left_kidney_volume_ml"}
     out.rename(rename, axis=1, inplace=True)
     
     # Calculate variables
