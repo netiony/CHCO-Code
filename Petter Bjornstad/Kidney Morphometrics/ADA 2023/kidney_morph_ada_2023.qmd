@@ -11,34 +11,174 @@ format:
     self-contained: true
     fig-cap-location: top
     page-layout: full
-editor: visual
+editor: source
 ---
 
 ```{r}
 #| include: false
 library(knitr)
+library(pander)
 library(dplyr)
 library(arsenal)
+library(psych)
+library(corrplot)
 ```
 
+# Full Cohort
+
 ```{r}
-df = read.csv("Z:/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Kidney Morphometrics/ADA 2023/Data_Cleaned/harmonized_latest_value.csv",na.strings = "")
-# Filter and format
-df = df %>% filter(!is.na(glom_tuft_area),is.na(co_enroll_id),
-                   visit=="baseline",group != "Lean Control") %>%
-  select(record_id,group,age,diabetes_duration,hba1c,acr_u,
-         glom_tuft_area:glom_nuc_count)
+# Import
+df <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = "")
+df_dict <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv", na.strings = "")
+# Get latest value, filter DF
+df <- df %>%
+  arrange(record_id, date) %>%
+  select(
+    record_id, co_enroll_id, visit, procedure, group, age,
+    diabetes_duration, hba1c, bmi, acr_u, sex, sbp, dbp, hdl, ldl,
+    cholesterol, triglycerides, eGFR_fas_cr,
+    gfr_raw_plasma, gfr_bsa_plasma,
+    cgm_yn, insulin_pump_timepoint,
+    metformin_timepoint, sglti_timepoint, glp1_agonist_timepoint,
+    glom_nuc_count:glom_volume_wiggins,
+    mes_index:mes_volume_wiggins, -mes_nuc_count
+  ) %>%
+  group_by(record_id, visit) %>%
+  summarise_all(~ first(na.omit(.x))) %>%
+  filter(
+    !is.na(glom_tuft_area), is.na(co_enroll_id),
+    visit == "baseline", group != "Lean Control"
+  ) %>%
+  ungroup()
+labels <- df_dict$label[df_dict$variable_name %in% colnames(df)]
+names(labels) <- df_dict$variable_name[match(labels, df_dict$label)]
 ```
 
 ```{r results='asis'}
 #| label: tbl-t1
 #| tbl-cap: Comparisons by Group
-t1 = tableby(group ~ age + diabetes_duration + hba1c + 
-               kwt(acr_u,"Nmiss","median","q1q3","range") + 
-               glom_tuft_area + glom_volume_weibel + glom_volume_wiggins + 
-               glom_volume_con + mes_matrix_area + mes_index + 
-               mes_volume_weibel + mes_volume_wiggins + 
-               mes_volume_con + glom_nuc_count,
-             data =df)
-summary(t1,pfootnote = T)
+t1 <- tableby(
+  group ~ age + bmi + diabetes_duration + hba1c + sex + sbp + dbp +
+    kwt(eGFR_fas_cr, "Nmiss", "median", "q1q3", "range") +
+    gfr_raw_plasma + gfr_bsa_plasma +
+    cgm_yn + insulin_pump_timepoint + metformin_timepoint +
+    sglti_timepoint + glp1_agonist_timepoint +
+    kwt(acr_u, "Nmiss", "median", "q1q3", "range") +
+    glom_tuft_area + glom_volume_weibel + glom_volume_wiggins +
+    glom_volume_con + mes_matrix_area + mes_index +
+    mes_volume_weibel + mes_volume_wiggins +
+    mes_volume_con + glom_nuc_count,
+  data = df
+)
+summary(t1, pfootnote = T, labelTranslations = labels)
 ```
+
+```{r results='asis'}
+#| label: fig-1
+#| fig-cap: Spearman Correlation Matrix
+# Calculate correlation matrix with nice labels
+clin <- df %>% select(
+  acr_u, hba1c, bmi, sbp, eGFR_fas_cr, gfr_raw_plasma,
+  gfr_bsa_plasma, hdl, ldl, cholesterol, triglycerides
+)
+colnames(clin) <- df_dict$label[match(colnames(clin), df_dict$variable_name)]
+clin <- as.data.frame(clin, check.names = F)
+
+morpho <- df %>% select(glom_nuc_count:mes_volume_wiggins)
+colnames(morpho) <- df_dict$label[match(colnames(morpho), df_dict$variable_name)]
+morpho <- as.data.frame(morpho, check.names = F)
+
+M <- corr.test(x = clin, y = morpho, method = "spearman")
+# Plot
+corrplot(M$r,
+  method = "circle", type = "lower", diag = FALSE,
+  p.mat = M$p, insig = "blank"
+)
+```
+
+```{r results='asis'}
+#| label: tbl-t2
+#| tbl-cap: Spearman Correlation Matrix
+# Print a nice looking table
+r <- data.frame(round(M$r, 3), check.names = F)
+emphasize.strong.cells(which(M$p <= 0.05, arr.ind = TRUE))
+pander(r)
+```
+
+# T1D
+
+```{r results='asis'}
+#| label: fig-2
+#| fig-cap: Spearman Correlation Matrix (T1D Only)
+# Calculate correlation matrix with nice labels
+clin <- df %>%
+  filter(group == "Type 1 Diabetes") %>%
+  select(
+    acr_u, hba1c, bmi, sbp, eGFR_fas_cr, gfr_raw_plasma,
+    gfr_bsa_plasma, hdl, ldl, cholesterol, triglycerides
+  )
+colnames(clin) <- df_dict$label[match(colnames(clin), df_dict$variable_name)]
+clin <- as.data.frame(clin, check.names = F)
+
+morpho <- df %>%
+  filter(group == "Type 1 Diabetes") %>%
+  select(glom_nuc_count:mes_volume_wiggins)
+colnames(morpho) <- df_dict$label[match(colnames(morpho), df_dict$variable_name)]
+morpho <- as.data.frame(morpho, check.names = F)
+
+M <- corr.test(x = clin, y = morpho, method = "spearman")
+# Plot
+corrplot(M$r,
+  method = "circle", type = "lower", diag = FALSE,
+  p.mat = M$p, insig = "blank"
+)
+```
+
+```{r results='asis'}
+#| label: tbl-t3
+#| tbl-cap: Spearman Correlation Matrix (T1D Only)
+# Print a nice looking table
+r <- data.frame(round(M$r, 3), check.names = F)
+emphasize.strong.cells(which(M$p <= 0.05, arr.ind = TRUE))
+pander(r)
+```
+
+# T2D
+
+```{r results='asis'}
+#| label: fig-3
+#| fig-cap: Spearman Correlation Matrix (T2D Only)
+# Calculate correlation matrix with nice labels
+clin <- df %>%
+  filter(group == "Type 2 Diabetes") %>%
+  select(
+    acr_u, hba1c, bmi, sbp, eGFR_fas_cr, gfr_raw_plasma,
+    gfr_bsa_plasma, hdl, ldl, cholesterol, triglycerides
+  )
+colnames(clin) <- df_dict$label[match(colnames(clin), df_dict$variable_name)]
+clin <- as.data.frame(clin, check.names = F)
+
+morpho <- df %>%
+  filter(group == "Type 2 Diabetes") %>%
+  select(glom_nuc_count:mes_volume_wiggins)
+colnames(morpho) <- df_dict$label[match(colnames(morpho), df_dict$variable_name)]
+morpho <- as.data.frame(morpho, check.names = F)
+
+M <- corr.test(x = clin, y = morpho, method = "spearman")
+# Plot
+corrplot(M$r,
+  method = "circle", type = "lower", diag = FALSE,
+  p.mat = M$p, insig = "blank"
+)
+```
+
+```{r results='asis'}
+#| label: tbl-t4
+#| tbl-cap: Spearman Correlation Matrix (T2D Only)
+# Print a nice looking table
+r <- data.frame(round(M$r, 3), check.names = F)
+emphasize.strong.cells(which(M$p <= 0.05, arr.ind = TRUE))
+pander(r)
+```
+
+P values were not adjusted for multiple comparisons. Bold correlation coefficients in tables were significant at a nominal p $\leq$ 0.05 level.
