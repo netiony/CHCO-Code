@@ -41,7 +41,7 @@ def harmonize_data():
     improve = clean_improve()
     penguin = clean_penguin()
     renal_heir = clean_renal_heir()
-    # renal_heiritage = clean_renal_heiritage()
+    renal_heiritage = clean_renal_heiritage()
     # panther = clean_panther()
     # Merge
     harmonized = pd.concat([casper, coffee], join='outer', ignore_index=True)
@@ -53,8 +53,8 @@ def harmonize_data():
                            join='outer', ignore_index=True)
     harmonized = pd.concat([harmonized, renal_heir],
                            join='outer', ignore_index=True)
-    # harmonized = pd.concat([harmonized, renal_heiritage],
-    #                        join='outer', ignore_index=True)
+    harmonized = pd.concat([harmonized, renal_heiritage],
+                           join='outer', ignore_index=True)
     # harmonized = pd.concat([harmonized, panther],
     #                        join='outer', ignore_index=True)
     # harmonized = pd.concat([harmonized, panda],
