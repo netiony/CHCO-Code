@@ -1,8 +1,13 @@
 ---
 title: CROCODILE Analysis
-author: Ye Ji Choi
+author: Ye Ji Choi and Tim Vigers
 date: "`r lubridate::today()`"
-format: docx
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
 editor: visual
 ---
 
@@ -18,6 +23,8 @@ library(kableExtra)
 library(gtools)
 library(superheat)
 library(emmeans)
+library(table1)
+library(ggpubr)
 use_python("/usr/bin/python3", required = TRUE)
 ```
 
@@ -38,6 +45,7 @@ from scipy.stats import mannwhitneyu
 df = pd.read_csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", low_memory=False)
 var_names = pd.read_csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv", low_memory=False)
 vw = pd.read_csv("/Volumes/Peds Endo/Petter Bjornstad/PENGUIN/Background/voxelwise_means_combined.csv", low_memory=False)
+exclude = pd.read_csv("/Users/choiyej/GitHub/YC_CHCO/CROCODILE/exclude_list.csv", low_memory=False)
 # Create dictionary of variable names
 var_dict = var_names.set_index('variable_name')['label'].to_dict()
 # Subset to CROCODILE
@@ -45,8 +53,6 @@ df = df.loc[df["study"]=="CROCODILE"]
 vw = vw.loc[vw["record_id"].str.startswith("CRC", na = False)]
 # Get last values for each visit
 df = df.groupby(by=["record_id", "visit"]).agg("last").reset_index()
-# Exclude any removed participants
-df = df.loc[df["participation_status"] == "Participated"]
 # Create urine albumin excretion variable (general 24 hrs)
 df = df.assign(aer_24 = (df.u24_mab * df.u24_vl) / 1440)
 # Height-adjusted
@@ -55,6 +61,10 @@ df["height_adj_right_kidney_volume"] = df["right_kidney_volume_ml"] / (df["heigh
 df["height_adj_left_kidney_volume"] = df["left_kidney_volume_ml"] / (df["height"] / 100)
 # Merge voxelwise analysis means
 df = pd.merge(df, vw, on = "record_id", how = "outer")
+# Exclude other participants 
+df = pd.merge(exclude, df, how="left")
+# Exclude any removed participants
+df = df.loc[df["participation_status"] == "Participated"]
 # Average left/right cortex
 df["avg_c_f"] = df[["lc_f", "rc_f"]].mean(axis=1)
 df["avg_c_k1"] = df[["lc_k1", "rc_k1"]].mean(axis=1)
@@ -80,13 +90,13 @@ groupby = "group"
 ```
 
 ```{python, include = F}
-tab_1_vars = ["age", "sex", "race", "height", "weight", "bmi", "hba1c", "diabetes_duration", "sbp", "dbp", "pulse", "creatinine_s", "cystatin_c_s", "eGFR_CKD_epi", "acr_u", "aer_24" , "cgm_yn", "insulin_pump_timepoint", "pump_basal_rate",  "raasi_timepoint", "statin", "metformin_timepoint", "sglti_timepoint", "glp1_agonist_timepoint"]
+tab_1_vars = ["age", "sex", "race", "height", "weight", "bmi", "hba1c", "diabetes_duration", "sbp", "dbp", "pulse", "creatinine_s", "cystatin_c_s", "eGFR_CKD_epi", "aer_24" , "cgm_yn", "insulin_pump_timepoint", "pump_basal_rate",  "raasi_timepoint", "statin", "metformin_timepoint", "sglti_timepoint", "glp1_agonist_timepoint", "adc_left", "adc_right", "pcasl3d_left", "pcasl3d_right", "gfr_raw_plasma", "acr_u", "p1_raw_leanm", "p2_raw_leanm", "lc_f", "rc_f"]
 
-hist_vars = df[list(tab_1_vars)].select_dtypes(include=np.number).columns.tolist()
-for v in hist_vars:
-   ax = sns.displot(df, x=v, hue="group", element="step")
-   ax.set(xlabel=v)
-   plt.show()
+# hist_vars = df[list(tab_1_vars)].select_dtypes(include=np.number).columns.tolist()
+# for v in hist_vars:
+#    ax = sns.displot(df, x=v, hue="group", element="step")
+#    ax.set(xlabel=v)
+#    plt.show()
 
 tab_1_nn =  ["hba1c", "acr_u", "aer_24", "pump_basal_rate", "creatinine_s", "sbp", "dbp", "bmi"]
 
@@ -95,6 +105,407 @@ tab_1 = TableOne(df, tab_1_vars, nonnormal=tab_1_nn, groupby="group", pval=True,
 
 ```{python}
 tab_1
+```
+
+```{python}
+morpho_vars = ["fia",	"glom_tuft_area",	"glom_volume_weibel",	"glom_volume_wiggins",	"glom_volume_con",	"mes_matrix_area",	"mes_index",	"mes_volume_weibel",	"mes_volume_wiggins",	"mes_volume_con",	"glom_nuc_count"]
+
+tab_morpho = TableOne(df, morpho_vars, groupby="group", pval=True, normal_test=True, tukey_test=True, decimals=3, rename=var_dict)
+tab_morpho
+```
+# Correlations
+## Pooled
+
+```{r, include=F}
+# Make python version of df into R version df
+df_R <- py$df
+
+# ggplot(df_R, aes(lc_f, glom_tuft_area)) +
+#   ggtitle("Left F vs. Glomerular tuft area") +
+#   geom_point(aes(color=group)) +
+#   geom_smooth(method=lm, se=F) +
+#   stat_cor(method = "pearson") +
+#   scale_color_manual(values=c('deeppink', 'steelblue'))
+# 
+# ggplot(df_R, aes(acr_u, glom_tuft_area)) +
+#   ggtitle("ASL Left vs. Glomerular tuft area") +
+#   geom_point(aes(color=group)) +
+#   geom_smooth(method=lm, se=F) +
+#   stat_cor(method = "pearson") +
+#   scale_color_manual(values=c('deeppink', 'steelblue'))
+
+
+# Select relevant variables for the correlation matrix
+df_R_correlation <- df_R %>%
+  select(lc_f, 
+         rc_f,
+         lc_k1, 
+         rc_k1, 
+         lc_k2, 
+         rc_k2,
+         adc_left,
+         adc_right,
+         pcasl3d_left,
+         pcasl3d_right,
+         gfr_raw_plasma,
+         acr_u,
+         p1_raw_leanm,
+         p2_raw_leanm,
+         fia,
+         glom_tuft_area,
+         glom_volume_weibel,
+         glom_volume_wiggins,
+         glom_volume_con,
+         mes_matrix_area,
+         mes_index,
+         mes_volume_weibel,
+         mes_volume_wiggins,
+         mes_volume_con,
+         glom_nuc_count
+         )
+
+# Correlation matrix in table format
+M_table <- as.data.frame(cor(y = df_R_correlation[,1:14],
+                             x=df_R_correlation[,15:ncol(df_R_correlation)], 
+                             use = "pairwise.complete.obs")) 
+
+# Compute p-values to add to matrix table
+res2 <- rcorr(as.matrix(df_R_correlation))
+corr_pval <- as.data.frame(res2$P) %>%
+  select(lc_f, 
+         rc_f,
+         lc_k1, 
+         rc_k1, 
+         lc_k2, 
+         rc_k2,
+         adc_left,
+         adc_right,
+         pcasl3d_left,
+         pcasl3d_right,
+         gfr_raw_plasma,
+         acr_u,
+         p1_raw_leanm,
+         p2_raw_leanm) %>%
+  sapply(pvalue) 
+corr_pval <- as.data.frame(corr_pval) 
+colnames(corr_pval) <- rep("p_value", ncol(corr_pval))
+
+# Add p-values to matrix table
+corr_pval = corr_pval[15:nrow(corr_pval),]
+M_table_p <- bind_cols(M_table, corr_pval) %>%
+  relocate(map(1:ncol(M_table), ~ c(.x, .x + ncol(M_table))) %>% unlist())
+
+# Label variables
+var_R <- as.data.frame(py$var_dict)
+var_R %<>%
+  mutate(lc_f = "Left Cortex F") %>%
+  mutate(rc_f = "Right Cortex F") %>%
+  mutate(lc_k1 = "Left Cortex K1") %>%
+  mutate(rc_k1 = "Right Cortex K1") %>%
+  mutate(lc_k2 = "Left Cortex k2") %>%
+  mutate(rc_k2 = "Right Cortex k2")
+var_R <- var_R[intersect(names(M_table_p), names(var_R))]
+var_R[setdiff(names(M_table_p), names(var_R))] <- "p-value"
+Hmisc::label(M_table_p) = var_R[match(names(M_table_p), names(var_R))]
+var_R <- as.data.frame(py$var_dict)
+
+row.names(M_table_p) <- var_R[match(row.names(M_table_p), names(var_R))]
+```
+
+```{r}
+## Correlation matrix (table)
+# Matrix table with p-values
+kable(M_table_p, 
+      col.names = rep(c("Correlation", "p-value"), ncol(M_table_p)/2), 
+      caption = "Correlation", 
+      digits = c(1,4),
+      align = rep("r", ncol(M_table_p))) %>%
+  kable_styling(bootstrap_options = c("hover"),
+            full_width = F, 
+            fixed_thead = T) %>%
+  add_header_above(header = c(" "=1, 
+                     setNames(2, Hmisc::label(M_table_p)[1]), 
+                     setNames(2, Hmisc::label(M_table_p)[3]), 
+                     setNames(2, Hmisc::label(M_table_p)[5]), 
+                     setNames(2, Hmisc::label(M_table_p)[7]), 
+                     setNames(2, Hmisc::label(M_table_p)[9]), 
+                     setNames(2, Hmisc::label(M_table_p)[11]),
+                     setNames(2, Hmisc::label(M_table_p)[13]), 
+                     setNames(2, Hmisc::label(M_table_p)[15]), 
+                     setNames(2, Hmisc::label(M_table_p)[17]), 
+                     setNames(2, Hmisc::label(M_table_p)[19]), 
+                     setNames(2, Hmisc::label(M_table_p)[21]),
+                     setNames(2, Hmisc::label(M_table_p)[23]),
+                     setNames(2, Hmisc::label(M_table_p)[25]),
+                     setNames(2, Hmisc::label(M_table_p)[27]))) %>%
+  column_spec(1, width_min = "5in", border_right=T, bold = T) %>%
+  column_spec(3, border_right=T) %>%
+  column_spec(5, border_right=T) %>%
+  column_spec(7, border_right=T) %>%
+  column_spec(9, border_right=T) %>%
+  column_spec(11, border_right=T) %>%
+  column_spec(13, border_right=T) %>%
+  column_spec(15, border_right=T) %>%
+  column_spec(17, border_right=T) %>%
+  column_spec(19, border_right=T) %>%
+  column_spec(21, border_right=T) %>%
+  column_spec(23, border_right=T) %>%
+  column_spec(25, border_right=T) %>%
+  column_spec(27, border_right=T)
+
+  
+```
+
+## Healthy Controls
+```{r, include=F}
+# Make python version of df into R version df
+df_R <- py$df %>%
+  filter(group == "Lean Control")
+
+# Select relevant variables for the correlation matrix
+df_R_correlation <- df_R %>%
+  select(lc_f, 
+         rc_f,
+         lc_k1, 
+         rc_k1, 
+         lc_k2, 
+         rc_k2,
+         adc_left,
+         adc_right,
+         pcasl3d_left,
+         pcasl3d_right,
+         gfr_raw_plasma,
+         acr_u,
+         p1_raw_leanm,
+         p2_raw_leanm,
+         fia,
+         glom_tuft_area,
+         glom_volume_weibel,
+         glom_volume_wiggins,
+         glom_volume_con,
+         mes_matrix_area,
+         mes_index,
+         mes_volume_weibel,
+         mes_volume_wiggins,
+         mes_volume_con,
+         glom_nuc_count
+         )
+
+# Correlation matrix in table format
+M_table <- as.data.frame(cor(y = df_R_correlation[,1:14],
+                             x=df_R_correlation[,15:ncol(df_R_correlation)], 
+                             use = "pairwise.complete.obs")) 
+
+# Compute p-values to add to matrix table
+res2 <- rcorr(as.matrix(df_R_correlation))
+corr_pval <- as.data.frame(res2$P) %>%
+  select(lc_f, 
+         rc_f,
+         lc_k1, 
+         rc_k1, 
+         lc_k2, 
+         rc_k2,
+         adc_left,
+         adc_right,
+         pcasl3d_left,
+         pcasl3d_right,
+         gfr_raw_plasma,
+         acr_u,
+         p1_raw_leanm,
+         p2_raw_leanm) %>%
+  sapply(pvalue) 
+corr_pval <- as.data.frame(corr_pval) 
+colnames(corr_pval) <- rep("p_value", ncol(corr_pval))
+
+# Add p-values to matrix table
+corr_pval = corr_pval[15:nrow(corr_pval),]
+M_table_p <- bind_cols(M_table, corr_pval) %>%
+  relocate(map(1:ncol(M_table), ~ c(.x, .x + ncol(M_table))) %>% unlist())
+
+# Label variables
+var_R <- as.data.frame(py$var_dict)
+var_R %<>%
+  mutate(lc_f = "Left Cortex F") %>%
+  mutate(rc_f = "Right Cortex F") %>%
+  mutate(lc_k1 = "Left Cortex K1") %>%
+  mutate(rc_k1 = "Right Cortex K1") %>%
+  mutate(lc_k2 = "Left Cortex k2") %>%
+  mutate(rc_k2 = "Right Cortex k2")
+var_R <- var_R[intersect(names(M_table_p), names(var_R))]
+var_R[setdiff(names(M_table_p), names(var_R))] <- "p-value"
+Hmisc::label(M_table_p) = var_R[match(names(M_table_p), names(var_R))]
+var_R <- as.data.frame(py$var_dict)
+
+row.names(M_table_p) <- var_R[match(row.names(M_table_p), names(var_R))]
+```
+
+```{r}
+## Correlation matrix (table)
+# Matrix table with p-values
+kable(M_table_p, 
+      col.names = rep(c("Correlation", "p-value"), ncol(M_table_p)/2), 
+      caption = "Correlation", 
+      digits = c(1,4),
+      align = rep("r", ncol(M_table_p))) %>%
+  kable_styling(bootstrap_options = c("hover"),
+            full_width = F, 
+            fixed_thead = T) %>%
+  add_header_above(header = c(" "=1, 
+                     setNames(2, Hmisc::label(M_table_p)[1]), 
+                     setNames(2, Hmisc::label(M_table_p)[3]), 
+                     setNames(2, Hmisc::label(M_table_p)[5]), 
+                     setNames(2, Hmisc::label(M_table_p)[7]), 
+                     setNames(2, Hmisc::label(M_table_p)[9]), 
+                     setNames(2, Hmisc::label(M_table_p)[11]),
+                     setNames(2, Hmisc::label(M_table_p)[13]), 
+                     setNames(2, Hmisc::label(M_table_p)[15]), 
+                     setNames(2, Hmisc::label(M_table_p)[17]), 
+                     setNames(2, Hmisc::label(M_table_p)[19]), 
+                     setNames(2, Hmisc::label(M_table_p)[21]),
+                     setNames(2, Hmisc::label(M_table_p)[23]),
+                     setNames(2, Hmisc::label(M_table_p)[25]),
+                     setNames(2, Hmisc::label(M_table_p)[27]))) %>%
+  column_spec(1, width_min = "5in", border_right=T, bold = T) %>%
+  column_spec(3, border_right=T) %>%
+  column_spec(5, border_right=T) %>%
+  column_spec(7, border_right=T) %>%
+  column_spec(9, border_right=T) %>%
+  column_spec(11, border_right=T) %>%
+  column_spec(13, border_right=T) %>%
+  column_spec(15, border_right=T) %>%
+  column_spec(17, border_right=T) %>%
+  column_spec(19, border_right=T) %>%
+  column_spec(21, border_right=T) %>%
+  column_spec(23, border_right=T) %>%
+  column_spec(25, border_right=T) %>%
+  column_spec(27, border_right=T)
+
+```
+
+## Type 1 Diabetes
+
+```{r, include=F}
+# Make python version of df into R version df
+df_R <- py$df %>%
+  filter(group == "Type 1 Diabetes")
+
+# Select relevant variables for the correlation matrix
+df_R_correlation <- df_R %>%
+  select(lc_f, 
+         rc_f,
+         lc_k1, 
+         rc_k1, 
+         lc_k2, 
+         rc_k2,
+         adc_left,
+         adc_right,
+         pcasl3d_left,
+         pcasl3d_right,
+         gfr_raw_plasma,
+         acr_u,
+         p1_raw_leanm,
+         p2_raw_leanm,
+         fia,
+         glom_tuft_area,
+         glom_volume_weibel,
+         glom_volume_wiggins,
+         glom_volume_con,
+         mes_matrix_area,
+         mes_index,
+         mes_volume_weibel,
+         mes_volume_wiggins,
+         mes_volume_con,
+         glom_nuc_count
+         )
+
+# Correlation matrix in table format
+M_table <- as.data.frame(cor(y = df_R_correlation[,1:14],
+                             x=df_R_correlation[,15:ncol(df_R_correlation)], 
+                             use = "pairwise.complete.obs")) 
+
+# Compute p-values to add to matrix table
+res2 <- rcorr(as.matrix(df_R_correlation))
+corr_pval <- as.data.frame(res2$P) %>%
+  select(lc_f, 
+         rc_f,
+         lc_k1, 
+         rc_k1, 
+         lc_k2, 
+         rc_k2,
+         adc_left,
+         adc_right,
+         pcasl3d_left,
+         pcasl3d_right,
+         gfr_raw_plasma,
+         acr_u,
+         p1_raw_leanm,
+         p2_raw_leanm) %>%
+  sapply(pvalue) 
+corr_pval <- as.data.frame(corr_pval) 
+colnames(corr_pval) <- rep("p_value", ncol(corr_pval))
+
+# Add p-values to matrix table
+corr_pval = corr_pval[15:nrow(corr_pval),]
+M_table_p <- bind_cols(M_table, corr_pval) %>%
+  relocate(map(1:ncol(M_table), ~ c(.x, .x + ncol(M_table))) %>% unlist())
+
+# Label variables
+var_R <- as.data.frame(py$var_dict)
+var_R %<>%
+  mutate(lc_f = "Left Cortex F") %>%
+  mutate(rc_f = "Right Cortex F") %>%
+  mutate(lc_k1 = "Left Cortex K1") %>%
+  mutate(rc_k1 = "Right Cortex K1") %>%
+  mutate(lc_k2 = "Left Cortex k2") %>%
+  mutate(rc_k2 = "Right Cortex k2")
+var_R <- var_R[intersect(names(M_table_p), names(var_R))]
+var_R[setdiff(names(M_table_p), names(var_R))] <- "p-value"
+Hmisc::label(M_table_p) = var_R[match(names(M_table_p), names(var_R))]
+var_R <- as.data.frame(py$var_dict)
+
+row.names(M_table_p) <- var_R[match(row.names(M_table_p), names(var_R))]
+```
+
+```{r}
+## Correlation matrix (table)
+# Matrix table with p-values
+kable(M_table_p, 
+      col.names = rep(c("Correlation", "p-value"), ncol(M_table_p)/2), 
+      caption = "Correlation", 
+      digits = c(1,4),
+      align = rep("r", ncol(M_table_p))) %>%
+  kable_styling(bootstrap_options = c("hover"),
+            full_width = F, 
+            fixed_thead = T) %>%
+  add_header_above(header = c(" "=1, 
+                     setNames(2, Hmisc::label(M_table_p)[1]), 
+                     setNames(2, Hmisc::label(M_table_p)[3]), 
+                     setNames(2, Hmisc::label(M_table_p)[5]), 
+                     setNames(2, Hmisc::label(M_table_p)[7]), 
+                     setNames(2, Hmisc::label(M_table_p)[9]), 
+                     setNames(2, Hmisc::label(M_table_p)[11]),
+                     setNames(2, Hmisc::label(M_table_p)[13]), 
+                     setNames(2, Hmisc::label(M_table_p)[15]), 
+                     setNames(2, Hmisc::label(M_table_p)[17]), 
+                     setNames(2, Hmisc::label(M_table_p)[19]), 
+                     setNames(2, Hmisc::label(M_table_p)[21]),
+                     setNames(2, Hmisc::label(M_table_p)[23]),
+                     setNames(2, Hmisc::label(M_table_p)[25]),
+                     setNames(2, Hmisc::label(M_table_p)[27]))) %>%
+  column_spec(1, width_min = "5in", border_right=T, bold = T) %>%
+  column_spec(3, border_right=T) %>%
+  column_spec(5, border_right=T) %>%
+  column_spec(7, border_right=T) %>%
+  column_spec(9, border_right=T) %>%
+  column_spec(11, border_right=T) %>%
+  column_spec(13, border_right=T) %>%
+  column_spec(15, border_right=T) %>%
+  column_spec(17, border_right=T) %>%
+  column_spec(19, border_right=T) %>%
+  column_spec(21, border_right=T) %>%
+  column_spec(23, border_right=T) %>%
+  column_spec(25, border_right=T) %>%
+  column_spec(27, border_right=T)
 ```
 
 ```{python, include = F}
@@ -111,7 +522,7 @@ tab_2_nn =  ["p1_ffa_suppression", "p2_ffa_suppression"]
 tab_2 = TableOne(df, tab_2_vars, nonnormal=tab_2_nn, groupby="group", pval=True, normal_test=True, tukey_test=True, decimals=3, rename=var_dict)
 ```
 
-```{python}
+```{python, include=F}
 tab_2
 ```
 
@@ -129,7 +540,7 @@ tab_3_nn =  ["glomerular_pressure", "mes_matrix_area", "mes_volume_con"]
 tab_3 = TableOne(df, tab_3_vars, nonnormal=tab_3_nn, groupby="group", pval=True, normal_test=True, tukey_test=True, decimals=3, rename=var_dict)
 ```
 
-```{python}
+```{python, include=F}
 tab_3
 ```
 
@@ -147,18 +558,14 @@ tab_4_nn =  tab_4_vars
 tab_4 = TableOne(df, tab_4_vars, nonnormal=tab_4_nn, groupby="group", pval=True, normal_test=True, tukey_test=True, decimals=3, rename=var_dict)
 ```
 
-```{python}
+```{python, include=F}
 tab_4
 ```
 
-```{r}
+```{r, include=F}
 # "gfr_raw_plasma", "erpf_raw_plasma", "rvr", "glomerular_pressure", "total_kidney_volume_ml", "height_adj_total_kidney_volume", "pcasl3d_left", "pcasl3d_right", "bold_l_bl_cortex", "bold_l_bl_kidney", "bold_l_bl_medulla", "bold_l_pf_cortex", "bold_l_pf_kidney", "bold_l_pf_medulla", "bold_r_bl_cortex", "bold_r_bl_kidney", "bold_r_bl_medulla", "bold_r_pf_cortex", "bold_r_pf_kidney", "bold_r_pf_medulla", "fsoc_l_cortex", "fsoc_l_kidney", "fsoc_l_medulla", "fsoc_r_cortex", "fsoc_r_kidney", "fsoc_r_medulla", "adc_left", "adc_right", "fia", "glom_tuft_area", "glom_volume_con", "mes_matrix_area", "mes_index", "mes_volume_con"
 df_R <- as.data.frame(py$df)
-table(df_R$record_id[is.na(df_R$bold_r_pf_kidney)])
-table(df_R$group[is.na(df_R$fsoc_r_kidney)])
-table(df_R$group[is.na(df_R$fsoc_r_medulla)])
-table(df_R$group[is.na(df_R$adc_left)])
-table(df_R$group[is.na(df_R$adc_right)])
+table(df_R$record_id[is.na(df_R$group)])
 table(df_R$group[is.na(df_R$fia)])
 table(df_R$group[is.na(df_R$glom_tuft_area)])
 table(df_R$group[is.na(df_R$glom_volume_con)])
