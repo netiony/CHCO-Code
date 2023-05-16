@@ -80,13 +80,13 @@ def clean_improve():
     # --------------------------------------------------------------------------
 
     var = ["subject_id", "study_visit", "med_date", "diabetes_med",
-           "diabetes_med_other", "htn_med_type"]
+           "diabetes_med_other", "htn_med_type", "addl_hld_meds"]
     med = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
     med.replace(rep, np.nan, inplace=True)
     # SGLT2i (diabetes_med_other___4), RAASi (htn_med_type___1, htn_med_type___2), Metformin (diabetes_med_other___1)
     med = med[["subject_id", "study_visit", "med_date", "diabetes_med_other___3", "htn_med_type___1",
-               "htn_med_type___2", "diabetes_med___1", "diabetes_med___2"]]
+               "htn_med_type___2", "diabetes_med___1", "diabetes_med___2", "addl_hld_meds___1"]]
     # SGLT2i
     med["diabetes_med_other___3"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
@@ -109,8 +109,13 @@ def clean_improve():
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med.rename({"diabetes_med___2": "insulin_med_timepoint"},
                axis=1, inplace=True)
+    # Statin
+    med["addl_hld_meds___1"].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med.rename({"addl_hld_meds___1": "statin"},
+           axis=1, inplace=True)
     med.rename({"med_date": "date"},
-               axis=1, inplace=True)
+           axis=1, inplace=True)
     med["procedure"] = "medications"
 
     # --------------------------------------------------------------------------
