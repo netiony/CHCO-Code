@@ -77,11 +77,20 @@ def clean_renal_heir():
     # Replace missing values
     med.replace(rep, np.nan, inplace=True)
     # Just SGLT2i for now
-    med = med[["subject_id", "diabetes_med___1",  "diabetes_med_other___3", "diabetes_med___3", "addl_hld_meds___1", "htn_med_type___1",
-               "htn_med_type___2"]]
+    med = med[["subject_id", "diabetes_med___1", "diabetes_med_other___1", "addl_hld_meds___2", 
+              "diabetes_med_other___3", "diabetes_med___3", "addl_hld_meds___1", "htn_med_type___1",
+              "htn_med_type___2"]]
     med["diabetes_med_other___3"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med.rename({"diabetes_med_other___3": "sglti_timepoint"}, axis=1, inplace=True)
+    # TZD
+    med["diabetes_med_other___1"].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med.rename({"diabetes_med_other___1": "tzd_timepoint"}, axis=1, inplace=True)
+    # Fibrates
+    med["addl_hld_meds___2"].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med.rename({"addl_hld_meds___2": "fibrates_timepoint"}, axis=1, inplace=True)
     # Metformin
     med["diabetes_med___1"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)

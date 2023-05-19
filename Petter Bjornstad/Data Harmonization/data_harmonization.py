@@ -111,6 +111,9 @@ def harmonize_data():
     harmonized["total_kidney_volume_ml"] = \
         harmonized["left_kidney_volume_ml"] + \
         harmonized["right_kidney_volume_ml"]
+    # Height adjusted kidney volume
+    harmonized["ht_adj_tkv"] = harmonized["total_kidney_volume_ml"] / \
+        (harmonized["height"] / 100)
     # Calculate FSOC = bl_bold - pf_bold
     cols = [c for c in harmonized.columns if "_bl_" in c] + \
         [c for c in harmonized.columns if "_pf_" in c]

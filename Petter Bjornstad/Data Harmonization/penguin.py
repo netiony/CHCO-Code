@@ -230,7 +230,8 @@ def clean_penguin():
     rename = {"gfr": "gfr_raw_plasma_urine", "gfr_bsa": "gfr_bsa_plasma_urine",
               "erpf": "erpf_raw_plasma_urine", "erpf_bsa": "erpf_bsa_plasma_urine",
               "gfr_15mgmin": "gfr_raw_plasma", "gfrbsa": "gfr_bsa_plasma",
-              "erpf_pah_85": "erpf_raw_plasma", "erpfbsa": "erpf_bsa_plasma"}
+              "erpf_pah_85": "erpf_raw_plasma", "erpfbsa": "erpf_bsa_plasma",
+              "pah_bsa": "pah_bsa_plasma_urine"}
     rct.rename(rename, axis=1, inplace=True)
     # Calculate variables
     rct_vars = ["gfr_raw_plasma", "erpf_raw_plasma", "bl_tot_protein", "visit_map", "phys_map", "hct_210"]
