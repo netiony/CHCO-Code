@@ -26,14 +26,15 @@ library(ggpubr)
 library(ggplot2)
 library(hrbrthemes)
 library(viridis)
+library(limma)
 ```
 
 # Full Cohort
 
 ```{r}
 # Import
-df <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = "")
-df_dict <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv", na.strings = "")
+df <- read.csv("~/Documents/Work/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = "")
+df_dict <- read.csv("~/Documents/Work/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv", na.strings = "")
 # Get latest value, filter DF
 df <- df %>%
   arrange(record_id, date) %>%
@@ -58,6 +59,27 @@ df <- df %>%
   ungroup()
 labels <- df_dict$label[df_dict$variable_name %in% colnames(df)]
 names(labels) <- df_dict$variable_name[match(labels, df_dict$label)]
+# Import SOMAScan data
+load("~/Documents/Work/Petter Bjornstad/Renal HERITAGE/Somalogic data/analytes.Rdata")
+load("~/Documents/Work/Petter Bjornstad/CROCODILE/Somalogic data/croc_soma.Rdata")
+load("~/Documents/Work/Petter Bjornstad/Renal HERITAGE/Somalogic data/rh_soma.Rdata")
+load("~/Documents/Work/Petter Bjornstad/IMPROVE T2D/Somalogic data/improve_soma.Rdata")
+# Delete unnecessary columns
+croc_soma = croc_soma %>% 
+  select(SampleDescription,contains("seq")) %>% 
+  rename(record_id = SampleDescription)
+rh_soma = rh_soma %>%
+  select(SampleDescription,contains("seq")) %>% 
+  rename(record_id = SampleDescription)
+improve_soma = improve_soma %>%
+  mutate(SampleDescription = sub("2D-","_",SampleDescription)) %>%
+  filter(TimePoint == "BL") %>%
+  select(SampleDescription,contains("seq")) %>% 
+  rename(record_id = SampleDescription)
+soma = do.call(rbind,list(croc_soma,improve_soma,rh_soma))
+# Join
+prots = df %>% select(record_id,group)
+prots = left_join(prots,soma,by = join_by(record_id))
 ```
 
 ```{r results='asis'}
@@ -369,3 +391,28 @@ df %>%
   xlab("") +
   stat_compare_means(method = "anova",   label.x.npc = "center")
 ```
+
+# Proteomics Comparison
+
+SOMAScan proteins were compared between T1D and T2D using `limma` empirical Bayes with constant prior variance. T1D was the reference group, so logFC is in T2D relative to T1D.
+
+```{r}
+# Model matrix
+des = model.matrix(~group,prots)
+# Log 2 transformed outcome
+out = prots %>% select(contains("seq")) %>% t(.)
+out = log2(out)
+# Fit and results
+fit = lmFit(out,des)
+fit <- eBayes(fit)
+res = topTable(fit, coef=ncol(des),adjust.method = "BH")
+res = res[res$adj.P.Val <= 0.05,]
+res$adj.P.Val = format.pval(res$adj.P.Val,digits = 3,eps = 0.001)
+res$P.Value = format.pval(res$P.Value,digits = 3,eps = 0.001)
+res$Target = analytes$Target[match(rownames(res),analytes$AptName)]
+res$TargetFullName = analytes$TargetFullName[match(rownames(res),analytes$AptName)]
+res$EntrezGeneSymbol = analytes$EntrezGeneSymbol[match(rownames(res),analytes$AptName)]
+kable(res,digits = 3)
+```
+
+There were `r nrow(res)` proteins significantly different between the two groups after FDR p-value adjustment.
