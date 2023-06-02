@@ -74,14 +74,18 @@ def clean_renal_heiritage():
     # Medical History
     # --------------------------------------------------------------------------
 
-    var = ["record_id"] + ["screen_a1c"]
+    var = ["record_id"] + ["screen_a1c"] + ["insulin_inj"]
     med = pd.DataFrame(proj.export_records(fields=var))
     med = med.loc[med["redcap_event_name"].str.startswith('screen', na=False)]
     med.drop(["redcap_event_name"], inplace=True, axis=1)
     # Replace missing values
     med.replace(rep, np.nan, inplace=True)
-    med.rename({"screen_a1c": "hba1c"},
+    med.rename({"screen_a1c": "hba1c",
+                "insulin_inj": "insulin_med_timepoint"},
                 inplace=True, axis=1)
+    # Replace 0/1 values with yes/no
+    med.iloc[:, 1:] = med.iloc[:, 1:].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
     med["procedure"] = "screening"
     med["visit"] = "baseline"
 
@@ -98,12 +102,11 @@ def clean_renal_heiritage():
     phys.replace(rep, np.nan, inplace=True)
     phys["procedure"] = "physical_exam"
     phys.drop(["male_activity_factor", "fem_activity_factor", "schofield_male",
-               "schofield_female", "phys_norm", "screen_bmi_percentile", "phys_age"], axis=1, inplace=True)
+               "schofield_female", "phys_norm", "screen_bmi_percentile", "phys_age", "insulin_inj"], axis=1, inplace=True)
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
     phys.rename({"sysbp": "sbp", "diasbp": "dbp",
                 "waist_circumference": "waistcm", 
-                "hip_circumference": "hipcm",
-                "insulin_inj": "insulin_injections_timepoint"}, inplace=True, axis=1)
+                "hip_circumference": "hipcm"}, inplace=True, axis=1)
     phys["visit"] = "baseline"
     med["date"] = phys["date"]
 
