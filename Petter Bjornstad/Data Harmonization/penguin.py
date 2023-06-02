@@ -81,6 +81,8 @@ def clean_penguin():
     og_names = list(med_list.keys())
     med = med[["record_id"] + og_names]
     med.rename(med_list, axis=1, inplace=True)
+    # Insulin med (no one with diabetes/insulin)
+    med["insulin_med_timepoint"] = 0
     # RAASi
     med = med.assign(raasi_timepoint=np.maximum(pd.to_numeric(
         med["ace_inhibitor"]), pd.to_numeric(med["angiotensin_receptor_blocker"])))
