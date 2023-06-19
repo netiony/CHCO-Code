@@ -4,13 +4,13 @@ cd /mnt/HD2/Davizon-Castillo
 # Run FastQC on all fastq files
 for file in $(find . -name "*.fastq.gz"); do
     SAMPLE=$(basename $file)
-    fastqc -t 32 Data_Raw/${SAMPLE} -o /mnt/HD2/Davizon-Castillo/Data_Clean/QC/FastQC
+    fastqc -t 16 Data_Raw/${SAMPLE} -o /mnt/HD2/Davizon-Castillo/Data_Clean/QC/FastQC
 done
 # MultiQC to put everything together
 python3 -m multiqc Data_Clean/QC/FastQC -o Data_Clean/QC --no-data-dir
 # Prepare STARsolo to mimic Cell Ranger as close as possible
 STAR  --runMode genomeGenerate \
-    --runThreadN 32 \
+    --runThreadN 16 \
     --genomeDir ./Miscellaneous/STAR\ Genome \
     --genomeSAindexNbases 10 \
     --genomeFastaFiles /home/tim/UCD/PEDS/RI\ Biostatistics\ Core/Shared/Shared\ Projects/Laura/Peds\ Endo/Petter\ Bjornstad/scRNA/Miscellaneous/cellranger-7.1.0/external/cellranger_tiny_ref/fasta/genome.fa \
@@ -28,7 +28,8 @@ STAR --genomeDir ./Miscellaneous/STAR\ Genome \
     --clip5pNbases 39 0 \
     --readFilesCommand zcat \
     --genomeSAsparseD 3 \
+    --soloMultiMappers EM \
     --outFileNamePrefix ./Data_Clean/Mapped/\
-    --runThreadN 32
+    --runThreadN 16
 
 
