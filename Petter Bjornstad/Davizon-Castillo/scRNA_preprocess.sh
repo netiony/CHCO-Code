@@ -2,9 +2,9 @@
 # cd to top project folder
 cd /mnt/HD2/Davizon-Castillo
 # Run FastQC on all fastq files
-for file in $(find . -name "*.fastq.gz"); do
+for file in $(find Data_Raw/fastq -name "*.fastq.gz"); do
     SAMPLE=$(basename $file)
-    fastqc -t 16 Data_Raw/${SAMPLE} -o /mnt/HD2/Davizon-Castillo/Data_Clean/QC/FastQC
+    fastqc -q -t 16 Data_Raw/fastq/${SAMPLE} -o /mnt/HD2/Davizon-Castillo/Data_Clean/QC/FastQC
 done
 # MultiQC to put everything together
 python3 -m multiqc Data_Clean/QC/FastQC -o Data_Clean/QC --no-data-dir
@@ -31,5 +31,3 @@ STAR --genomeDir ./Miscellaneous/STAR\ Genome \
     --soloMultiMappers EM \
     --outFileNamePrefix ./Data_Clean/Mapped/\
     --runThreadN 16
-
-
