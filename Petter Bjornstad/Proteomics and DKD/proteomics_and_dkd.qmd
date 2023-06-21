@@ -198,6 +198,8 @@ df$htn[is.na(df$sbp) & is.na(df$dbp) & is.na(df$sbp_perc) & is.na(df$dbp_perc)] 
 df$htn = factor(df$htn,levels = c(F,T),labels = c("HTN-","HTN+"))
 # Hyperfiltration
 df$hyp = factor(df$eGFR_fas_cr >= 135,levels = c(F,T),labels = c("eGFR < 135","eGFR >= 135"))
+# UACR
+df$elevated_uacr <- factor(df$acr_u >= 30,labels = c("UACR < 30","UACR >= 30"))
 # Merge
 df <- full_join(df, soma, by = c("record_id", "visit"))
 # Import Olink data and combine
@@ -242,33 +244,35 @@ urine <- left_join(df, olink_urine, by = c("record_id", "visit"))
 # Limit df to those with all data
 ids = intersect(soma$record_id,olink_plasma$record_id)
 df = df %>% filter(record_id %in% ids)
-# # Read in scRNA object
-# so <- readRDS("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/Data_Clean/seurat_data_no_computations.RDS")
-# # Limit to RH/IMPROVE baseline visit
-# so <- so[, !grepl("_12M", so$michigan_id)]
-# # Limit to those with SOMA and Olink
-# so <- so[, sub("_BL","",so$michigan_id) %in% ids]
-# # Combined groups
-# so$diabetes <- sub("i", "", so$T2D_HC_Phil)
-# so$SGLT2i <- factor(so$T2D_HC_Phil,
-#                     levels = c("HC", "T2D", "T2Di"),
-#                     labels = c("SGLT2i-", "SGLT2i-", "SGLT2i+")
-# )
-# so$acr_u_cat <- cut_number(so$acr_u, n = 2, labels = c("Low UACR", "High UACR"))
-# so$elevated_uacr <- factor(so$acr_u >= 30,labels = c("UACR < 30","UACR >= 30"))
-# # Normalize and scale
-# so <- NormalizeData(so)
-# so <- ScaleData(so, features = rownames(so))
-# # PCA
-# so <- RunPCA(so, features = VariableFeatures(object = so))
-# # Cluster cells
-# so <- FindNeighbors(so)
-# so <- FindClusters(so)
-# # Perform UMAP
-# so <- RunUMAP(so, dims = 1:20)
-# # General cell types as identifiers
-# so$generaltype <- sub("_.*", "", so$LR_clusters)
-# Idents(so) <- so$generaltype
+# Read in scRNA object
+so <- readRDS("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/Data_Clean/seurat_data_no_computations.RDS")
+# Limit to RH/IMPROVE baseline visit
+so <- so[, !grepl("_12M", so$michigan_id)]
+# Limit to those with SOMA and Olink
+so$michigan_id = sub("_BL","",so$michigan_id)
+so <- so[, so$michigan_id %in% ids]
+# Combined groups
+so$diabetes <- sub("i", "", so$T2D_HC_Phil)
+so$SGLT2i <- factor(so$T2D_HC_Phil,
+                    levels = c("HC", "T2D", "T2Di"),
+                    labels = c("SGLT2i-", "SGLT2i-", "SGLT2i+")
+)
+so$elevated_uacr = df$elevated_uacr[match(so$michigan_id,df$record_id)]
+so$htn = df$htn[match(so$michigan_id,df$record_id)]
+so$hyp = df$hyp[match(so$michigan_id,df$record_id)]
+# Normalize and scale
+so <- NormalizeData(so)
+so <- ScaleData(so, features = rownames(so))
+# PCA
+so <- RunPCA(so, features = VariableFeatures(object = so))
+# Cluster cells
+so <- FindNeighbors(so)
+so <- FindClusters(so)
+# Perform UMAP
+so <- RunUMAP(so, dims = 1:20)
+# General cell types as identifiers
+so$generaltype <- sub("_.*", "", so$LR_clusters)
+Idents(so) <- so$generaltype
 ```
 
 ```{r functions}
@@ -845,181 +849,13 @@ df %>%
                         "Yes", T ~ "No")
   ) %>%
   select(
-    group, age, sex, race_ethnicity_condensed, diabetes_duration, hba1c, bmi, 
-    acr_u, elevated_albuminuria, htn,soma, olink_plasma, olink_urine, scRNA
+    group, age, sex, race_ethnicity_condensed, diabetes_duration, hba1c, bmi, acr_u, sbp, dbp, map, eGFR_fas_cr,gfr_bsa_plasma,gfr_raw_plasma,elevated_albuminuria, htn,soma, olink_plasma, olink_urine, scRNA
   ) %>%
   tbl_summary(by = group,
-              statistic = list(all_continuous() ~ "{mean}({sd})",
-                               acr_u ~ "{median}[{p25},{p75}]")) %>%
-  add_p(list(all_continuous() ~ "aov")) %>%
-  add_overall()
+              statistic = list(all_continuous() ~ "{mean} ({sd})",
+                               acr_u ~ "{median}[{p25},{p75}]"),
+              missing_text = "Missing")
 ```
-
-# SOMAScan correlation matrix (with UACR)
-
-## MAC
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MAC were: `r toString(analytes$TargetFullName[match(top_mac,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_mac,analytes$AptName)])`, respectively).
-
-```{r results='asis', dpi=1200}
-cor_and_plot_soma(vars = top_mac)
-```
-
-## MIC
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MIC were: `r toString(analytes$TargetFullName[match(top_mic,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_mic,analytes$AptName)])`, respectively).
-
-```{r results='asis', dpi=1200}
-cor_and_plot_soma(vars = top_mic)
-```
-
-## HYP
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_hyp,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_hyp,analytes$AptName)])`, respectively).
-
-```{r results='asis', dpi=1200}
-cor_and_plot_soma(vars = top_hyp)
-```
-
-## RAPID
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for rapid eGFR decline were: `r toString(analytes$TargetFullName[match(top_rapid,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_rapid,analytes$AptName)])`, respectively).
-
-```{r results='asis', dpi=1200}
-cor_and_plot_soma(vars = top_rapid)
-```
-
-## HTN
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_htn,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_htn,analytes$AptName)])`, respectively).
-
-```{r results='asis', dpi=1200}
-cor_and_plot_soma(vars = top_htn)
-```
-
-## HTN with SBP
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension (with SBP) were: `r toString(analytes$TargetFullName[match(top_htn_sbp,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_htn_sbp,analytes$AptName)])`, respectively).
-
-```{r results='asis', dpi=1200}
-cor_and_plot_soma(vars = top_htn_sbp)
-```
-
-# Olink associations with SOMAScan
-
-## MAC
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MAC were: `r toString(analytes$TargetFullName[match(top_mac,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_mac,analytes$AptName)])`, respectively).
-
-### Plasma
-
-```{r warning=FALSE,results='asis', dpi=1200}
-top_mac_olink <- soma_to_olink(top_mac)
-soma_olink_corr(top_olink = top_mac_olink, data = plasma)
-```
-
-### Urine
-
-```{r warning=FALSE,results='asis', dpi=1200}
-soma_olink_corr(top_olink = top_mac_olink, data = urine)
-```
-
-## MIC
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MIC were: `r toString(analytes$TargetFullName[match(top_mic,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_mic,analytes$AptName)])`, respectively).
-
-### Plasma
-
-```{r warning=FALSE,results='asis', dpi=1200}
-top_mic_olink <- soma_to_olink(top_mic)
-soma_olink_corr(top_olink = top_mic_olink, data = plasma)
-```
-
-### Urine
-
-```{r warning=FALSE,results='asis', dpi=1200}
-soma_olink_corr(top_olink = top_mic_olink, data = urine)
-```
-
-## HYP
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_hyp,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_hyp,analytes$AptName)])`, respectively).
-
-### Plasma
-
-```{r warning=FALSE,results='asis', dpi=1200}
-top_hyp_olink <- soma_to_olink(top_hyp)
-soma_olink_corr(top_olink = top_hyp_olink, data = plasma)
-```
-
-### Urine
-
-```{r warning=FALSE,results='asis', dpi=1200}
-soma_olink_corr(top_olink = top_hyp_olink, data = urine)
-```
-
-## RAPID
-
-Top proteins from SOMAScan were not available in Olink.
-
-## HTN
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension (with SBP) were: `r toString(analytes$TargetFullName[match(top_htn_sbp,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_htn_sbp,analytes$AptName)])`, respectively).
-
-### Plasma
-
-```{r warning=FALSE,results='asis', dpi=1200}
-top_htn_olink <- soma_to_olink(top_htn)
-soma_olink_corr(top_olink = top_htn_olink, data = plasma)
-```
-
-### Urine
-
-```{r warning=FALSE,results='asis', dpi=1200}
-soma_olink_corr(top_olink = top_htn_olink, data = urine)
-```
-
-## HTN with SBP
-
-Top proteins from SOMAScan were not available in Olink.
-
-# Olink associations with UACR
-
-## MAC
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MAC were: `r toString(analytes$TargetFullName[match(top_mac,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_mac,analytes$AptName)])`, respectively).
-
-```{r results='asis', dpi=1200}
-cor_and_plot_olink(vars = top_mac_olink)
-```
-
-## MIC
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MIC were: `r toString(analytes$TargetFullName[match(top_mic,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_mic,analytes$AptName)])`, respectively).
-
-```{r results='asis', dpi=1200}
-cor_and_plot_olink(vars = top_mic_olink)
-```
-
-## HYP
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_hyp,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_hyp,analytes$AptName)])`, respectively).
-
-```{r results='asis', dpi=1200}
-cor_and_plot_olink(vars = top_hyp_olink)
-```
-
-## HTN
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension (with SBP) were: `r toString(analytes$TargetFullName[match(top_htn_sbp,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_htn_sbp,analytes$AptName)])`, respectively).
-
-```{r results='asis', dpi=1200}
-cor_and_plot_olink(vars = top_htn_olink)
-```
-
-## HTN with SBP
-
-Top proteins from SOMAScan were not available in Olink.
 
 # scRNA-seq
 
@@ -1027,19 +863,7 @@ Top proteins from SOMAScan were not available in Olink.
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MAC were: `r toString(analytes$TargetFullName[match(top_mac,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_mac,analytes$AptName)])`, respectively).
 
-### Overall expression
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-umap_plot(so, top_mac)
-```
-
 ### Differential expression in the highest expressing cell type
-
-#### SGLT2i status
-
-```{r results='asis', dpi=1200}
-de(outcome = "SGLT2i", ref_group = "SGLT2i-", vars = top_mac)
-```
 
 #### UACR
 
@@ -1051,19 +875,7 @@ de(outcome = "elevated_uacr", ref_group = "UACR < 30", vars = top_mac)
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MIC were: `r toString(analytes$TargetFullName[match(top_mic,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_mic,analytes$AptName)])`, respectively).
 
-### Overall expression
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-umap_plot(so, top_mic)
-```
-
 ### Differential expression in the highest expressing cell type
-
-#### SGLT2i status
-
-```{r results='asis', dpi=1200}
-de(outcome = "SGLT2i", ref_group = "SGLT2i-", vars = top_mic)
-```
 
 #### UACR
 
@@ -1075,434 +887,30 @@ de(outcome = "elevated_uacr", ref_group = "UACR < 30", vars = top_mic)
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_hyp,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_hyp,analytes$AptName)])`, respectively).
 
-### Overall expression
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-umap_plot(so, top_hyp)
-```
-
 ### Differential expression in the highest expressing cell type
 
-#### SGLT2i status
+#### eGFR
 
 ```{r results='asis', dpi=1200}
-de(outcome = "SGLT2i", ref_group = "SGLT2i-", vars = top_hyp)
-```
-
-#### UACR
-
-```{r results='asis', dpi=1200}
-de(outcome = "elevated_uacr", ref_group = "UACR < 30", vars = top_hyp)
-```
-
-## RAPID
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for rapid eGFR decline were: `r toString(analytes$TargetFullName[match(top_rapid,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_rapid,analytes$AptName)])`, respectively).
-
-### Overall expression
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-umap_plot(so, top_rapid)
-```
-
-### Differential expression in the highest expressing cell type
-
-#### SGLT2i status
-
-```{r results='asis', dpi=1200}
-de(outcome = "SGLT2i", ref_group = "SGLT2i-", vars = top_rapid)
-```
-
-#### UACR
-
-```{r results='asis', dpi=1200}
-de(outcome = "elevated_uacr", ref_group = "UACR < 30", vars = top_rapid)
+de(outcome = "hyp", ref_group = "eGFR < 135", vars = top_hyp)
 ```
 
 ## HTN
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_htn,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_htn,analytes$AptName)])`, respectively).
 
-### Overall expression
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-umap_plot(so, top_htn)
-```
-
 ### Differential expression in the highest expressing cell type
 
-#### SGLT2i status
-
 ```{r results='asis', dpi=1200}
-de(outcome = "SGLT2i", ref_group = "SGLT2i-", vars = top_htn)
-```
-
-#### UACR
-
-```{r results='asis', dpi=1200}
-de(outcome = "elevated_uacr", ref_group = "UACR < 30", vars = top_htn)
+de(outcome = "htn", ref_group = "HTN-", vars = top_htn)
 ```
 
 ## HTN with SBP
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension (with SBP) were: `r toString(analytes$TargetFullName[match(top_htn_sbp,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_htn_sbp,analytes$AptName)])`, respectively).
 
-### Overall expression
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-umap_plot(so, top_htn_sbp)
-```
-
 ### Differential expression in the highest expressing cell type
 
-#### SGLT2i status
-
 ```{r results='asis', dpi=1200}
-de(outcome = "SGLT2i", ref_group = "SGLT2i-", vars = top_htn_sbp)
-```
-
-#### UACR
-
-```{r results='asis', dpi=1200}
-de(outcome = "elevated_uacr", ref_group = "UACR < 30", vars = top_htn_sbp)
-```
-
-# Soluble omics in SGLT2i+ vs. SGLT2i-
-
-## MAC
-
-```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
-soluble_comp(vars = top_mac)
-```
-
-## MIC
-
-```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
-soluble_comp(vars = top_mic)
-```
-
-## HYP
-
-```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
-soluble_comp(vars = top_hyp)
-```
-
-## RAPID
-
-```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
-soluble_comp(vars = top_rapid)
-```
-
-## HTN
-
-```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
-soluble_comp(vars = top_htn)
-```
-
-## HTN with SBP
-
-```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
-soluble_comp(vars = top_htn_sbp)
-```
-
-# TODAY pathway analysis
-
-## MAC
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MAC were: `r toString(analytes$TargetFullName[match(top_mac,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_mac,analytes$AptName)])`, respectively).
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-v_mac <- volcano(top_mac_df)
-v_mac <- v_mac +
-  ggtitle("Severe Albuminuria") +
-  theme(plot.title = element_text(hjust = 0.5))
-v_mac
-```
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-mac_p <- pathway_analysis(de_genes_mac)
-mac_p$updot
-mac_p$downdot
-
-mac_plot = mac_p$updot + mac_p$downdot + 
-  plot_annotation(title = "Severe Albuminuria",
-                  theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/MAC_ORA_1600x900.jpeg",plot = mac_plot,
-       width = 1600,height = 900,units = "px",scale = 2.5)
-
-mac_p_comp <- pathway_comparison(list(
-  Baseline = de_genes_mac,
-  Followup = de_genes_mac_10
-))
-mac_p_comp$updot
-mac_p_comp$downdot
-
-mac_comp_plot = mac_p_comp$updot + mac_p_comp$downdot + 
-  plot_annotation(title = "Severe Albuminuria",
-                  theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/MAC_ORA_comparison_1600x900.jpeg",
-       plot = mac_comp_plot,width = 1600,height = 900,units = "px",scale = 2.5)
-```
-
-## MIC
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MIC were: `r toString(analytes$TargetFullName[match(top_mic,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_mic,analytes$AptName)])`, respectively).
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-v_mic <- volcano(top_mic_df)
-v_mic <- v_mic +
-  ggtitle("Moderate Albuminuria") +
-  theme(plot.title = element_text(hjust = 0.5))
-v_mic
-```
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-mic_p <- pathway_analysis(de_genes_mic)
-mic_p$updot
-mic_p$downdot
-
-mic_plot = mic_p$updot + mic_p$downdot + 
-  plot_annotation(title = "Moderate Albuminuria",
-                  theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/MIC_ORA_1600x900.jpeg",plot = mic_plot,
-       width = 1600,height = 900,units = "px",scale = 2.5)
-
-mic_p_comp <- pathway_comparison(list(
-  Baseline = de_genes_mic,
-  Followup = de_genes_mic_10
-))
-mic_p_comp$updot
-mic_p_comp$downdot
-
-mic_comp_plot = mic_p_comp$updot + mic_p_comp$downdot + 
-  plot_annotation(title = "Moderate Albuminuria",
-                  theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/MIC_ORA_comparison_1600x900.jpeg",
-       plot = mic_comp_plot,width = 1600,height = 900,units = "px",scale = 2.5)
-```
-
-## HYP
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_hyp,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_hyp,analytes$AptName)])`, respectively).
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-v_hyp <- volcano(top_hyp_df)
-v_hyp <- v_hyp +
-  ggtitle("Hyperfiltration") +
-  theme(plot.title = element_text(hjust = 0.5))
-v_hyp
-```
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-hyp_p <- pathway_analysis(de_genes_hyp)
-hyp_p$updot
-hyp_p$downdot
-
-hyp_plot = hyp_p$updot + hyp_p$downdot + 
-  plot_annotation(title = "Hyperfiltration",
-                  theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/HYP_ORA_1600x900.jpeg",plot = hyp_plot,
-       width = 1600,height = 900,units = "px",scale = 3)
-
-hyp_p_comp <- pathway_comparison(list(
-  Baseline = de_genes_hyp,
-  Followup = de_genes_hyp_10
-))
-hyp_p_comp$updot
-hyp_p_comp$downdot
-
-hyp_comp_plot = hyp_p_comp$updot + hyp_p_comp$downdot + 
-  plot_annotation(title = "Hyperfiltration",
-                  theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/HYP_ORA_comparison_1600x900.jpeg",
-       plot = hyp_comp_plot,width = 1600,height = 900,units = "px",scale = 2.5)
-```
-
-## RAPID
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for rapid eGFR decline were: `r toString(analytes$TargetFullName[match(top_rapid,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_rapid,analytes$AptName)])`, respectively).
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-v_rapid <- volcano(top_rapid_df)
-v_rapid <- v_rapid +
-  ggtitle("Rapid eGFR Decline") +
-  theme(plot.title = element_text(hjust = 0.5))
-v_rapid
-```
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-rapid_p <- pathway_analysis(de_genes_rapid)
-rapid_p$updot
-rapid_p$downdot
-
-rapid_plot = rapid_p$updot + rapid_p$downdot + 
-  plot_annotation(title = "Rapid eGFR decline",
-                  theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/RAPID_ORA_1600x900.jpeg",plot = rapid_plot,
-       width = 1600,height = 900,units = "px",scale = 2.8)
-
-rapid_p_comp <- pathway_comparison(list(
-  Baseline = de_genes_rapid,
-  Followup = de_genes_rapid_10
-))
-rapid_p_comp$updot
-rapid_p_comp$downdot
-
-rapid_comp_plot = rapid_p_comp$updot + rapid_p_comp$downdot + 
-  plot_annotation(title = "Rapid eGFR decline",
-                  theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/RAPID_ORA_comparison_1600x900.jpeg",
-       plot = rapid_comp_plot,width = 1600,height = 900,units = "px",scale = 2.5)
-```
-
-## HTN
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_htn,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_htn,analytes$AptName)])`, respectively).
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-v_htn <- volcano(top_htn_df)
-v_htn <- v_htn +
-  ggtitle("Hypertension") +
-  theme(plot.title = element_text(hjust = 0.5))
-v_htn
-```
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-htn_p <- pathway_analysis(de_genes_htn)
-htn_p$updot
-htn_p$downdot
-
-htn_plot = htn_p$updot + htn_p$downdot + 
-  plot_annotation(title = "Hypertension",
-                  theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/HTN_ORA_1600x900.jpeg",plot = htn_plot,
-       width = 1600,height = 900,units = "px",scale = 2.8)
-
-htn_p_comp <- pathway_comparison(list(
-  Baseline = de_genes_htn,
-  Followup = de_genes_htn_10
-))
-htn_p_comp$updot
-htn_p_comp$downdot
-
-htn_comp_plot = htn_p_comp$updot + htn_p_comp$downdot + 
-  plot_annotation(title = "Hypertension",
-                  theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/HTN_ORA_comparison_1600x900.jpeg",
-       plot = htn_comp_plot,width = 1600,height = 900,units = "px",scale = 2.5)
-```
-
-## HTN with SBP
-
-The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension (with SBP) were: `r toString(analytes$TargetFullName[match(top_htn_sbp,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_htn_sbp,analytes$AptName)])`, respectively).
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-v_htn_sbp <- volcano(top_htn_sbp_df)
-v_htn_sbp <- v_htn_sbp +
-  ggtitle("Hypertension (with SBP)") +
-  theme(plot.title = element_text(hjust = 0.5))
-v_htn_sbp
-```
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-htn_sbp_p <- pathway_analysis(de_genes_htn_sbp)
-htn_sbp_p$updot
-htn_sbp_p$downdot
-
-htn_sbp_p_comp <- pathway_comparison(list(
-  Baseline = de_genes_htn_sbp,
-  Followup = de_genes_htn_sbp_10
-))
-htn_sbp_p_comp$updot
-htn_sbp_p_comp$downdot
-```
-
-# scRNA-seq correlations with circulating proteins
-
-## MAC
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-scRNA_corr(vars = top_mac)
-```
-
-## MIC
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-scRNA_corr(vars = top_mic)
-```
-
-## HYP
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-scRNA_corr(vars = top_hyp)
-```
-
-## RAPID
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-scRNA_corr(vars = top_rapid)
-```
-
-## HTN
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-scRNA_corr(vars = top_htn)
-```
-
-## HTN with SBP
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-scRNA_corr(vars = top_htn_sbp)
-```
-
-# UACR correlation with TAL NELL-1 transcript.
-
-```{r message=FALSE,warning=FALSE,dpi=1200}
-# Pull data
-tal <- subset(so, idents = "TAL")
-avg_exp <- AverageExpression(tal,features = "NELL1" , group.by = "michigan_id")
-avg_exp = as.data.frame(t(avg_exp$RNA))
-avg_exp$record_id = sub("*_BL","",rownames(avg_exp))
-avg_exp = left_join(avg_exp,df[,c("record_id","acr_u")])
-colnames(avg_exp) = c("NELL1","record_id","UACR")
-# Correlation
-M = corr.test(avg_exp$NELL1,avg_exp$UACR,method = "spearman")
-# Plot
-ggplot(avg_exp,aes(x=NELL1,y=log(UACR))) + 
-  geom_point() + theme_bw() + 
-  geom_smooth(method = "lm",se=F)
-```
-
-Spearman correlation between UACR and mean NELL1 expression in TAL was `r round(M$r,3)` (p = `r round(M$p,3)`).
-
-# scRNA correlations with continuous outcomes
-
-## MAC correlation with UACR
-
-```{r results='asis'}
-scRNA_corr_out(vars = top_mac,outcome = "acr_u")
-```
-
-## MIC correlation with UACR
-
-```{r results='asis'}
-scRNA_corr_out(vars = top_mic,outcome = "acr_u")
-```
-
-## HYP correlation with BSA-indexed GFR
-
-```{r results='asis'}
-scRNA_corr_out(vars = top_hyp,outcome = "gfr_bsa_plasma")
-```
-
-## HTN correlation with MAP
-
-```{r results='asis'}
-scRNA_corr_out(vars = top_htn,outcome = "map")
-```
-
-## HTN with SBP correlation with MAP
-
-```{r results='asis'}
-scRNA_corr_out(vars = top_htn_sbp,outcome = "map")
+de(outcome = "htn", ref_group = "HTN-", vars = top_htn_sbp)
 ```
