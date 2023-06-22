@@ -198,6 +198,8 @@ df$htn[is.na(df$sbp) & is.na(df$dbp) & is.na(df$sbp_perc) & is.na(df$dbp_perc)] 
 df$htn = factor(df$htn,levels = c(F,T),labels = c("HTN-","HTN+"))
 # Hyperfiltration
 df$hyp = factor(df$eGFR_fas_cr >= 135,levels = c(F,T),labels = c("eGFR < 135","eGFR >= 135"))
+# UACR
+df$elevated_uacr <- factor(df$acr_u >= 30,labels = c("UACR < 30","UACR >= 30"))
 # Merge
 df <- full_join(df, soma, by = c("record_id", "visit"))
 # Import Olink data and combine
@@ -242,33 +244,35 @@ urine <- left_join(df, olink_urine, by = c("record_id", "visit"))
 # Limit df to those with all data
 ids = intersect(soma$record_id,olink_plasma$record_id)
 df = df %>% filter(record_id %in% ids)
-# # Read in scRNA object
-# so <- readRDS("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/Data_Clean/seurat_data_no_computations.RDS")
-# # Limit to RH/IMPROVE baseline visit
-# so <- so[, !grepl("_12M", so$michigan_id)]
-# # Limit to those with SOMA and Olink
-# so <- so[, sub("_BL","",so$michigan_id) %in% ids]
-# # Combined groups
-# so$diabetes <- sub("i", "", so$T2D_HC_Phil)
-# so$SGLT2i <- factor(so$T2D_HC_Phil,
-#                     levels = c("HC", "T2D", "T2Di"),
-#                     labels = c("SGLT2i-", "SGLT2i-", "SGLT2i+")
-# )
-# so$acr_u_cat <- cut_number(so$acr_u, n = 2, labels = c("Low UACR", "High UACR"))
-# so$elevated_uacr <- factor(so$acr_u >= 30,labels = c("UACR < 30","UACR >= 30"))
-# # Normalize and scale
-# so <- NormalizeData(so)
-# so <- ScaleData(so, features = rownames(so))
-# # PCA
-# so <- RunPCA(so, features = VariableFeatures(object = so))
-# # Cluster cells
-# so <- FindNeighbors(so)
-# so <- FindClusters(so)
-# # Perform UMAP
-# so <- RunUMAP(so, dims = 1:20)
-# # General cell types as identifiers
-# so$generaltype <- sub("_.*", "", so$LR_clusters)
-# Idents(so) <- so$generaltype
+# Read in scRNA object
+so <- readRDS("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/Data_Clean/seurat_data_no_computations.RDS")
+# Limit to RH/IMPROVE baseline visit
+so <- so[, !grepl("_12M", so$michigan_id)]
+# Limit to those with SOMA and Olink
+so$michigan_id = sub("_BL","",so$michigan_id)
+so <- so[, so$michigan_id %in% ids]
+# Combined groups
+so$diabetes <- sub("i", "", so$T2D_HC_Phil)
+so$SGLT2i <- factor(so$T2D_HC_Phil,
+                    levels = c("HC", "T2D", "T2Di"),
+                    labels = c("SGLT2i-", "SGLT2i-", "SGLT2i+")
+)
+so$elevated_uacr = df$elevated_uacr[match(so$michigan_id,df$record_id)]
+so$htn = df$htn[match(so$michigan_id,df$record_id)]
+so$hyp = df$hyp[match(so$michigan_id,df$record_id)]
+# Normalize and scale
+so <- NormalizeData(so)
+so <- ScaleData(so, features = rownames(so))
+# PCA
+so <- RunPCA(so, features = VariableFeatures(object = so))
+# Cluster cells
+so <- FindNeighbors(so)
+so <- FindClusters(so)
+# Perform UMAP
+so <- RunUMAP(so, dims = 1:20)
+# General cell types as identifiers
+so$generaltype <- sub("_.*", "", so$LR_clusters)
+Idents(so) <- so$generaltype
 ```
 
 ```{r functions}
@@ -845,14 +849,12 @@ df %>%
                         "Yes", T ~ "No")
   ) %>%
   select(
-    group, age, sex, race_ethnicity_condensed, diabetes_duration, hba1c, bmi, 
-    acr_u, elevated_albuminuria, htn,soma, olink_plasma, olink_urine, scRNA
+    group, age, sex, race_ethnicity_condensed, diabetes_duration, hba1c, bmi, acr_u, sbp, dbp, map, eGFR_fas_cr,gfr_bsa_plasma,gfr_raw_plasma,elevated_albuminuria, htn,soma, olink_plasma, olink_urine, scRNA
   ) %>%
   tbl_summary(by = group,
-              statistic = list(all_continuous() ~ "{mean}({sd})",
-                               acr_u ~ "{median}[{p25},{p75}]")) %>%
-  add_p(list(all_continuous() ~ "aov")) %>%
-  add_overall()
+              statistic = list(all_continuous() ~ "{mean} ({sd})",
+                               acr_u ~ "{median}[{p25},{p75}]"),
+              missing_text = "Missing")
 ```
 
 # SOMAScan correlation matrix (with UACR)
@@ -1089,10 +1091,10 @@ umap_plot(so, top_hyp)
 de(outcome = "SGLT2i", ref_group = "SGLT2i-", vars = top_hyp)
 ```
 
-#### UACR
+#### eGFR
 
 ```{r results='asis', dpi=1200}
-de(outcome = "elevated_uacr", ref_group = "UACR < 30", vars = top_hyp)
+de(outcome = "hyp", ref_group = "eGFR < 135", vars = top_hyp)
 ```
 
 ## RAPID
@@ -1113,12 +1115,6 @@ umap_plot(so, top_rapid)
 de(outcome = "SGLT2i", ref_group = "SGLT2i-", vars = top_rapid)
 ```
 
-#### UACR
-
-```{r results='asis', dpi=1200}
-de(outcome = "elevated_uacr", ref_group = "UACR < 30", vars = top_rapid)
-```
-
 ## HTN
 
 The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_htn,analytes$AptName)])` (associated with genes `r toString(analytes$Target[match(top_htn,analytes$AptName)])`, respectively).
@@ -1137,10 +1133,10 @@ umap_plot(so, top_htn)
 de(outcome = "SGLT2i", ref_group = "SGLT2i-", vars = top_htn)
 ```
 
-#### UACR
+#### Hypertension
 
 ```{r results='asis', dpi=1200}
-de(outcome = "elevated_uacr", ref_group = "UACR < 30", vars = top_htn)
+de(outcome = "htn", ref_group = "HTN-", vars = top_htn)
 ```
 
 ## HTN with SBP
@@ -1161,10 +1157,10 @@ umap_plot(so, top_htn_sbp)
 de(outcome = "SGLT2i", ref_group = "SGLT2i-", vars = top_htn_sbp)
 ```
 
-#### UACR
+#### Hypertension
 
 ```{r results='asis', dpi=1200}
-de(outcome = "elevated_uacr", ref_group = "UACR < 30", vars = top_htn_sbp)
+de(outcome = "htn", ref_group = "HTN-", vars = top_htn_sbp)
 ```
 
 # Soluble omics in SGLT2i+ vs. SGLT2i-
@@ -1227,7 +1223,7 @@ mac_p$downdot
 mac_plot = mac_p$updot + mac_p$downdot + 
   plot_annotation(title = "Severe Albuminuria",
                   theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/MAC_ORA_1600x900.jpeg",plot = mac_plot,
+ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/MAC_ORA_1600x900.jpeg",plot = mac_plot,
        width = 1600,height = 900,units = "px",scale = 2.5)
 
 mac_p_comp <- pathway_comparison(list(
@@ -1240,7 +1236,7 @@ mac_p_comp$downdot
 mac_comp_plot = mac_p_comp$updot + mac_p_comp$downdot + 
   plot_annotation(title = "Severe Albuminuria",
                   theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/MAC_ORA_comparison_1600x900.jpeg",
+ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/MAC_ORA_comparison_1600x900.jpeg",
        plot = mac_comp_plot,width = 1600,height = 900,units = "px",scale = 2.5)
 ```
 
@@ -1264,7 +1260,7 @@ mic_p$downdot
 mic_plot = mic_p$updot + mic_p$downdot + 
   plot_annotation(title = "Moderate Albuminuria",
                   theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/MIC_ORA_1600x900.jpeg",plot = mic_plot,
+ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/MIC_ORA_1600x900.jpeg",plot = mic_plot,
        width = 1600,height = 900,units = "px",scale = 2.5)
 
 mic_p_comp <- pathway_comparison(list(
@@ -1277,7 +1273,7 @@ mic_p_comp$downdot
 mic_comp_plot = mic_p_comp$updot + mic_p_comp$downdot + 
   plot_annotation(title = "Moderate Albuminuria",
                   theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/MIC_ORA_comparison_1600x900.jpeg",
+ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/MIC_ORA_comparison_1600x900.jpeg",
        plot = mic_comp_plot,width = 1600,height = 900,units = "px",scale = 2.5)
 ```
 
@@ -1301,7 +1297,7 @@ hyp_p$downdot
 hyp_plot = hyp_p$updot + hyp_p$downdot + 
   plot_annotation(title = "Hyperfiltration",
                   theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/HYP_ORA_1600x900.jpeg",plot = hyp_plot,
+ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/HYP_ORA_1600x900.jpeg",plot = hyp_plot,
        width = 1600,height = 900,units = "px",scale = 3)
 
 hyp_p_comp <- pathway_comparison(list(
@@ -1314,7 +1310,7 @@ hyp_p_comp$downdot
 hyp_comp_plot = hyp_p_comp$updot + hyp_p_comp$downdot + 
   plot_annotation(title = "Hyperfiltration",
                   theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/HYP_ORA_comparison_1600x900.jpeg",
+ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/HYP_ORA_comparison_1600x900.jpeg",
        plot = hyp_comp_plot,width = 1600,height = 900,units = "px",scale = 2.5)
 ```
 
@@ -1338,7 +1334,7 @@ rapid_p$downdot
 rapid_plot = rapid_p$updot + rapid_p$downdot + 
   plot_annotation(title = "Rapid eGFR decline",
                   theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/RAPID_ORA_1600x900.jpeg",plot = rapid_plot,
+ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/RAPID_ORA_1600x900.jpeg",plot = rapid_plot,
        width = 1600,height = 900,units = "px",scale = 2.8)
 
 rapid_p_comp <- pathway_comparison(list(
@@ -1351,7 +1347,7 @@ rapid_p_comp$downdot
 rapid_comp_plot = rapid_p_comp$updot + rapid_p_comp$downdot + 
   plot_annotation(title = "Rapid eGFR decline",
                   theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/RAPID_ORA_comparison_1600x900.jpeg",
+ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/RAPID_ORA_comparison_1600x900.jpeg",
        plot = rapid_comp_plot,width = 1600,height = 900,units = "px",scale = 2.5)
 ```
 
@@ -1375,7 +1371,7 @@ htn_p$downdot
 htn_plot = htn_p$updot + htn_p$downdot + 
   plot_annotation(title = "Hypertension",
                   theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/HTN_ORA_1600x900.jpeg",plot = htn_plot,
+ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/HTN_ORA_1600x900.jpeg",plot = htn_plot,
        width = 1600,height = 900,units = "px",scale = 2.8)
 
 htn_p_comp <- pathway_comparison(list(
@@ -1388,7 +1384,7 @@ htn_p_comp$downdot
 htn_comp_plot = htn_p_comp$updot + htn_p_comp$downdot + 
   plot_annotation(title = "Hypertension",
                   theme = theme(plot.title = element_text(hjust = 0.5)))
-ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/TODAY/TODAY DKD manuscript [shared]/Figures/HTN_ORA_comparison_1600x900.jpeg",
+ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/HTN_ORA_comparison_1600x900.jpeg",
        plot = htn_comp_plot,width = 1600,height = 900,units = "px",scale = 2.5)
 ```
 
