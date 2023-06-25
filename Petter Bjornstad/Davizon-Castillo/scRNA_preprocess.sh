@@ -17,7 +17,7 @@ STAR  --runMode genomeGenerate \
     --sjdbGTFfile /home/tim/UCD/PEDS/RI\ Biostatistics\ Core/Shared/Shared\ Projects/Laura/Peds\ Endo/Petter\ Bjornstad/scRNA/Miscellaneous/cellranger-7.1.0/external/cellranger_tiny_ref/genes/genes.gtf
 # Alignment with STARsolo
 STAR --genomeDir ./Miscellaneous/STAR\ Genome \
-    --readFilesIn $(find . -name "*_R1_*.fastq.gz" | tr '\n' ',') $(find . -name "*_R2_*.fastq.gz" | tr '\n' ',') \
+    --readFilesIn $(find Data_Raw/fastq/ -name "*_R1_*.fastq.gz" | tr '\n' ',') $(find Data_Raw/fastq/ -name "*_R2_*.fastq.gz" | tr '\n' ',') \
     --soloType CB_UMI_Simple \
     --soloCBwhitelist /home/tim/GitHub/cellranger/lib/python/cellranger/barcodes/737K-august-2016.txt \
     --soloCBstart 1 \
@@ -26,7 +26,7 @@ STAR --genomeDir ./Miscellaneous/STAR\ Genome \
     --soloUMIlen 10 \
     --soloBarcodeMate 1 \
     --clip5pNbases 39 0 \
-    --readFilesCommand zcat \
+    --readFilesCommand gunzip -c \
     --genomeSAsparseD 3 \
     --soloMultiMappers EM \
     --outFileNamePrefix ./Data_Clean/Mapped/\
