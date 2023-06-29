@@ -19,11 +19,13 @@ cd /mnt/HD2/Davizon-Castillo
 #     /mnt/HD2/Davizon-Castillo/reference_genome/ref
 # cd /mnt/HD2/Davizon-Castillo
 
-# Calculate expression
+# Calculate expression levels
 rsem-calculate-expression -p 20 \
+    --star-gzipped-read-file \
     --paired-end \
 	--star \
     --star-path /home/tim/Tools/STAR/source \
-	data_raw/fastqs/0_1_cd93_3_1_S21_L002_R1_001.fastq.gz data_raw/fastqs/0_1_cd93_3_1_S21_L002_R2_001.fastq.gz \
-	/mnt/HD2/Davizon-Castillo/reference_genome \
-    data_clean/quals/test
+	$(find data_raw/fastqs/ -name "*_R1_*.fastq.gz" | sort | tr '\n' ',') \
+    $(find data_raw/fastqs/ -name "*_R2_*.fastq.gz" | sort | tr '\n' ',') \
+	reference_genome/ref \
+    data_clean/rsem_out
