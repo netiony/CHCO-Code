@@ -1,6 +1,6 @@
 library(Seurat)
 # Read in scRNA object
-so <- readRDS("/Volumes/Peds Endo/Petter Bjornstad/scRNA/Data_Clean/seurat_data_no_computations.RDS")
+so <- readRDS("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/Data_Clean/seurat_data_no_computations.RDS")
 # Limit to RH/IMPROVE baseline visit
 so <- so[, !grepl("_12M", so$michigan_id)]
 # Combined groups
