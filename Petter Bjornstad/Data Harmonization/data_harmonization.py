@@ -33,6 +33,7 @@ def harmonize_data():
     from renal_heir import clean_renal_heir
     from renal_heiritage import clean_renal_heiritage
     from panther import clean_panther
+    from panda import clean_panda
     from harmonization_functions import calc_egfr
     # Use individual data functions to import cleaned DFs
     casper = clean_casper()
@@ -42,7 +43,8 @@ def harmonize_data():
     penguin = clean_penguin()
     renal_heir = clean_renal_heir()
     renal_heiritage = clean_renal_heiritage()
-    # panther = clean_panther()
+    panther = clean_panther()
+    panda = clean_panda()
     # Merge
     harmonized = pd.concat([casper, coffee], join='outer', ignore_index=True)
     harmonized = pd.concat([harmonized, crocodile],
@@ -55,10 +57,10 @@ def harmonize_data():
                            join='outer', ignore_index=True)
     harmonized = pd.concat([harmonized, renal_heiritage],
                            join='outer', ignore_index=True)
-    # harmonized = pd.concat([harmonized, panther],
-    #                        join='outer', ignore_index=True)
-    # harmonized = pd.concat([harmonized, panda],
-    #                        join='outer', ignore_index=True)
+    harmonized = pd.concat([harmonized, panther],
+                           join='outer', ignore_index=True)
+    harmonized = pd.concat([harmonized, panda],
+                           join='outer', ignore_index=True)
 
     # Fix levels of categorical variables
     harmonized["visit"] = \
@@ -111,9 +113,6 @@ def harmonize_data():
     harmonized["total_kidney_volume_ml"] = \
         harmonized["left_kidney_volume_ml"] + \
         harmonized["right_kidney_volume_ml"]
-    # Height adjusted kidney volume
-    harmonized["ht_adj_tkv"] = harmonized["total_kidney_volume_ml"] / \
-        (harmonized["height"] / 100)
     # Calculate FSOC = bl_bold - pf_bold
     cols = [c for c in harmonized.columns if "_bl_" in c] + \
         [c for c in harmonized.columns if "_pf_" in c]
