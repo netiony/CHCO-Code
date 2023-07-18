@@ -20,12 +20,16 @@ cd /mnt/HD2/Davizon-Castillo
 # cd /mnt/HD2/Davizon-Castillo
 
 # Calculate expression levels
-rsem-calculate-expression -p 20 \
-    --star-gzipped-read-file \
-    --paired-end \
-	--star \
-    --star-path /home/tim/Tools/STAR/source \
-	$(find data_raw/fastqs/ -name "*_R1_*.fastq.gz" | sort | tr '\n' ',') \
-    $(find data_raw/fastqs/ -name "*_R2_*.fastq.gz" | sort | tr '\n' ',') \
-	reference_genome/ref \
-    data_clean/rsem_out
+for file in $(find data_raw/fastqs/ -name "*_R1_*.fastq.gz"); do
+    name="$(basename -- $file)"
+    name=${name/_R1*/""}
+    rsem-calculate-expression -p 20 \
+        --star-gzipped-read-file \
+        --paired-end \
+        --star \
+        --star-path /home/tim/Tools/STAR/source \
+        ${file} \
+        ${file/R1/R2} \
+        reference_genome/ref \
+        data_clean/rsem_out/${name}
+done
