@@ -33,3 +33,7 @@ for file in $(find data_raw/fastqs/ -name "*_R1_*.fastq.gz"); do
         reference_genome/ref \
         data_clean/rsem_out/${name}
 done
+# Sync to shared drive
+rsync -auvm --include "*/"  --include="*.genes.results" --exclude="*" \
+    /mnt/HD2/Davizon-Castillo \
+    ~/UCD/PEDS/RI\ Biostatistics\ Core/Shared/Shared\ Projects/Laura/Peds\ Endo/Petter\ Bjornstad/
