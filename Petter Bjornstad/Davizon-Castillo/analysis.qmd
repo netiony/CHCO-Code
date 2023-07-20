@@ -1,54 +1,89 @@
 ---
-title: "Title"
+title: "RNAseq Analysis"
 author: "Tim Vigers"
 date: "today"
 date-format: long
 format:
   html:
-    toc: true
-    toc-depth: 5
-    toc-float: true
+    toc: false
     code-fold: true
     self-contained: true
     fig-cap-location: top
     page-layout: full
 editor: source
+bibliography: /Users/timvigers/Library/CloudStorage/Dropbox/Miscellaneous/zotero.bib
+csl: /Users/timvigers/Library/CloudStorage/Dropbox/Miscellaneous/american-medical-association.csl
 ---
 
-```{r}
+```{r libraries}
 #| include: false
 library(tidyverse)
+library(readxl)
+library(edgeR)
+library(limma)
+library(annotables)
+library(knitr)
 ```
 
-```{r}
+```{r data import and formatting}
+#| include: false
 # Import counts (estimated counts since paired read data)
 files = list.files("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Petter Bjornstad/Davizon-Castillo/data_clean/rsem_out",full.names = T)
 files = files[grep(".genes.results",files)]
-df_list = lapply(files,function(f){
+df = lapply(files,function(f){
   id = sub(".genes.results","",basename(f),)
+  id = sub("_S.*","",id)
   d = read.table(f,header=T)
   d = d[,c("gene_id","expected_count")]
   colnames(d) = c("gene_id",id)
   return(d)
 })
 # Combine
-df = df_list %>% reduce(full_join, by = "gene_id")
+df = df %>% reduce(full_join, by = "gene_id") %>% column_to_rownames("gene_id")
+# Add clinical info
+sample_info = read_excel("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Petter Bjornstad/Davizon-Castillo/data_raw/Copy of 2022.09.04_RNA from Pods w. CD93 0.1 03 ug_mL 36h sample list.xlsx")
+sample_info = sample_info[,2:3]
+colnames(sample_info) = sample_info[3,]
+sample_info = sample_info[4:nrow(sample_info),]
+colnames(sample_info) = c("ID","Group")
+sample_info$Group = sub(",.*","",sample_info$Group)
+sample_info$Group = sub("Cells treated with recombinant ","",sample_info$Group)
+sample_info$ID = gsub("\\s|\\.","_",sample_info$ID)
+sample_info = sample_info[sample_info$ID %in% colnames(df),]
+sample_info$Group = factor(sample_info$Group)
+sample_info$Group = relevel(sample_info$Group,ref = "Untreated cells")
 ```
 
+# Methods
 
+Transcripts were aligned to the genome using `STAR` @dobinSTARUltrafastUniversal2013 (via `RSEM` @liRSEMAccurateTranscript2011). Genes with low counts were filtered using `edgeR` @robinsonEdgeRBioconductorPackage2010 and counts were normalized with `voom` @lawVoomPrecisionWeights2014. Untreated cells were used as the reference group in `limma` @ritchieLimmaPowersDifferential2015 ANOVA models.
 
-# Table
+```{r limma}
+#| message: false
+#| label: fig-MV
+#| fig-cap: Mean-variance plot
+# Create design matrix by group
+des = model.matrix(~Group,data = sample_info)
+# DGEList object for processing
+dge <- DGEList(counts=df)
+keep <- filterByExpr(dge, des)
+dge <- dge[keep,]
+dge <- calcNormFactors(dge)
+v <- voom(dge,plot = T)
+fit <- lmFit(v, des)
+fit <- eBayes(fit)
+res = topTable(fit,number = 20) %>% rownames_to_column("ensembl_id")
+# Format results table
+res$ensembl_id = sub("\\..*","",res$ensembl_id)
+res$gene_symbol = grch38$symbol[match(res$ensembl_id,grch38$ensgene)]
+res = res %>% select(ensembl_id,gene_symbol,everything())
+```
 
 ```{r}
-#| label: tbl-planets
-#| tbl-cap: Planets
-
+#| label: tbl-results
+#| tbl-cap: Top 20 differentially expressed genes
+# Print
+kable(res,digits = 3,row.names = F)
 ```
 
-# Figure
-
-```{r}
-#| label: fig-planets
-#| fig-cap: Planets
-
-```
+There was one gene (ENSG00000284461) differentially expressed between the treatment conditions. It's not clear why there is no gene symbol for this gene in our annotation set, but additional information can be found [here](https://www.genecards.org/cgi-bin/carddisp.pl?gene=ENSG00000284461).
