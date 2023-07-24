@@ -179,9 +179,13 @@ def clean_panda():
     mri.columns = mri.columns.str.replace(
         r"mri_", "", regex=True)
     mri.columns = mri.columns.str.replace(
-        r"_pre_", "_bl_", regex=True)
+        r"_pre_r", "_r_bl", regex=True)
     mri.columns = mri.columns.str.replace(
-        r"_post_", "_pf_", regex=True)        
+        r"_pre_l", "_l_bl", regex=True)
+    mri.columns = mri.columns.str.replace(
+        r"_post_r", "_r_pf", regex=True)
+    mri.columns = mri.columns.str.replace(
+        r"_post_l", "_l_pf", regex=True)        
     mri.rename({"volume_right": "right_kidney_volume_ml",
                 "volume_left": "left_kidney_volume_ml"},
                axis=1, inplace=True)
@@ -201,9 +205,9 @@ def clean_panda():
     dxa.replace(rep, np.nan, inplace=True)
     dxa.columns = dxa.columns.str.replace(
         r"dxa_|_percent", "", regex=True)
-    dxa.rename({"dxa_date": "date", "bodyfat_percent": "body_fat", 
-                "leanmass_percent": "lean_mass",
-                "trunkmass_percent": "trunk_mass_percent", "fatmass_kg": "fat_kg",
+    dxa.rename({"dxa_date": "date", "bodyfat": "body_fat", 
+                "leanmass": "lean_mass",
+                "trunkmass": "trunk_mass", "fatmass_kg": "fat_kg",
                 "leanmass_kg": "lean_kg", "trunkmass_kg": "trunk_kg",
                 "bmd": "bone_mineral_density"}, axis=1, inplace=True)
     dxa_cols = dxa.columns[3:].to_list()
