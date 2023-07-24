@@ -194,9 +194,10 @@ def clean_panther():
     dxa.replace(rep, np.nan, inplace=True)
     dxa.columns = dxa.columns.str.replace(
         r"dxa_", "dexa_", regex=True)
+    # DEXA Redcap form flipped weight/height vars
     dxa.rename({"bmd": "dexa_bone_mineral_density", "dexa_date": "date",
-                "dexa_height": "height", "dexa_weight": "weight",
-                "bodyfat_percent": "dexa_body_fat", "lean_mass_percent": "dexa_lean_mass",
+                "dexa_height": "weight", "dexa_weight": "height", 
+                "bodyfat_percent": "dexa_body_fat", "leanmass_percent": "dexa_lean_mass",
                 "trunkmass_percent": "dexa_trunk_mass", "fatmass_kg": "dexa_fat_kg", 
                 "leanmass_kg": "dexa_lean_kg", "trunkmass_kg": "dexa_trunk_kg"}, axis=1, inplace=True)
     dxa.drop(["dexa_age"], axis=1, inplace=True)

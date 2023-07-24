@@ -1,0 +1,92 @@
+---
+title: "TEEN-LABS"
+author: "Laura Pyle, Tim Vigers, Ye Ji Choi"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    theme: default
+    page-layout: full
+    embed-resources: true
+editor: visual
+---
+
+```{r, include=F}
+library(dplyr)
+library(sas7bdat)
+library(SomaDataIO)
+library(table1)
+
+# Clinical Data
+clinical_dat <- read.sas7bdat("/Volumes/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/bjornstad_03_15_2023.sas7bdat")
+names(clinical_dat) <- tolower(names(clinical_dat))
+clinical_dat <- clinical_dat %>% rename(common_id = sample_id) %>%
+  mutate(albuminuria = case_when(uacratio * 1000 < 30 ~ "A1",
+                                 uacratio * 1000 >= 30 & uacratio * 1000 <=300 ~ "A2",
+                                 uacratio * 1000 >300 ~ "A3")) %>%
+  dplyr::group_by(id) %>%
+  mutate(diab_resolved = case_when(sum(na.omit(diab)) > 0 & (last(na.omit(diab))-first(na.omit(diab))) < 0 ~ 1,
+                                   sum(na.omit(diab)) > 0 & (last(na.omit(diab))-first(na.omit(diab))) == 0 ~ 0,
+                                   sum(na.omit(diab)) == 0 ~ 2)) %>%
+  mutate(race_ethnicity = case_when(race == 1 & ethn == 2 ~ "Non-Hispanic White",
+                                              race == 2 & ethn == 2 ~ "Non-Hispanic Black",
+                                              ethn == 1 ~ "Hispanic",
+                                              T ~ "Other"))
+
+# Soma Data
+soma_dat <- read_adat("/Volumes/Peds Endo/Petter Bjornstad/Teen Labs/Data_Raw/WUS_22_007_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
+names(soma_dat) <- tolower(names(soma_dat))
+soma_dat <- soma_dat %>% rename(common_id = sampledescription)
+
+# Merge (Per Todd, samples "FAF001634 0200" and "FAF001855 0200" were excluded due to "invalid draw date information that prevented the DCC from linking these specimens with study data.")
+dat <- merge(clinical_dat, soma_dat, by = "common_id", all.x = TRUE, all.y = FALSE) %>%
+  filter(!common_id %in% c("FAF001634 0200","FAF001855 0200"))
+
+# Categorical data
+dat$sex <- factor(dat$sex, levels = 1:2, labels = c("Male", "Female"))
+dat$ethn <- factor(dat$ethn, levels = 1:2, labels = c("Hispanic", "Non-Hispanic"))
+dat$race <- factor(dat$race, levels = 1:8, labels = c("White or Caucasian", 
+                                                      "Black or African-American", 
+                                                      "Asian",
+                                                      "American Indian or Alaska Native",
+                                                      "Native Hawaiian or other Pacific Islander",
+                                                      "Other",
+                                                      "Unknown",
+                                                      "More than one race"))
+
+dat$surg <- factor(dat$surg, levels = c(1, 4, 5), labels = c("Gastric bypass",
+                                                      "Laparoscopic adjustable gastric band",
+                                                      "Sleeve gastrectomy - initial stage"))
+dat$potentialpreg <- factor(dat$potentialpreg, levels = 0:1, labels = c("No", "Yes"))
+dat$fasting <- factor(dat$fasting, levels = 0:1, labels = c("Non-Fasting", "Fasting"))
+dat$labid <- factor(dat$labid, levels = 1:2, labels = c("NWRL", "Quest"))
+dat$diab <- factor(dat$diab, levels = 0:1, labels = c("No", "Yes"))
+dat$visit <- factor(dat$visit, levels = c(1,6,12,24,36,48,60), labels = c("Month 1", "Month 6", "Year 1", "Year 2", "Year 3","Year 4","Year 5"))
+dat$diab_resolved <- factor(dat$diab_resolved, levels = 0:2, labels = c("No", "Yes", "Non-diabetic"))
+
+# Data dictionary and labels
+clin_dict <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/DataDictionary_clean.csv") %>%
+  select(name, description) 
+soma_dict <- SomaDataIO::getAnalyteInfo(soma_dat) %>%
+  select(AptName, Target) %>%
+  rename(name = AptName) %>%
+  rename(description = Target)
+dict <- bind_rows(clin_dict, soma_dict)
+dict <- setNames(data.frame(t(dict[ , - 1])), dict[ , 1])
+dict %<>%
+  mutate(diab = "Diabetes") %>%
+  mutate(diab_resolved = "Diabetes resolved after procedure (if previously diagnosed)") %>%
+  mutate(race_ethnicity = "Race/Ethnicity") %>%
+  mutate(albuminuria = "Albuminuria")
+dict <- dict[intersect(names(dat), names(dict))]
+dict[setdiff(names(dat), names(dict))] <- ""
+Hmisc::label(dat) = dict[match(names(dat), names(dict))]
+```
+
+```{r}
+table1(~ sex + age + ethn + race + surg + diab + diab_resolved + sbp + dbp + hrate + bfat + bmi + weight + height + uacratio + albuminuria + cysc
+       | visit, data = dat, overall = F)
+```
