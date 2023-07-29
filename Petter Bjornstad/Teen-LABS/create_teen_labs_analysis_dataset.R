@@ -96,7 +96,7 @@ label(df) <- as.list(labels)
 label(df$diab) <- "Diabetes"
 label(df$diab_resolved) <- "Diabetes resolved?"
 label(df$albuminuria) <- "Albuminuria level"
-label(df$months) = "Months"
+label(df$months) <- "Months"
 # As regular dataframe
 df <- as.data.frame(df)
 # Save
