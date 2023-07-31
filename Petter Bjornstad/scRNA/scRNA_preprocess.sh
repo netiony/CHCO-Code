@@ -16,19 +16,23 @@ python3 -m multiqc data_clean/qc/fastqc -o data_clean/qc --no-data-dir --interac
 #     --genomeFastaFiles /home/tim/UCD/PEDS/RI\ Biostatistics\ Core/Shared/Shared\ Projects/Laura/Peds\ Endo/Petter\ Bjornstad/scRNA/Miscellaneous/cellranger-7.1.0/external/cellranger_tiny_ref/fasta/genome.fa \
 #     --sjdbGTFfile /home/tim/UCD/PEDS/RI\ Biostatistics\ Core/Shared/Shared\ Projects/Laura/Peds\ Endo/Petter\ Bjornstad/scRNA/Miscellaneous/cellranger-7.1.0/external/cellranger_tiny_ref/genes/genes.gtf
 # Alignment with STARsolo
-STAR --genomeDir ./Miscellaneous/STAR\ Genome \
-    --readFilesIn $(find data_raw/fastqs/ -name "*_R1_*.fastq.gz" | tr '\n' ',') $(find data_raw/fastqs/ -name "*_R2_*.fastq.gz" | tr '\n' ',') \
-    --soloType CB_UMI_Simple \
-    --soloCBwhitelist /home/tim/GitHub/cellranger/lib/python/cellranger/barcodes/737K-august-2016.txt \
-    --soloCBstart 1 \
-    --soloCBlen 16 \
-    --soloUMIstart 17 \
-    --soloUMIlen 10 \
-    --soloBarcodeMate 1 \
-    --clip5pNbases 39 0 \
-    --readFilesCommand gunzip -c \
-    --genomeSAsparseD 3 \
-    --soloMultiMappers EM \
-    --outFileNamePrefix ./data_clean/mapped/ \
-    --outTmpDir /mnt/HD2/Bjornstad/scRNA/STAR_temp \
-    --runThreadN 16
+for file in $(find data_raw/fastqs/ -name "*_R1_*.fastq.gz"); do
+    name="$(basename -- $file)"
+    name=${name/_R1*/""}
+    STAR --genomeDir ./Miscellaneous/STAR\ Genome \
+        --readFilesIn ${file/R1/R2} ${file} \
+        --soloType CB_UMI_Simple \
+        --soloCBwhitelist /home/tim/GitHub/cellranger/lib/python/cellranger/barcodes/737K-august-2016.txt \
+        --soloCBstart 1 \
+        --soloCBlen 16 \
+        --soloUMIstart 17 \
+        --soloUMIlen 10 \
+        --soloBarcodeMate 1 \
+        --clip5pNbases 39 0 \
+        --readFilesCommand gunzip -c \
+        --genomeSAsparseD 3 \
+        --soloMultiMappers EM \
+        --outFileNamePrefix ./data_clean/mapped/${name} \
+        --outTmpDir /mnt/HD2/Bjornstad/scRNA/STAR_temp \
+        --runThreadN 16
+done
