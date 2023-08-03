@@ -9,7 +9,7 @@ easy_elasticnet = function(data,outcome,predictors,
                            n_alphas = 10,n_lambdas = 100,max_coef = NULL,
                            model_type = "gaussian",time = NULL,
                            cv_method = "loo",folds = NULL,out = "1se.error",
-                           cores = 4,seed = 1017){
+                           cores = 4,seed = 3654){
   require(ensr)
   df = data
   # Random seed
@@ -31,10 +31,10 @@ easy_elasticnet = function(data,outcome,predictors,
     X = data.matrix(X[idx,])
     Y = data.matrix(Y[idx,])
     # Remove variables without any variance
-    near_zero = caret::nearZeroVar(X)
-    if(length(near_zero)>0){
-      X = X[,-near_zero]
-    }
+    #near_zero = caret::nearZeroVar(X)
+    #if(length(near_zero)>0){
+    #  X = X[,-near_zero]
+    #}
   } else if (model_type == "binomial" | model_type == "gaussian"){
     # Outcome matrix
     Y = df[,outcome]
@@ -92,7 +92,7 @@ easy_elasticnet = function(data,outcome,predictors,
   selected = as.matrix(coef(mod))
   selected = rownames(selected)[selected[,1] != 0]
   selected = selected[selected != "(Intercept)"]
-  selected = predictors[match(selected,preds)]
+  #selected = predictors[match(selected,preds)]
   # Remove variables from global environment, just in case
   rm(X,Y,n_alphas,n_lambdas,model_type,folds,p,envir = .GlobalEnv)
   # Return selected variables
