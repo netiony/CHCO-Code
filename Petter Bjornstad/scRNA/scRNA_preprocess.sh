@@ -36,3 +36,21 @@ for file in $(find data_raw/fastqs/ -name "*_R1_*.fastq.gz"); do
         --outTmpDir /mnt/HD2/Bjornstad/scRNA/STAR_temp \
         --runThreadN 16
 done
+# Test
+STAR --genomeDir ./Miscellaneous/STAR\ Genome \
+        --readFilesIn data_raw/fastqs/2402-EO-1_AGAATGGTTT-TCCCACCCTC_S18_L000_R2_001.fastq.gz \
+        data_raw/fastqs/2402-EO-1_AGAATGGTTT-TCCCACCCTC_S18_L000_R1_001.fastq.gz \
+        --soloType CB_UMI_Simple \
+        --soloCBwhitelist /home/tim/GitHub/cellranger/lib/python/cellranger/barcodes/737K-august-2016.txt \
+        --soloCBstart 1 \
+        --soloCBlen 16 \
+        --soloUMIstart 17 \
+        --soloUMIlen 10 \
+        --soloBarcodeMate 1 \
+        --clip5pNbases 39 0 \
+        --readFilesCommand gunzip -c \
+        --genomeSAsparseD 3 \
+        --soloMultiMappers EM \
+        --outFileNamePrefix ./data_clean/mapped/test \
+        --outTmpDir /mnt/HD2/Bjornstad/scRNA/STAR_temp \
+        --runThreadN 16
