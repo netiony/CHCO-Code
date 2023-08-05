@@ -47,6 +47,7 @@ cols = [c for c in cols if c not in skip]
 df = df[cols]
 # Select rows
 df = df[df["study"].isin(["CROCODILE", "PANDA", "RENAL-HEIR", "RENAL-HEIRitage"])]
+df = df[df["procedure"].isin(["bold_mri", "clamp", "kidney_biopsy", "medications"])]
 # Write
 df.to_csv(
     "/Volumes/Work/Petter Bjornstad/Data Harmonization/Data Exports/pierre_clustering.csv",
