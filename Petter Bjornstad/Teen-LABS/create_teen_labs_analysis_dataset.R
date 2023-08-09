@@ -4,9 +4,9 @@ library(readxl)
 library(SomaDataIO)
 library(Hmisc)
 # Clinical Data
-clinical <- read.sas7bdat("/Volumes/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/bjornstad_03_15_2023.sas7bdat")
+clinical <- read.sas7bdat("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Petter Bjornstad/Teen Labs/Data_Cleaned/bjornstad_03_15_2023.sas7bdat")
 # Proteomics data
-soma <- read_adat("/Volumes/Peds Endo/Petter Bjornstad/Teen Labs/Data_Raw/WUS_22_007_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
+soma <- read_adat("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Petter Bjornstad/Teen Labs/Data_Raw/WUS_22_007_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
 soma <- soma %>%
   # Remove flagged rows, QC samples, and excluded samples
   filter(
@@ -15,6 +15,8 @@ soma <- soma %>%
   ) %>%
   # Remove unnecessary columns
   select(SampleDescription, contains("seq."))
+# Log transform
+soma[,grep("seq",colnames(soma))] = lapply(soma[,grep("seq",colnames(soma))],log)
 # Merge
 df <- left_join(clinical, soma, by = c("SAMPLE_ID" = "SampleDescription"))
 # Create new variables
@@ -35,7 +37,8 @@ df <- df %>%
     RACE == 2 & ETHN == 2 ~ "Non-Hispanic Black",
     ETHN == 1 ~ "Hispanic",
     T ~ "Other"
-  ))
+  )) %>%
+  group_by(ID) %>% mutate(diab_baseline = first(na.omit(diab))) %>% ungroup()
 # Categorical data
 df$SEX <- factor(df$SEX, levels = 1:2, labels = c("Male", "Female"))
 df$ETHN <- factor(df$ETHN,
@@ -73,6 +76,7 @@ df$fasting <- factor(df$fasting,
 )
 df$labid <- factor(df$labid, levels = 1:2, labels = c("NWRL", "Quest"))
 df$diab <- factor(df$diab, levels = 0:1, labels = c("No", "Yes"))
+df$diab_baseline <- factor(df$diab_baseline, levels = 0:1, labels = c("No", "Yes"))
 df$months <- df$visit
 df$visit <- factor(df$visit,
   levels = c(1, 6, 12, 24, 36, 48, 60),
@@ -86,18 +90,19 @@ df$diab_resolved <- factor(df$diab_resolved,
   labels = c("No", "Yes", "Non-diabetic")
 )
 # Labels
-dict <- read_excel("/Volumes/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/DataDictionary.xlsx")
+dict <- read_excel("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Petter Bjornstad/Teen Labs/Data_Cleaned/DataDictionary.xlsx")
 analytes <- getAnalytes(soma)
 analyte_info <- getAnalyteInfo(soma)
 labels <- dict$Description[match(names(df), dict$Name)]
 names(labels) <- colnames(df)
-labels[analytes] <- analyte_info$EntrezGeneSymbol[match(names(labels[analytes]), analyte_info$AptName)]
+labels[analytes] <- paste0("log(",analyte_info$EntrezGeneSymbol[match(names(labels[analytes]), analyte_info$AptName)],")")
 label(df) <- as.list(labels)
 label(df$diab) <- "Diabetes"
 label(df$diab_resolved) <- "Diabetes resolved?"
 label(df$albuminuria) <- "Albuminuria level"
 label(df$months) <- "Months"
+label(df$diab_baseline) = "Diabetes at Baseline"
 # As regular dataframe
 df <- as.data.frame(df)
 # Save
-save(df, file = "/Volumes/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/analysis_dataset.RData")
+save(df,analyte_info, file = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Petter Bjornstad/Teen Labs/Data_Cleaned/analysis_dataset.RData")
