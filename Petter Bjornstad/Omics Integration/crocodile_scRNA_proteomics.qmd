@@ -1,0 +1,102 @@
+---
+title: "Integration of scRNA and SOMAScan in CROCODILE"
+author: "Tim Vigers"
+date: "today"
+date-format: long
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
+    code-fold: true
+    self-contained: true
+    fig-cap-location: top
+    page-layout: full
+    theme:
+      light: flatly
+      dark: darkly
+bibliography: /Users/timvigers/Documents/Miscellaneous/zotero.bib
+csl: /Users/timvigers/Documents/Miscellaneous/american-medical-association.csl
+editor: source
+---
+
+```{r libraries}
+#| include: false
+library(tidyverse)
+library(Seurat)
+library(SNFtool)
+library(MOFA2)
+```
+
+```{r data cleaning}
+# Import scRNA
+so <- readRDS("~/Documents/Work/Petter Bjornstad/scRNA/data_clean/seurat_data_no_computations.RDS")
+# Limit to CROCODILE
+so <- so[, grepl("CRC", so$michigan_id)]
+# Aggregate by ident
+rna <- AggregateExpression(so, assays = "RNA", group.by = c("ident", "michigan_id"))
+rna <- as.data.frame(t(rna$RNA))
+# Format and make extra long
+ids <- strsplit(rownames(rna), "_(?!.*_)", perl = TRUE)
+rna$id <- sapply(ids, "[[", 2)
+rna$cell_type <- sapply(ids, "[[", 1)
+rna <- rna %>% select(id, cell_type, everything())
+df <- rna %>% pivot_longer(AL627309.5:last_col())
+colnames(df) <- c("sample", "view", "feature", "value")
+# Import SOMAScan
+load("~/Documents/Work/Petter Bjornstad/CROCODILE/Somalogic data/croc_soma.Rdata")
+load("/Users/timvigers/Documents/Work/Petter Bjornstad/CROCODILE/Somalogic data/analytes.Rdata")
+croc_soma$view <- "SOMAScan"
+# Limit to those with both types of data
+keep <- sort(intersect(unique(rna$sample), unique(croc_soma$SampleDescription)))
+croc_soma <- croc_soma %>%
+  select(SampleDescription, view, contains("seq")) %>%
+  pivot_longer(contains("seq")) %>%
+  select(SampleDescription, view, name, value)
+colnames(croc_soma) <- c("sample", "view", "feature", "value")
+df <- rbind(df, croc_soma)
+# Fix view and feature names
+df$view <- gsub("/", "_", df$view)
+df$feature <- paste(df$feature, "in", df$view)
+```
+
+```{r}
+# Prepare for MOFA!
+mo <- create_mofa(df)
+# Data options
+data_opts <- get_default_data_options(mo)
+data_opts$scale_views <- T
+data_opts$scale_groups <- T
+# Model options
+model_opts <- get_default_model_options(mo)
+model_opts$num_factors <- 10
+# Training options
+training_opts <- get_default_training_options(mo)
+training_opts$maxiter <- 1e6
+training_opts$seed <- 1017
+```
+
+```{r}
+#| eval: false
+# Fit
+mo <- prepare_mofa(
+  object = mo,
+  data_options = data_opts,
+  model_options = model_opts,
+  training_options = training_opts
+)
+mo_trained <- run_mofa(mo, outfile = "/Users/timvigers/Documents/Work/Petter Bjornstad/CROCODILE/Data_Cleaned/mofa_model.hdf5", use_basilisk = T, save_data = F)
+```
+
+```{r}
+#| label: fig-overview
+#| fig-cap: Data overview
+plot_data_overview(mo)
+```
+
+# MOFA questions
+
+1. Do you use spike-slab sparsity prior in the factors and/or weights? 
+  - Any other model/training recommendations?
+  
+2. What feature selection approaches do you use prior to fitting the model? Something like 
