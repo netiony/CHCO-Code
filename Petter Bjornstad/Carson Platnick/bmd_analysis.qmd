@@ -14,8 +14,16 @@ format:
 editor: visual
 ---
 
+Notes from meeting w/ Carson on 7/27/23:
+
+- Try the absolute mass vars for DEXA
+- Add trunk mass
+- Adjust for BMI in hba1c model
+- Try different groups or subsetting groups
+
 ```{r, include = F}
 library(dplyr)
+library(car)
 library(tidyr)
 library(table1)
 library(Hmisc)
@@ -27,6 +35,10 @@ library(arsenal)
 library(data.table)
 library(ggpubr)
 library(smplot2)
+library(corrplot)
+library(ggpmisc)
+library(jtools)
+library(interactions)
 ```
 
 ```{r, include = F}
@@ -37,8 +49,8 @@ dict <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_di
 
 dat <- dat %>%
   filter(study != "PENGUIN") %>%
-  summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
-            across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+  dplyr::summarise(dplyr::across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+            dplyr::across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
             .by = record_id) %>%
   mutate(race = case_when(grepl("&", race) ~ "More Than One",
                           T ~ race)) %>%
@@ -65,21 +77,14 @@ dat %>%
     geom_histogram()
 
 dat %>%
-  select(dexa_lean_kg, dexa_fat_kg, dexa_body_fat, dexa_trunk_kg, fasting_ffa, ffa_suppression, fasting_insulin, steady_state_insulin, steady_state_cpeptide, raw_m, m_i, di, airg, acprg) %>% 
+  select(dexa_lean_kg, dexa_fat_kg, dexa_body_fat, dexa_fat_kg, dexa_trunk_kg, fasting_ffa, ffa_suppression, fasting_insulin, steady_state_insulin, steady_state_cpeptide, raw_m, di, airg, acprg) %>% 
   gather() %>% 
   ggplot(aes(value)) +
     facet_wrap(~ key, scales = "free") +
     geom_histogram()
 
 dat %>%
-  select(gfr_raw_plasma,  gfr_bsa_plasma,  erpf_raw_plasma,  erpf_bsa_plasma,  ff,  glomerular_pressure,  ra,  re,  rvr,  total_kidney_volume_ml, ht_adj_tkv, pcasl3d_left, pcasl3d_right, adc_left, adc_right, bold_l_bl_cortex, bold_r_bl_cortex,  bold_l_bl_medulla, bold_r_bl_medulla,   fsoc_l_medulla, fsoc_r_medulla, fsoc_l_medulla, fsoc_r_medulla) %>% 
-  gather() %>% 
-  ggplot(aes(value)) +
-    facet_wrap(~ key, scales = "free") +
-    geom_histogram()
-
-dat %>%
-  select(ends_with(c("vw")))%>% 
+  select(gfr_raw_plasma,  gfr_bsa_plasma,  erpf_raw_plasma,  erpf_bsa_plasma,  ff,  glomerular_pressure,  ra,  re,  rvr,  total_kidney_volume_ml, pcasl3d_left, pcasl3d_right, adc_left, adc_right, bold_l_bl_cortex, bold_r_bl_cortex,  bold_l_bl_medulla, bold_r_bl_medulla,   fsoc_l_medulla, fsoc_r_medulla, fsoc_l_medulla, fsoc_r_medulla) %>% 
   gather() %>% 
   ggplot(aes(value)) +
     facet_wrap(~ key, scales = "free") +
@@ -92,26 +97,267 @@ dat %>%
 ## All Participants
 
 ```{r, include=F}
-table_one <- tableby(group ~ study + sex + age + race + ethnicity + kwt(hba1c, "Nmiss", "median", "q1q3", "range") + bmi + dexa_body_fat + dexa_lean_mass + dexa_bone_mineral_density + map, data = dat)
+table_one <- tableby(group ~ study + sex + age + race + ethnicity + kwt(hba1c, "Nmiss", "median", "q1q3", "range") + kwt(bmi, "Nmiss", "median", "q1q3", "range") + dexa_body_fat + dexa_fat_kg + dexa_lean_mass + dexa_bone_mineral_density + map, data = dat)
 ```
 
 ```{r results='asis'}
+#| echo: false
 table_one <- summary(table_one, pfootnote = T, digits=3, digits.pct=0)
 table_one
 ```
 
-```{r}
-ggplot(dat, aes(hba1c, dexa_bone_mineral_density, size = age)) +
+# Interactions
+## Sex and group
+```{r message = F, warning = F}
+#| echo: false
+sex_group <- lm(dexa_bone_mineral_density ~ sex*group + sex + group, data = dat)
+summ(sex_group, digits =5)
+```
+## HbA1c and group (limited to T1D and T2D only)
+```{r message = F, warning = F}
+#| echo: false
+hba1c_group <- lm(dexa_bone_mineral_density ~ hba1c*group + hba1c + group, data = subset(dat, group == "Type 1 Diabetes"| group =="Type 2 Diabetes"))
+summ(hba1c_group, digits =5)
+# interact_plot(hba1c_group, pred = hba1c, modx = group,
+#               plot.points = TRUE, linearity.check = TRUE)
+
+ggplot(subset(dat, grepl("Type", group)), aes(hba1c, dexa_bone_mineral_density, size = age, color = group)) +
   labs(x = Hmisc::label(dat$hba1c),
        y = Hmisc::label(dat$dexa_bone_mineral_density),
-       color  = "Group") +
-  geom_point(aes(color=group), alpha = 0.6) +
+       color  = "Group",
+       size = "Age") +
+  geom_point(aes(color=group), alpha = 0.4) +
   scale_color_brewer(palette = "Set1") +
-  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
-              linetype = 'dashed') +
-  sm_corr_theme()
+  sm_corr_theme() + 
+  geom_smooth(method=lm, se=F, fullrange=F, aes(color=group)) +
+  stat_poly_line(se = F) 
 
-summary(lm(hba1c ~ dexa_bone_mineral_density, data = dat))
-summary(lm(hba1c ~ dexa_bone_mineral_density + age + sex + bmi + dexa_body_fat + dexa_lean_mass, data = dat))
+```
+## BMI and group
+```{r message = F, warning = F}
+#| echo: false
+bmi_group <- lm(dexa_bone_mineral_density ~ bmi*group + bmi + group, data = dat)
+summ(bmi_group, digits =5)
+# interact_plot(bmi_group, pred = bmi, modx = group,
+#               plot.points = TRUE, linearity.check = TRUE)
 
+ggplot(dat, aes(bmi, dexa_bone_mineral_density, size = age, color = group)) +
+  labs(x = Hmisc::label(dat$bmi),
+       y = Hmisc::label(dat$dexa_bone_mineral_density),
+       color  = "Group",
+       size = "Age") +
+  geom_point(aes(color=group), alpha = 0.4) +
+  scale_color_brewer(palette = "Set1") +
+  sm_corr_theme() + 
+  geom_smooth(method=lm, se=F, fullrange=F, aes(color=group)) +
+  stat_poly_line(se = F)
+```
+## Body fat mass (%) and group
+```{r message = F, warning = F}
+#| echo: false
+dexa_body_fat_group <- lm(dexa_bone_mineral_density ~ dexa_body_fat*group + dexa_body_fat + group, data = dat)
+summ(dexa_body_fat_group)
+# interact_plot(dexa_body_fat_group, pred = dexa_body_fat, modx = group,
+#               plot.points = TRUE, linearity.check = TRUE)
+ggplot(dat, aes(dexa_body_fat, dexa_bone_mineral_density, size = age, color = group)) +
+  labs(x = Hmisc::label(dat$dexa_body_fat),
+       y = Hmisc::label(dat$dexa_bone_mineral_density),
+       color  = "Group",
+       size = "Age") +
+  geom_point(aes(color=group), alpha = 0.4) +
+  scale_color_brewer(palette = "Set1") +
+  sm_corr_theme() + 
+  geom_smooth(method=lm, se=F, fullrange=F, aes(color=group)) +
+  stat_poly_line(se = F)
+```
+## Body fat mass (%) and sex
+```{r message = F, warning = F}
+#| echo: false
+dexa_body_fat_sex <- lm(dexa_bone_mineral_density ~ dexa_body_fat*sex + dexa_body_fat + sex, data = dat)
+summ(dexa_body_fat_sex, digits =5)
+# interact_plot(dexa_body_fat_sex, pred = dexa_body_fat, modx = sex,
+#               plot.points = TRUE, linearity.check = TRUE)
+ggplot(dat, aes(dexa_body_fat, dexa_bone_mineral_density, size = age, color = sex)) +
+  labs(x = Hmisc::label(dat$dexa_body_fat),
+       y = Hmisc::label(dat$dexa_bone_mineral_density),
+       color  = "Sex",
+       size = "Age") +
+  geom_point(aes(color=sex), alpha = 0.4) +
+  scale_color_brewer(palette = "Set1") +
+  sm_corr_theme() + 
+  geom_smooth(method=lm, se=F, fullrange=F, aes(color=sex)) +
+  stat_poly_line(se = F)
+```
+## Absolute body fat mass (kg) and group
+```{r message = F, warning = F}
+#| echo: false
+dexa_fat_kg_group <- lm(dexa_bone_mineral_density ~ dexa_fat_kg*group + dexa_fat_kg + group, data = dat)
+summ(dexa_fat_kg_group)
+# interact_plot(dexa_fat_kg_group, pred = dexa_fat_kg, modx = group,
+#               plot.points = TRUE, linearity.check = TRUE)
+ggplot(dat, aes(dexa_fat_kg, dexa_bone_mineral_density, size = age, color = group)) +
+  labs(x = Hmisc::label(dat$dexa_fat_kg),
+       y = Hmisc::label(dat$dexa_bone_mineral_density),
+       color  = "Group",
+       size = "Age") +
+  geom_point(aes(color=group), alpha = 0.4) +
+  scale_color_brewer(palette = "Set1") +
+  sm_corr_theme() + 
+  geom_smooth(method=lm, se=F, fullrange=F, aes(color=group)) +
+  stat_poly_line(se = F)
+```
+## Absolute body fat mass (kg) and sex
+```{r message = F, warning = F}
+#| echo: false
+dexa_fat_kg_sex <- lm(dexa_bone_mineral_density ~ dexa_fat_kg*sex + dexa_fat_kg + sex, data = dat)
+summ(dexa_fat_kg_sex, digits =5)
+# interact_plot(dexa_fat_kg_sex, pred = dexa_fat_kg, modx = sex,
+#               plot.points = TRUE, linearity.check = TRUE)
+ggplot(dat, aes(dexa_fat_kg, dexa_bone_mineral_density, size = age, color = sex)) +
+  labs(x = Hmisc::label(dat$dexa_fat_kg),
+       y = Hmisc::label(dat$dexa_bone_mineral_density),
+       color  = "Sex",
+       size = "Age") +
+  geom_point(aes(color=sex), alpha = 0.4) +
+  scale_color_brewer(palette = "Set1") +
+  sm_corr_theme() + 
+  geom_smooth(method=lm, se=F, fullrange=F, aes(color=sex)) +
+  stat_poly_line(se = F)
+```
+## Lean mass (%) and group
+```{r message = F, warning = F}
+#| echo: false
+dexa_lean_mass_group <- lm(dexa_bone_mineral_density ~ dexa_lean_mass*group + dexa_lean_mass + group, data = dat)
+summ(dexa_lean_mass_group)
+# interact_plot(dexa_lean_mass_group, pred = dexa_lean_mass, modx = group,
+#               plot.points = TRUE, linearity.check = TRUE)
+```
+## Lean mass (%) and sex
+```{r message = F, warning = F}
+#| echo: false
+dexa_lean_mass_sex <- lm(dexa_bone_mineral_density ~ dexa_lean_mass*sex + dexa_lean_mass + sex, data = dat)
+summ(dexa_lean_mass_sex, digits =5)
+# interact_plot(dexa_lean_mass_sex, pred = dexa_lean_mass, modx = sex,
+#               plot.points = TRUE, linearity.check = TRUE)
+
+ggplot(dat, aes(dexa_lean_mass, dexa_bone_mineral_density, size = age, color = sex)) +
+  labs(x = Hmisc::label(dat$dexa_lean_mass),
+       y = Hmisc::label(dat$dexa_bone_mineral_density),
+       color  = "Sex",
+       size = "Age") +
+  geom_point(aes(color=sex), alpha = 0.4) +
+  scale_color_brewer(palette = "Set1") +
+  sm_corr_theme() + 
+  geom_smooth(method=lm, se=F, fullrange=F, aes(color=sex)) +
+  stat_poly_line(se = F)
+```
+
+
+# Box plot
+```{r message = F}
+#| echo: false
+stat.test <- dat %>%
+  group_by(group) %>%
+  t_test(dexa_bone_mineral_density ~ sex) %>%
+  add_xy_position(x = "group", dodge = 0.8)
+
+ggboxplot(dat, "group", "dexa_bone_mineral_density",
+          add = "jitter", color = "sex",
+          order = c("Lean Control", "Obese Control", "Type 1 Diabetes", "Type 2 Diabetes")) +
+  labs(x = Hmisc::label(dat$group),
+       y = Hmisc::label(dat$dexa_bone_mineral_density),
+       color  = "Sex") +
+  scale_color_brewer(palette = "Set1") +
+  sm_corr_theme() + 
+  stat_pvalue_manual(stat.test,  label = "p", tip.length = 0)
+```
+
+# Simple linear regression
+
+```{r}
+#| echo: false
+simple_hba1c <- lm(dexa_bone_mineral_density ~ hba1c, dat)
+simple_bmi <- lm(dexa_bone_mineral_density ~ bmi, dat)
+simple_dexa_body_fat <- lm(dexa_bone_mineral_density ~ dexa_body_fat, dat)
+simple_dexa_fat_kg <- lm(dexa_bone_mineral_density ~ dexa_fat_kg, dat)
+simple_dexa_lean_mass <- lm(dexa_bone_mineral_density ~ dexa_lean_mass, dat)
+simple_dexa_trunk_mass <- lm(dexa_bone_mineral_density ~ dexa_trunk_mass, dat)
+```
+## HbA1c
+```{r}
+#| echo: false
+summ(simple_hba1c, digits = 5)
+```
+## BMI
+```{r}
+#| echo: false
+summ(simple_bmi, digits = 5)
+```
+## Body fat (%)
+```{r}
+#| echo: false
+summ(simple_dexa_body_fat, digits = 5)
+```
+## Absolute body fat (kg)
+```{r}
+#| echo: false
+summ(simple_dexa_fat_kg, digits = 5)
+```
+## Lean mass (%)
+```{r}
+#| echo: false
+summ(simple_dexa_lean_mass, digits = 5)
+```
+## Trunk mass (%)
+```{r}
+#| echo: false
+summ(simple_dexa_trunk_mass, digits = 5)
+```
+# Correlation
+```{r}
+#| echo: false
+corrplot(cor(subset(dat, 
+                    select = c("age", "bmi", "hba1c", "dexa_body_fat", "dexa_fat_kg", "dexa_lean_mass", "dexa_trunk_mass")),
+             use = "complete.obs"), method = "number")
+```
+
+# Multiple linear regression
+```{r}
+#| echo: false
+adj_hba1c <- lm(dexa_bone_mineral_density ~ hba1c + age + sex + bmi, dat)
+adj_bmi <- lm(dexa_bone_mineral_density ~ bmi + age + sex, dat)
+adj_dexa_body_fat <- lm(dexa_bone_mineral_density ~ dexa_body_fat + age + sex, dat)
+adj_dexa_fat_kg <- lm(dexa_bone_mineral_density ~ dexa_fat_kg + age + sex, dat)
+adj_dexa_lean_mass <- lm(dexa_bone_mineral_density ~ dexa_lean_mass + age + sex, dat)
+adj_dexa_trunk_mass <- lm(dexa_bone_mineral_density ~ dexa_trunk_mass + age + sex, dat)
+```
+## Adjusted HbA1c (adjusting for age, sex, and bmi)
+```{r}
+#| echo: false
+summ(adj_hba1c, digits = 5)
+```
+## Adjusted BMI (adjusting for age and sex)
+```{r}
+#| echo: false
+summ(adj_bmi, digits = 5)
+```
+## Adjusted Body fat (%) (adjusting for age and sex)
+```{r}
+#| echo: false
+summ(adj_dexa_body_fat, digits = 5)
+```
+## Adjusted Body fat (kg) (adjusting for age and sex)
+```{r}
+#| echo: false
+summ(adj_dexa_fat_kg, digits = 5)
+```
+## Adjusted Lean mass (%) (adjusting for age and sex)
+```{r}
+#| echo: false
+summ(adj_dexa_lean_mass, digits = 5)
+```
+## Adjusted Trunk mass (%) (adjusting for age and sex)
+```{r}
+#| echo: false
+summ(adj_dexa_trunk_mass, digits = 5)
 ```
