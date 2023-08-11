@@ -77,7 +77,7 @@ def clean_renal_heir():
     # Replace missing values
     med.replace(rep, np.nan, inplace=True)
     # Just SGLT2i for now
-    med = med[["subject_id", "diabetes_med___1", "diabetes_med_other___1", "addl_hld_meds___2", 
+    med = med[["subject_id", "diabetes_med___1", "diabetes_med_other___1", "addl_hld_meds___2", "diabetes_med_other___2",
               "diabetes_med_other___3", "diabetes_med___3", "addl_hld_meds___1", "htn_med_type___1",
               "htn_med_type___2"]]
     med["diabetes_med_other___3"].replace(
@@ -113,6 +113,12 @@ def clean_renal_heir():
              axis=1, inplace=True)
     med["raasi_timepoint"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    # GLP-1
+    med["diabetes_med_other___2"].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med.rename({"diabetes_med_other___2": "glp1_agonist_timepoint"},
+           axis=1, inplace=True)
+           
     med["procedure"] = "medications"
     med["visit"] = "baseline"
 
@@ -331,7 +337,8 @@ def clean_renal_heir():
                  "glom_volume_con", "mes_matrix_area",
                  "mes_index", "mes_volume_weibel", "mes_volume_wiggins",
                  "mes_volume_con", "glom_nuc_count", "mes_nuc_count", "art_intima",
-                 "art_media", "pod_nuc_density", "pod_cell_volume"]
+                 "art_media", "pod_nuc_density", "pod_cell_volume",
+                 "gbm_thick_artmean", "gbm_thick_harmmean"]
     biopsy = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
     biopsy.replace(rep, np.nan, inplace=True)

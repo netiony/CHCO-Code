@@ -324,7 +324,8 @@ def clean_crocodile():
                  "glom_volume_con", "mes_matrix_area",
                  "mes_index", "mes_volume_weibel", "mes_volume_wiggins",
                  "mes_volume_con", "glom_nuc_count", "mes_nuc_count", "art_intima",
-                 "art_media", "pod_nuc_density", "pod_cell_volume"]
+                 "art_media", "pod_nuc_density", "pod_cell_volume",
+                 "gbm_thick_artmean", "gbm_thick_harmmean"]
     biopsy = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
     biopsy.replace(rep, np.nan, inplace=True)
@@ -354,6 +355,18 @@ def clean_crocodile():
     pet["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
+    # Voxelwise
+    # --------------------------------------------------------------------------
+
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                                  == "voxelwise", "field_name"]]
+    voxelwise = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    voxelwise.replace(rep, np.nan, inplace=True)
+    voxelwise["procedure"] = "pet_scan"
+    voxelwise["visit"] = "baseline"
+    
+    # --------------------------------------------------------------------------
     # Neuro markers
     # --------------------------------------------------------------------------
 
@@ -365,6 +378,31 @@ def clean_crocodile():
     neuro["procedure"] = "neuro_markers"
     neuro["visit"] = "baseline"
 
+    # --------------------------------------------------------------------------
+    # Metabolomics (Blood and Tissue)
+    # --------------------------------------------------------------------------
+    
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                               == "metabolomics", "field_name"]]
+    metabolomics_blood = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    metabolomics_blood.replace(rep, np.nan, inplace=True)
+    metabolomics_blood["procedure"] = "metabolomics_blood"
+    metabolomics_blood["visit"] = "baseline"
+    
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                               == "metabolomics_tissue", "field_name"]]
+    metabolomics_tissue = pd.DataFrame(proj.export_records(fields=var))
+    
+    tissue_met = [c for c in metabolomics_tissue.columns if "_tissue" in c]
+    metabolomics_tissue[tissue_met] = metabolomics_tissue[tissue_met].apply(
+        pd.to_numeric, errors='coerce')
+    metabolomics_tissue = metabolomics_tissue.groupby(by=["record_id"]).agg("mean", numeric_only = True).reset_index()
+    # Replace missing values
+    metabolomics_tissue.replace(rep, np.nan, inplace=True)
+    metabolomics_tissue["procedure"] = "metabolomics_tissue"
+    metabolomics_tissue["visit"] = "baseline"
+    
     # --------------------------------------------------------------------------
     # Missingness
     # --------------------------------------------------------------------------
@@ -380,6 +418,9 @@ def clean_crocodile():
     biopsy.dropna(thresh=4, axis=0, inplace=True)
     pet.dropna(thresh=4, axis=0, inplace=True)
     neuro.dropna(thresh=2, axis=0, inplace=True)
+    voxelwise.dropna(thresh=4, axis=0, inplace=True)
+    metabolomics_blood.dropna(thresh=4, axis=0, inplace=True)
+    metabolomics_tissue.dropna(thresh=2, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Merge
@@ -394,9 +435,14 @@ def clean_crocodile():
     df = pd.concat([df, dxa], join='outer', ignore_index=True)
     df = pd.concat([df, clamp_merge], join='outer', ignore_index=True)
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
+    pet = pd.merge(pet, voxelwise, how = 'outer')
     df = pd.concat([df, pet], join='outer', ignore_index=True)
     df = pd.concat([df, neuro], join='outer', ignore_index=True)
+    df = pd.concat([df, metabolomics_blood], join='outer', ignore_index=True)
+    df = pd.concat([df, metabolomics_tissue], join='outer', ignore_index=True)
     df = pd.merge(df, demo, on='record_id', how="outer")
+    df.drop(["redcap_repeat_instance_x"], axis=1, inplace=True)
+    df.drop(["redcap_repeat_instrument_x"], axis=1, inplace=True)
     df = df.copy()
 
     # --------------------------------------------------------------------------

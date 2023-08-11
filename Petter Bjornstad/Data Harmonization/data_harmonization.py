@@ -81,17 +81,15 @@ def harmonize_data():
         ", " + harmonized["ethnicity"]
     harmonized = pd.concat([harmonized, race_ethnicity], axis=1)
     harmonized.rename({0: "race_ethnicity"}, axis=1, inplace=True)
+    # Replace blanks with missing
+    harmonized.replace("", np.nan, inplace=True)
+    # Convert to numeric
+    harmonized = harmonized.apply(
+        pd.to_numeric, errors='ignore')    
     # Date variables
     dates = ["dob", "date", "diabetes_dx_date"]
     harmonized[dates] = \
         harmonized[dates].apply(pd.to_datetime, errors='coerce')
-    # Replace blanks with missing
-    harmonized.replace("", np.nan, inplace=True)
-    # Convert to numeric
-    num_vars = ["height", "total_kidney_volume_ml", "left_kidney_volume_ml",
-                "right_kidney_volume_ml"]
-    harmonized[num_vars] = harmonized[num_vars].apply(
-        pd.to_numeric, errors='coerce')
     # Calculated variables
     # Age
     age = round((harmonized["date"] - harmonized["dob"]).dt.days / 365.25, 2)
@@ -113,6 +111,25 @@ def harmonize_data():
     harmonized["total_kidney_volume_ml"] = \
         harmonized["left_kidney_volume_ml"] + \
         harmonized["right_kidney_volume_ml"]
+    harmonized["ht_adj_tkv"] = harmonized["total_kidney_volume_ml"] / (harmonized.groupby("record_id")["height"].transform("mean") / 100)
+    # PCASL
+    harmonized["avg_pcascl"] = \
+        harmonized[["pcasl3d_left", "pcasl3d_right"]].apply(lambda x: x.mean(), axis=1)
+    # Average R2*
+    harmonized["avg_k_r2"]= \
+        harmonized[["bold_l_bl_kidney", "bold_r_bl_kidney"]].apply(lambda x: x.mean(), axis=1)
+    harmonized["avg_c_r2"]= \
+        harmonized[["bold_l_bl_cortex", "bold_r_bl_cortex"]].apply(lambda x: x.mean(), axis=1)
+    harmonized["avg_m_r2"]= \
+        harmonized[["bold_l_bl_medulla", "bold_r_bl_medulla"]].apply(lambda x: x.mean(), axis=1)        
+    # Average ADC
+    harmonized["avg_c_adc"] = \
+        harmonized[["adc_left", "adc_right"]].apply(lambda x: x.mean(), axis=1)
+    # # Average voxelwise
+    harmonized["avg_m_k2_wo_cyst_vw"] = \
+        harmonized[["lm_k2_wo_cyst_vw", "rm_k2_wo_cyst_vw"]].apply(lambda x: x.mean(), axis=1)
+    harmonized["avg_c_k2_wo_cyst_vw"] = \
+        harmonized[["lc_k2_wo_cyst_vw", "rc_k2_wo_cyst_vw"]].apply(lambda x: x.mean(), axis=1)
     # Calculate FSOC = bl_bold - pf_bold
     cols = [c for c in harmonized.columns if "_bl_" in c] + \
         [c for c in harmonized.columns if "_pf_" in c]
@@ -131,6 +148,13 @@ def harmonize_data():
         harmonized["bold_l_pf_medulla"],
         fsoc_l_kidney=harmonized["bold_l_bl_kidney"] -
         harmonized["bold_l_pf_kidney"])
+    # Average FSOC
+    harmonized["avg_k_fsoc"]= \
+        harmonized[["fsoc_l_kidney", "fsoc_r_kidney"]].apply(lambda x: x.mean(), axis=1)
+    harmonized["avg_c_fsoc"]= \
+        harmonized[["fsoc_l_cortex", "fsoc_r_cortex"]].apply(lambda x: x.mean(), axis=1)
+    harmonized["avg_m_fsoc"]= \
+        harmonized[["fsoc_l_medulla", "fsoc_r_medulla"]].apply(lambda x: x.mean(), axis=1)        
     # UACR
     harmonized["acr_u"] = \
         pd.to_numeric(harmonized["microalbumin_u"], errors="coerce") * 100 / \
@@ -146,6 +170,7 @@ def harmonize_data():
             alb.append("A3")
         else:
             alb.append(np.nan)
+
     harmonized["albuminuria_cat"] = alb
     harmonized["elevated_albuminuria"] = pd.cut(
         harmonized["acr_u"], [-float("inf"), 30, float("inf")], right=False, labels=["No", "Yes"])

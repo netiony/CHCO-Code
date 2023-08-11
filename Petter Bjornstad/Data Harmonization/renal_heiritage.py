@@ -182,7 +182,7 @@ def clean_renal_heiritage():
     rct.loc[~(rct['ra'] > 0), 'ra']=np.nan    
     # Reduce rct dataset
     rct.drop(["rbf_seconds", "erpf_raw_plasma_seconds", "redcap_repeat_instrument"], axis=1, inplace=True)
-    rct["procedure"] = "renal_clearnace_test"
+    rct["procedure"] = "renal_clearance_testing"
     rct["visit"] = "baseline"
     
     # --------------------------------------------------------------------------
@@ -266,6 +266,19 @@ def clean_renal_heiritage():
     biopsy["visit"] = "baseline"
     
     # --------------------------------------------------------------------------
+    # Voxelwise
+    # --------------------------------------------------------------------------
+
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                                  == "voxelwise", "field_name"]]
+    voxelwise = pd.DataFrame(proj.export_records(fields=var))
+    voxelwise.drop(["redcap_event_name", "redcap_repeat_instrument", "redcap_repeat_instance"], axis=1, inplace=True)
+    # Replace missing values
+    voxelwise.replace(rep, np.nan, inplace=True)
+    voxelwise["procedure"] = "pet_scan"
+    voxelwise["visit"] = "baseline"
+    
+    # --------------------------------------------------------------------------
     # Neurocognitive Tracking
     # --------------------------------------------------------------------------
 
@@ -293,6 +306,7 @@ def clean_renal_heiritage():
     pet.dropna(thresh=4, axis=0, inplace=True)
     biopsy.dropna(thresh=4, axis=0, inplace=True)
     neuro.dropna(thresh=4, axis=0, inplace=True)
+    voxelwise.dropna(thresh=4, axis=0, inplace=True)
     
     # --------------------------------------------------------------------------
     # Merge
@@ -304,6 +318,7 @@ def clean_renal_heiritage():
     df = pd.concat([df, dextran], join='outer', ignore_index=True)
     df = pd.merge(df, out, how='outer')
     df = pd.concat([df, bold_mri], join='outer', ignore_index=True)
+    pet = pd.merge(pet, voxelwise, how = 'outer')
     df = pd.concat([df, pet], join='outer', ignore_index=True)
     df = pd.concat([df, neuro], join='outer', ignore_index=True)
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
