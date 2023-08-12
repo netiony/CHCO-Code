@@ -283,6 +283,18 @@ def clean_penguin():
     pet["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
+    # Voxelwise
+    # --------------------------------------------------------------------------
+
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                                  == "voxelwise", "field_name"]]
+    voxelwise = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    voxelwise.replace(rep, np.nan, inplace=True)
+    voxelwise["procedure"] = "pet_scan"
+    voxelwise["visit"] = "baseline"
+    
+    # --------------------------------------------------------------------------
     # fMRI
     # --------------------------------------------------------------------------
 
@@ -307,6 +319,7 @@ def clean_penguin():
     clamp.dropna(thresh=6, axis=0, inplace=True)
     rct.dropna(thresh=4, axis=0, inplace=True)
     pet.dropna(thresh=4, axis=0, inplace=True)
+    voxelwise.dropna(thresh=4, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Merge
@@ -319,6 +332,7 @@ def clean_penguin():
     df = pd.concat([df, med], join='outer', ignore_index=True)
     df = pd.concat([df, dxa], join='outer', ignore_index=True)
     df = pd.concat([df, clamp_merge], join='outer', ignore_index=True)
+    pet = pd.merge(pet, voxelwise, how = 'outer')
     df = pd.concat([df, pet], join='outer', ignore_index=True)
     df = pd.concat([df, mri], join='outer', ignore_index=True)
     df = pd.merge(df, demo, how="outer")

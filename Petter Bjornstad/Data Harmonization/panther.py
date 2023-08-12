@@ -72,6 +72,21 @@ def clean_panther():
     demo["participation_status"].replace({"1": "Participated", "2": "Removed", "3": "Will Participate"}, inplace=True)
 
     # --------------------------------------------------------------------------
+    # Screening labs
+    # --------------------------------------------------------------------------
+
+    var = ["record_id", "screen_creat_s", "screen_a1c"]
+    screen = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    screen.replace(rep, np.nan, inplace=True)
+    screen.columns = screen.columns.str.replace(
+        r"screen_|_of_screen", "", regex=True)
+    screen.rename({"creat_s": "creatinine_s", "a1c": "hba1c"},
+                  axis=1, inplace=True)
+    screen["procedure"] = "screening"
+    screen["visit"] = "baseline"
+
+    # --------------------------------------------------------------------------
     # Medications
     # --------------------------------------------------------------------------
 
@@ -323,6 +338,7 @@ def clean_panther():
     # --------------------------------------------------------------------------
 
     med.dropna(thresh=3, axis=0, inplace=True)
+    screen.dropna(thresh=5, axis=0, inplace=True)
     phys.dropna(thresh=4, axis=0, inplace=True)
     ivgtt.dropna(thresh=4, axis=0, inplace=True)
     dxa.dropna(thresh=4, axis=0, inplace=True)
@@ -337,6 +353,7 @@ def clean_panther():
     # --------------------------------------------------------------------------
 
     df = pd.concat([med, phys], join='outer', ignore_index=True)
+    df = pd.concat([df, screen], join='outer', ignore_index=True)
     df = pd.concat([df, ivgtt], join='outer', ignore_index=True)
     df = pd.concat([df, dxa], join='outer', ignore_index=True)
     df = pd.concat([df, rct], join='outer', ignore_index=True)

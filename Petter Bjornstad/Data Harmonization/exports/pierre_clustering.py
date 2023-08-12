@@ -22,34 +22,17 @@ import pandas as pd
 df = harmonize_data()
 # Variable list from Pierre
 dict = pd.read_csv(
-    "/Volumes/Work/Petter Bjornstad/Data Harmonization/Data Exports/variables_for_Pierre_clustering.csv"
+    "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/variables_for_Pierre_clustering.csv"
 )
 dict = dict[dict["Unnamed: 2"] == "x"]
-cols = [c for c in dict["variable_name"]]
-# Skip non-existent variables
-skip = [
-    "ht_adj_tkv",
-    "avg_pcascl",
-    "avg_k_r2",
-    "avg_c_r2",
-    "avg_m_r2",
-    "avg_k_fsoc",
-    "avg_c_fsoc",
-    "avg_m_fsoc",
-    "avg_c_adc",
-    "avg_m_k2_wo_cyst_vw",
-    "avg_c_k2_wo_cyst_vw",
-    "gbm_thick_artmean",
-    "gbm_thick_harmmean",
-]
-cols = [c for c in cols if c not in skip]
+cols = [c for c in dict["variable_name"]] + ["hematocrit_210"] + ["tot_protein"]
 # Select columns
 df = df[cols]
 # Select rows
 df = df[df["study"].isin(["CROCODILE", "PANDA", "RENAL-HEIR", "RENAL-HEIRitage"])]
-df = df[df["procedure"].isin(["bold_mri", "clamp", "kidney_biopsy", "medications"])]
+df = df[df["procedure"].isin(["screening", "bold_mri", "clamp", "kidney_biopsy", "medications", "renal_clearance_testing"])]
 # Write
 df.to_csv(
-    "/Volumes/Work/Petter Bjornstad/Data Harmonization/Data Exports/pierre_clustering.csv",
+    "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/pierre_clustering.csv",
     index=False,
 )
