@@ -1,0 +1,403 @@
+---
+title: "General Software For Producing Trajectory Plots"
+output:
+  html_document: default
+  html_notebook: default
+params:
+  digits: 2
+  details: FALSE
+# ------------------------------------------------------------------------------
+# Parameters to the program that specify datasets, subsets, variable names and
+# some plot parameters
+# ------------------------------------------------------------------------------
+  # Specify the dataset
+  # SAS.dataset.path: 'C:/Users/bsc-default/Documents/RISE/SASdatasets/risecomplete_r.sas7bdat'
+  # SAS.dataset.path: 'C:/Users/bsc-default/Documents/RISE/SASdatasets/adultpeds_full_i_r.sas7bdat'
+  # SAS.dataset.path: 'C:/Users/bsc-default/Documents/RISE/SASdatasets/adultpeds_full_i_r.sas7bdat'
+  SAS.dataset.path: 'R:/Analyses/Matched Pairs/subset.sas7bdat'
+  # SAS.catalog.path: 'C:/Users/bsc-default/Documents/RISE/baselinefmtutf8.sas7bcat'
+  # Specify subsets
+  clinics: !r c('Adult')
+  visits: !r c('BAS','M12', 'M15')
+  timepoint.fu.labels: !r c('12', '15')
+  # trtgrps: !r c('GLARGINE + METFORMIN','METFORMIN')
+  # trtgrp.tags: !r c('GM','Met')
+  # trtgrp.legend.labels: !r c('Glargine/Metformin','Metformin Alone')
+  trtgrps: !r c('GLARGINE + METFORMIN', 'LIRAGLUTIDE + METFORMIN', 'METFORMIN', 'PLACEBO')
+  trtgrp.tags: !r c('GM','LM','Met','Pla')
+  trtgrp.legend.labels: !r c('Glargine/Metformin', 'Liraglutide+Metformin', 'Metformin Alone', 'Placebo')
+  subset.bydiabvar: FALSE
+  diabvar: "diabetes"
+  diabvar.levels.keep: 0
+  patidvar: "patid"
+  clinicvar: "clinic_type"
+  # yvar: "log_cpeptide_steady"
+  # yvar.base: "log_cpeptide_steady_base"
+  # yvar: "log_acprg"
+  # yvar.base: "log_acprg_base"
+  yvar: "log_acprmax"
+  yvar.base: "log_acprmax_base"
+  # yvar: "logcpgi_si"
+  # yvar.base: "log_cpgi_base"
+  # yvar: "logigi_si"
+  # yvar.base: "log_igi_base"
+  xvar: "log_mi"
+  xvar.base: "log_mi_base"
+  # xvar: "log_inv_ins0o_si"
+  # xvar.base: "log_inv_ins0o_si_base"
+  trtvar: "treatment"
+  visitvar: "visit"
+  # plot.ylab: "\nSteady State C-peptide (nmol/L)"
+  # plot.ylab: "\nACPRg (nmol/L)"
+  # plot.ylab: "\nACPRmax (nmol/L)"
+  # plot.ylab: "IGI (pmol/mmol)"
+  # plot.ylab: "CPI (nmol/mmol)"
+  plot.ylab: " "
+  plot.xlab: !r expression(paste(bold("M/I (x 10"^"-5"*" mmol/kg/min per pmol/L)")))
+  # plot.xlab: !r expression(paste(bold("1/Fasting Insulin x 10"^"3"*" (1/(pmol/L))")))
+  plot.xlo: 1
+  plot.xhi: 5
+  plot.ylo: 3.5
+  plot.yhi: 9.0
+  # plot.xlo: NULL
+  # plot.xhi: NULL
+  # plot.ylo: NULL
+  # plot.yhi: NULL
+  plot.legend.pos: "topright"
+---
+# Program Initialization
+The code chunk below initializes program parameters
+
+```{r loaddata, include=TRUE,error=TRUE,echo=TRUE,warning=FALSE}
+# Load required packages
+library(rio)
+library(dplyr)
+library(VIM)
+library(StatAnalysis)
+
+# Source functions from personal library
+path = "./functions/"
+for (nm in list.files(path, pattern = "[.][RrSsQq]$")) {
+       # if(trace) cat(nm,":")
+       source(file.path(path, nm))
+       # if(trace) cat("\n")
+}
+
+# ------------------------------------------------------------------------------
+# Read RISE data from
+```
+
+```{r initparms, include=TRUE,error=TRUE,echo=TRUE,warning=FALSE}
+# ============================================================================
+# Program Initialization 
+# ============================================================================
+# Analysis Flags:
+# 1. pooledAnalysis - should treatment groups be pooled?
+# 2. useImputedData - should imputed data for patients who failed treatment be
+#                     included in the analysis?
+# 3. IGTonly        - should the analysis be restricted to those participants who
+#                     were IGT at baseline?
+  clinics.keep   = params$clinics
+  
+# Specify the timepoints to be included in the analysis dataset using levels from
+# the visit variable in the original dataset
+  timepoints.keep <- params$visits
+  
+# Specify the treatment variable in the original dataset
+  trtgrp.var <- as.symbol(params$trtvar)
+  
+# Specify the followup timepoints that will be analyzed for location and confidence
+# ellipse from SUR model (this list should not include the baseline visit)
+  timepoints.followup <- timepoints.keep[-1]
+
+# Specify the timepoint labels that will be used in the plot
+  timepoint.labels <- params$timepoint.fu.labels
+
+# Specify the treatment group labels (not including baseline) for the legend.
+# If null the values of the groups variable defined above will be used
+  legend.names <- params$trtgrp.legend.labels 
+
+# Specify the X and Y variables for the model
+  xvar <- as.symbol(params$xvar)
+  xvar.base <- as.symbol(params$xvar.base)
+
+  yvar <- as.symbol(params$yvar)
+  yvar.base <- as.symbol(params$yvar.base)
+
+# Specify the x and y labels for the plot# X and Y axis labels
+  xlabel <- expression(paste(bold("M/I (usual units)")))
+  xlabel <- expression(paste(bold("1/Fasting Insulin x 10"^"3"*" (1 / (pmol/L))")))
+  xlabel <- expression(paste(bold("M/I (x 10"^"-5"*" mmol/kg/min per pmol/L)")))
+  xlabel <- params$plot.xlab
+
+  ylabel <- "IGI (pmol/mmol)"
+  ylabel <- "iAUC C/G (nmol/mmol)"
+  ylabel <- "iAUC I/G (pmol/mmol)"
+  ylabel <- "CPGI (nmol/mmol)"
+  ylabel <- "AIRg (nmol/L)"
+  ylabel <- "ACPRg (nmol/L)"
+  ylabel <- "Steady State C-peptide (nmol/L)"
+  ylabel <- "ACPRmax (nmol/L)"
+  ylabel <- params$plot.ylab
+  
+  
+# Specify and x and y limits for plot.  Set all to null if you want program to
+# determine limits from the data
+  xlo=params$plot.xlo
+  xhi=params$plot.xhi
+  ylo=params$plot.ylo
+  yhi=params$plot.yhi
+
+# Specify legend position by keyword. Options:
+#   "bottom", "bottomright", "top", "topright"
+  leg.pos <- params$plot.legend.pos
+# =============================================================================
+# END of Program Initialization
+# =============================================================================
+```
+
+# Create Dataset
+The code chunk below creates a dataset for analysis based on the program 
+parameters initialized above.
+
+```{r loaddata1, include=TRUE,error=TRUE,echo=TRUE,warning=FALSE}  
+# Load the Analysis dataset
+#  RISE <- import(params$SAS.dataset.path, format=params$SAS.catalog.path)
+  RISE <- import(params$SAS.dataset.path)
+
+# Apply SAS formats to create factor variables
+  RISE <- as.data.frame(lapply(RISE, applySASfmt))
+  
+# Convert all variable names to lower case since R is case sensitive
+  names(RISE) <- tolower(names(RISE))
+  
+# Exclude kid with extreme OGTT results - 5P069
+#  RISE = RISE[RISE$PATID != '5P069',]
+# Exclude the 2 kids who decompensated 5P033 and 7P031
+#  RISE = RISE[!(RISE$PATID %in% c('5P033', '7P031')),]
+
+# Subset to keep visits specified in params
+  RISE = RISE[RISE[,params$visitvar] %in% params$visits,]
+  RISE[,params$visitvar] <- droplevels(RISE[,params$visitvar])
+  
+# Subset to keep clinics specified in params
+  RISE = RISE[RISE[,params$clinicvar] %in% params$clinics,]
+  RISE[,params$clinicvar] <- droplevels(RISE[,params$clinicvar])
+  
+# Subset to keep treatment groups specified in params
+  RISE = RISE[RISE[,params$trtvar] %in% params$trtgrps,]
+  RISE[,params$trtvar] <- droplevels(RISE[,params$trtvar])
+  
+# Subset to keep only IGT participants
+  if(params$subset.bydiabvar){
+    RISE = RISE[RISE[,params$diabvar] %in% params$diabvar.levels.keep,]
+    RISE[,params$diabvar] <- droplevels(RISE[,params$diabvar])
+  }
+
+# Keep only the needed variables for the analysis
+  RISE <- RISE[,c(params$patidvar,
+                  params$clinicvar,
+                  params$visitvar, 
+                  params$trtvar,
+                  params$xvar.base,
+                  params$xvar,
+                  params$yvar.base,
+                  params$yvar,
+                  params$diabvar
+                          )]
+
+```
+
+# Seemingly Unrelated Regression Models
+The code chunk below runs the models based on the program initialization parameters.
+
+```{r SUR,include=TRUE,error=TRUE,echo=FALSE,warning=FALSE,message=FALSE}
+library(systemfit)
+# SUR Regression
+  SUR.models.byvisit <- by(RISE, 
+                           RISE[,params$visitvar], 
+                           function(x) {if(x$visit %in% 'BAS'){ x[,as.character(yvar.base)] = x[,as.character(yvar.base)] +1; x[,as.character(xvar.base)] = x[,as.character(xvar.base)] +1}
+                                        systemfit(list(Y = eval(yvar) ~ eval(yvar.base) + 
+                                                          eval(trtgrp.var), 
+                                                      X = eval(xvar) ~ eval(xvar.base) + 
+                                                          eval(trtgrp.var)),
+                                                 method='SUR',data=x)})
+
+  cat(paste("SUR Regression for the bivariate endpoint(", xvar,",", yvar,")\n"))
+  lapply(SUR.models.byvisit, function(x){ return(summary(x)$coefficients[,c(1,2,4)])})
+    
+```
+
+
+# Plot dataset
+The code chunk below creates the plot dataset.
+
+```{r Create Plot dataset}
+# Version of egg plot where colors represent treatment groups, all plotting
+# symbols are squares.  Baseline curve and point are black, non-baseline timepoints
+# for glargine are green, and non-baseline timepoints for metformin are purple
+library(ellipse)
+library(shape)
+library(RColorBrewer)
+
+# -----------------------------------------------------------------------------  
+# Calculate the baseline mean point in the plane and curve for the entire 
+# study population
+# -----------------------------------------------------------------------------  
+# E[Y | E[X] ] at baseline
+  # E[X] = mean of X
+    mean.loginsSens <- RISE %>% filter(visit=="BAS") %>% summarize(mean(eval(xvar), na.rm=T)) %>% as.numeric
+  # E[Y | E[X]] = predicted value of Y at x=E[X] for linear model of Y ~ X
+    lm.model.base <- lm(eval(yvar) ~ eval(xvar), data=RISE[RISE$visit %in% 'BAS',])
+    E.outcome    <- predict.lm(lm.model.base, data.frame(xvar=mean.loginsSens))
+  
+  # Variance-covariance matrix of (x,y) at baseline which will be used to 
+  # to draw the confidence ellipse around the baseline point
+  xy.matrix <- cbind(eval(xvar, envir = RISE[RISE[,params$visitvar]=='BAS',]), eval(yvar, envir = RISE[RISE[,params$visitvar]=='BAS',]))
+  xy.cov    <- var(xy.matrix, use = 'complete.obs')
+  n.points  <- sum(complete.cases(data.frame(xy.matrix)))
+
+  # Confidence ellipse for baseline point
+  confellipse.base <- ellipse::ellipse(xy.cov/n.points, centre=c(mean.loginsSens,E.outcome))
+    
+  # Predicted Baseline curve data
+  baseline.curve <- data.frame(x=exp(lm.model.base$model$'eval(xvar)'),y=exp(predict.lm(lm.model.base))) 
+  baseline.curve <- baseline.curve[order(baseline.curve$x),]
+
+# -----------------------------------------------------------------------------
+#  Specify the contrast matrices for each of the treatment groups. These
+#  will be used below to determine the mean point and confidence ellipse
+#  for each treatment group at the different visits.
+#  
+#  (R uses the alphabetical order of the levels
+#  to determine to reference group, with the first levels always being the reference).
+#  This can be changed by using the relevel() function to set a new reference, or using
+#  my function ReorderFactorLevels() to change the order of the levels to whatever
+#  the user chooses (e.g. PLACEBO, METFORMIN, GLARGINE + METFORMIN, LIRAGLUTIDE + METFORMIN)
+#  
+#  If doing a pooled analysis a treatment variable with 1-level ('Pooled') must
+#  be defined and specified as trtvar in the parameters section of YAML header
+# -----------------------------------------------------------------------------
+   # 4 Treatment Groups
+   Cmat.GM <- rbind(c(0,0,0,0,0,1,mean.loginsSens,0,0,0),
+                    c(1,E.outcome,0,0,0,0,0,0,0,0))
+  
+   Cmat.LM <- rbind(c(0,0,0,0,0,1,mean.loginsSens,1,0,0),
+                    c(1,E.outcome,1,0,0,0,0,0,0,0))
+   
+   Cmat.Met <- rbind(c(0,0,0,0,0,1,mean.loginsSens,0,1,0),
+                    c(1,E.outcome,0,1,0,0,0,0,0,0))
+   
+   Cmat.Pla <- rbind(c(0,0,0,0,0,1,mean.loginsSens,0,0,1),
+                    c(1,E.outcome,0,0,1,0,0,0,0,0))
+
+   # 2 Treatment Groups
+   # Cmat.GM <- rbind(c(0,0,0,1,mean.loginsSens,0),
+   #                  c(1,E.outcome,0,0,0,0))
+   # Cmat.LM <- rbind(c(0,0,0,0,0,1,mean.loginsSens,1,0,0),
+   #                  c(1,E.outcome,1,0,0,0,0,0,0,0))
+   # Cmat.Met <- rbind(c(0,0,0,1,mean.loginsSens,1),
+   #                  c(1,E.outcome,1,0,0,0))
+   # Cmat.Pla <- rbind(c(0,0,0,0,0,1,mean.loginsSens,0,0,1),
+   #                   c(1,E.outcome,0,0,1,0,0,0,0,0))
+  
+# -----------------------------------------------------------------------------  
+# Loop over visits and calculate the centroid and confidence ellipse for each treatment
+# group at the visits (this excludes baseline since only the baseline curve and mean
+# from the baseline curve are plotted for this timepoint)
+# -----------------------------------------------------------------------------  
+for(j in 1:length(timepoints.followup)){
+  # Start loop over treatment groups
+  for(i in 1:length(params$trtgrp.tags)){
+    # Bivariate Mean and 95% Confidence Ellipse at followup timepoint j
+    assign(paste0('confellipse.',timepoints.followup[j],'.',params$trtgrp.tags[i]), conf_Ellipse_SUR(SUR.models.byvisit[[match(timepoints.followup[j], names(SUR.models.byvisit))]], eval(as.symbol(paste0('Cmat.',params$trtgrp.tags[i])))))
+                                                                                              
+  # Closing bracket for loop over treatment groups in the case of unpooled data
+  }
+# Closing bracket for loop over visits
+}
+  
+# -----------------------------------------------------------------------------  
+# Organize the data into a list for plotting.  The code backtranforms to the
+# original scale by applying exp() to the estimates based on the log transformed
+# X and Y variables
+# -----------------------------------------------------------------------------
+  Estimates <- list()
+  for(j in 1:length(timepoints.keep)){
+    if(timepoints.keep[j] %in% 'BAS'){ 
+        Baseline=Baseline=list(meanvec=exp(c(mean.loginsSens, E.outcome)),
+                                    ellipse=exp(confellipse.base),
+                                    curveXY=baseline.curve)
+        Estimates[[j]] <- Baseline
+    }
+    else{
+      groups.currentvisit <- list()
+      for(i in 1:length(params$trtgrp.tags)){
+        meanvec=exp(as.vector(eval(as.symbol(paste0('confellipse.',timepoints.keep[j], '.', params$trtgrp.tags[i])))$Mean))
+        ellipse=exp(eval(as.symbol(paste0('confellipse.',timepoints.keep[j], '.', params$trtgrp.tags[i])))$Ellipse)
+        
+        groups.currentvisit[[i]] <- list(meanvec=meanvec,ellipse=ellipse)
+      }
+      names(groups.currentvisit) <- params$trtgrp.tags
+      Estimates[[j]] <- groups.currentvisit
+    }
+  }
+  
+  names(Estimates) <- timepoints.keep 
+  
+```
+
+# Trajectory Plot
+The code chunk below creates the trajectory plot.
+
+```{r Create Trajectory Plot}
+# Open Graphics Device for output
+  png(file='plot.png',width = 7, height=5, units = 'in', res=600)
+
+  # Layout for paper
+  # nf <- layout(matrix(c(1,1,2,2), 2, 2, byrow = TRUE), widths = c(lcm(10.5), lcm(10.5)),heights = c(lcm(12),lcm(12)))
+  
+  # Call Function to plot data
+    plotData(Estimates, 
+             timepoints = timepoints.followup,
+             timepoint.labels = timepoint.labels,
+             groups=params$trtgrp.tags,
+             xaxis.label = xlabel,
+             yaxis.label = ylabel,
+             useBaseline = F,
+             xmin = xlo,
+             xmax = xhi,
+             ymin = ylo,
+             ymax = yhi,
+             legend.names = legend.names,
+             leg.pos = leg.pos,
+             xpd = TRUE,
+             plotbgcol="#f3eff5",
+             plotannotcol="#330f42")
+  
+ dev.off()
+```
+
+# GLH Tests of Interest
+General linear hypothesis tests of 
+```{r GLH,include=FALSE, eval=FALSE}
+# Linear Hypothesis of treatment differences equal to 0
+  GLH.m15.GMvsMet <- linearHypothesis(SUR.models.byvisit[[3]],test = "Chisq",
+# the constrasts:
+  c('Y_eval(trtgrp.var)METFORMIN=0',
+    'X_eval(trtgrp.var)METFORMIN=0'))
+
+  GLH.m12.GMvsMet <- linearHypothesis(SUR.models.byvisit[[2]],test = "Chisq",
+# the constrasts:
+  c('Y_eval(trtgrp.var)METFORMIN=0',
+    'X_eval(trtgrp.var)METFORMIN=0'))
+
+# Linear Hypotheses of Treament group difference from baseline
+  GLH.BasVm15.GM <- linearHypothesis(SUR.models.byvisit[[3]],test = "Chisq",
+# the constrasts:
+  c('Y_(Intercept)+Y_eval(yvar.base)=0',
+    'X_(Intercept)+X_eval(xvar.base)=0'))
+
+```
+
+

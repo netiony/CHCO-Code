@@ -1,0 +1,1113 @@
+---
+title: "RENAL HEIR Analysis"
+author: "Ye Ji Choi & Tim Vigers"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    theme: default
+    page-layout: full
+    embed-resources: true
+editor: visual
+---
+
+```{r, include = F}
+library(dplyr)
+library(tidyr)
+library(table1)
+library(Hmisc)
+library(rstatix)
+library(purrr)
+library(kableExtra)
+library(knitr)
+library(arsenal)
+library(data.table)
+library(ggpubr)
+library(smplot2)
+source("/Users/choiyej/GitHub/YC_CHCO/R Functions/correlation_function.R")
+```
+
+```{r, include = F}
+pvalue_func <- function(x, ...) {
+    # Construct vectors of data y, and groups (strata) g
+    y <- unlist(x)
+    g <- factor(rep(1:length(x), times=sapply(x, length)))
+    if (is.numeric(y)) {
+        # For numeric variables, perform a standard 2-sample t-test
+        p <- t.test(y ~ g)$p.value
+    } else {
+        # For categorical variables, perform a chi-squared test of independence
+        p <- chisq.test(table(y, g))$p.value
+    }
+    # Format the p-value, using an HTML entity for the less-than sign.
+    # The initial empty string places the output on the line below the variable label.
+    c("", sub("<", "&lt;", format.pval(p, digits=3, eps=0.001)))
+}
+pvalueANOVA <- function(x, ...) {
+  # Construct vectors of data y, and groups (strata) g
+  y <- unlist(x)
+  g <- factor(rep(1:length(x), times=sapply(x, length)))
+  
+  if (is.numeric(y)) {
+    # For numeric variables, perform ANOVA
+    ano <- aov(y ~ g)
+    p <- summary(ano)[[1]][[5]][1]
+    
+  } else {
+    # For categorical variables, perform a chi-squared test of independence
+    p <- chisq.test(table(y, g))$p.value
+  }
+  # Format the p-value, using an HTML entity for the less-than sign.
+  # The initial empty string places the output on the line below the variable label.
+  c("", sub("<", "&lt;", format.pval(p, digits=3, eps=0.001)))
+}
+```
+
+```{r, include = F}
+dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = c(" ", "", "-9999",-9999))
+dict <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv", na.strings = c(" ", "", "-9999",-9999)) %>%
+  select(variable_name, label)
+
+dat <- dat %>%
+  filter(study == "RENAL-HEIR") %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+            across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+            .by = record_id) %>%
+  filter(participation_status=="Participated") %>%
+  mutate(race_ethnicity_condensed = case_when(race == "White" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino White",
+                                              race == "Black or African American" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino Black",
+                                              ethnicity == "Hispanic or Latino" ~ "Hispanic or Latino",
+                                              T ~ "Not Hispanic or Latino Other")) %>%
+  mutate(elevated_albuminuria = case_when(elevated_albuminuria == "Yes" ~ "Elevated albuminuria",
+                                          elevated_albuminuria == "No" ~ "Normoalbuminuria")) %>%
+  rowwise() %>%
+  mutate(m_i = raw_m / steady_state_insulin) %>%
+  mutate(ht_tkv = total_kidney_volume_ml/height) %>%
+  mutate_at(vars(starts_with("fsoc")), function(x) case_when(x<0 ~ 0, T~x)) %>%
+  mutate(lc_k2_f = lc_k2/lc_f) %>%
+  mutate(rc_k2_f = rc_k2/rc_f) %>%
+  mutate(lm_k2_f = lm_k2/lm_f) %>%
+  mutate(rm_k2_f = rm_k2/rm_f) %>%
+  mutate(lc_k2_k1 = lc_k2/lc_k1) %>%
+  mutate(rc_k2_k1 = rc_k2/rc_k1) %>%
+  mutate(lm_k2_k1 = lm_k2/lm_k1) %>%
+  mutate(rm_k2_k1 = rm_k2/rm_k1) %>%
+  mutate(avg_c_k2_k1 = mean(c(lc_k2_k1, rc_k2_k1), na.rm = T)) %>%
+  mutate(avg_m_k2_k1 = mean(c(lm_k2_k1, rm_k2_k1), na.rm = T)) %>%
+  mutate(avg_c_k2_f = mean(c(lc_k2_f, rc_k2_f), na.rm = T)) %>%
+  mutate(avg_m_k2_f = mean(c(lm_k2_f, rm_k2_f), na.rm = T)) %>%
+  mutate(avg_c_f = mean(c(lc_f, rc_f), na.rm = T)) %>%
+  mutate(avg_m_f = mean(c(lm_f, rm_f), na.rm = T)) %>%
+  mutate(avg_c_k2 = mean(c(lc_k2, rc_k2), na.rm = T)) %>%
+  mutate(avg_m_k2 = mean(c(lm_k2, rm_k2), na.rm = T)) %>%
+  mutate(avg_c_vb = mean(c(lc_vb, rc_vb), na.rm = T)) %>%
+  mutate(avg_m_vb = mean(c(lm_vb, rm_vb), na.rm = T)) %>%
+  mutate(avg_c_k1 = mean(c(lc_k1, rc_k1), na.rm = T)) %>%
+  mutate(avg_m_k1 = mean(c(lm_k1, rm_k1), na.rm = T)) %>%
+  mutate(avg_bl_cortex = mean(c(bold_l_bl_cortex, bold_r_bl_cortex), na.rm = T)) %>%
+  mutate(avg_bl_medulla = mean(c(bold_l_bl_medulla, bold_r_bl_medulla), na.rm = T)) %>%
+  mutate(avg_fsoc_medulla = mean(c(fsoc_l_medulla, fsoc_r_medulla), na.rm = T)) %>%
+  mutate(avg_pcasl3d = mean(c(pcasl3d_left, pcasl3d_right), na.rm = T)) %>%
+  mutate(avg_k1_wo_cyst = mean(c(ltot_k1_wo_cyst, rtot_k1_wo_cyst), na.rm = T)) %>%
+  mutate(avg_k2_wo_cyst = mean(c(ltot_k2_wo_cyst, rtot_k2_wo_cyst), na.rm = T)) %>%
+  mutate(egfr_hyper = case_when(eGFR_fas_cr >= 135 ~ "Yes", eGFR_fas_cr < 135 ~ "No"))
+
+mgfr_sub <- subset(dat, group == "Lean Control", select = gfr_bsa_plasma) %>% ungroup() %>%
+  dplyr::summarise(mgfr_mean = mean(gfr_bsa_plasma), mgfr_sd = sd(gfr_bsa_plasma)) %>%
+  mutate(mgfr_cutoff = mgfr_mean + (2*mgfr_sd))
+
+dat <- dat %>%
+  mutate(mgfr_hyper = case_when(gfr_bsa_plasma >= mgfr_sub$mgfr_cutoff ~ "Yes",
+                                gfr_bsa_plasma < mgfr_sub$mgfr_cutoff ~ "No"))
+
+dat_obese_t2d <- dat %>%
+  filter(group!="Lean Control")
+
+dict <- setNames(data.frame(t(dict[ , - 1])), dict[ , 1])
+dict %<>%
+  mutate(egfr_hyper = "Hyperfiltration defined by eGFR FAS") %>%
+  mutate(mgfr_hyper = "Hyperfiltration defined by mGFR BSA") %>%
+  mutate(elevated_albuminuria = "Elevated Albuminuria") %>%
+  mutate(m_i = "M/I") %>%
+  mutate(race_ethnicity_condensed = "Race/Ethnicity") %>%
+  mutate(lc_k2_f = "Left Cortex K2/F (g/min)") %>%
+  mutate(rc_k2_f = "Right Cortex K2/F (g/min)") %>%
+  mutate(lm_k2_f = "Left Medulla K2/F (g/min)") %>%
+  mutate(rm_k2_f = "Right Medulla K2/F (g/min)") %>%
+  mutate(avg_c_f = "Average Cortex F (ml/min/g)") %>%
+  mutate(avg_m_f = "Average Medulla F (ml/min/g)") %>%
+  mutate(avg_c_k2 = "Average Cortex K2 (1/min) ") %>%
+  mutate(avg_m_k2 = "Average Medulla K2 (1/min) ") %>%
+  mutate(avg_c_vb = "Average Cortex vb") %>%
+  mutate(avg_m_vb = "Average Medulla vb") %>%
+  mutate(avg_c_k1 = "Average Cortex k1 (ml/g/min)") %>%
+  mutate(avg_m_k1 = "Average Medulla k1 (ml/g/min)") %>%
+  mutate(rtot_k1_wo_cyst = "Voxel-wise right k1") %>%
+  mutate(ltot_k1_wo_cyst = "Voxel-wise left k1") %>%
+  mutate(rtot_k2_wo_cyst = "Voxel-wise right k2") %>%
+  mutate(ltot_k2_wo_cyst = "Voxel-wise left k2") %>%
+  mutate(avg_k1_wo_cyst = "Voxel-wise Average k1") %>%
+  mutate(avg_k2_wo_cyst = "Voxel-wise Average k2") %>%
+  mutate(avg_c_k2_f = "Average Cortex k2/F") %>%
+  mutate(avg_c_k2_k1 = "Average Cortex k2/k1") %>%
+  mutate(erpf_raw_plasma = "RPF from plasma clearance") %>%
+  mutate(avg_pcasl3d = "Average cortex 3D ASL") %>%
+  mutate(avg_bl_cortex = "Average cortex R2*") %>%
+  mutate(avg_bl_medulla = "Average medulla R2*") %>%
+  mutate(avg_fsoc_medulla = "Average FSOC medulla")
+
+dict <- dict[intersect(names(dat), names(dict))]
+dict[setdiff(names(dat), names(dict))] <- ""
+Hmisc::label(dat) = dict[match(names(dat), names(dict))]
+
+dict <- dict[intersect(names(dat_obese_t2d), names(dict))]
+dict[setdiff(names(dat_obese_t2d), names(dict))] <- ""
+Hmisc::label(dat_obese_t2d) = dict[match(names(dat_obese_t2d), names(dict))]
+```
+
+```{r include = F}
+# Distribution check
+dat %>%
+  select(age, bmi, weight, height, waistcm, hba1c, sbp, dbp, cholesterol, ldl, hdl, triglycerides ,eGFR_fas_cr, eGFR_fas_cr_cysc, acr_u) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram()
+
+dat %>%
+  select(dexa_lean_kg, dexa_fat_kg, dexa_body_fat, dexa_trunk_kg, fasting_ffa, ffa_suppression, fasting_insulin, steady_state_insulin, steady_state_cpeptide, raw_m, m_i, di, airg, acprg) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram()
+
+dat %>%
+  select(gfr_raw_plasma,  gfr_bsa_plasma,  erpf_raw_plasma,  erpf_bsa_plasma,  ff,  glomerular_pressure,  ra,  re,  rvr,  total_kidney_volume_ml, pcasl3d_left, pcasl3d_right, adc_left, adc_right, bold_l_bl_cortex, bold_r_bl_cortex,  bold_l_bl_medulla, bold_r_bl_medulla,   fsoc_l_medulla, fsoc_r_medulla, fsoc_l_medulla, fsoc_r_medulla) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram()
+
+dat %>%
+  select(ends_with(c("vw")))%>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram()
+```
+
+# Table 1
+
+## All Participants
+
+```{r, include=F}
+table_one <- tableby(group ~ age + diabetes_duration + sex + fe(race_ethnicity_condensed) + bmi + weight + height + waistcm + kwt(hba1c, "Nmiss", "median", "q1q3", "range") + sbp + dbp + cholesterol + ldl + hdl +  kwt(triglycerides, "Nmiss", "median", "q1q3", "range") + kwt(eGFR_fas_cr, "Nmiss", "median", "q1q3", "range") + kwt(eGFR_fas_cr_cysc, "Nmiss", "median", "q1q3", "range") + kwt(acr_u, "Nmiss", "median", "q1q3", "range") + + fe(elevated_albuminuria) + fe(metformin_timepoint) + fe(insulin_med_timepoint) +  fe(sglti_timepoint) + fe(tzd_timepoint) + fe(raasi_timepoint) + fe(statin) + fe(fibrates_timepoint) + fe(egfr_hyper) + fe(mgfr_hyper) + fe(glp1_agonist_timepoint), data = dat)
+```
+
+```{r results='asis'}
+table_one <- summary(table_one, pfootnote = T, digits=3, digits.pct=0)
+table_one
+```
+
+```{r, include=F}
+as.data.frame(table_one)
+write.csv2(as.data.frame(table_one),"/Users/choiyej/GitHub/YC_CHCO/RH/t1.csv", row.names = F)
+```
+
+## Obese and T2D Only
+
+```{r, include=F}
+table_one_lim <- tableby(group ~ age + diabetes_duration + sex + fe(race_ethnicity_condensed) + bmi + weight + height + waistcm + kwt(hba1c, "Nmiss", "median", "q1q3", "range") + sbp + dbp + cholesterol + ldl + hdl +  kwt(triglycerides, "Nmiss", "median", "q1q3", "range") + kwt(eGFR_fas_cr, "Nmiss", "median", "q1q3", "range") + kwt(eGFR_fas_cr_cysc, "Nmiss", "median", "q1q3", "range") + kwt(acr_u, "Nmiss", "median", "q1q3", "range") + + fe(elevated_albuminuria) + fe(metformin_timepoint) + fe(insulin_med_timepoint) +  fe(sglti_timepoint) + fe(tzd_timepoint) + fe(raasi_timepoint) + fe(statin) + fe(fibrates_timepoint)+ fe(glp1_agonist_timepoint), data = dat_obese_t2d)
+```
+
+```{r results='asis'}
+table_one_lim <- summary(table_one_lim, pfootnote = T, text = NULL, digits=3, digits.pct=0)
+table_one_lim
+```
+
+```{r, include=F}
+as.data.frame(table_one_lim)
+write.csv2(as.data.frame(table_one_lim),"/Users/choiyej/GitHub/YC_CHCO/RH/t1.1.csv", row.names = F)
+```
+
+# Table 2
+
+## All Participants
+
+```{r, include = F}
+table_two <- tableby(group ~ dexa_lean_kg + dexa_fat_kg + dexa_body_fat + dexa_trunk_kg + fasting_ffa + kwt(ffa_suppression, "Nmiss", "median", "q1q3", "range") + kwt(fasting_insulin, "Nmiss", "median", "q1q3", "range") + kwt(steady_state_insulin, "Nmiss", "median", "q1q3", "range") + steady_state_cpeptide + raw_m + kwt(m_i, "Nmiss", "median", "q1q3", "range") + kwt(di, "Nmiss", "median", "q1q3", "range") + kwt(airg, "Nmiss", "median", "q1q3", "range") + kwt(acprg, "Nmiss", "median", "q1q3", "range"), data = dat)
+```
+
+```{r results='asis'}
+table_two <- summary(table_two, pfootnote = T, text = NULL, digits=3, digits.pct=0)
+table_two
+```
+
+```{r, include=F}
+as.data.frame(table_two)
+write.csv2(as.data.frame(table_two),"/Users/choiyej/GitHub/YC_CHCO/RH/t_2.csv", row.names = F)
+```
+
+## Obese and T2D Only
+
+```{r, include=F}
+table_two_lim <- tableby(group ~ dexa_lean_kg + dexa_fat_kg + dexa_body_fat + dexa_trunk_kg + fasting_ffa + kwt(ffa_suppression, "Nmiss", "median", "q1q3", "range") + kwt(fasting_insulin, "Nmiss", "median", "q1q3", "range") + kwt(steady_state_insulin, "Nmiss", "median", "q1q3", "range") + steady_state_cpeptide + raw_m + kwt(m_i, "Nmiss", "median", "q1q3", "range") + kwt(di, "Nmiss", "median", "q1q3", "range") + kwt(airg, "Nmiss", "median", "q1q3", "range") + kwt(acprg, "Nmiss", "median", "q1q3", "range"), data = dat_obese_t2d)
+```
+
+```{r results='asis'}
+table_two_lim <- summary(table_two_lim, pfootnote = T, text = NULL, digits=3, digits.pct=0)
+table_two_lim
+```
+
+```{r, include=F}
+as.data.frame(table_two_lim)
+write.csv2(as.data.frame(table_two_lim),"/Users/choiyej/GitHub/YC_CHCO/RH/t_2.1.csv", row.names = F)
+```
+
+# Table 3
+
+## All Participants
+
+```{r, include = F}
+table_three <- tableby(group ~ gfr_raw_plasma +  gfr_bsa_plasma +  erpf_raw_plasma +  erpf_bsa_plasma +  ff +  glomerular_pressure +  ra +  kwt(re, "Nmiss", "median", "q1q3", "range") +  rvr +  total_kidney_volume_ml + pcasl3d_left + pcasl3d_right + adc_left + adc_right + bold_l_bl_cortex + bold_r_bl_cortex +  bold_l_bl_medulla + bold_r_bl_medulla + fsoc_l_medulla + fsoc_r_medulla + avg_pcasl3d + avg_bl_cortex + avg_bl_medulla + avg_fsoc_medulla, data = dat)
+
+table_three_lean <- tableby(group ~ gfr_raw_plasma +  gfr_bsa_plasma +  erpf_raw_plasma +  erpf_bsa_plasma +  ff +  glomerular_pressure +  ra +  kwt(re, "Nmiss", "median", "q1q3", "range") +  rvr +  total_kidney_volume_ml + pcasl3d_left + pcasl3d_right + adc_left + adc_right + bold_l_bl_cortex + bold_r_bl_cortex +  bold_l_bl_medulla + bold_r_bl_medulla +  fsoc_l_medulla + fsoc_r_medulla + avg_pcasl3d + avg_bl_cortex + avg_bl_medulla + avg_fsoc_medulla, data = subset(dat, group != "Lean Control"))
+
+table_three_obese <- tableby(group ~ gfr_raw_plasma +  gfr_bsa_plasma +  erpf_raw_plasma +  erpf_bsa_plasma +  ff +  glomerular_pressure +  ra +  kwt(re, "Nmiss", "median", "q1q3", "range") +  rvr +  total_kidney_volume_ml + pcasl3d_left + pcasl3d_right + adc_left + adc_right + bold_l_bl_cortex + bold_r_bl_cortex +  bold_l_bl_medulla + bold_r_bl_medulla + fsoc_l_medulla + fsoc_r_medulla + avg_pcasl3d + avg_bl_cortex + avg_bl_medulla + avg_fsoc_medulla, data = subset(dat, group != "Obese Control"))
+
+table_three_t2d <- tableby(group ~ gfr_raw_plasma +  gfr_bsa_plasma +  erpf_raw_plasma +  erpf_bsa_plasma +  ff +  glomerular_pressure +  ra +  kwt(re, "Nmiss", "median", "q1q3", "range") +  rvr + pcasl3d_left + pcasl3d_right + bold_l_bl_cortex + bold_r_bl_cortex +  bold_l_bl_medulla + bold_r_bl_medulla + fsoc_l_medulla + fsoc_r_medulla + avg_pcasl3d + avg_bl_cortex + avg_bl_medulla + avg_fsoc_medulla, data = subset(dat, group != "Type 2 Diabetes"))
+```
+
+```{r results='asis'}
+table_three <- summary(table_three, pfootnote = T, text = NULL, digits=3, digits.pct=0)
+table_three
+
+table_three_lean <- summary(table_three_lean, pfootnote = T, text = NULL, digits=3, digits.pct=0)
+table_three_lean
+
+table_three_obese <- summary(table_three_obese, pfootnote = T, text = NULL, digits=3, digits.pct=0)
+table_three_obese
+
+table_three_t2d <- summary(table_three_t2d, pfootnote = T, text = NULL, digits=3, digits.pct=0)
+table_three_t2d
+```
+
+```{r, include = F}
+as.data.frame(table_three)
+write.csv2(as.data.frame(table_three),"/Users/choiyej/GitHub/YC_CHCO/RH/t_3.csv", row.names = F)
+```
+
+## Obese and T2D Only
+
+```{r, include=F}
+table_three_lim <- tableby(group ~ gfr_raw_plasma +  gfr_bsa_plasma +  erpf_raw_plasma +  erpf_bsa_plasma +  ff +  glomerular_pressure +  ra +  kwt(re, "Nmiss", "median", "q1q3", "range") +  rvr +  total_kidney_volume_ml + ht_adj_tkv + pcasl3d_left + pcasl3d_right + adc_left + adc_right + bold_l_bl_cortex + bold_r_bl_cortex +  bold_l_bl_medulla + bold_r_bl_medulla +   fsoc_l_medulla + fsoc_r_medulla , data = dat_obese_t2d)
+```
+
+```{r results='asis'}
+table_three_lim <- summary(table_three_lim, pfootnote = T, text = NULL, digits=3, digits.pct=0)
+table_three_lim
+```
+
+```{r, include = F}
+as.data.frame(table_three_lim)
+write.csv2(as.data.frame(table_three_lim),"/Users/choiyej/GitHub/YC_CHCO/RH/t_3.1.csv", row.names = F)
+```
+
+# Table 4 (Correlations Pearson)
+
+## All Participants
+
+```{r}
+correlation_table_with_formatting(dat, c("gfr_raw_plasma", 
+                                         "gfr_bsa_plasma", 
+                                         "erpf_raw_plasma", 
+                                         "erpf_bsa_plasma", 
+                                         "glomerular_pressure", 
+                                         "rvr", 
+                                         "dexa_lean_mass",
+                                         "dexa_fat_kg", 
+                                         "dexa_body_fat", 
+                                         "dexa_trunk_kg", 
+                                         "fasting_ffa", 
+                                         "ffa_suppression",
+                                         "fasting_insulin", 
+                                         "steady_state_insulin", 
+                                         "steady_state_cpeptide", 
+                                         "raw_m", 
+                                         "m_i", 
+                                         "di",
+                                         "airg",
+                                         "acprg"), n_cols = 6, dict = dict, 
+                                  save_path = "/Users/choiyej/GitHub/YC_CHCO/RH/co_all_1_pearson.csv")
+
+corrplot()
+
+correlation_table_with_formatting(dat, c("avg_bl_cortex", 
+                                         "avg_bl_medulla", 
+                                         "avg_fsoc_medulla", 
+                                         "dexa_lean_mass", 
+                                         "dexa_fat_kg", 
+                                         "dexa_body_fat", 
+                                         "dexa_trunk_kg", 
+                                         "fasting_ffa", 
+                                         "ffa_suppression",
+                                         "fasting_insulin", 
+                                         "steady_state_insulin", 
+                                         "steady_state_cpeptide", 
+                                         "raw_m", 
+                                         "m_i", 
+                                         "di",
+                                         "airg",
+                                         "acprg",
+                                         "acr_u"), n_cols = 3, dict = dict, 
+                                  save_path = "/Users/choiyej/GitHub/YC_CHCO/RH/co_all_1_mri_pearson.csv")
+```
+
+## Obese and T2D
+
+```{r}
+correlation_table_with_formatting(dat_obese_t2d, c("gfr_raw_plasma", 
+                                         "gfr_bsa_plasma", 
+                                         "erpf_raw_plasma", 
+                                         "erpf_bsa_plasma", 
+                                         "glomerular_pressure", 
+                                         "rvr", 
+                                         "dexa_lean_mass",
+                                         "dexa_fat_kg", 
+                                         "dexa_body_fat", 
+                                         "dexa_trunk_kg", 
+                                         "fasting_ffa", 
+                                         "ffa_suppression",
+                                         "fasting_insulin", 
+                                         "steady_state_insulin", 
+                                         "steady_state_cpeptide", 
+                                         "raw_m", 
+                                         "m_i", 
+                                         "di",
+                                         "airg",
+                                         "acprg"), n_cols = 6, dict = dict, 
+                                  save_path = "/Users/choiyej/GitHub/YC_CHCO/RH/co_obeset2d_1_pearson.csv")
+
+# MRI variable matrix
+correlation_table_with_formatting(dat_obese_t2d, c("avg_bl_cortex", 
+                                         "avg_bl_medulla", 
+                                         "avg_fsoc_medulla", 
+                                         "dexa_lean_mass", 
+                                         "dexa_fat_kg", 
+                                         "dexa_body_fat", 
+                                         "dexa_trunk_kg", 
+                                         "fasting_ffa", 
+                                         "ffa_suppression",
+                                         "fasting_insulin", 
+                                         "steady_state_insulin", 
+                                         "steady_state_cpeptide", 
+                                         "raw_m", 
+                                         "m_i", 
+                                         "di",
+                                         "airg",
+                                         "acprg",
+                                         "acr_u"), n_cols = 3, dict = dict, 
+                                  save_path = "/Users/choiyej/GitHub/YC_CHCO/RH/co_obeset2d_1_mri_pearson.csv")
+```
+
+# Table 4 (Correlations Spearman)
+
+Non-parametric variables:
+
+-   UACR
+-   eGFR
+-   hba1c
+-   triglycerides
+-   acprg
+-   airg
+-   DI
+-   fasting_insulin
+-   ffa_suppression
+-   m_i
+-   steady_state_insulin
+-   re
+
+## All Participants
+
+```{r}
+correlation_table_with_formatting(dat, c("gfr_raw_plasma", 
+                                         "gfr_bsa_plasma", 
+                                         "erpf_raw_plasma", 
+                                         "erpf_bsa_plasma", 
+                                         "glomerular_pressure", 
+                                         "rvr", 
+                                         "dexa_lean_mass",
+                                         "dexa_fat_kg", 
+                                         "dexa_body_fat", 
+                                         "dexa_trunk_kg", 
+                                         "fasting_ffa", 
+                                         "ffa_suppression",
+                                         "fasting_insulin", 
+                                         "steady_state_insulin", 
+                                         "steady_state_cpeptide", 
+                                         "raw_m", 
+                                         "m_i", 
+                                         "di",
+                                         "airg",
+                                         "acprg"), n_cols = 6, dict = dict, cor_method = "spearman", 
+                                  save_path = "/Users/choiyej/GitHub/YC_CHCO/RH/co_all_2_spearman.csv")
+
+# MRI variable matrix
+correlation_table_with_formatting(dat, c("avg_bl_cortex", 
+                                         "avg_bl_medulla", 
+                                         "avg_fsoc_medulla", 
+                                         "dexa_lean_mass", 
+                                         "dexa_fat_kg", 
+                                         "dexa_body_fat", 
+                                         "dexa_trunk_kg", 
+                                         "fasting_ffa", 
+                                         "ffa_suppression",
+                                         "fasting_insulin", 
+                                         "steady_state_insulin", 
+                                         "steady_state_cpeptide", 
+                                         "raw_m", 
+                                         "m_i", 
+                                         "di",
+                                         "airg",
+                                         "acprg",
+                                         "acr_u"), n_cols = 3, dict = dict, cor_method = "spearman", 
+                                  save_path = "/Users/choiyej/GitHub/YC_CHCO/RH/co_all_2_mri_spearman.csv")
+```
+
+## Obese and T2D
+
+Non-parametric variables:
+
+-   UACR
+-   eGFR
+-   hba1c
+-   triglycerides
+-   acprg
+-   airg
+-   DI
+-   fasting_insulin
+-   ffa_suppression
+-   m_i
+-   steady_state_insulin
+-   re
+
+```{r}
+correlation_table_with_formatting(dat_obese_t2d, c("gfr_raw_plasma", 
+                                         "gfr_bsa_plasma", 
+                                         "erpf_raw_plasma", 
+                                         "erpf_bsa_plasma", 
+                                         "glomerular_pressure", 
+                                         "rvr", 
+                                         "dexa_lean_mass",
+                                         "dexa_fat_kg", 
+                                         "dexa_body_fat", 
+                                         "dexa_trunk_kg", 
+                                         "fasting_ffa", 
+                                         "ffa_suppression",
+                                         "fasting_insulin", 
+                                         "steady_state_insulin", 
+                                         "steady_state_cpeptide", 
+                                         "raw_m", 
+                                         "m_i", 
+                                         "di",
+                                         "airg",
+                                         "acprg"), n_cols = 6, dict = dict, cor_method = "spearman", 
+                                  save_path = "/Users/choiyej/GitHub/YC_CHCO/RH/co_obeset2d_2_spearman.csv")
+
+# MRI variable matrix
+correlation_table_with_formatting(dat_obese_t2d, c("avg_bl_cortex", 
+                                         "avg_bl_medulla", 
+                                         "avg_fsoc_medulla", 
+                                         "dexa_lean_mass", 
+                                         "dexa_fat_kg", 
+                                         "dexa_body_fat", 
+                                         "dexa_trunk_kg", 
+                                         "fasting_ffa", 
+                                         "ffa_suppression",
+                                         "fasting_insulin", 
+                                         "steady_state_insulin", 
+                                         "steady_state_cpeptide", 
+                                         "raw_m", 
+                                         "m_i", 
+                                         "di",
+                                         "airg",
+                                         "acprg",
+                                         "acr_u"), n_cols = 3, dict = dict, cor_method = "spearman", 
+                                  save_path = "/Users/choiyej/GitHub/YC_CHCO/RH/co_obeset2d_2_mri_spearman.csv")
+```
+
+# Table 5
+
+## All Participants
+
+```{r, include = F}
+table_five <- tableby(elevated_albuminuria ~ gfr_raw_plasma +  gfr_bsa_plasma +  erpf_raw_plasma +  erpf_bsa_plasma +  ff +  glomerular_pressure +  ra +  kwt(re, "Nmiss", "median", "q1q3", "range") +  rvr +  total_kidney_volume_ml + ht_adj_tkv +  pcasl3d_left + pcasl3d_right + adc_left + adc_right + bold_l_bl_cortex + bold_r_bl_cortex +  bold_l_bl_medulla + bold_r_bl_medulla +   fsoc_l_medulla + fsoc_r_medulla + fsoc_l_medulla + fsoc_r_medulla,  data = dat)
+```
+
+```{r results='asis'}
+table_five <- summary(table_five, pfootnote = T, text = NULL, digits=3, digits.pct=0)
+table_five
+```
+
+```{r, include = F}
+as.data.frame(table_five)
+write.csv2(as.data.frame(table_five),"/Users/choiyej/GitHub/YC_CHCO/RH/t_5.csv", row.names = F)
+```
+
+## T2D Only
+
+```{r, include=F}
+table_five_lim <- tableby(elevated_albuminuria ~ gfr_raw_plasma +  gfr_bsa_plasma +  erpf_raw_plasma +  erpf_bsa_plasma +  ff +  glomerular_pressure +  ra +  kwt(re, "Nmiss", "median", "q1q3", "range") +  rvr +  total_kidney_volume_ml + ht_adj_tkv +  pcasl3d_left + pcasl3d_right + adc_left + adc_right + bold_l_bl_cortex + bold_r_bl_cortex +  bold_l_bl_medulla + bold_r_bl_medulla +   fsoc_l_medulla + fsoc_r_medulla,  data = subset(dat, group == "Type 2 Diabetes"))
+```
+
+```{r results='asis'}
+table_five_lim <- summary(table_five_lim, pfootnote = T, text = NULL, digits=3, digits.pct=0)
+table_five_lim
+```
+
+```{r, include = F}
+as.data.frame(table_five_lim)
+write.csv2(as.data.frame(table_five_lim),"/Users/choiyej/GitHub/YC_CHCO/RH/t_5.1.csv", row.names = F)
+```
+
+# Table 6
+
+## All Participants
+
+```{r, include = F}
+table_six <- tableby(elevated_albuminuria ~ dexa_lean_kg + dexa_fat_kg + dexa_body_fat + dexa_trunk_kg + fasting_ffa + kwt(ffa_suppression, "Nmiss", "median", "q1q3", "range") + kwt(fasting_insulin, "Nmiss", "median", "q1q3", "range") + kwt(steady_state_insulin, "Nmiss", "median", "q1q3", "range") + steady_state_cpeptide + raw_m + kwt(m_i, "Nmiss", "median", "q1q3", "range") + kwt(di, "Nmiss", "median", "q1q3", "range") + kwt(airg, "Nmiss", "median", "q1q3", "range") + kwt(acprg, "Nmiss", "median", "q1q3", "range"), data = dat)
+```
+
+```{r results='asis'}
+table_six <- summary(table_six, pfootnote = T, text = NULL, digits=3, digits.pct=0)
+table_six
+```
+
+```{r, include = F}
+as.data.frame(table_six)
+write.csv2(as.data.frame(table_six),"/Users/choiyej/GitHub/YC_CHCO/RH/t_6.csv", row.names = F)
+```
+
+## T2D Only
+
+```{r, include=F}
+table_six_lim <- tableby(elevated_albuminuria ~ dexa_lean_kg + dexa_fat_kg + dexa_body_fat + dexa_trunk_kg + fasting_ffa + kwt(ffa_suppression, "Nmiss", "median", "q1q3", "range") + kwt(fasting_insulin, "Nmiss", "median", "q1q3", "range") + kwt(steady_state_insulin, "Nmiss", "median", "q1q3", "range") + steady_state_cpeptide + raw_m + kwt(m_i, "Nmiss", "median", "q1q3", "range") + kwt(di, "Nmiss", "median", "q1q3", "range") + kwt(airg, "Nmiss", "median", "q1q3", "range") + kwt(acprg, "Nmiss", "median", "q1q3", "range"), data = subset(dat, group == "Type 2 Diabetes"))
+```
+
+```{r results='asis'}
+table_six_lim <- summary(table_six_lim, pfootnote = T, text = NULL, digits=3, digits.pct=0)
+table_six_lim
+```
+
+```{r, include = F}
+as.data.frame(table_six_lim)
+write.csv2(as.data.frame(table_six_lim),"/Users/choiyej/GitHub/YC_CHCO/RH/t_6.1.csv", row.names = F)
+```
+
+# Table 5 (by hyperfiltration)
+
+```{r, include=F}
+table_five_lim_hyper <- tableby(mgfr_hyper ~ gfr_raw_plasma +  gfr_bsa_plasma +  erpf_raw_plasma +  erpf_bsa_plasma +  ff +  glomerular_pressure +  ra +  kwt(re, "Nmiss", "median", "q1q3", "range") +  rvr +  total_kidney_volume_ml + ht_adj_tkv +  pcasl3d_left + pcasl3d_right + adc_left + adc_right + bold_l_bl_cortex + bold_r_bl_cortex +  bold_l_bl_medulla + bold_r_bl_medulla +   fsoc_l_medulla + fsoc_r_medulla,  data = subset(dat, group == "Type 2 Diabetes"))
+```
+
+```{r results='asis'}
+table_five_lim_hyper <- summary(table_five_lim_hyper, pfootnote = T, text = NULL, digits=3, digits.pct=0)
+table_five_lim_hyper
+```
+
+```{r, include = F}
+as.data.frame(table_five_lim_hyper)
+write.csv2(as.data.frame(table_five_lim_hyper),"/Users/choiyej/GitHub/YC_CHCO/RH/t_5.2.csv", row.names = F)
+```
+
+# Table 6 (by hyperfiltration)
+
+## T2D Only
+
+```{r, include=F}
+table_six_lim_hyper <- tableby(mgfr_hyper ~ dexa_lean_kg + dexa_fat_kg + dexa_body_fat + dexa_trunk_kg + fasting_ffa + kwt(ffa_suppression, "Nmiss", "median", "q1q3", "range") + kwt(fasting_insulin, "Nmiss", "median", "q1q3", "range") + kwt(steady_state_insulin, "Nmiss", "median", "q1q3", "range") + steady_state_cpeptide + raw_m + kwt(m_i, "Nmiss", "median", "q1q3", "range") + kwt(di, "Nmiss", "median", "q1q3", "range") + kwt(airg, "Nmiss", "median", "q1q3", "range") + kwt(acprg, "Nmiss", "median", "q1q3", "range"), data = subset(dat, group == "Type 2 Diabetes"))
+```
+
+```{r results='asis'}
+table_six_lim_hyper <- summary(table_six_lim_hyper, pfootnote = T, text = NULL, digits=3, digits.pct=0)
+table_six_lim_hyper
+```
+
+```{r, include = F}
+as.data.frame(table_six_lim_hyper)
+write.csv2(as.data.frame(table_six_lim_hyper),"/Users/choiyej/GitHub/YC_CHCO/RH/t_6.2.csv", row.names = F)
+```
+
+# Multivariable analysis
+
+```{r include = F}
+dat$group <- relevel(factor(dat$group), ref="Type 2 Diabetes")
+summary(lm(bold_l_bl_medulla ~ group + sex + bmi, data=dat))
+summary(lm(bold_r_bl_medulla ~ group + sex + bmi, data=dat))
+summary(lm(fsoc_l_medulla ~ group + sex + bmi, data=dat))
+summary(lm(fsoc_r_medulla ~ group + sex + bmi, data=dat))
+```
+
+# Individual level data (all participants)
+
+```{r warning = F}
+# Pglo vs. Fat mass (kg)
+pglo1 <- ggplot(dat, aes(glomerular_pressure, dexa_fat_kg)) +
+  labs(x = Hmisc::label(dat$glomerular_pressure),
+       y = Hmisc::label(dat$dexa_fat_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+# Pglo vs. trunk mass (kg)
+pglo2 <- ggplot(dat, aes(glomerular_pressure, dexa_trunk_kg)) +
+  labs(x = Hmisc::label(dat$glomerular_pressure),
+       y = Hmisc::label(dat$dexa_trunk_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+# Pglo vs. Fat percentage
+pglo3 <- ggplot(dat, aes(glomerular_pressure, dexa_body_fat)) +
+  labs(x = Hmisc::label(dat$glomerular_pressure),
+       y = Hmisc::label(dat$dexa_body_fat),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+pglo <- ggarrange(pglo1, pglo2, pglo3,
+                     ncol = 2, nrow = 2, common.legend = T)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/RH/pglo.png", pglo)
+
+# Left cortex R2* vs. Fat mass
+cr21 <- ggplot(dat, aes(bold_l_bl_cortex, dexa_fat_kg)) +
+  labs(x = Hmisc::label(dat$bold_l_bl_cortex),
+       y = Hmisc::label(dat$dexa_fat_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+# Right cortex R2* vs. Fat mass
+cr22 <- ggplot(dat, aes(bold_r_bl_cortex, dexa_fat_kg)) +
+  labs(x = Hmisc::label(dat$bold_r_bl_cortex),
+       y = Hmisc::label(dat$dexa_fat_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+# Left cortex R2* vs. Trunk mass
+cr23 <- ggplot(dat, aes(bold_l_bl_cortex, dexa_trunk_kg)) +
+  labs(x = Hmisc::label(dat$bold_l_bl_cortex),
+       y = Hmisc::label(dat$dexa_trunk_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+# Right cortex R2* vs. Trunk mass
+cr24 <- ggplot(dat, aes(bold_r_bl_cortex, dexa_trunk_kg)) +
+  labs(x = Hmisc::label(dat$bold_r_bl_cortex),
+       y = Hmisc::label(dat$dexa_trunk_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+cr2 <- ggarrange(cr21, cr22, cr23, cr24,
+                     ncol = 2, nrow = 2, common.legend = T)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/RH/cr2.png", cr2)
+
+# Left medulla R2* vs. Fat percentage
+mr21 <- ggplot(dat, aes(bold_l_bl_medulla, dexa_body_fat)) +
+  labs(x = Hmisc::label(dat$bold_l_bl_medulla),
+       y = Hmisc::label(dat$dexa_body_fat),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+# Right medulla R2* vs. Fat percentage
+mr22 <- ggplot(dat, aes(bold_r_bl_medulla, dexa_body_fat)) +
+  labs(x = Hmisc::label(dat$bold_r_bl_medulla),
+       y = Hmisc::label(dat$dexa_body_fat),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+# Left medulla R2* vs. Fat mass
+mr23 <- ggplot(dat, aes(bold_l_bl_medulla, dexa_fat_kg)) +
+  labs(x = Hmisc::label(dat$bold_l_bl_medulla),
+       y = Hmisc::label(dat$dexa_fat_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+# Right medulla R2* vs. Fat mass
+mr24 <- ggplot(dat, aes(bold_r_bl_medulla, dexa_fat_kg)) +
+  labs(x = Hmisc::label(dat$bold_r_bl_medulla),
+       y = Hmisc::label(dat$dexa_fat_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+# Left medulla R2* vs. Trunk mass
+mr25 <- ggplot(dat, aes(bold_l_bl_medulla, dexa_trunk_kg)) +
+  labs(x = Hmisc::label(dat$bold_l_bl_medulla),
+       y = Hmisc::label(dat$dexa_trunk_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+# Right medulla R2* vs. Trunk mass
+mr26 <- ggplot(dat, aes(bold_r_bl_medulla, dexa_trunk_kg)) +
+  labs(x = Hmisc::label(dat$bold_r_bl_medulla),
+       y = Hmisc::label(dat$dexa_trunk_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+mr2 <- ggarrange(mr21, mr22, mr23, mr24,
+                 mr25, mr26,
+                     ncol = 2, nrow = 3, common.legend = T)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/RH/mr2.png", mr2)
+
+# Left medulla FSOC vs. Fat mass
+fsoc1 <- ggplot(dat, aes(fsoc_l_medulla, dexa_fat_kg)) +
+  labs(x = Hmisc::label(dat$fsoc_l_medulla),
+       y = Hmisc::label(dat$dexa_fat_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+# Right medulla FSOC vs. Fat mass
+fsoc2 <- ggplot(dat, aes(fsoc_r_medulla, dexa_fat_kg)) +
+  labs(x = Hmisc::label(dat$fsoc_r_medulla),
+       y = Hmisc::label(dat$dexa_fat_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+# Left medulla FSOC vs. Trunk mass
+fsoc3 <- ggplot(dat, aes(fsoc_l_medulla, dexa_trunk_kg)) +
+  labs(x = Hmisc::label(dat$fsoc_l_medulla),
+       y = Hmisc::label(dat$dexa_trunk_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+# Right medulla FSOC vs. Trunk mass
+fsoc4 <- ggplot(dat, aes(fsoc_r_medulla, dexa_trunk_kg)) +
+  labs(x = Hmisc::label(dat$fsoc_r_medulla),
+       y = Hmisc::label(dat$dexa_trunk_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+# Left medulla FSOC vs. Fat percentage
+fsoc5 <- ggplot(dat, aes(fsoc_l_medulla, dexa_body_fat)) +
+  labs(x = Hmisc::label(dat$fsoc_l_medulla),
+       y = Hmisc::label(dat$dexa_body_fat),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+# Right medulla FSOC vs. Fat percentage
+fsoc6 <- ggplot(dat, aes(fsoc_r_medulla, dexa_body_fat)) +
+  labs(x = Hmisc::label(dat$fsoc_r_medulla),
+       y = Hmisc::label(dat$dexa_body_fat),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#ffba49', '#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed') +
+  sm_corr_theme()
+
+fsoc <- ggarrange(fsoc1, fsoc2, fsoc3, 
+                  fsoc4, fsoc5, fsoc6,
+                     ncol = 2, nrow = 3, common.legend = T)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/RH/fsoc.png", fsoc)
+```
+
+# Individual level data (T2D/Obese)
+
+```{r warning = F}
+# GFR vs. Fat mass (kg)
+gfr1 <- ggplot(subset(dat, group != "Lean Control"), aes(gfr_raw_plasma, dexa_fat_kg)) +
+  labs(x = Hmisc::label(dat$gfr_raw_plasma),
+       y = Hmisc::label(dat$dexa_fat_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed', digits = 3) +
+  sm_corr_theme()
+
+# GFR vs. trunk mass (kg)
+gfr2 <- ggplot(subset(dat, group != "Lean Control"), aes(gfr_raw_plasma, dexa_trunk_kg)) +
+  labs(x = Hmisc::label(dat$gfr_raw_plasma),
+       y = Hmisc::label(dat$dexa_trunk_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed', digits = 3) +
+  sm_corr_theme()
+
+# RPF vs. Fat mass (kg)
+rpf1 <- ggplot(subset(dat, group != "Lean Control"), aes(erpf_raw_plasma, dexa_fat_kg)) +
+  labs(x = Hmisc::label(dat$erpf_raw_plasma),
+       y = Hmisc::label(dat$dexa_fat_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed', digits = 3) +
+  sm_corr_theme()
+
+# RPF vs. trunk mass (kg)
+rpf2 <- ggplot(subset(dat, group != "Lean Control"), aes(erpf_raw_plasma, dexa_trunk_kg)) +
+  labs(x = Hmisc::label(dat$erpf_raw_plasma),
+       y = Hmisc::label(dat$dexa_trunk_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed', digits = 3) +
+  sm_corr_theme()
+
+# Pglo vs. trunk mass (kg)
+pglo2_1 <- ggplot(subset(dat, group != "Lean Control"), aes(glomerular_pressure, dexa_trunk_kg)) +
+  labs(x = Hmisc::label(dat$glomerular_pressure),
+       y = Hmisc::label(dat$dexa_trunk_kg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed', digits = 3) +
+  sm_corr_theme()
+
+# Pglo vs. M-value
+pglo2_2 <- ggplot(subset(dat, group != "Lean Control"), aes(glomerular_pressure, raw_m)) +
+  labs(x = Hmisc::label(dat$glomerular_pressure),
+       y = Hmisc::label(dat$raw_m),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'pearson',
+              linetype = 'dashed', digits = 3) +
+  sm_corr_theme()
+
+gfr_rpf_pglo <- ggarrange(gfr1, gfr2, rpf1, rpf2,
+                          pglo2_1, pglo2_2,
+                     ncol = 2, nrow = 3, common.legend = T)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/RH/gfr_rpf_pglo.png", gfr_rpf_pglo)
+
+# Left medulla FSOC vs. AIRg
+fsoc2_1 <- ggplot(subset(dat, group != "Lean Control"), aes(fsoc_l_medulla, airg)) +
+  labs(x = Hmisc::label(dat$fsoc_l_medulla),
+       y = Hmisc::label(dat$airg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'spearman',
+              linetype = 'dashed', digits = 3) +
+  sm_corr_theme()
+
+# Right medulla FSOC vs. AIRg
+fsoc2_2 <- ggplot(subset(dat, group != "Lean Control"), aes(fsoc_r_medulla, airg)) +
+  labs(x = Hmisc::label(dat$fsoc_r_medulla),
+       y = Hmisc::label(dat$airg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'spearman',
+              linetype = 'dashed', digits = 3) +
+  sm_corr_theme()
+
+# Left medulla FSOC vs. ACPRg
+fsoc2_3 <- ggplot(subset(dat, group != "Lean Control"), aes(fsoc_l_medulla, acprg)) +
+  labs(x = Hmisc::label(dat$fsoc_l_medulla),
+       y = Hmisc::label(dat$acprg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'spearman',
+              linetype = 'dashed', digits = 3) +
+  sm_corr_theme()
+
+# Right medulla FSOC vs. ACPRg
+fsoc2_4 <- ggplot(subset(dat, group != "Lean Control"), aes(fsoc_r_medulla, acprg)) +
+  labs(x = Hmisc::label(dat$fsoc_r_medulla),
+       y = Hmisc::label(dat$acprg),
+       color  = "Group") +
+  geom_point(aes(color=group)) +
+  scale_color_manual(values=c('#20a39e', "#ef5b5b")) +
+  sm_statCorr(color = '#5A5A5A', corr_method = 'spearman',
+              linetype = 'dashed', digits = 3) +
+  sm_corr_theme()
+
+fsoc_2 <- ggarrange(fsoc2_1, fsoc2_2, fsoc2_3, fsoc2_4, 
+                     ncol = 2, nrow = 2, common.legend = T)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/RH/fsoc_2.png", fsoc_2)
+
+```
+
+# RISE Plot
+```{r}
+#| echo: False
+# RISE figures
+# Version of egg plot where colors represent treatment groups, all plotting
+# symbols are squares.  Baseline curve and point are black, non-baseline timepoints
+# for glargine are green, and non-baseline timepoints for metformin are purple
+library(ellipse)
+library(shape)
+library(RColorBrewer)
+source("/Users/choiyej/GitHub/CHCO-Code/Petter Bjornstad/RISE manuscript functions/plotData.r")
+source("/Users/choiyej/GitHub/CHCO-Code/Petter Bjornstad/RISE manuscript functions/xy_limits.r")
+
+dat %<>% 
+  mutate(xvar = log(m_i), 
+         yvar = log(acprg),
+         group_mod = case_when(group == "Type 2 Diabetes" ~ "T2D",
+                               group == "Lean Control" ~ "LC", 
+                               group == "Obese Control" ~"OC"))
+
+# -----------------------------------------------------------------------------  
+# Calculate the baseline mean point in the plane and curve for the entire 
+# study population
+# -----------------------------------------------------------------------------  
+# E[Y | E[X] ] at baseline
+  # E[X] = mean of X
+    mean.loginsSens <- dat %>% summarize(mean(eval(xvar), na.rm=T)) %>% as.numeric
+  # E[Y | E[X]] = predicted value of Y at x=E[X] for linear model of Y ~ X
+    lm.model.base <- lm(eval(yvar) ~ eval(xvar), data=dat)
+    E.outcome    <- predict.lm(lm.model.base, data.frame(xvar=mean.loginsSens))
+  
+  # Variance-covariance matrix of (x,y) at baseline which will be used to 
+  # to draw the confidence ellipse around the baseline point
+  xy.matrix <- cbind(eval(xvar, envir = dat), eval(yvar, envir = dat))
+  xy.cov    <- var(xy.matrix, use = 'complete.obs')
+  n.points  <- sum(complete.cases(data.frame(xy.matrix)))
+
+  # Confidence ellipse for baseline point
+  confellipse.base <- ellipse::ellipse(xy.cov/n.points, centre=c(mean.loginsSens,E.outcome))
+    
+  # Predicted Baseline curve data
+  baseline.curve <- data.frame(x=exp(lm.model.base$model$'eval(xvar)'),y=exp(predict.lm(lm.model.base))) 
+  baseline.curve <- baseline.curve[order(baseline.curve$x),]
+
+# -----------------------------------------------------------------------------
+#  Specify the contrast matrices for each of the treatment groups. These
+#  will be used below to determine the mean point and confidence ellipse
+#  for each treatment group at the different visits.
+#  
+#  (R uses the alphabetical order of the levels
+#  to determine to reference group, with the first levels always being the reference).
+#  This can be changed by using the relevel() function to set a new reference, or using
+#  my function ReorderFactorLevels() to change the order of the levels to whatever
+#  the user chooses (e.g. PLACEBO, METFORMIN, GLARGINE + METFORMIN, LIRAGLUTIDE + METFORMIN)
+#  
+#  If doing a pooled analysis a treatment variable with 1-level ('Pooled') must
+#  be defined and specified as trtvar in the parameters section of YAML header
+# -----------------------------------------------------------------------------
+   # 3 Groups
+   Cmat.LC <- rbind(c(0,0,0,0,1,mean.loginsSens,0,0),
+                    c(1,E.outcome,0,0,0,0,0,0))
+  
+   Cmat.OC <- rbind(c(0,0,0,0,1,mean.loginsSens,1,0),
+                    c(1,E.outcome,1,0,0,0,0,0))
+   
+   Cmat.T2D <- rbind(c(0,0,0,0,1,mean.loginsSens,0,1),
+                    c(1,E.outcome,0,1,0,0,0,0))
+
+# -----------------------------------------------------------------------------  
+# Loop over visits and calculate the centroid and confidence ellipse for each treatment
+# group at the visits (this excludes baseline since only the baseline curve and mean
+# from the baseline curve are plotted for this timepoint)
+# -----------------------------------------------------------------------------  
+# Start loop over treatment groups
+for(i in 1:length(dat$group_mod)){
+  # Bivariate Mean and 95% Confidence Ellipse at followup timepoint j
+  assign(paste0('confellipse.base.',dat$group_mod[i]), eval(as.symbol(paste0('Cmat.',dat$group_mod[i]))))
+# Closing bracket for loop over treatment groups in the case of unpooled data
+}
+
+# -----------------------------------------------------------------------------  
+# Organize the data into a list for plotting.  The code backtranforms to the
+# original scale by applying exp() to the estimates based on the log transformed
+# X and Y variables
+# -----------------------------------------------------------------------------
+Estimates <- list()
+Baseline=list(meanvec=exp(c(mean.loginsSens, E.outcome)),
+              ellipse=exp(confellipse.base),
+              curveXY=baseline.curve)
+Estimates <- Baseline
+groups.currentvisit <- list()
+
+for(i in 1:length(dat$group_mod)){
+  meanvec=exp(as.vector(eval(as.symbol(paste0('confellipse.base.', dat$group_mod[i])))$Mean))
+  ellipse=exp(eval(as.symbol(paste0('confellipse.base.', dat$group_mod[i])))$Ellipse)
+  
+  groups.currentvisit[[i]] <- list(meanvec=meanvec,ellipse=ellipse)
+}
+names(groups.currentvisit) <- dat$group_mod
+Estimates[[j]] <- groups.currentvisit
+
+names(Estimates) <- timepoints.keep 
+```
