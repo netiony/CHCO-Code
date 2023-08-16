@@ -16,8 +16,6 @@ sys.path.insert(
     0, os.path.expanduser("~") + "/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization"
 )
 from data_harmonization import harmonize_data
-from datetime import datetime
-import pandas as pd
 
 # Get dataset
 df = harmonize_data()
@@ -35,6 +33,7 @@ df = df[
         "race",
         "ethnicity",
         "visit",
+        "bmi",
         "creatinine_s",
         "cystatin_c_s",
         "acr_u",
