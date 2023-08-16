@@ -76,49 +76,31 @@ def clean_renal_heir():
     med = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
     med.replace(rep, np.nan, inplace=True)
-    # Just SGLT2i for now
+    # SGLT2i
     med = med[["subject_id", "diabetes_med___1", "diabetes_med_other___1", "addl_hld_meds___2", "diabetes_med_other___2",
               "diabetes_med_other___3", "diabetes_med___3", "addl_hld_meds___1", "htn_med_type___1",
-              "htn_med_type___2"]]
-    med["diabetes_med_other___3"].replace(
-        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
-    med.rename({"diabetes_med_other___3": "sglti_timepoint"}, axis=1, inplace=True)
-    # TZD
-    med["diabetes_med_other___1"].replace(
-        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
-    med.rename({"diabetes_med_other___1": "tzd_timepoint"}, axis=1, inplace=True)
-    # Fibrates
-    med["addl_hld_meds___2"].replace(
-        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
-    med.rename({"addl_hld_meds___2": "fibrates_timepoint"}, axis=1, inplace=True)
-    # Metformin
-    med["diabetes_med___1"].replace(
-        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
-    med.rename({"diabetes_med___1": "metformin_timepoint"},
-               axis=1, inplace=True)
-    # Insulin
-    med["diabetes_med___3"].replace(
-        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
-    med.rename({"diabetes_med___3": "insulin_med_timepoint"},
-               axis=1, inplace=True)
-    # Statin
-    med["addl_hld_meds___1"].replace(
-        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
-    med.rename({"addl_hld_meds___1": "statin"},
-           axis=1, inplace=True)
+              "htn_med_type___2", "htn_med_type___3", "htn_med_type___4", "htn_med_type___5"]]
+
     # RAASi
     med = med.assign(raasi_timepoint=np.maximum(pd.to_numeric(
         med["htn_med_type___1"]), pd.to_numeric(med["htn_med_type___2"])))
-    med.drop(med[['htn_med_type___1', 'htn_med_type___2']],
-             axis=1, inplace=True)
-    med["raasi_timepoint"].replace(
-        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
-    # GLP-1
-    med["diabetes_med_other___2"].replace(
-        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
-    med.rename({"diabetes_med_other___2": "glp1_agonist_timepoint"},
-           axis=1, inplace=True)
-           
+    med_list = {"raasi_timepoint": "raasi_timepoint",
+                "diabetes_med_other___3": "sglti_timepoint",
+                "diabetes_med_other___1": "tzd_timepoint",
+                "addl_hld_meds___2": "fibrates_timepoint",
+                "diabetes_med___1": "metformin_timepoint",
+                "diabetes_med___3": "insulin_med_timepoint",
+                "addl_hld_meds___1": "statin",
+                "diabetes_med_other___2": "glp1_agonist_timepoint",
+                "htn_med_type___1": "ace_inhibitor",
+                "htn_med_type___2": "angiotensin_receptor_blocker",
+                "htn_med_type___3": "beta_blocker",
+                "htn_med_type___4": "ca_channel_blocker",
+                "htn_med_type___5": "diuretic"}
+    og_names = list(med_list.keys())
+    med.rename(med_list, axis=1, inplace=True)
+    med.iloc[:, 1:] = med.iloc[:, 1:].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
     med["procedure"] = "medications"
     med["visit"] = "baseline"
 
