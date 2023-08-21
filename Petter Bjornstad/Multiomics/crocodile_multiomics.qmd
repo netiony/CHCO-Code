@@ -28,61 +28,102 @@ library(MOFA2)
 ```
 
 ```{r data cleaning}
+#| cache: true
+# CROCODILE clinical data
+croc <- read.csv("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = "")
+croc <- croc %>%
+  filter(study == "CROCODILE") %>%
+  select(record_id, acr_u, albuminuria_cat) %>%
+  group_by(record_id) %>%
+  summarise_all(~ first(na.omit(.x)))
+ids <- as.character(unique(croc$record_id))
+# Number of features
+nfeat <- 500
 # Import scRNA
 so <- readRDS("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Petter Bjornstad/scRNA/data_clean/seurat_data_no_computations.RDS")
 # Limit to CROCODILE
 so <- so[, grepl("CRC", so$michigan_id)]
-# Normalize
+# Normalize and scale
 so <- NormalizeData(so)
-# Aggregate by ident - variable features only
-rna <- AggregateExpression(so,
-  assays = "RNA", group.by = c("ident", "michigan_id"),
-  features = VariableFeatures(so)[1:7596] # Top 7596 to match SOMA dimensionality
-)
-rna <- as.data.frame(t(rna$RNA))
-# List of dataframes
-celltype = sub("_CRC-\\d\\d","",rownames(rna))
-rna = split.data.frame(rna,celltype)
-rna = lapply(rna,function(d){
-  rownames(d) = sub(".*_CRC","CRC",rownames(d))
-  colnames(d) = paste(colnames(d),"in",sub("_CRC-\\d\\d","",rownames(d)))
-  return(d)
+so <- ScaleData(so)
+celltypes <- as.character(unique(Idents(so)))
+# Get the top features by cell type
+rna <- lapply(celltypes, function(ct) {
+  sso <- subset(so, idents = ct)
+  ct_vars <- FindVariableFeatures(sso, nfeatures = nfeat, verbose = F)
+  ct_vars <- VariableFeatures(ct_vars)
+  rn <- AggregateExpression(sso, group.by = "michigan_id", features = ct_vars)
+  rn <- t(rn$RNA)
+  colnames(rn) <- paste(colnames(rn), "in", ct)
+  # Add rows of missing if necessary (need all matrices to be same dimensions)
+  miss <- ids[which(!ids %in% rownames(rn))]
+  if (length(miss) > 0) {
+    miss_mat <- matrix(rep(rep(NA, times = nfeat), times = length(miss)),
+      nrow = length(miss), byrow = T
+    )
+    rownames(miss_mat) <- miss
+    colnames(miss_mat) <- colnames(rn)
+    rn <- rbind(rn, miss_mat)
+  }
+  # Sort and return
+  rn <- rn[ids, ]
+  return(rn)
 })
-# Just PT cells for now
-rna = rna[grep("PT-",names(rna))]
-# Find those with complete PT cell data
-keep = Reduce(intersect,lapply(rna, rownames))
-rna = lapply(rna,function(d){
-  return(data.matrix(d[keep,]))
-})
+names(rna) <- celltypes
 # Import SOMAScan
 load("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Petter Bjornstad/CROCODILE/Somalogic data/croc_soma.Rdata")
 load("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Petter Bjornstad/CROCODILE/Somalogic data/analytes.Rdata")
-rownames(croc_soma)=NULL
-# Normalize and exclude those without scRNA data
+rownames(croc_soma) <- NULL
+# Exclude those without scRNA data
 croc_soma <- croc_soma %>%
   select(SampleDescription, contains("seq")) %>%
   column_to_rownames("SampleDescription")
-croc_soma = log(croc_soma)
-croc_soma = data.matrix(croc_soma[keep,])
+croc_soma <- log(croc_soma)
+cvs <- sapply(croc_soma[, 2:ncol(croc_soma)], function(c) {
+  sd(c, na.rm = T) / mean(c, na.rm = T)
+})
+soma_var <- names(cvs)[order(cvs, decreasing = T)[1:nfeat]]
+croc_soma <- croc_soma[, soma_var]
+miss <- ids[which(!ids %in% rownames(croc_soma))]
+if (length(miss) > 0) {
+    miss_mat <- matrix(rep(rep(NA, times = nfeat), times = length(miss)),
+      nrow = length(miss), byrow = T
+    )
+    rownames(miss_mat) <- miss
+    colnames(miss_mat) <- colnames(croc_soma)
+    croc_soma <- rbind(croc_soma, miss_mat)
+  }
+croc_soma <- croc_soma[ids, ]
 # Targeted metabolomics
 metabs <- read.csv("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Petter Bjornstad/CROCODILE/Data_Cleaned/metabolomics_rq.csv")
 metabs <- metabs %>% column_to_rownames("CmpdID")
 colnames(metabs) <- sub("\\.", "-", colnames(metabs))
 metabs <- data.frame(t(metabs))
-# Normalize and exclude those missing scRNA
 metabs <- log(metabs)
-metabs = data.matrix(metabs[keep,])
+miss <- ids[which(!ids %in% rownames(metabs))]
+if (length(miss) > 0) {
+    miss_mat <- matrix(rep(rep(NA, times = ncol(metabs)), times = length(miss)),
+      nrow = length(miss), byrow = T
+    )
+    rownames(miss_mat) <- miss
+    colnames(miss_mat) <- colnames(metabs)
+    metabs <- rbind(metabs, miss_mat)
+  }
+metabs <- metabs[ids, ]
 # Put together
-mofa_dfs = c(rna,list("SOMAScan"=croc_soma),list("Metabolomics"=metabs))
+mofa_dfs <- c(rna, list("SOMAScan" = croc_soma), list("Metabolomics" = metabs))
+# Format matrices
+mofa_dfs <- lapply(mofa_dfs, function(d) {
+  data.matrix(t(d))
+})
+names(mofa_dfs) = gsub("/",".",names(mofa_dfs))
 ```
 
 # With scRNAseq data
 
 ```{r prepare mofa}
-#| eval: false
 # Prepare for MOFA!
-mo <- create_mofa(mofa_dfs[-which(names(mofa_dfs)=="Metabolomics")])
+mo <- create_mofa(mofa_dfs)
 # Data options
 data_opts <- get_default_data_options(mo)
 data_opts$scale_views <- T
@@ -125,12 +166,6 @@ plot_data_overview(model)
 # Metadata from model
 md <- samples_metadata(model)
 # Add clinical data
-croc <- read.csv("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = "")
-croc <- croc %>%
-  filter(study == "CROCODILE") %>%
-  select(record_id, acr_u, albuminuria_cat) %>%
-  group_by(record_id) %>%
-  summarise_all(~ first(na.omit(.x)))
 md <- left_join(md, croc, by = c("sample" = "record_id"))
 samples_metadata(model) <- md
 ```
@@ -145,7 +180,7 @@ plot_variance_explained(model, x = "factor", y = "view")
 
 ```{r}
 plot_factor(model,
-  factor = 1:2,
+  factor = 1:4,
   color_by = "acr_u",
   shape_by = "albuminuria_cat"
 )
@@ -155,14 +190,14 @@ plot_factor(model,
 
 ```{r}
 plot_factors(model,
-  factors = 1:2,
-  color_by = "acr_u"
+  factors = 1:4,
+  color_by = "albuminuria_cat"
 )
 ```
 
 # MOFA questions
 
 1. Do you use spike-slab sparsity prior in the factors and/or weights? 
-  - Any other model/training recommendations?
-  
-2. What feature selection approaches do you use prior to fitting the model? I used `VariableFeatures()` in `Seurat` and `nearZeroVar()` from the `caret` package (both with default options).
+- Any other model/training recommendations?
+
+2. What feature selection approaches do you use prior to fitting the model? Currently I am running `FindVariableFeatures(nfeatures = 200)` for each cell type subset in and using the "genes" with the largest coefficient of variation for SOMAScan.
