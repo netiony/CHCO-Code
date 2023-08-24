@@ -1,0 +1,266 @@
+---
+title: "Proteomics and DKD - scRNA-seq"
+author: "Laura Pyle, Ye Ji Choi & Tim Vigers"
+date: "today"
+date-format: long
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
+    code-fold: true
+    self-contained: true
+    fig-cap-location: top
+    page-layout: full
+editor: source
+execute:
+  echo: false
+  message: false
+---
+
+```{r libraries}
+#| include: false
+library(tidyverse)
+library(Seurat)
+library(pander)
+```
+
+```{r data import}
+#| include: false
+# source("~/GitHub/CHCO-Code/Petter Bjornstad/Proteomics and DKD/create_today_dkd_analysis_dataset.R")
+load("~/analysis_dataset.RData")
+load("~/analysis_seurat_object.RData")
+```
+
+```{r functions}
+# UMAP function
+umap_plot <- function(seurat_object = so, vars) {
+  # Get Entrez Gene IDs
+  entrez <- analytes$EntrezGeneSymbol[match(vars, analytes$AptName)]
+  entrez <- entrez[entrez %in% rownames(so)]
+  # Plot each gene
+  invisible(lapply(entrez, function(e) {
+    p <- FeaturePlot(seurat_object, features = e)
+    p <- LabelClusters(plot = p, id = "ident")
+    cat("\n")
+    print(p)
+    cat("\n")
+  }))
+}
+# DE function
+de <- function(seurat_object = so, outcome, ref_group, vars) {
+  # Get Entrez Gene IDs
+  entrez <- analytes$EntrezGeneSymbol[match(vars, analytes$AptName)]
+  entrez <- entrez[entrez %in% rownames(seurat_object)]
+  entrez <- unique(entrez)
+  # Find cells where most highly expressed
+  cells <- FetchData(seurat_object, vars = entrez,slot = "counts")
+  cells$type <- seurat_object$generaltype
+  cell_count = data.frame(table(cells$type))
+  colnames(cell_count) = c("Cell.Type","n Cells")
+  cells <- cells %>%
+    group_by(type) %>%
+    summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+    column_to_rownames("type")
+  max <- lapply(cells, function(c) {
+    rownames(cells)[order(c,decreasing = T)[1:2]]
+  })
+  # DE testing
+  de_tables <- lapply(names(max), function(n) {
+    # Compare expression in two highest expressing cell types
+    c1 = tryCatch(FindMarkers(seurat_object,features = n, ident.1 = ref_group,
+                              group.by = outcome, subset.ident = max[[n]][1],
+                              logfc.threshold = 0, verbose = F),
+                  error=function(err) NULL,warning=function(war) NULL)
+    if(!is.null(c1)){
+      c1$`Cell Type` = max[[n]][1]
+      c1$`Gene` = n
+    }
+    c2 = tryCatch(FindMarkers(seurat_object,features = n, ident.1 = ref_group,
+                              group.by = outcome, subset.ident = max[[n]][2],
+                              logfc.threshold = 0, verbose = F),
+                  error=function(err) NULL,warning=function(war) NULL)
+    if(!is.null(c2)){
+      c2$`Cell Type` = max[[n]][2]
+      c2$`Gene` = n
+    }
+    # Merge tables if necessary
+    t = do.call(rbind,list(c1,c2))
+    return(t)
+  })
+  # Combine rows and print
+  de_table <- data.frame(do.call(rbind, de_tables))
+  de_table <- de_table[order(de_table$Gene), ]
+  # Plots
+  invisible(apply(de_table,1, function(r) {
+    g = r["Gene"]
+    i = r["Cell.Type"]
+    adjp = format.pval(as.numeric(r["p_val_adj"]),eps = 0.001,digits = 3)
+    fc = round(as.numeric(r["avg_log2FC"]),3)
+    t = bquote(log[2]~FC==~.(fc)~(q==~.(adjp)))
+    p1 <- VlnPlot(seurat_object,
+                 features = g, group.by = outcome,
+                 idents = i, pt.size = 0.01, log = F
+    ) 
+    d = p1$data
+    colnames(d) = sub("rna_","",colnames(d))
+    p = ggplot(d,aes(x=ident,y=.data[[colnames(d)[1]]],color=ident)) + 
+      geom_violin()+ theme_bw()+
+      annotate(geom = 'text', label = deparse(t), 
+               x = 1.5, y = max(p1$data[,1]), parse=TRUE) + 
+      ggtitle(paste(g,"in",i)) + 
+      theme(legend.position = "none",plot.title = element_text(hjust = 0.5),
+            axis.title.x = element_blank(),axis.title.y = element_blank())
+    cat("\n")
+    print(p)
+    cat("\n")
+  }))
+  de_table = de_table %>% 
+    select(Gene,Cell.Type,avg_log2FC,pct.1,pct.2,p_val,p_val_adj)
+  de_table=left_join(de_table,cell_count,by = join_by(Cell.Type))
+  rownames(de_table)=NULL
+  cat("\n")
+  pander(de_table)
+  cat("\n")
+}
+```
+
+# scRNA-seq
+
+## MAC
+
+The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MAC were: `r toString(analytes$TargetFullName[match(top_mac,analytes$AptName)])` (associated with genes `r toString(analytes$EntrezGeneSymbol[match(top_mac,analytes$AptName)])`, respectively).
+
+### Overall expression
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+umap_plot(so, top_mac)
+```
+
+### Differential expression in the highest expressing cell type
+
+#### SGLT2i status
+
+```{r results='asis', dpi=1200}
+de(outcome = "SGLT2i", ref_group = "SGLT2i-", vars = top_mac)
+```
+
+#### UACR
+
+```{r results='asis', dpi=1200}
+de(outcome = "elevated_uacr", ref_group = "UACR < 30", vars = top_mac)
+```
+
+## MIC
+
+The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MIC were: `r toString(analytes$TargetFullName[match(top_mic,analytes$AptName)])` (associated with genes `r toString(analytes$EntrezGeneSymbol[match(top_mic,analytes$AptName)])`, respectively).
+
+### Overall expression
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+umap_plot(so, top_mic)
+```
+
+### Differential expression in the highest expressing cell type
+
+#### SGLT2i status
+
+```{r results='asis', dpi=1200}
+de(outcome = "SGLT2i", ref_group = "SGLT2i-", vars = top_mic)
+```
+
+#### UACR
+
+```{r results='asis', dpi=1200}
+de(outcome = "elevated_uacr", ref_group = "UACR < 30", vars = top_mic)
+```
+
+## HYP
+
+The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_hyp,analytes$AptName)])` (associated with genes `r toString(analytes$EntrezGeneSymbol[match(top_hyp,analytes$AptName)])`, respectively).
+
+### Overall expression
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+umap_plot(so, top_hyp)
+```
+
+### Differential expression in the highest expressing cell type
+
+#### SGLT2i status
+
+```{r results='asis', dpi=1200}
+de(outcome = "SGLT2i", ref_group = "SGLT2i-", vars = top_hyp)
+```
+
+#### eGFR
+
+```{r results='asis', dpi=1200}
+de(outcome = "hyp", ref_group = "eGFR < 135", vars = top_hyp)
+```
+
+## RAPID
+
+The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for rapid eGFR decline were: `r toString(analytes$TargetFullName[match(top_rapid,analytes$AptName)])` (associated with genes `r toString(analytes$EntrezGeneSymbol[match(top_rapid,analytes$AptName)])`, respectively).
+
+### Overall expression
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+umap_plot(so, top_rapid)
+```
+
+### Differential expression in the highest expressing cell type
+
+#### SGLT2i status
+
+```{r results='asis', dpi=1200}
+de(outcome = "SGLT2i", ref_group = "SGLT2i-", vars = top_rapid)
+```
+
+## HTN
+
+The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_htn,analytes$AptName)])` (associated with genes `r toString(analytes$EntrezGeneSymbol[match(top_htn,analytes$AptName)])`, respectively).
+
+### Overall expression
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+umap_plot(so, top_htn)
+```
+
+### Differential expression in the highest expressing cell type
+
+#### SGLT2i status
+
+```{r results='asis', dpi=1200}
+de(outcome = "SGLT2i", ref_group = "SGLT2i-", vars = top_htn)
+```
+
+#### Hypertension
+
+```{r results='asis', dpi=1200}
+de(outcome = "htn", ref_group = "HTN-", vars = top_htn)
+```
+
+## HTN with SBP
+
+The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension (with SBP) were: `r toString(analytes$TargetFullName[match(top_htn_sbp,analytes$AptName)])` (associated with genes `r toString(analytes$EntrezGeneSymbol[match(top_htn_sbp,analytes$AptName)])`, respectively).
+
+### Overall expression
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+umap_plot(so, top_htn_sbp)
+```
+
+### Differential expression in the highest expressing cell type
+
+#### SGLT2i status
+
+```{r results='asis', dpi=1200}
+de(outcome = "SGLT2i", ref_group = "SGLT2i-", vars = top_htn_sbp)
+```
+
+#### Hypertension
+
+```{r results='asis', dpi=1200}
+de(outcome = "htn", ref_group = "HTN-", vars = top_htn_sbp)
+```

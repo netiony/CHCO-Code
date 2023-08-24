@@ -1,0 +1,340 @@
+---
+title: "Proteomics and DKD - TODAY Pathway Analyses"
+author: "Laura Pyle, Ye Ji Choi & Tim Vigers"
+date: "today"
+date-format: long
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
+    code-fold: true
+    self-contained: true
+    fig-cap-location: top
+    page-layout: full
+editor: source
+execute:
+  echo: false
+  message: false
+---
+
+```{r libraries}
+#| include: false
+library(tidyverse)
+library(ggrepel)
+library(clusterProfiler)
+library(ReactomePA)
+library(patchwork)
+```
+
+```{r data import}
+#| include: false
+# source("~/GitHub/CHCO-Code/Petter Bjornstad/Proteomics and DKD/create_today_dkd_analysis_dataset.R")
+load("/Volumes/Peds Endo/Petter Bjornstad/Proteomics and DKD/Data_Cleaned/analysis_dataset.RData")
+```
+
+```{r functions}
+# Volcano plot
+volcano <- function(data, lab = "EntrezGeneSymbol", xcol = "estimate", ycol = "p.value", 
+                    top = 3,
+                    xlimit = c(-1, 1), ylimit = c(0, -log10(10e-7)),
+                    xlabel = "HR", pCutoff = 0.05, overlaps = 10,
+                    log_t = T) {
+  data <- as.data.frame(data)
+  t <- data[data[, "adj.p.value"] <= pCutoff, ]
+  if (log_t) {
+    t <- t[order(abs(log(t[, xcol])), decreasing = T), ]
+  } else {
+    t <- t[order(abs(t[, xcol]), decreasing = T), ]
+  }
+  data$top <- data[, "AptName"] %in% t[1:top, "AptName"]
+  data$logp <- -log10(data[, ycol])
+  data$fc <- data[, xcol]
+  data$sig <- data[, ycol] <= pCutoff
+  p <- ggplot(data = data, aes(x = fc, y = logp, color = sig)) +
+    geom_hline(yintercept = -log10(pCutoff), linetype = "dashed") +
+    geom_point(size = 2) +
+    geom_label_repel(
+      data = data[data$top, ], aes(label = EntrezGeneSymbol), color = "black",
+      max.overlaps = overlaps
+    ) +
+    scale_color_manual(values = c("grey", "#3e6dbf")) +
+    xlab(xlabel) +
+    ylab(bquote(~ -Log[10] ~ italic(P))) +
+    theme_bw() +
+    theme(legend.position = "none")
+  return(p)
+}
+# GSEA
+pathway_analysis <- function(de_genes) {
+  # Log transform if necessary
+  if(!any(de_genes < 0)){
+    de_genes = log(de_genes)
+  }
+  de_genes = sort(de_genes,decreasing = T)
+  de_genes = de_genes[!duplicated(names(de_genes))]
+  gsea = gsePathway(de_genes)
+  gsea = setReadable(gsea, "org.Hs.eg.db", "ENTREZID")
+  dot = dotplot(gsea)
+  # Return
+  return(dot)
+}
+# Function for comparing two gene lists
+# de_gene_list is a named list of multiple gene sets
+pathway_comparison <- function(de_gene_list) {
+  # Log transform if necessary
+  de_gene_list = lapply(de_gene_list,function(l){
+    if(!any(l < 0)){
+      l = log(l)
+    }
+    return(l)
+  })
+  clust_df = lapply(names(de_gene_list),function(t){
+    d = de_gene_list[[t]]
+    d = d[!is.na(names(d))]
+    d = d[!duplicated(names(d))]
+    n = names(d)
+    d = data.frame(cbind(n,d))
+    colnames(d) = c("Entrez","logFC")
+    d$group = t
+    return(d)
+  })
+  clust_df = data.frame(do.call(rbind,clust_df))
+  clust_df$logFC = as.numeric(clust_df$logFC)
+  clust_df = clust_df[order(clust_df$logFC),]
+  comp = compareCluster(Entrez~group, data=clust_df,
+                        fun="groupGO", OrgDb='org.Hs.eg.db')
+  # Plots
+  updot <- dotplot(upck) + ggtitle("Upregulated") + 
+    theme(plot.title = element_text(hjust = 0.5))
+  upnet <- cnetplot(upck) + ggtitle("Upregulated") + 
+    theme(plot.title = element_text(hjust = 0.5))
+  downdot <- dotplot(downck) + ggtitle("Downregulated") + 
+    theme(plot.title = element_text(hjust = 0.5))
+  downnet <- cnetplot(downck) + ggtitle("Downregulated") + 
+    theme(plot.title = element_text(hjust = 0.5))
+  # Return
+  return(list("updot" = updot, "upnet" = upnet,
+              "downdot" = downdot, "downnet" = downnet))
+}
+```
+
+# TODAY pathway analysis
+
+## MAC
+
+The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MAC were: `r toString(analytes$TargetFullName[match(top_mac,analytes$AptName)])` (associated with genes `r toString(analytes$EntrezGeneSymbol[match(top_mac,analytes$AptName)])`, respectively).
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+v_mac <- volcano(top_mac_df)
+v_mac <- v_mac +
+  ggtitle("Severe Albuminuria") +
+  theme(plot.title = element_text(hjust = 0.5))
+v_mac
+```
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+mac_p <- pathway_analysis(de_genes_mac)
+
+mac_p = mac_p + ggtitle("Severe Albuminuria") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+# ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/MAC_ORA_1600x900.jpeg",plot = mac_p,
+#        width = 1600,height = 900,units = "px",scale = 2.5)
+
+mac_p_comp <- pathway_comparison(list(
+  Baseline = de_genes_mac,
+  Followup = de_genes_mac_10
+))
+mac_p_comp$updot
+mac_p_comp$downdot
+
+mac_comp_plot = mac_p_comp$updot + mac_p_comp$downdot + 
+  plot_annotation(title = "Severe Albuminuria",
+                  theme = theme(plot.title = element_text(hjust = 0.5)))
+# ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/MAC_ORA_comparison_1600x900.jpeg",
+#        plot = mac_comp_plot,width = 1600,height = 900,units = "px",scale = 2.5)
+```
+
+## MIC
+
+The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for MIC were: `r toString(analytes$TargetFullName[match(top_mic,analytes$AptName)])` (associated with genes `r toString(analytes$EntrezGeneSymbol[match(top_mic,analytes$AptName)])`, respectively).
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+v_mic <- volcano(top_mic_df)
+v_mic <- v_mic +
+  ggtitle("Elevated Albuminuria") +
+  theme(plot.title = element_text(hjust = 0.5))
+v_mic
+```
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+mic_p <- pathway_analysis(de_genes_mic)
+mic_p$updot
+mic_p$downdot
+
+mic_plot = mic_p$updot + mic_p$downdot + 
+  plot_annotation(title = "Elevated Albuminuria",
+                  theme = theme(plot.title = element_text(hjust = 0.5)))
+# ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/MIC_ORA_1600x900.jpeg",plot = mic_plot,
+#        width = 1600,height = 900,units = "px",scale = 2.5)
+
+mic_p_comp <- pathway_comparison(list(
+  Baseline = de_genes_mic,
+  Followup = de_genes_mic_10
+))
+mic_p_comp$updot
+mic_p_comp$downdot
+
+mic_comp_plot = mic_p_comp$updot + mic_p_comp$downdot + 
+  plot_annotation(title = "Elevated Albuminuria",
+                  theme = theme(plot.title = element_text(hjust = 0.5)))
+# ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/MIC_ORA_comparison_1600x900.jpeg",
+#        plot = mic_comp_plot,width = 1600,height = 900,units = "px",scale = 2.5)
+```
+
+## HYP
+
+The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_hyp,analytes$AptName)])` (associated with genes `r toString(analytes$EntrezGeneSymbol[match(top_hyp,analytes$AptName)])`, respectively).
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+v_hyp <- volcano(top_hyp_df)
+v_hyp <- v_hyp +
+  ggtitle("Hyperfiltration") +
+  theme(plot.title = element_text(hjust = 0.5))
+v_hyp
+```
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+hyp_p <- pathway_analysis(de_genes_hyp)
+hyp_p$updot
+hyp_p$downdot
+
+hyp_plot = hyp_p$updot + hyp_p$downdot + 
+  plot_annotation(title = "Hyperfiltration",
+                  theme = theme(plot.title = element_text(hjust = 0.5)))
+# ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/HYP_ORA_1600x900.jpeg",plot = hyp_plot,
+#        width = 1600,height = 900,units = "px",scale = 3)
+
+hyp_p_comp <- pathway_comparison(list(
+  Baseline = de_genes_hyp,
+  Followup = de_genes_hyp_10
+))
+hyp_p_comp$updot
+hyp_p_comp$downdot
+
+hyp_comp_plot = hyp_p_comp$updot + hyp_p_comp$downdot + 
+  plot_annotation(title = "Hyperfiltration",
+                  theme = theme(plot.title = element_text(hjust = 0.5)))
+# ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/HYP_ORA_comparison_1600x900.jpeg",
+#        plot = hyp_comp_plot,width = 1600,height = 900,units = "px",scale = 2.5)
+```
+
+## RAPID
+
+The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for rapid eGFR decline were: `r toString(analytes$TargetFullName[match(top_rapid,analytes$AptName)])` (associated with genes `r toString(analytes$EntrezGeneSymbol[match(top_rapid,analytes$AptName)])`, respectively).
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+v_rapid <- volcano(top_rapid_df)
+v_rapid <- v_rapid +
+  ggtitle("Rapid eGFR Decline") +
+  theme(plot.title = element_text(hjust = 0.5))
+v_rapid
+```
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+rapid_p <- pathway_analysis(de_genes_rapid)
+rapid_p$updot
+rapid_p$downdot
+
+rapid_plot = rapid_p$updot + rapid_p$downdot + 
+  plot_annotation(title = "Rapid eGFR decline",
+                  theme = theme(plot.title = element_text(hjust = 0.5)))
+# ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/RAPID_ORA_1600x900.jpeg",plot = rapid_plot,
+#        width = 1600,height = 900,units = "px",scale = 2.8)
+
+rapid_p_comp <- pathway_comparison(list(
+  Baseline = de_genes_rapid,
+  Followup = de_genes_rapid_10
+))
+rapid_p_comp$updot
+rapid_p_comp$downdot
+
+rapid_comp_plot = rapid_p_comp$updot + rapid_p_comp$downdot + 
+  plot_annotation(title = "Rapid eGFR decline",
+                  theme = theme(plot.title = element_text(hjust = 0.5)))
+# ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/RAPID_ORA_comparison_1600x900.jpeg",
+#        plot = rapid_comp_plot,width = 1600,height = 900,units = "px",scale = 2.5)
+```
+
+## HTN
+
+The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_htn,analytes$AptName)])` (associated with genes `r toString(analytes$EntrezGeneSymbol[match(top_htn,analytes$AptName)])`, respectively).
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+v_htn <- volcano(top_htn_df)
+v_htn <- v_htn +
+  ggtitle("Hypertension") +
+  theme(plot.title = element_text(hjust = 0.5))
+v_htn
+```
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+htn_p <- pathway_analysis(de_genes_htn)
+htn_p$updot
+htn_p$downdot
+
+htn_plot = htn_p$updot + htn_p$downdot + 
+  plot_annotation(title = "Hypertension",
+                  theme = theme(plot.title = element_text(hjust = 0.5)))
+# ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/HTN_ORA_1600x900.jpeg",plot = htn_plot,
+#        width = 1600,height = 900,units = "px",scale = 2.8)
+
+htn_p_comp <- pathway_comparison(list(
+  Baseline = de_genes_htn,
+  Followup = de_genes_htn_10
+))
+htn_p_comp$updot
+htn_p_comp$downdot
+
+htn_comp_plot = htn_p_comp$updot + htn_p_comp$downdot + 
+  plot_annotation(title = "Hypertension",
+                  theme = theme(plot.title = element_text(hjust = 0.5)))
+# ggsave(filename = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/HTN_ORA_comparison_1600x900.jpeg",
+#        plot = htn_comp_plot,width = 1600,height = 900,units = "px",scale = 2.5)
+```
+
+## HTN with SBP
+
+The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension (with SBP) were: `r toString(analytes$TargetFullName[match(top_htn_sbp,analytes$AptName)])` (associated with genes `r toString(analytes$EntrezGeneSymbol[match(top_htn_sbp,analytes$AptName)])`, respectively).
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+v_htn_sbp <- volcano(top_htn_sbp_df)
+v_htn_sbp <- v_htn_sbp +
+  ggtitle("Hypertension (with SBP)") +
+  theme(plot.title = element_text(hjust = 0.5))
+v_htn_sbp
+```
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+htn_sbp_p <- pathway_analysis(de_genes_htn_sbp)
+htn_sbp_p$updot
+htn_sbp_p$downdot
+
+htn_sbp_p_comp <- pathway_comparison(list(
+  Baseline = de_genes_htn_sbp,
+  Followup = de_genes_htn_sbp_10
+))
+htn_sbp_p_comp$updot
+htn_sbp_p_comp$downdot
+```
+
+# Figure 1
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+fig1 <- (v_mic + v_mac + v_rapid) / (v_hyp + v_htn + plot_spacer())
+# ggsave("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Shared/TODAY/TODAY DKD manuscript [shared]/Figures/Figure_1_1600x900.jpeg",
+#   units = "px",
+#   width = 1600, height = 900, scale = 2, plot = fig1, device = "jpeg"
+# )
+```
