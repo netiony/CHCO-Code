@@ -111,7 +111,8 @@ def harmonize_data():
     harmonized["total_kidney_volume_ml"] = \
         harmonized["left_kidney_volume_ml"] + \
         harmonized["right_kidney_volume_ml"]
-    harmonized["ht_adj_tkv"] = harmonized["total_kidney_volume_ml"] / (harmonized.groupby("record_id")["height"].transform("mean") / 100)
+    harmonized = harmonized.assign(
+        ht_adj_tkv = harmonized["total_kidney_volume_ml"] / (harmonized.groupby("record_id")["height"].transform("mean") / 100))
     # PCASL
     harmonized["avg_pcascl"] = \
         harmonized[["pcasl3d_left", "pcasl3d_right"]].apply(lambda x: x.mean(), axis=1)
@@ -170,7 +171,7 @@ def harmonize_data():
             alb.append("A3")
         else:
             alb.append(np.nan)
-
+            
     harmonized["albuminuria_cat"] = alb
     harmonized["elevated_albuminuria"] = pd.cut(
         harmonized["acr_u"], [-float("inf"), 30, float("inf")], right=False, labels=["No", "Yes"])
@@ -195,10 +196,22 @@ def harmonize_data():
     harmonized["fasting_ffa"] = \
         harmonized[["ffa_minus_20", "ffa_minus_10", "ffa_minus_5", "ffa_0"]].apply(
             lambda x: x.mean(), axis=1)
+    # Fasting Glucose
+    harmonized["fbg"] = \
+        harmonized[["glucose_minus_120", "glucose_minus_90","glucose_minus_20",
+        "glucose_minus_10", "glucose_minus_5", "glucose_0", "fbg"]].apply(
+            lambda x: x.mean(), axis=1)
+    # HOMA-IR (https://link.springer.com/article/10.1007/BF00280883), FBG entered as mg/dL, converting to mmol/L (18 mg/dL = 1 mmol/L)
+    harmonized = harmonized.assign(
+        homa_ir=(harmonized["fasting_insulin"] * (harmonized["fbg"]/18))/22.5)
     # Adipose IR (fasting_insulin * fasting_ffa)
     harmonized = harmonized.assign(
         adipose_ir=harmonized["fasting_ffa"] * harmonized["fasting_insulin"])
-
+    # SEARCH IS score eIS (estimated insulin sensitivity) (https://academic.oup.com/jcem/article/101/2/686/2811091#81467317)
+    harmonized = harmonized.assign(
+        search_eis = np.exp((4.64725 - (0.02032 * harmonized.groupby("record_id")["waistcm"].transform("mean")) - 
+        (0.09779 * harmonized.groupby("record_id")["hba1c"].transform("mean")) - 
+        (0.00235 * harmonized.groupby("record_id")["triglycerides"].transform("mean")))))
     # Sort columns
     id_cols = ["record_id", "co_enroll_id", "study", "dob", "diabetes_dx_date",
                "sex", "race", "ethnicity", "visit", "procedure", "date", "group"]
