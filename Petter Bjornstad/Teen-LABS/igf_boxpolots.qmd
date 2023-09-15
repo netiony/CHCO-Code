@@ -1,0 +1,405 @@
+---
+title: "Teen-LABS Proteomics"
+author: "Tim Vigers"
+date: "today"
+date-format: long
+format:
+  revealjs:
+    self-contained: true
+bibliography: /Users/timvigers/Library/CloudStorage/Dropbox/Miscellaneous/zotero.bib
+csl: /Users/timvigers/Library/CloudStorage/Dropbox/Miscellaneous/american-medical-association.csl
+editor: source
+---
+
+```{r libraries}
+#| include: false
+library(limma)
+library(clusterProfiler)
+library(ReactomePA)
+library(enrichplot)
+library(Hmisc)
+library(knitr)
+library(tidyverse)
+library(gtsummary)
+library(ggpubr)
+library(lmerTest)
+library(parallel)
+library(emmeans)
+library(RColorBrewer)
+library(VennDiagram)
+library(broom.mixed)
+library(xlsx)
+```
+
+```{r clean data}
+# source("/Users/timvigers/GitHub/CHCO-Code/Petter Bjornstad/Teen-LABS/create_teen_labs_analysis_dataset.R")
+load("/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/analysis_dataset.RData")
+```
+
+:::{.scrollable .smaller}
+
+## The Teen-LABS study
+
+- NIDDK funded the Teen-LABS (Longitudinal Assessment of Bariatric Surgery) study to look at the short- and long-term risks and benefits of bariatric (weight-loss) surgery in teens.
+  - Gastric band, gastric sleeve, and gastric bypass
+- Found no significant difference in percent weight change between adolescents and adults 5 years after surgery @ingeFiveYearOutcomesGastric2019.
+
+:::
+
+:::{.scrollable .smaller}
+
+## The Teen-LABS study
+
+- 30 participants with T2D from Teen-LABS were compared to 63 from TODAY @bjornstadEffectSurgicalMedical2020:
+    - Hyperfiltration decreased from 21% to 18% in Teen-LABS and increased from 7% to 48% in TODAY
+    - Elevated UAE decreased from 27% to 5% in Teen-LABS and increased from 21% to 43% in TODAY. 
+    - TODAY participants had greater odds of elevated UAE at 5 years of follow-up.
+- Adolescents with preoperative type 2 diabetes (T2D) experienced earlier attenuation of elevated UACR compared to adults @bjornstadFiveyearKidneyOutcomes2020.
+  - No improvement in those without preoperative T2D.
+  
+:::
+
+:::{.scrollable .smaller}
+
+## 
+
+```{r}
+#| label: tbl-characteristics
+#| tbl-cap: Participant characteristics
+df %>%
+  dplyr::select(
+    SEX, age, ETHN, RACE, SURG, diab, diab_resolved, sbp, dbp, hrate, bfat, bmi,
+    weight, height, UACRATIO, albuminuria, CYSC, visit
+  ) %>%
+  tbl_summary(by = visit, missing_text = "Missing") %>%
+  modify_header(label = "**Visit**") %>%
+  bold_labels() %>%
+  as_kable_extra()
+```
+
+:::
+
+# Univariable analyses with `limma`@ritchieLimmaPowersDifferential2015
+
+:::{.scrollable .smaller}
+
+## Intercept only model with $\Delta$ as the outcome
+
+```{r intercept}
+#| message: false
+# Calculate difference from month 1 to year 1, make variable for diabetes status
+# at baseline
+df_diff <- df %>%
+  arrange(ID, visit) %>%
+  filter(visit %in% c("Month 1", "Year 1")) %>%
+  group_by(ID) %>%
+  reframe(across(contains("seq"), ~ diff(as.numeric(.x))))
+# Limma setup
+# Y needs "genes" in rows
+y <- df_diff %>%
+  dplyr::select(contains("seq")) %>%
+  t()
+# Design matrix
+design_mat <- model.matrix(~1, data = df_diff)
+# Fit
+fit <- lmFit(y, design_mat)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$Target <- analyte_info$Target[match(rownames(res), analyte_info$AptName)]
+res$TargetFullName <- analyte_info$TargetFullName[match(rownames(res), analyte_info$AptName)]
+res <- res[res$adj.P.Val <= 0.05, ]
+# Write results for online enrichment
+res_for_enrichment <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res_for_enrichment <- res_for_enrichment[order(res_for_enrichment$logFC, decreasing = T), ]
+res_for_enrichment$UniProt <- analyte_info$UniProt[match(rownames(res_for_enrichment), analyte_info$AptName)]
+res_for_enrichment <- res_for_enrichment[, c("UniProt", "AveExpr")]
+write.csv(res_for_enrichment, file = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/limma_intercept_only_results.csv", row.names = F)
+# Table
+kable(res[1:10, ], digits = 3, row.names = F)
+```
+
+There were `r nrow(res)` proteins significantly different after p value adjustment. Of these, `r sum(res$logFC>0)` were higher on average at year 1 compared to month 1, and `r sum(res$logFC<0)` were lower.
+
+:::
+
+# Gene set enrichment analysis (GSEA) with Reactome
+
+:::{.scrollable .smaller}
+
+## Dotplot
+
+```{r}
+#| message: false
+res$EntrezGeneID <- analyte_info$EntrezGeneID[match(rownames(res), analyte_info$AptName)]
+de <- res$logFC
+names(de) <- res$EntrezGeneID
+de <- de[names(de) != ""]
+de <- de[!duplicated(names(de))]
+de <- sort(de, decreasing = T)
+all_prots_gse <- gsePathway(de,
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  verbose = FALSE
+)
+dotplot(all_prots_gse)
+```
+
+*Drug ADME is drug absorption, distribution, metabolism and excretion*
+
+:::
+
+:::{.scrollable .smaller}
+
+## Ridge plot
+
+```{r}
+#| message: false
+ridgeplot(all_prots_gse)
+```
+
+:::
+
+:::{.scrollable .smaller}
+
+## Network plot
+
+```{r}
+#| message: false
+#| fig-width: 12
+#| fig-height: 9
+all_prots_gse_net <- setReadable(all_prots_gse, "org.Hs.eg.db", "ENTREZID")
+cnetplot(all_prots_gse_net, foldChange = de, circular = T, colorEdge = T)
+```
+
+:::
+
+## GSEA scores
+
+```{r}
+#| message: false
+#| fig-width: 12
+#| fig-height: 9
+gseaplot2(all_prots_gse, geneSetID = 1:7, subplots = 1:2)
+```
+
+## Phase I - Functionalization of compounds
+
+![](/Users/timvigers/GitHub/CHCO-Code/Petter Bjornstad/Teen-LABS/phase_1_functionalization.png){fig-align="center"}
+
+:::{.scrollable .smaller}
+
+## Over-representation analysis (as a sanity check)
+
+```{r}
+#| fig-width: 16
+#| fig-height: 9
+# Upregulated and downregulated
+up <- rownames(res)[res$logFC > 0]
+up <- analyte_info$EntrezGeneID[match(up, analyte_info$AptName)]
+up <- up[up != ""]
+down <- rownames(res)[res$logFC < 0]
+down <- analyte_info$EntrezGeneID[match(down, analyte_info$AptName)]
+down <- down[down != ""]
+# Reactome enrichment
+upreact <- enrichPathway(up)
+upreact <- setReadable(upreact, "org.Hs.eg.db", "ENTREZID")
+downreact <- enrichPathway(down)
+downreact <- setReadable(downreact, "org.Hs.eg.db", "ENTREZID")
+# Plots
+updot <- dotplot(upreact) + ggtitle("Upregulated") +
+  theme(plot.title = element_text(hjust = 0.5))
+downdot <- dotplot(downreact) + ggtitle("Downregulated") +
+  theme(plot.title = element_text(hjust = 0.5))
+updot + downdot
+```
+
+::: 
+
+## Main takeaways
+
+1. There were `r nrow(res)` proteins that were significantly different between month 1 and year 1 after p value adjustment.
+
+2. `r sum(res$logFC>0)` were upregulated and `r sum(res$logFC<0)` were downregulated.
+
+3. GSEA appears to show that metabolism of lipids, steroids, amino acids, and drug compounds is downregulated.
+    - We know that T2D is associated with upregulation of these pathways
+    - Makes sense that MBS downregulates them 
+  
+# Future directions
+
+```{r}
+load("/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/analysis_dataset.RData")
+spagett <- function(dataframe = df, outcome, loess = T) {
+  p <- ggplot(dataframe, aes(x = months, y = .data[[outcome]], color = ID, group = ID)) +
+    geom_point(alpha = 0.3) +
+    geom_line(alpha = 0.3) +
+    ylab(label(dataframe[, outcome])) +
+    xlab("Months") +
+    theme_bw() +
+    theme(legend.position = "none")
+  if (loess) {
+    p <- p + geom_smooth(aes(x = months, y = .data[[outcome]]), inherit.aes = F, se = F, color = "black")
+  }
+  return(p)
+}
+```
+
+:::{.scrollable .smaller}
+
+## Longitudinal models
+
+```{r}
+spagett(outcome = "seq.3554.24") + spagett(outcome = "seq.2575.5")
+```
+
+*The black lines in the above plot are LOESS smoothed and the LMMs will be slightly different.*
+
+:::
+
+
+
+## Longitudinal models
+
+- We are planning on fitting linear mixed models (LMM) that use all of the data. 
+- These models still allow for comparisons between specific timepoints using contrasts.
+- We can adjust for covariates and mixed models should be robust to missing data.
+  - As seen in @tbl-characteristics, quite a few patients were were lost to follow up.
+  
+:::{.scrollable .smaller}  
+  
+## Longitudinal model considerations
+
+- We need to check the missing data assumptions.
+  - Is dropout related to the study outcomes?
+- More advanced mixed models may not include empirical Bayes posterior variance estimators
+  - `limma` enforces a common correlation for all genes/proteins.
+    - Likely a risky assumption for between-array replicates. @yuFullyModeratedTstatistic2019
+  - In `dream`, variance shrinkage of random effects is ignored. @yuFullyModeratedTstatistic2019
+  - It's possible we could implement these ourselves but it may not be worth the effort based on previous comparisons we've done.
+
+:::
+
+## Questions
+
+1. How do we reconcile the overlap between unregulated and downregulated pathway analyses?
+  - What does it mean that extracellular matrix organization and post-translational protein phosphorylation appear to be both upregulated and downregulated?
+2. What do we need to adjust for in the longitudinal models?
+3. **What next?**
+
+## Initial LMMs
+
+- Unadjusted
+- Unstructured variance covariance matrix
+- Random slope models did not converge
+- No fancy shrinkage estimation, just default LMM in `lme4` package. @batesFittingLinearMixedEffects2014
+
+```{r}
+#| cache: true
+seqs <- analyte_info$AptName
+# Parallel processing
+cl <- makeForkCluster(8)
+rows <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|ID)"))
+  m <- lmer(f, data = df)
+  emm <- emmeans(m, specs = ~visit)
+  # Contrast not necessary with current parameterization, but nice to have written
+  c <- contrast(emm,
+    method =
+      list("Year 1 - Month 1" = c(0, 0, 1, 0, 0, 0, 0) - c(1, 0, 0, 0, 0, 0, 0))
+  )
+  c <- as.data.frame(c)
+  c$AptName <- y
+  return(c)
+})
+stopCluster(cl)
+```
+
+:::{.scrollable .smaller}
+
+## Initial LMM results
+
+```{r}
+# Format results
+lmm_res <- do.call(rbind, rows)
+lmm_res$p.value.adj <- p.adjust(lmm_res$p.value, method = "BH")
+lmm_res$Target <- analyte_info$Target[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res <- lmm_res[, c(
+  "AptName", "Target", "estimate", "SE", "df",
+  "t.ratio", "p.value", "p.value.adj"
+)]
+lmm_res <- lmm_res[order(lmm_res$p.value, decreasing = F), ]
+lmm_res <- lmm_res[lmm_res$p.value.adj <= 0.05, ]
+kable(lmm_res[1:10, ], digits = 3, row.names = F)
+```
+
+There were `r nrow(lmm_res)` proteins significantly different after p value adjustment. Of these, `r sum(lmm_res$estimate>0)` were higher on average at year 1 compared to month 1, and `r sum(lmm_res$estimate<0)` were lower. Of these, `r length(intersect(rownames(res),lmm_res$AptName))` proteins were also identified by our `limma`@ritchieLimmaPowersDifferential2015 analysis. `r length(setdiff(lmm_res$AptName,rownames(res)))` were not previously detected and `r length(setdiff(rownames(res),lmm_res$AptName))` were no longer significant.
+
+:::
+
+## Initial LMM results
+
+```{r}
+#| include: false
+fn <- "/Users/timvigers/GitHub/CHCO-Code/Petter Bjornstad/Teen-LABS/venn.png"
+venn.diagram(
+  x = list(rownames(res), lmm_res$AptName),
+  category.names = c("limma", "Simple LMM"),
+  filename = fn, imagetype = "png", output = T, disable.logging = T,
+  fill = brewer.pal(3, "Pastel2")[1:2]
+)
+```
+
+![](/Users/timvigers/GitHub/CHCO-Code/Petter Bjornstad/Teen-LABS/venn.png){fig-align="center"}
+
+We hope that the differing results are to do with increased power and decreased type 1 error from the mixed models, but need to investigate more in depth.
+
+## LMM all timepoints
+
+```{r}
+seqs <- analyte_info$AptName
+# Parallel processing
+cl <- makeForkCluster(8)
+rows <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|ID)"))
+  m <- lmer(f, data = df)
+  res <- tidy(m, effects = "fixed")
+  res$protein <- y
+  return(res)
+})
+stopCluster(cl)
+# Save results
+lmm_res <- data.frame(do.call(rbind, rows)) %>%
+  dplyr::select(protein, term, estimate, p.value) %>%
+  filter(term != "(Intercept)")
+lmm_res$AptName <- analyte_info$AptName[match(lmm_res$protein, analyte_info$AptName)]
+lmm_res$protein <- analyte_info$UniProt[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$Target <- analyte_info$Target[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$TargetFullName <- analyte_info$TargetFullName[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res <- split.data.frame(lmm_res, lmm_res$term)
+# Write the change from baseline at each visit as a new excel sheet
+names <- names(lmm_res)
+lmm_res <- lapply(names(lmm_res), function(n) {
+  d <- lmm_res[[n]]
+  d <- d[, c("AptName", "protein", "Target", "TargetFullName", "estimate", "p.value")]
+  d$p.value.adj <- p.adjust(d$p.value, method = "fdr")
+  d <- d[order(d$estimate, decreasing = T), ]
+  colnames(d) <- c("AptName", "UniProt", "Target", "TargetFullName", "logFC", "p value", "q value")
+  return(d)
+})
+openxlsx::write.xlsx(lmm_res, file = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/change_from_m1.xlsx")
+```
+
+## Box plots
+
+```{r}
+# keep only the proteins we need
+analyte_igf <- analyte_info %>% filter(UniProt %in% c("P05019","P17936","P35858","P01241","P18065","P22692","P24593",
+                                                         "P10912","P08833","P24592"))
+apt_keep <- analyte_igf$AptName
+df_igf <- df %>% select(all_of(apt_keep))
+df_igf <- cbind(df$ID, df$visit, df_igf)
+colnames(df_igf[,1:2]) <- c ("ID","visit")
+p <- ggplot(df,aes(visit,seq.13741.36))+geom_boxplot(aes(fill=visit)) + ylab(label(df$seq.13741.36))
+```
+
+## References
