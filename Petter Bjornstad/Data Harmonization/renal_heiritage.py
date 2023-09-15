@@ -161,7 +161,7 @@ def clean_renal_heiritage():
     # Filtration Fraction
     rct["ff"] = rct["gfr_raw_plasma"]/rct["erpf_raw_plasma"] 
     # Kfg for group (T1D/T2D kfg: 0.1012, Control kfg: 0.1733)
-    rct["kfg"] = np.select([rct["group_rh2"].eq("1"), rct["group_rh2"].eq("2"), rct["group_rh2"].eq("3")], [0.1012, 0.1733, 0.1733]) 
+    rct["kfg"] = np.select([rct["group_rh2"].eq(1), rct["group_rh2"].eq(2), rct["group_rh2"].eq(3)], [0.1012, 0.1733, 0.1733]) 
     # Filtration pressure across glomerular capillaries
     rct["deltapf"] = (rct["gfr_raw_plasma"]/60)/rct["kfg"] 
     # Plasma protein mean concentration
