@@ -115,7 +115,7 @@ def clean_renal_heir():
     phys.replace(rep, np.nan, inplace=True)
     phys["procedure"] = "physical_exam"
     phys.drop(["male_activity_factor", "fem_activity_factor", "schofield_male",
-               "schofield_female", "phys_norm", "phys_no", "breast_tanner", "testicular_volume", "lmp", "screen_bmi_percentile"], axis=1, inplace=True)
+               "schofield_female", "phys_norm", "phys_no", "lmp", "screen_bmi_percentile"], axis=1, inplace=True)
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
     phys.rename({"sys_bp": "sbp", "dys_bp": "dbp",
                 "waist_circumference": "waistcm", "hip_circumference": "hipcm"}, inplace=True, axis=1)
