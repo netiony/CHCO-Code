@@ -1,0 +1,150 @@
+---
+title: "IMPROVE Proteomics"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r libraries}
+#| include: false
+library(limma)
+library(clusterProfiler)
+library(ReactomePA)
+library(enrichplot)
+library(Hmisc)
+library(knitr)
+library(tidyverse)
+library(gtsummary)
+library(ggpubr)
+library(lmerTest)
+library(parallel)
+library(emmeans)
+library(RColorBrewer)
+library(VennDiagram)
+library(broom.mixed)
+#library(xlsx)
+```
+
+```{r clean data}
+# Import proteomics data for IMPROVE
+load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/IMPROVE T2D/Somalogic data/improve_soma.Rdata")
+load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/IMPROVE T2D/Somalogic data/analytes.Rdata")
+# Format and combine
+soma <- improve_soma %>% select(SampleDescription, TimePoint, contains("seq."))
+# Transform
+soma[, 3:ncol(soma)] <- lapply(soma[, 3:ncol(soma)], log)
+# Merge clinical and SOMA data
+soma <- soma %>%
+  rename(record_id = "SampleDescription", visit = "TimePoint") %>%
+  mutate(
+    record_id = sub("IT2D-", "IT_", record_id),
+    visit = case_when(
+      visit == "BL" ~ "baseline",
+      visit == "3M" ~ "3_months_post_surgery",
+      visit == "12M" ~ "12_months_post_surgery"
+    )
+  )
+```
+
+```{r}
+#| cache: true
+seqs <- analytes$AptName
+# Parallel processing
+cl <- makeForkCluster(8)
+rows <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|ID)"))
+  m <- lmer(f, data = df)
+  emm <- emmeans(m, specs = ~visit)
+  # Contrast not necessary with current parameterization, but nice to have written
+  c <- contrast(emm,
+    method =
+      list("Year 1 - Month 1" = c(0, 0, 1, 0, 0, 0, 0) - c(1, 0, 0, 0, 0, 0, 0))
+  )
+  c <- as.data.frame(c)
+  c$AptName <- y
+  return(c)
+})
+stopCluster(cl)
+```
+
+:::{.scrollable .smaller}
+
+## Initial LMM results
+
+```{r}
+# Format results
+lmm_res <- do.call(rbind, rows)
+lmm_res$p.value.adj <- p.adjust(lmm_res$p.value, method = "BH")
+lmm_res$Target <- analyte_info$Target[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res <- lmm_res[, c(
+  "AptName", "Target", "estimate", "SE", "df",
+  "t.ratio", "p.value", "p.value.adj"
+)]
+lmm_res <- lmm_res[order(lmm_res$p.value, decreasing = F), ]
+lmm_res <- lmm_res[lmm_res$p.value.adj <= 0.05, ]
+kable(lmm_res[1:10, ], digits = 3, row.names = F)
+```
+
+There were `r nrow(lmm_res)` proteins significantly different after p value adjustment. Of these, `r sum(lmm_res$estimate>0)` were higher on average at year 1 compared to month 1, and `r sum(lmm_res$estimate<0)` were lower. Of these, `r length(intersect(rownames(res),lmm_res$AptName))` proteins were also identified by our `limma`@ritchieLimmaPowersDifferential2015 analysis. `r length(setdiff(lmm_res$AptName,rownames(res)))` were not previously detected and `r length(setdiff(rownames(res),lmm_res$AptName))` were no longer significant.
+
+:::
+
+## Initial LMM results
+
+```{r}
+#| include: false
+#fn <- "/Users/timvigers/GitHub/CHCO-Code/Petter Bjornstad/Teen-LABS/venn.png"
+#venn.diagram(
+#  x = list(rownames(res), lmm_res$AptName),
+#  category.names = c("limma", "Simple LMM"),
+#  filename = fn, imagetype = "png", output = T, disable.logging = T,
+#  fill = brewer.pal(3, "Pastel2")[1:2]
+#)
+```
+
+# ![](/Users/timvigers/GitHub/CHCO-Code/Petter Bjornstad/Teen-LABS/venn.png){fig-align="center"}
+
+We hope that the differing results are to do with increased power and decreased type 1 error from the mixed models, but need to investigate more in depth.
+
+## LMM all timepoints
+
+```{r}
+seqs <- analyte_info$AptName
+# Parallel processing
+cl <- makeForkCluster(8)
+rows <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|ID)"))
+  m <- lmer(f, data = df)
+  res <- tidy(m, effects = "fixed")
+  res$protein <- y
+  return(res)
+})
+stopCluster(cl)
+# Save results
+lmm_res <- data.frame(do.call(rbind, rows)) %>%
+  dplyr::select(protein, term, estimate, p.value) %>%
+  filter(term != "(Intercept)")
+lmm_res$AptName <- analyte_info$AptName[match(lmm_res$protein, analyte_info$AptName)]
+lmm_res$protein <- analyte_info$UniProt[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$Target <- analyte_info$Target[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$TargetFullName <- analyte_info$TargetFullName[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res <- split.data.frame(lmm_res, lmm_res$term)
+# Write the change from baseline at each visit as a new excel sheet
+names <- names(lmm_res)
+lmm_res <- lapply(names(lmm_res), function(n) {
+  d <- lmm_res[[n]]
+  d <- d[, c("AptName", "protein", "Target", "TargetFullName", "estimate", "p.value")]
+  d$p.value.adj <- p.adjust(d$p.value, method = "fdr")
+  d <- d[order(d$estimate, decreasing = T), ]
+  colnames(d) <- c("AptName", "UniProt", "Target", "TargetFullName", "logFC", "p value", "q value")
+  return(d)
+})
+openxlsx::write.xlsx(lmm_res, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/change_from_m1.xlsx", sheetName=names)
+```
+
