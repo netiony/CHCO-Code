@@ -1,0 +1,1416 @@
+---
+title: ADC Preliminary
+author: Ye Ji Choi
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    theme: default
+    page-layout: full
+    embed-resources: true
+editor: visual
+---
+
+```{r libraries}
+#| include: false
+library(tidyverse)
+library(table1)
+library(emmeans)
+library(broom)
+library(kableExtra)
+library(arsenal)
+library(olsrr)
+library(purrr)
+library(Hmisc)
+library(kableExtra)
+library(knitr)
+library(stats)
+library(smplot2)
+library(ggpubr)
+source("/Users/choiyej/GitHub/YC_CHCO/R Functions/correlation_function.R")
+```
+
+```{r, include=F}
+dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv")
+coenroll_id <- read.csv("/Users/choiyej/GitHub/YC_CHCO/RH2/coenrolled_ids.csv")
+dict <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv", na.strings = c(" ", "", "-9999",-9999)) %>%
+  dplyr::select(variable_name, label)
+
+dat <- dat %>%
+  dplyr::mutate(study = case_when(study %in% c("IMPROVE", "RENAL-HEIR", "RENAL-HEIRitage") ~ "IMPROVE/RH/RH2", 
+                            T~study)) %>%
+  left_join(coenroll_id) %>%
+  dplyr::mutate(merged_id = case_when(is.na(merged_id) ~ record_id,
+                               T~merged_id)) %>%
+  filter(visit == "baseline") %>%
+  filter(study != "PANTHER") %>%
+  group_by(merged_id) %>% 
+  dplyr::summarise(across(where(is.character),~max(na.omit(.x))),
+            across(where(is.factor),~last(na.omit(.x))),
+            across(where(is.numeric),~mean(.x,na.rm = T)),.groups = "drop")%>%
+  dplyr::mutate(race_ethnicity_condensed = case_when(race == "White" & startsWith(ethnicity, "Not") ~ "Non-Hispanic White",
+                                              race == "Black or African American" & startsWith(ethnicity, "Not") ~ "Non-Hispanic Black",
+                                              ethnicity == "Hispanic or Latino" ~ "Hispanic",
+                                              T ~ "Other")) %>%
+  ungroup() %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(adc_avg = mean(c(adc_left, adc_right), na.rm = T)) %>%
+  filter(group == "Lean Control" | group == "Type 1 Diabetes" | group == "Type 2 Diabetes" | group == "Obese Control") %>%
+  dplyr::mutate(elevated_albuminuria = case_when(acr_u >=30 ~ "Yes",
+                                          acr_u <30 ~ "No")) %>%
+  dplyr::mutate(combined_m_value = case_when(is.na(p2_raw_m) ~ raw_m,
+                                      is.na(raw_m) ~ p2_raw_m)) %>%
+  dplyr::mutate(ht_adj_tkv = total_kidney_volume_ml / (height/100),
+                pcasl3d_avg = mean(c(pcasl3d_left, pcasl3d_right)),
+                bold_avg_bl_cortex = mean(c(bold_l_bl_cortex, bold_r_bl_cortex), na.rm = T),
+                bold_avg_bl_kidney = mean(c(bold_l_bl_kidney, bold_r_bl_kidney), na.rm = T),
+                bold_avg_bl_medulla = mean(c(bold_l_bl_medulla, bold_r_bl_medulla), na.rm = T),
+                bold_avg_pf_cortex = mean(c(bold_l_pf_cortex, bold_r_pf_cortex), na.rm = T),
+                bold_avg_pf_kidney = mean(c(bold_l_pf_kidney, bold_r_pf_kidney), na.rm = T),
+                bold_avg_pf_medulla = mean(c(bold_l_pf_medulla, bold_r_pf_medulla), na.rm = T),
+                fsoc_avg_cortex = mean(c(fsoc_l_cortex, fsoc_r_cortex), na.rm = T),
+                fsoc_avg_kidney = mean(c(fsoc_l_kidney, fsoc_r_kidney), na.rm = T),
+                fsoc_avg_medulla = mean(c(fsoc_l_medulla, fsoc_r_medulla), na.rm = T),
+                ckd_stage = case_when(eGFR_fas_cr >= 90 ~ "Stage 1",
+                               eGFR_fas_cr < 90 & eGFR_fas_cr >=60 ~ "Stage 2",
+                               eGFR_fas_cr < 60 & eGFR_fas_cr >= 45 ~ "Stage 3a",
+                               eGFR_fas_cr < 45 & eGFR_fas_cr >= 30 ~ "Stage 3b",
+                               eGFR_fas_cr < 30 & eGFR_fas_cr >= 15 ~ "Stage 4",
+                               eGFR_fas_cr < 15 ~ "Stage 5")) %>%
+  filter(!is.na(adc_avg)) %>%
+  dplyr::mutate(subgroup = case_when(group == "Type 1 Diabetes"|group == "Lean Control" ~ "Group 1",
+                              group == "Type 2 Diabetes"|group == "Obese Control" ~ "Group 2")) 
+
+# Create different tertiles
+adc_avg_tertile <- quantile(dat$adc_avg, seq(0, 1, 1/3), na.rm = TRUE)
+dat$adc_avg_cat_pooled <- cut(dat$adc_avg, adc_avg_tertile, c('Low', 'Medium', 'High'), include.lowest = TRUE)
+
+adc_avg_tertile_1 <- quantile(subset(dat, subgroup=="Group 1")$adc_avg, seq(0, 1, 1/3), na.rm = TRUE)
+dat$adc_avg_cat_group1 <- cut(dat$adc_avg, adc_avg_tertile_1, c('Low', 'Medium', 'High'), include.lowest = TRUE)
+
+adc_avg_tertile_2 <- quantile(subset(dat, subgroup=="Group 2")$adc_avg, seq(0, 1, 1/3), na.rm = TRUE)
+dat$adc_avg_cat_group2 <- cut(dat$adc_avg, adc_avg_tertile_2, c('Low', 'Medium', 'High'), include.lowest = TRUE)
+
+dict <- setNames(data.frame(t(dict[ , - 1])), dict[ , 1])
+dict %<>%
+  dplyr::mutate(adc_avg = "Average ADC") %>%
+  dplyr::mutate(elevated_albuminuria = "Elevated albuminuria") %>%
+  dplyr::mutate(pcasl3d_avg = "Average ASL") %>%
+  dplyr::mutate(combined_m_value = "M-value") %>%
+  dplyr::mutate(ckd_stage = "CKD Stage")
+dict <- dict[intersect(names(dat), names(dict))]
+dict[setdiff(names(dat), names(dict))] <- ""
+Hmisc::label(dat) = dict[match(names(dat), names(dict))]
+
+# RH without MRI
+# rh_mri <- dat %>%
+  # filter(study == "IMPROVE/RH/RH2") %>%
+  # filter(rowSums(!is.na(across(c(adc_avg, pcasl3d_avg, bold_avg_bl_cortex, 
+  #                              bold_avg_bl_medulla, bold_avg_bl_kidney, bold_avg_pf_kidney,
+  #                              bold_avg_pf_cortex, bold_avg_pf_medulla, fsoc_avg_cortex, 
+  #                              fsoc_avg_kidney, fsoc_avg_medulla)))) == 0) %>%
+  # select(record_id, co_enroll_id)
+
+# write.csv(rh_mri, "/Users/choiyej/GitHub/YC_CHCO/RH2/rh_missing_mri.csv", row.names = F)
+```
+
+```{r include = F}
+# distribution check
+# dat %>%
+#   dplyr::select(adc_left, adc_right, adc_avg, age, bmi, hba1c, eGFR_fas_cr, sbp, dbp, acr_u, diabetes_duration) %>% 
+#   gather() %>% 
+#   ggplot(aes(value)) +
+#     facet_wrap(~ key, scales = "free") +
+#     geom_histogram()
+# 
+# dat %>%
+#   dplyr::select(creatinine_s, cholesterol, triglycerides, ldl, hdl, combined_m_value, pcasl3d_left, pcasl3d_right) %>% 
+#   gather() %>% 
+#   ggplot(aes(value)) +
+#     facet_wrap(~ key, scales = "free") +
+#     geom_histogram()
+# 
+# dat %>%
+#   dplyr::select(bold_l_bl_cortex, bold_l_bl_kidney, bold_l_bl_medulla, bold_l_pf_cortex, bold_l_pf_kidney, bold_l_pf_medulla, bold_r_bl_cortex, bold_r_bl_kidney, bold_r_bl_medulla, bold_r_pf_cortex, bold_r_pf_kidney, bold_r_pf_medulla, fsoc_l_cortex , fsoc_l_kidney, fsoc_l_medulla, fsoc_r_cortex, fsoc_r_kidney, fsoc_r_medulla, left_kidney_volume_ml, right_kidney_volume_ml, total_kidney_volume_ml, ht_adj_tkv) %>% 
+#   gather() %>% 
+#   ggplot(aes(value)) +
+#     facet_wrap(~ key, scales = "free") +
+#     geom_histogram()
+# 
+# dat %>%
+#   dplyr::select(dexa_ag_ratio, dexa_bone_mineral_density, dexa_est_vat, dexa_fat_kg, dexa_body_fat, dexa_lean_kg, dexa_lean_mass, dexa_trunk_kg, dexa_trunk_mass) %>% 
+#   gather() %>% 
+#   ggplot(aes(value)) +
+#     facet_wrap(~ key, scales = "free") +
+#     geom_histogram()
+
+# Non-normal distribution
+# acr_u
+# bmi
+# diabetes_duration
+# hba1c
+# triglycerides
+```
+
+# Descriptive tables
+
+## By group
+
+### Pooled
+
+#### Participant characteristics, labs, vitals
+
+```{r}
+#| echo: false
+participant_desc <- tableby(group ~ age + sex + kwt(bmi, "Nmiss", "median", "q1q3", "range") + ethnicity + kwt(hba1c, "Nmiss", "median", "q1q3", "range") + eGFR_fas_cr + fe(ckd_stage) + sbp + dbp + kwt(acr_u, "Nmiss", "median", "q1q3", "range") +  kwt(diabetes_duration, "Nmiss", "median", "q1q3", "range") + study + creatinine_s + cholesterol + kwt(triglycerides, "Nmiss", "median", "q1q3", "range") + ldl + hdl + insulin_med_timepoint + kwt(combined_m_value, "Nmiss", "median", "q1q3", "range") + adc_left + adc_right + adc_avg, data = dat)
+```
+
+```{r results='asis'}
+#| echo: false
+summary(participant_desc, pfootnote = T)
+```
+
+#### DXA
+
+```{r}
+#| echo: false
+dxa_desc <- tableby(group ~ dexa_bone_mineral_density + dexa_fat_kg + dexa_body_fat + dexa_lean_kg + dexa_lean_mass + dexa_trunk_kg + dexa_trunk_mass, data = dat)
+```
+
+```{r results='asis'}
+#| echo: false
+summary(dxa_desc, pfootnote = T)
+```
+
+### Lean Control vs. Type 1 Diabetes
+
+#### Participant characteristics, labs, vitals
+
+```{r}
+#| echo: false
+participant_desc <- tableby(group ~ age + sex + kwt(bmi, "Nmiss", "median", "q1q3", "range") + ethnicity + kwt(hba1c, "Nmiss", "median", "q1q3", "range") + eGFR_fas_cr + fe(ckd_stage) + sbp + dbp + kwt(acr_u, "Nmiss", "median", "q1q3", "range") +  kwt(diabetes_duration, "Nmiss", "median", "q1q3", "range") + study + creatinine_s + cholesterol + kwt(triglycerides, "Nmiss", "median", "q1q3", "range") + ldl + hdl + insulin_med_timepoint + kwt(combined_m_value, "Nmiss", "median", "q1q3", "range") + adc_left + adc_right + adc_avg, data = subset(dat, subgroup == "Group 1"))
+```
+
+```{r results='asis'}
+#| echo: false
+summary(participant_desc, pfootnote = T)
+```
+
+#### DXA
+
+```{r}
+#| echo: false
+dxa_desc <- tableby(group ~ dexa_bone_mineral_density + dexa_fat_kg + dexa_body_fat + dexa_lean_kg + dexa_lean_mass + dexa_trunk_kg + dexa_trunk_mass, data = subset(dat, subgroup == "Group 1"))
+```
+
+```{r results='asis'}
+#| echo: false
+summary(dxa_desc, pfootnote = T)
+```
+
+### Obese Control vs. Type 2 Diabetes
+
+#### Participant characteristics, labs, vitals
+
+```{r}
+#| echo: false
+participant_desc <- tableby(group ~ age + sex + kwt(bmi, "Nmiss", "median", "q1q3", "range") + ethnicity + kwt(hba1c, "Nmiss", "median", "q1q3", "range") + eGFR_fas_cr + fe(ckd_stage) + sbp + dbp + kwt(acr_u, "Nmiss", "median", "q1q3", "range") +  kwt(diabetes_duration, "Nmiss", "median", "q1q3", "range") + study + creatinine_s + cholesterol + kwt(triglycerides, "Nmiss", "median", "q1q3", "range") + ldl + hdl + insulin_med_timepoint + kwt(combined_m_value, "Nmiss", "median", "q1q3", "range") + adc_left + adc_right + adc_avg, data = subset(dat, subgroup == "Group 2"))
+```
+
+```{r results='asis'}
+#| echo: false
+summary(participant_desc, pfootnote = T)
+```
+
+## By tertiles
+
+### Pooled
+
+#### Participant characteristics, labs, vitals
+
+```{r}
+#| echo: false
+participant_desc <- tableby(adc_avg_cat_pooled ~ age + sex + kwt(bmi, "Nmiss", "median", "q1q3", "range") + ethnicity + kwt(hba1c, "Nmiss", "median", "q1q3", "range") + eGFR_fas_cr + fe(ckd_stage) + sbp + dbp + kwt(acr_u, "Nmiss", "median", "q1q3", "range") +  kwt(diabetes_duration, "Nmiss", "median", "q1q3", "range") + study + creatinine_s + cholesterol + kwt(triglycerides, "Nmiss", "median", "q1q3", "range") + ldl + hdl + insulin_med_timepoint + combined_m_value + adc_left + adc_right + adc_avg, data = dat)
+```
+
+```{r results='asis'}
+#| echo: false
+summary(participant_desc, pfootnote = T)
+```
+
+#### DXA
+
+```{r}
+#| echo: false
+dxa_desc <- tableby(adc_avg_cat_pooled ~ dexa_bone_mineral_density + dexa_fat_kg + dexa_body_fat + dexa_lean_kg + dexa_lean_mass + dexa_trunk_kg + dexa_trunk_mass, data = dat)
+```
+
+```{r results='asis'}
+#| echo: false
+summary(dxa_desc, pfootnote = T)
+```
+
+### Lean Control vs. Type 1 Diabetes
+
+#### Participant characteristics, labs, vitals
+
+```{r}
+#| echo: false
+participant_desc <- tableby(adc_avg_cat_group1 ~ age + sex + kwt(bmi, "Nmiss", "median", "q1q3", "range") + ethnicity + kwt(hba1c, "Nmiss", "median", "q1q3", "range") + eGFR_fas_cr + fe(ckd_stage) + sbp + dbp + kwt(acr_u, "Nmiss", "median", "q1q3", "range") +  kwt(diabetes_duration, "Nmiss", "median", "q1q3", "range") + study + creatinine_s + cholesterol + kwt(triglycerides, "Nmiss", "median", "q1q3", "range") + ldl + hdl + insulin_med_timepoint + combined_m_value + adc_left + adc_right + adc_avg, data = subset(dat, subgroup == "Group 1"))
+```
+
+```{r results='asis'}
+#| echo: false
+summary(participant_desc, pfootnote = T)
+```
+
+#### DXA
+
+```{r}
+#| echo: false
+dxa_desc <- tableby(adc_avg_cat_group1 ~ dexa_bone_mineral_density + dexa_fat_kg + dexa_body_fat + dexa_lean_kg + dexa_lean_mass + dexa_trunk_kg + dexa_trunk_mass, data = subset(dat, subgroup == "Group 1"))
+```
+
+```{r results='asis'}
+#| echo: false
+summary(dxa_desc, pfootnote = T)
+```
+
+### Obese Control vs. Type 2 Diabetes
+
+#### Participant characteristics, labs, vitals
+
+```{r}
+#| echo: false
+participant_desc <- tableby(adc_avg_cat_group2 ~ age + sex + kwt(bmi, "Nmiss", "median", "q1q3", "range") + ethnicity + kwt(hba1c, "Nmiss", "median", "q1q3", "range") + eGFR_fas_cr + fe(ckd_stage) + sbp + dbp + kwt(acr_u, "Nmiss", "median", "q1q3", "range") +  kwt(diabetes_duration, "Nmiss", "median", "q1q3", "range") + study + creatinine_s + cholesterol + kwt(triglycerides, "Nmiss", "median", "q1q3", "range") + ldl + hdl + insulin_med_timepoint + combined_m_value + adc_left + adc_right + adc_avg, data = subset(dat, subgroup == "Group 2"))
+```
+
+```{r results='asis'}
+#| echo: false
+summary(participant_desc, pfootnote = T)
+```
+
+#### DXA
+
+```{r}
+#| echo: false
+dxa_desc <- tableby(adc_avg_cat_group2 ~ dexa_bone_mineral_density + dexa_fat_kg + dexa_body_fat + dexa_lean_kg + dexa_lean_mass + dexa_trunk_kg + dexa_trunk_mass, data = subset(dat, subgroup == "Group 2"))
+```
+
+```{r results='asis'}
+#| echo: false
+summary(dxa_desc, pfootnote = T)
+```
+
+#### Plots for BMI and HbA1c across tertiles (SP requested in Sept 2023)
+```{r}
+ggplot(subset(dat, subgroup == "Group 2"),
+       aes(x = adc_avg_cat_group2, y = bmi, fill = adc_avg_cat_group2)) +
+  geom_boxplot(outlier.shape = NA) +  
+  labs(x = "ADC Tertile",
+       y = "BMI") + 
+  scale_x_discrete(position = "bottom") +
+  theme(axis.title.x = element_text(size = 10),
+        axis.title.y = element_text(size = 10),
+        axis.text.x = element_text(size = 10),
+        legend.position = "none",
+        panel.background = element_rect(fill = "white",
+                                        color = "grey")) + 
+  geom_jitter(aes(fill = adc_avg_cat_group2),
+              color = "black",
+              alpha = 0.7, 
+              shape = 21) +
+  scale_fill_manual(values = c("#eaac8b", "#e56b6f",
+                                "#b56576"))
+
+
+ggplot(subset(dat, subgroup == "Group 2"),
+       aes(x = adc_avg_cat_group2, y = hba1c, fill = adc_avg_cat_group2)) +
+  geom_boxplot(outlier.shape = NA) +  
+  labs(x = "ADC Tertile",
+       y = "HbA1c") + 
+  scale_x_discrete(position = "bottom") +
+  theme(axis.title.x = element_text(size = 10),
+        axis.title.y = element_text(size = 10),
+        axis.text.x = element_text(size = 10),
+        legend.position = "none",
+        panel.background = element_rect(fill = "white",
+                                        color = "grey")) + 
+  geom_jitter(aes(fill = adc_avg_cat_group2),
+              color = "black",
+              alpha = 0.7, 
+              shape = 21) +
+  scale_fill_manual(values = c("#eaac8b", "#e56b6f",
+                                "#b56576"))
+```
+
+## By elevated albuminuria (\>= 30 mg/g)
+
+### Pooled
+
+#### Participant characteristics, labs, vitals
+
+```{r}
+#| echo: false
+participant_desc_alb <- tableby(elevated_albuminuria ~ age + sex + kwt(bmi, "Nmiss", "median", "q1q3", "range") + ethnicity + kwt(hba1c, "Nmiss", "median", "q1q3", "range") + eGFR_fas_cr + fe(ckd_stage) + sbp + dbp + kwt(acr_u, "Nmiss", "median", "q1q3", "range") +  kwt(diabetes_duration, "Nmiss", "median", "q1q3", "range") + study + creatinine_s + cholesterol + kwt(triglycerides, "Nmiss", "median", "q1q3", "range") + ldl + hdl + insulin_med_timepoint + combined_m_value + adc_left + adc_right + adc_avg, data = dat)
+```
+
+```{r results='asis'}
+#| echo: false
+summary(participant_desc_alb, pfootnote = T)
+```
+
+#### DXA
+
+```{r}
+#| echo: false
+dxa_desc_alb <- tableby(elevated_albuminuria ~  dexa_bone_mineral_density + dexa_fat_kg + dexa_body_fat + dexa_lean_kg + dexa_lean_mass + dexa_trunk_kg + dexa_trunk_mass, data = dat)
+```
+
+```{r results='asis'}
+#| echo: false
+summary(dxa_desc_alb, pfootnote = T)
+```
+
+### Lean Control & Type 1 Diabetes
+
+#### Participant characteristics, labs, vitals
+
+```{r}
+#| echo: false
+participant_desc_alb <- tableby(elevated_albuminuria ~ age + sex + kwt(bmi, "Nmiss", "median", "q1q3", "range") + ethnicity + kwt(hba1c, "Nmiss", "median", "q1q3", "range") + eGFR_fas_cr + fe(ckd_stage) + sbp + dbp + kwt(acr_u, "Nmiss", "median", "q1q3", "range") +  kwt(diabetes_duration, "Nmiss", "median", "q1q3", "range") + study + creatinine_s + cholesterol + kwt(triglycerides, "Nmiss", "median", "q1q3", "range") + ldl + hdl + insulin_med_timepoint + combined_m_value + adc_left + adc_right + adc_avg, data = subset(dat, subgroup == "Group 1"))
+```
+
+```{r results='asis'}
+#| echo: false
+summary(participant_desc_alb, pfootnote = T)
+```
+
+#### DXA
+
+```{r}
+#| echo: false
+dxa_desc_alb <- tableby(elevated_albuminuria ~  dexa_bone_mineral_density + dexa_fat_kg + dexa_body_fat + dexa_lean_kg + dexa_lean_mass + dexa_trunk_kg + dexa_trunk_mass, data = subset(dat, subgroup == "Group 1"))
+```
+
+```{r results='asis'}
+#| echo: false
+summary(dxa_desc_alb, pfootnote = T)
+```
+
+### Obese Control & Type 2 Diabetes
+
+#### Participant characteristics, labs, vitals
+
+```{r}
+#| echo: false
+participant_desc_alb <- tableby(elevated_albuminuria ~ age + sex + kwt(bmi, "Nmiss", "median", "q1q3", "range") + ethnicity + kwt(hba1c, "Nmiss", "median", "q1q3", "range") + eGFR_fas_cr + fe(ckd_stage) + sbp + dbp + kwt(acr_u, "Nmiss", "median", "q1q3", "range") +  kwt(diabetes_duration, "Nmiss", "median", "q1q3", "range") + study + creatinine_s + cholesterol + kwt(triglycerides, "Nmiss", "median", "q1q3", "range") + ldl + hdl + insulin_med_timepoint + combined_m_value + adc_left + adc_right + adc_avg, data = subset(dat, subgroup == "Group 2"))
+```
+
+```{r results='asis'}
+#| echo: false
+summary(participant_desc_alb, pfootnote = T)
+```
+
+#### DXA
+
+```{r}
+#| echo: false
+dxa_desc_alb <- tableby(elevated_albuminuria ~  dexa_bone_mineral_density + dexa_fat_kg + dexa_body_fat + dexa_lean_kg + dexa_lean_mass + dexa_trunk_kg + dexa_trunk_mass, data = subset(dat, subgroup == "Group 2"))
+```
+
+```{r results='asis'}
+#| echo: false
+summary(dxa_desc_alb, pfootnote = T)
+```
+
+# Correlations
+
+## Pooled
+
+```{r, message=F}
+#| echo: false
+adc_pearson <- correlation_table_minimal(data = dat, 
+                                                  relevant_vars = c("adc_left", 
+                                                                    "adc_right", 
+                                                                    "adc_avg", 
+                                                                    "age", 
+                                                                    "eGFR_fas_cr", 
+                                                                    "sbp", 
+                                                                    "dbp", 
+                                                                    "creatinine_s", 
+                                                                    "cholesterol", 
+                                                                    "ldl", 
+                                                                    "hdl", 
+                                                                    "dexa_bone_mineral_density", 
+                                                                    "dexa_fat_kg", 
+                                                                    "dexa_body_fat", 
+                                                                    "dexa_lean_kg", 
+                                                                    "dexa_lean_mass", 
+                                                                    "dexa_trunk_kg", 
+                                                                    "dexa_trunk_mass"),
+                                                  n_cols = 3,
+                                                  cor_method = "pearson",
+                                                  dict = dict)
+adc_pearson
+```
+
+```{r, message=F}
+#| echo: false
+adc_spearman <- correlation_table_minimal(dat = dat, 
+                                                  relevant_vars = c("adc_left", 
+                                                                     "adc_right", 
+                                                                     "adc_avg", 
+                                                                     "bmi", 
+                                                                     "hba1c",
+                                                                     "acr_u",
+                                                                     "combined_m_value", 
+                                                                     "diabetes_duration",
+                                                                     "triglycerides"),
+                                                  n_cols = 3,
+                                                  cor_method = "spearman",
+                                                  dict = dict)
+
+adc_spearman
+```
+
+## Lean Control & Type 1 Diabetes
+
+```{r, message=F}
+#| echo: false
+adc_pearson_group1 <- correlation_table_minimal(data = subset(dat, subgroup == "Group 1"), 
+                                                  relevant_vars = c("adc_left", 
+                                                                    "adc_right", 
+                                                                    "adc_avg",
+                                                                    "age", 
+                                                                    "eGFR_fas_cr", 
+                                                                    "sbp", 
+                                                                    "dbp", 
+                                                                    "creatinine_s", 
+                                                                    "cholesterol", 
+                                                                    "ldl", 
+                                                                    "hdl", 
+                                                                    "dexa_bone_mineral_density", 
+                                                                    "dexa_fat_kg", 
+                                                                    "dexa_body_fat", 
+                                                                    "dexa_lean_kg", 
+                                                                    "dexa_lean_mass", 
+                                                                    "dexa_trunk_kg", 
+                                                                    "dexa_trunk_mass"),
+                                                  n_cols = 3,
+                                                  cor_method = "pearson",
+                                                  dict = dict)
+adc_pearson_group1
+```
+
+```{r, message=F}
+#| echo: false
+adc_spearman_group1 <- correlation_table_minimal(data = subset(dat, subgroup == "Group 1"), 
+                                                  relevant_vars = c("adc_left", 
+                                                                     "adc_right", 
+                                                                     "adc_avg", 
+                                                                     "bmi", 
+                                                                     "hba1c",
+                                                                     "acr_u",
+                                                                     "combined_m_value", 
+                                                                     "diabetes_duration",
+                                                                     "triglycerides"),
+                                                  n_cols = 3,
+                                                  cor_method = "spearman",
+                                                  dict = dict)
+
+adc_spearman_group1
+```
+
+## Obese Control & Type 2 Diabetes
+
+```{r, message=F}
+#| echo: false
+adc_pearson_group2 <- correlation_table_minimal(data = subset(dat, subgroup == "Group 2"), 
+                                                  relevant_vars = c("adc_left", 
+                                                                    "adc_right", 
+                                                                    "adc_avg",
+                                                                    "age", 
+                                                                    "eGFR_fas_cr", 
+                                                                    "sbp", 
+                                                                    "dbp", 
+                                                                    "creatinine_s", 
+                                                                    "cholesterol", 
+                                                                    "ldl", 
+                                                                    "hdl", 
+                                                                    "dexa_bone_mineral_density", 
+                                                                    "dexa_fat_kg", 
+                                                                    "dexa_body_fat", 
+                                                                    "dexa_lean_kg", 
+                                                                    "dexa_lean_mass", 
+                                                                    "dexa_trunk_kg", 
+                                                                    "dexa_trunk_mass"),
+                                                  n_cols = 3,
+                                                  cor_method = "pearson",
+                                                  dict = dict)
+adc_pearson_group2
+```
+
+```{r, message=F}
+#| echo: false
+adc_spearman_group2 <- correlation_table_minimal(data = subset(dat, subgroup == "Group 2"), 
+                                                  relevant_vars = c("adc_left", 
+                                                                     "adc_right", 
+                                                                     "adc_avg", 
+                                                                     "bmi", 
+                                                                     "hba1c",
+                                                                     "acr_u",
+                                                                     "combined_m_value", 
+                                                                     "diabetes_duration",
+                                                                     "triglycerides"),
+                                                  n_cols = 3,
+                                                  cor_method = "spearman",
+                                                  dict = dict)
+
+adc_spearman_group2
+```
+
+# Select correlation visualization
+
+## Pooled
+
+```{r warning = F, message=F}
+#| echo: false
+egfr_plot <- scatter_plot_correlation(dat, dat$adc_avg, dat$eGFR_fas_cr, dat$group)
+asl_plot <- scatter_plot_correlation(dat, dat$adc_avg, dat$pcasl3d_avg, dat$group)
+age_plot <- scatter_plot_correlation(dat, dat$adc_avg, dat$age, dat$group)
+sbp_plot <- scatter_plot_correlation(dat, dat$adc_avg, dat$sbp, dat$group)
+dbp_plot <- scatter_plot_correlation(dat, dat$adc_avg, dat$dbp, dat$group)
+bmi_plot <- scatter_plot_correlation(dat, dat$adc_avg, dat$bmi, dat$group)
+creat_plot <- scatter_plot_correlation(dat, dat$adc_avg, dat$creatinine_s, dat$group)
+creat_plot_sub <- scatter_plot_correlation(subset(dat, creatinine_s <4), subset(dat, creatinine_s <4)$adc_avg, subset(dat, creatinine_s <4)$creatinine_s, subset(dat, creatinine_s <4)$group)
+
+sex_plot <- ggboxplot(dat, "sex", "adc_avg",
+                          add = "jitter", color = "sex") +
+  labs(x = Hmisc::label(dat$sex),
+       y = Hmisc::label(dat$adc_avg),
+       color  = "Sex") +
+  scale_color_brewer(palette = "Set2") +
+  sm_corr_theme() +
+  stat_compare_means(method = "anova", label.y = 1200) 
+
+group_plot <- ggboxplot(dat, "group", "adc_avg",
+                          add = "jitter", color = "group",
+                        order = c("Lean Control", "Obese Control", "Type 1 Diabetes", "Type 2 Diabetes")) +
+  labs(x = Hmisc::label(dat$group),
+       y = Hmisc::label(dat$adc_avg),
+       color  = "Group") +
+  scale_color_brewer(palette = "Set1") +
+  sm_corr_theme() +
+  stat_compare_means(method = "anova", label.y = 1200) +
+  theme(axis.text.x = element_text(size=10))
+
+alb_plot <- ggboxplot(subset(dat, !is.na(elevated_albuminuria)), "elevated_albuminuria", "adc_avg",
+                          add = "jitter", color = "elevated_albuminuria",
+                      order = c("Yes", "No")) +
+  labs(x = Hmisc::label(dat$elevated_albuminuria),
+       y = Hmisc::label(dat$adc_avg),
+       color  = "Albuminuria") +
+  scale_color_brewer(palette = "Dark2") +
+  sm_corr_theme() +
+  stat_compare_means(method = "anova", label.y = 1200) 
+
+scatter1 <- ggarrange(egfr_plot, asl_plot,
+                     ncol = 2, nrow = 1, common.legend = T)
+scatter2 <- ggarrange(age_plot, bmi_plot,
+                     ncol = 2, nrow = 1, common.legend = T)
+scatter3 <- ggarrange(sbp_plot, dbp_plot,
+                     ncol = 2, nrow = 1, common.legend = T)
+scatter4 <- ggarrange(creat_plot, creat_plot_sub,
+                     ncol = 2, nrow = 1, common.legend = T)
+
+print(scatter1)
+print(scatter2)
+print(scatter3)
+print(scatter4)
+print(sex_plot)
+print(group_plot)
+print(alb_plot)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/scatter1.png", scatter1)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/scatter2.png", scatter2)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/scatter3.png", scatter3)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/scatter4.png", scatter4)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/sex_plot.png", sex_plot)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/group_plot.png", group_plot)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/alb_plot.png", alb_plot)
+```
+
+## Lean Control & Type 1 Diabetes
+
+```{r warning = F, message=F}
+#| echo: false
+
+colors_grp1 <- c("Lean Control" = brewer.pal(9, "Set1")[1], 
+                 "Type 1 Diabetes" = brewer.pal(9, "Set1")[3])
+
+egfr_plot_grp1<- scatter_plot_correlation(subset(dat, subgroup=="Group 1"), subset(dat, subgroup=="Group 1")$adc_avg, subset(dat, subgroup=="Group 1")$eGFR_fas_cr, subset(dat, subgroup=="Group 1")$group, group_colors = colors_grp1)
+asl_plot_grp1<- scatter_plot_correlation(subset(dat, subgroup=="Group 1"), subset(dat, subgroup=="Group 1")$adc_avg, subset(dat, subgroup=="Group 1")$pcasl3d_avg, subset(dat, subgroup=="Group 1")$group, group_colors = colors_grp1)
+age_plot_grp1<- scatter_plot_correlation(subset(dat, subgroup=="Group 1"), subset(dat, subgroup=="Group 1")$adc_avg, subset(dat, subgroup=="Group 1")$age, subset(dat, subgroup=="Group 1")$group, group_colors = colors_grp1)
+sbp_plot_grp1<- scatter_plot_correlation(subset(dat, subgroup=="Group 1"), subset(dat, subgroup=="Group 1")$adc_avg, subset(dat, subgroup=="Group 1")$sbp, subset(dat, subgroup=="Group 1")$group, group_colors = colors_grp1)
+dbp_plot_grp1<- scatter_plot_correlation(subset(dat, subgroup=="Group 1"), subset(dat, subgroup=="Group 1")$adc_avg, subset(dat, subgroup=="Group 1")$dbp, subset(dat, subgroup=="Group 1")$group, group_colors = colors_grp1)
+bmi_plot_grp1<- scatter_plot_correlation(subset(dat, subgroup=="Group 1"), subset(dat, subgroup=="Group 1")$adc_avg, subset(dat, subgroup=="Group 1")$bmi, subset(dat, subgroup=="Group 1")$group, group_colors = colors_grp1)
+creat_plot_grp1<- scatter_plot_correlation(subset(dat, subgroup=="Group 1"), subset(dat, subgroup=="Group 1")$adc_avg, subset(dat, subgroup=="Group 1")$creatinine_s, subset(dat, subgroup=="Group 1")$group, group_colors = colors_grp1)
+creat_plot_sub <- scatter_plot_correlation(subset(dat, subgroup=="Group 1" & creatinine_s <4), subset(dat, subgroup=="Group 1" & creatinine_s <4)$adc_avg, subset(dat, subgroup=="Group 1" & creatinine_s <4)$creatinine_s, subset(dat, subgroup=="Group 1" & creatinine_s <4)$group, group_colors = colors_grp1)
+
+sex_plot_grp1<- ggboxplot(subset(dat, subgroup=="Group 1"), "sex", "adc_avg",
+                          add = "jitter", color = "sex") +
+  labs(x = Hmisc::label(subset(dat, subgroup=="Group 1")$sex),
+       y = Hmisc::label(subset(dat, subgroup=="Group 1")$adc_avg),
+       color  = "Sex") +
+  scale_color_brewer(palette = "Set2") +
+  sm_corr_theme() +
+  stat_compare_means(method = "anova", label.y = 1200) 
+
+group_plot_grp1<- ggboxplot(subset(dat, subgroup=="Group 1"), "group", "adc_avg",
+                          add = "jitter", color = "group",
+                        order = c("Lean Control", "Obese Control", "Type 1 Diabetes", "Type 2 Diabetes")) +
+  labs(x = Hmisc::label(subset(dat, subgroup=="Group 1")$group),
+       y = Hmisc::label(subset(dat, subgroup=="Group 1")$adc_avg),
+       color  = "Group") +
+  scale_colour_manual(values = colors_grp1) +
+  sm_corr_theme() +
+  stat_compare_means(method = "anova", label.y = 1200) 
+
+alb_plot_grp1<- ggboxplot(subset(dat, subgroup=="Group 1" & !is.na(elevated_albuminuria)), "elevated_albuminuria", "adc_avg",
+                          add = "jitter", color = "elevated_albuminuria",
+                      order = c("Yes", "No")) +
+  labs(x = Hmisc::label(subset(dat, subgroup=="Group 1")$elevated_albuminuria),
+       y = Hmisc::label(subset(dat, subgroup=="Group 1")$adc_avg),
+       color  = "Albuminuria") +
+  scale_color_brewer(palette = "Dark2") +
+  sm_corr_theme() +
+  stat_compare_means(method = "anova", label.y = 1200) 
+
+scatter1_grp1 <- ggarrange(egfr_plot_grp1, asl_plot_grp1,
+                     ncol = 2, nrow = 1, common.legend = T)
+scatter2_grp1 <- ggarrange(age_plot_grp1, bmi_plot_grp1,
+                     ncol = 2, nrow = 1, common.legend = T)
+scatter3_grp1 <- ggarrange(sbp_plot_grp1, dbp_plot_grp1,
+                     ncol = 2, nrow = 1, common.legend = T)
+scatter4_grp1 <- ggarrange(creat_plot_grp1, creat_plot_sub,
+                     ncol = 2, nrow = 1, common.legend = T)
+
+print(scatter1_grp1)
+print(scatter2_grp1)
+print(scatter3_grp1)
+print(scatter4_grp1)
+print(sex_plot_grp1)
+print(group_plot_grp1)
+print(alb_plot_grp1)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/scatter1_grp1.png", scatter1_grp1)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/scatter2_grp1.png", scatter2_grp1)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/scatter3_grp1.png", scatter3_grp1)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/scatter4_grp1.png", scatter4_grp1)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/sex_plot_grp1.png", sex_plot_grp1)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/group_plot_grp1.png", group_plot_grp1)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/alb_plot_grp1.png", alb_plot_grp1)
+```
+
+## Obese Control & Type 2 Diabetes
+
+```{r warning = F, message=F}
+#| echo: false
+
+colors_grp2 <- c("Obese Control" = brewer.pal(9, "Set1")[2], 
+                 "Type 2 Diabetes" = brewer.pal(9, "Set1")[4])
+
+egfr_plot_grp2<- scatter_plot_correlation(subset(dat, subgroup=="Group 2"), subset(dat, subgroup=="Group 2")$adc_avg, subset(dat, subgroup=="Group 2")$eGFR_fas_cr, subset(dat, subgroup=="Group 2")$group, group_colors = colors_grp2)
+asl_plot_grp2<- scatter_plot_correlation(subset(dat, subgroup=="Group 2"), subset(dat, subgroup=="Group 2")$adc_avg, subset(dat, subgroup=="Group 2")$pcasl3d_avg, subset(dat, subgroup=="Group 2")$group, group_colors = colors_grp2)
+age_plot_grp2<- scatter_plot_correlation(subset(dat, subgroup=="Group 2"), subset(dat, subgroup=="Group 2")$adc_avg, subset(dat, subgroup=="Group 2")$age, subset(dat, subgroup=="Group 2")$group, group_colors = colors_grp2)
+sbp_plot_grp2<- scatter_plot_correlation(subset(dat, subgroup=="Group 2"), subset(dat, subgroup=="Group 2")$adc_avg, subset(dat, subgroup=="Group 2")$sbp, subset(dat, subgroup=="Group 2")$group, group_colors = colors_grp2)
+dbp_plot_grp2<- scatter_plot_correlation(subset(dat, subgroup=="Group 2"), subset(dat, subgroup=="Group 2")$adc_avg, subset(dat, subgroup=="Group 2")$dbp, subset(dat, subgroup=="Group 2")$group, group_colors = colors_grp2)
+bmi_plot_grp2<- scatter_plot_correlation(subset(dat, subgroup=="Group 2"), subset(dat, subgroup=="Group 2")$adc_avg, subset(dat, subgroup=="Group 2")$bmi, subset(dat, subgroup=="Group 2")$group, group_colors = colors_grp2)
+creat_plot_grp2<- scatter_plot_correlation(subset(dat, subgroup=="Group 2"), subset(dat, subgroup=="Group 2")$adc_avg, subset(dat, subgroup=="Group 2")$creatinine_s, subset(dat, subgroup=="Group 2")$group, group_colors = colors_grp2)
+creat_plot_sub <- scatter_plot_correlation(subset(dat, subgroup=="Group 2" & creatinine_s <4), subset(dat, subgroup=="Group 2" & creatinine_s <4)$adc_avg, subset(dat, subgroup=="Group 2" & creatinine_s <4)$creatinine_s, subset(dat, subgroup=="Group 2" & creatinine_s <4)$group, group_colors = colors_grp2)
+
+sex_plot_grp2<- ggboxplot(subset(dat, subgroup=="Group 2"), "sex", "adc_avg",
+                          add = "jitter", color = "sex") +
+  labs(x = Hmisc::label(subset(dat, subgroup=="Group 2")$sex),
+       y = Hmisc::label(subset(dat, subgroup=="Group 2")$adc_avg),
+       color  = "Sex") +
+  scale_color_brewer(palette = "Set2") +
+  sm_corr_theme() +
+  stat_compare_means(method = "anova", label.y = 1200) 
+
+group_plot_grp2<- ggboxplot(subset(dat, subgroup=="Group 2"), "group", "adc_avg",
+                          add = "jitter", color = "group",
+                        order = c("Lean Control", "Obese Control", "Type 1 Diabetes", "Type 2 Diabetes")) +
+  labs(x = Hmisc::label(subset(dat, subgroup=="Group 2")$group),
+       y = Hmisc::label(subset(dat, subgroup=="Group 2")$adc_avg),
+       color  = "Group") +
+  scale_colour_manual(values = colors_grp2) +
+  sm_corr_theme() +
+  stat_compare_means(method = "anova", label.y = 1200) 
+
+alb_plot_grp2<- ggboxplot(subset(dat, subgroup=="Group 2" & !is.na(elevated_albuminuria)), "elevated_albuminuria", "adc_avg",
+                          add = "jitter", color = "elevated_albuminuria",
+                      order = c("Yes", "No")) +
+  labs(x = Hmisc::label(subset(dat, subgroup=="Group 2")$elevated_albuminuria),
+       y = Hmisc::label(subset(dat, subgroup=="Group 2")$adc_avg),
+       color  = "Albuminuria") +
+  scale_color_brewer(palette = "Dark2") +
+  sm_corr_theme() +
+  stat_compare_means(method = "anova", label.y = 1200) 
+
+scatter1_grp2 <- ggarrange(egfr_plot_grp2, asl_plot_grp2,
+                     ncol = 2, nrow = 1, common.legend = T)
+scatter2_grp2 <- ggarrange(age_plot_grp2, bmi_plot_grp2,
+                     ncol = 2, nrow = 1, common.legend = T)
+scatter3_grp2 <- ggarrange(sbp_plot_grp2, dbp_plot_grp2,
+                     ncol = 2, nrow = 1, common.legend = T)
+scatter4_grp2 <- ggarrange(creat_plot_grp2, creat_plot_sub,
+                     ncol = 2, nrow = 1, common.legend = T)
+
+print(scatter1_grp2)
+print(scatter2_grp2)
+print(scatter3_grp2)
+print(scatter4_grp2)
+print(sex_plot_grp2)
+print(group_plot_grp2)
+print(alb_plot_grp2)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/scatter1_grp2.png", scatter1_grp2)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/scatter2_grp2.png", scatter2_grp2)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/scatter3_grp2.png", scatter3_grp2)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/scatter4_grp2.png", scatter4_grp2)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/sex_plot_grp2.png", sex_plot_grp2)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/group_plot_grp2.png", group_plot_grp2)
+ggsave("/Users/choiyej/GitHub/YC_CHCO/Descriptives/ADC tables/Figures/alb_plot_grp2.png", alb_plot_grp2)
+```
+
+# ADC analyses
+
+<!-- ## DEXA Parameters -->
+
+<!-- Bone Mineral Density -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ dexa_bone_mineral_density, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ dexa_bone_mineral_density, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ dexa_bone_mineral_density, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ dexa_bone_mineral_density, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ dexa_bone_mineral_density, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ dexa_bone_mineral_density, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- Fat mass (kg) -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ dexa_fat_kg, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ dexa_fat_kg, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ dexa_fat_kg, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ dexa_fat_kg, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ dexa_fat_kg, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ dexa_fat_kg, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- Fat percentage -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ dexa_body_fat, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ dexa_body_fat, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ dexa_body_fat, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ dexa_body_fat, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ dexa_body_fat, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ dexa_body_fat, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- Lean mass (kg) -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ dexa_lean_kg, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ dexa_lean_kg, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ dexa_lean_kg, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ dexa_lean_kg, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ dexa_lean_kg, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ dexa_lean_kg, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- Lean percentage -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ dexa_lean_mass, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ dexa_lean_mass, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ dexa_lean_mass, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ dexa_lean_mass, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ dexa_lean_mass, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ dexa_lean_mass, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- Trunk mass (kg) -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ dexa_trunk_kg, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ dexa_trunk_kg, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ dexa_trunk_kg, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ dexa_trunk_kg, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ dexa_trunk_kg, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ dexa_trunk_kg, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- Trunk percentage -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ dexa_trunk_mass, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ dexa_trunk_mass, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ dexa_trunk_mass, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ dexa_trunk_mass, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ dexa_trunk_mass, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ dexa_trunk_mass, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- ## Pooled -->
+
+<!-- ### Average / Left / Right ADC by group (Lean Control as reference) -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- # model <- lm(adc_left ~  group + age + sex + log(bmi) + ethnicity + hba1c + eGFR_fas_cr + sbp + dbp + log(acr_u)  + creatinine_s + cholesterol + log(triglycerides) + ldl + hdl + insulin_med_timepoint + combined_m_value + pcasl3d_left + pcasl3d_right + bold_l_bl_cortex + bold_l_bl_kidney + bold_l_bl_medulla + bold_l_pf_cortex + bold_l_pf_kidney + bold_l_pf_medulla + bold_r_bl_cortex + bold_r_bl_kidney + bold_r_bl_medulla + bold_r_pf_cortex + bold_r_pf_kidney + bold_r_pf_medulla + fsoc_l_cortex  + fsoc_l_kidney + fsoc_l_medulla + fsoc_r_cortex + fsoc_r_kidney + fsoc_r_medulla + ht_adj_tkv, data = dat) -->
+
+<!-- #  -->
+
+<!-- # k <- ols_step_both_p(model) -->
+
+<!-- # k -->
+
+<!-- # summary(k$model) -->
+
+<!-- # Not adjusting -->
+
+<!-- # kable(tidy(lm(adc_avg ~  group, data = dat)), digits = 3) -->
+
+<!-- # kable(tidy(confint(lsmeans((lm(adc_avg ~ group, data = dat)), specs=c("group"))), digits = 3)) -->
+
+<!-- # pairs(lsmeans((lm(adc_avg ~ group, data = dat)), specs=c("group")), adjust = "none") -->
+
+<!-- #  -->
+
+<!-- # kable(tidy(summary(lm(adc_left ~  group, data = dat))), digits = 3) -->
+
+<!-- # kable(tidy(confint(lsmeans((lm(adc_left ~ group, data = dat)), specs=c("group"))), digits = 3)) -->
+
+<!-- # pairs(lsmeans((lm(adc_left ~ group, data = dat)), specs=c("group")), adjust = "none") -->
+
+<!-- #  -->
+
+<!-- # kable(tidy(summary(lm(adc_right ~  group, data = dat))), digits = 3) -->
+
+<!-- # kable(tidy(confint(lsmeans((lm(adc_right ~ group, data = dat)), specs=c("group"))), digits = 3)) -->
+
+<!-- # pairs(lsmeans((lm(adc_right ~ group, data = dat)), specs=c("group")), adjust = "none") -->
+
+<!-- # Adjusting for sex, bmi, age -->
+
+<!-- kable(tidy(lm(adc_avg ~  group + sex + bmi + age, data = dat)), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ group + sex + bmi + age, data = dat)), specs=c("group"))), digits = 3)) -->
+
+<!-- pairs(lsmeans((lm(adc_avg ~ group + sex + bmi + age, data = dat)), specs=c("group")), adjust = "none") -->
+
+<!-- kable(tidy(summary(lm(adc_left ~  group + sex + bmi + age, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ group + sex + bmi + age, data = dat)), specs=c("group"))), digits = 3)) -->
+
+<!-- pairs(lsmeans((lm(adc_left ~ group + sex + bmi + age, data = dat)), specs=c("group")), adjust = "none") -->
+
+<!-- kable(tidy(summary(lm(adc_right ~  group + sex + bmi + age, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ group + sex + bmi + age, data = dat)), specs=c("group"))), digits = 3)) -->
+
+<!-- pairs(lsmeans((lm(adc_right ~ group + sex + bmi + age, data = dat)), specs=c("group")), adjust = "none") -->
+
+<!-- ``` -->
+
+<!-- ### Average / Left / Right ADC by group (T1D vs. T2D only, adjusting for diabetes duration instead of age) -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(lm(adc_avg ~  group + sex + bmi + diabetes_duration, data = dat)), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ group + sex + bmi + diabetes_duration, data = dat)), specs=c("group"))), digits = 3)) -->
+
+<!-- pairs(lsmeans((lm(adc_avg ~ group + sex + bmi + diabetes_duration, data = dat)), specs=c("group")), adjust = "none") -->
+
+<!-- kable(tidy(summary(lm(adc_left ~  group + sex + bmi + diabetes_duration, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ group + sex + bmi + diabetes_duration, data = dat)), specs=c("group"))), digits = 3)) -->
+
+<!-- pairs(lsmeans((lm(adc_left ~ group + sex + bmi + diabetes_duration, data = dat)), specs=c("group")), adjust = "none") -->
+
+<!-- kable(tidy(summary(lm(adc_right ~  group + sex + bmi + diabetes_duration, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ group + sex + bmi + diabetes_duration, data = dat)), specs=c("group"))), digits = 3)) -->
+
+<!-- pairs(lsmeans((lm(adc_right ~ group + sex + bmi + diabetes_duration, data = dat)), specs=c("group")), adjust = "none") -->
+
+<!-- ``` -->
+
+## Lean Control & Type 1 Diabetes
+
+### Average / Left / Right ADC by group (Lean Control as reference)
+
+```{r}
+#| echo: false
+# Adjusting for sex, bmi, age
+kable(tidy(lm(adc_avg ~  group + bmi, data = subset(dat, subgroup == "Group 1"))), digits = 3)
+kable(tidy(confint(lsmeans((lm(adc_avg ~ group + bmi, data = subset(dat, subgroup == "Group 1"))), specs=c("group"))), digits = 3))
+pairs(lsmeans((lm(adc_avg ~ group + bmi, data = subset(dat, subgroup == "Group 1"))), specs=c("group")), adjust = "none")
+
+kable(tidy(summary(lm(adc_left ~  group + bmi, data = subset(dat, subgroup == "Group 1")))), digits = 3)
+kable(tidy(confint(lsmeans((lm(adc_left ~ group + bmi, data = subset(dat, subgroup == "Group 1"))), specs=c("group"))), digits = 3))
+pairs(lsmeans((lm(adc_left ~ group + bmi, data = subset(dat, subgroup == "Group 1"))), specs=c("group")), adjust = "none")
+
+kable(tidy(summary(lm(adc_right ~  group + bmi, data = subset(dat, subgroup == "Group 1")))), digits = 3)
+kable(tidy(confint(lsmeans((lm(adc_right ~ group + bmi, data = subset(dat, subgroup == "Group 1"))), specs=c("group"))), digits = 3))
+pairs(lsmeans((lm(adc_right ~ group + bmi, data = subset(dat, subgroup == "Group 1"))), specs=c("group")), adjust = "none")
+```
+
+## Obese Control & Type 2 Diabetes
+
+### Average / Left / Right ADC by group (Obese Control as reference)
+
+```{r}
+#| echo: false
+# Adjusting for sex, bmi, age
+kable(tidy(lm(adc_avg ~  group + sex, data = subset(dat, subgroup == "Group 2"))), digits = 3)
+kable(tidy(confint(lsmeans((lm(adc_avg ~ group + sex, data = subset(dat, subgroup == "Group 2"))), specs=c("group"))), digits = 3))
+pairs(lsmeans((lm(adc_avg ~ group + sex, data = subset(dat, subgroup == "Group 2"))), specs=c("group")), adjust = "none")
+
+kable(tidy(summary(lm(adc_left ~  group + sex, data = subset(dat, subgroup == "Group 2")))), digits = 3)
+kable(tidy(confint(lsmeans((lm(adc_left ~ group + sex, data = subset(dat, subgroup == "Group 2"))), specs=c("group"))), digits = 3))
+pairs(lsmeans((lm(adc_left ~ group + sex, data = subset(dat, subgroup == "Group 2"))), specs=c("group")), adjust = "none")
+
+kable(tidy(summary(lm(adc_right ~  group + sex, data = subset(dat, subgroup == "Group 2")))), digits = 3)
+kable(tidy(confint(lsmeans((lm(adc_right ~ group + sex, data = subset(dat, subgroup == "Group 2"))), specs=c("group"))), digits = 3))
+pairs(lsmeans((lm(adc_right ~ group + sex, data = subset(dat, subgroup == "Group 2"))), specs=c("group")), adjust = "none")
+```
+
+<!-- ### Average / Left / Right ADC with M-value -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ combined_m_value, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ combined_m_value, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ combined_m_value, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ combined_m_value, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ combined_m_value, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ combined_m_value, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- <!-- ### Average / Left / Right ADC with UACR (Excluding Lean Control) -->
+
+--\>
+
+<!-- <!-- ```{r} -->
+
+--\>
+
+<!-- <!-- #| echo: false -->
+
+--\>
+
+<!-- <!-- kable(tidy(summary(lm(adc_avg ~ log(acr_u), data = subset(dat, group!="Lean Control")))), digits = 3) -->
+
+--\>
+
+<!-- <!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ log(acr_u), data = subset(dat, group!="Lean Control"))), specs=c("1")), digits = 3))) -->
+
+--\>
+
+<!-- <!-- kable(tidy(summary(lm(adc_left ~ log(acr_u), data = subset(dat, group!="Lean Control")))), digits = 3) -->
+
+--\>
+
+<!-- <!-- kable(tidy(confint(lsmeans((lm(adc_left ~ log(acr_u) , data = subset(dat, group!="Lean Control"))), specs=c("1")), digits = 3))) -->
+
+--\>
+
+<!-- <!-- kable(tidy(summary(lm(adc_right ~ log(acr_u) , data = subset(dat, group!="Lean Control")))), digits = 3) -->
+
+--\>
+
+<!-- <!-- kable(tidy(confint(lsmeans((lm(adc_right ~ log(acr_u), data = subset(dat, group!="Lean Control"))), specs=c("1")), digits = 3))) -->
+
+--\>
+
+<!-- <!-- ``` -->
+
+--\>
+
+<!-- ### Average / Left / Right ADC with eGFR (fas cr) -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ eGFR_fas_cr, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ eGFR_fas_cr, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ eGFR_fas_cr, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ eGFR_fas_cr, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ eGFR_fas_cr, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ eGFR_fas_cr, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ eGFR_bedside_Schwartz, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ eGFR_bedside_Schwartz, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ eGFR_CKD_epi, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ eGFR_CKD_epi, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ eGFR_fas_cr_cysc, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ eGFR_fas_cr_cysc, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ eGFR_Zap, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ eGFR_Zap, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- ### Average / Left / Right ADC with SBP -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ sbp, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ sbp, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ sbp, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ sbp, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ sbp, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ sbp, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- ### Average / Left / Right ADC with HbA1c -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ hba1c, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ hba1c, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ hba1c, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ hba1c, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ hba1c, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ hba1c, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- ### Average / Left / Right ADC with Age -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ age, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ age, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ age, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ age, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ age, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ age, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- ### Average / Left / Right ADC with Sex -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ sex, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ sex, data = dat)), specs=c("sex")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ sex, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ sex, data = dat)), specs=c("sex")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ sex, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ sex, data = dat)), specs=c("sex")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- ### Average / Left / Right ADC with Ethnicity -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ race_ethnicity_condensed, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ race_ethnicity_condensed , data = dat)), specs=c("race_ethnicity_condensed")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ race_ethnicity_condensed, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ race_ethnicity_condensed , data = dat)), specs=c("race_ethnicity_condensed")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ race_ethnicity_condensed, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ race_ethnicity_condensed, data = dat)), specs=c("race_ethnicity_condensed")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- ### Average / Left / Right ADC with DBP -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ dbp, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ dbp, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ dbp, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ dbp, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ dbp, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ dbp, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- ### Average / Left / Right ADC with BMI -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ bmi, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ bmi, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ bmi, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ bmi, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ bmi, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ bmi, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- ### Average / Left / Right ADC with serum creatinine -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ creatinine_s, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ creatinine_s, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ creatinine_s, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ creatinine_s, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ creatinine_s, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ creatinine_s, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- ### Average / Left / Right ADC with cholesterol -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ cholesterol, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ cholesterol, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ cholesterol, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ cholesterol, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ cholesterol, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ cholesterol, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- ### Average / Left / Right ADC with triglycerides -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ triglycerides, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ triglycerides, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ triglycerides, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ triglycerides, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ triglycerides, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ triglycerides, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- ### Average / Left / Right ADC with LDL -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ ldl, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ ldl, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ ldl, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ ldl, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ ldl, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ ldl, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- ### Average / Left / Right ADC with HDL -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ hdl, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ hdl, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ hdl, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ hdl, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ hdl, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ hdl, data = dat)), specs=c("1")), digits = 3))) -->
+
+<!-- ``` -->
+
+<!-- ### Average / Left / Right ADC with insulin use -->
+
+<!-- ```{r} -->
+
+<!-- #| echo: false -->
+
+<!-- kable(tidy(summary(lm(adc_avg ~ insulin_med_timepoint, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_avg ~ insulin_med_timepoint, data = dat)), specs=c("insulin_med_timepoint")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_left ~ insulin_med_timepoint, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_left ~ insulin_med_timepoint, data = dat)), specs=c("insulin_med_timepoint")), digits = 3))) -->
+
+<!-- kable(tidy(summary(lm(adc_right ~ insulin_med_timepoint, data = dat))), digits = 3) -->
+
+<!-- kable(tidy(confint(lsmeans((lm(adc_right ~ insulin_med_timepoint, data = dat)), specs=c("insulin_med_timepoint")), digits = 3))) -->
+
+<!-- ``` -->
