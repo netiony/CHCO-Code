@@ -1,0 +1,150 @@
+---
+title: "TODAY study - proteomics, hypertension, and OSA"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(SomaDataIO)
+library(limma)
+library(dplyr)
+library(caret)
+library(purrr)
+library(multtest)
+library(openxlsx)
+library(tableone)
+library(EnhancedVolcano)
+library(knitr)
+library(survival)
+library(broom)
+library(psych)
+library(corrplot)
+library(pander)
+library(tableone)
+
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+
+knitr::opts_chunk$set(echo = FALSE)
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "E:/Petter Bjornstad/TODAY subaward"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  home_dir = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/"
+}
+knitr::opts_knit$set(root.dir = home_dir)
+```
+
+```{r, include=FALSE}
+# load somalogic data, with QC samples already excluded
+load("./Somalogic data raw/soma.Rdata")
+
+# load analyte info
+load("./Somalogic data raw/analytes.Rdata")
+
+# load comorbidity data
+load("./Clinical data/comorb.Rdata")
+
+# load baseline risk factors
+load("./Clinical data/TODAY/baserisk.Rdata")
+
+# take only the baseline soma samples
+# can we just take the earliest or is it possible someone would have a follow-up sample but not baseline?
+# probably can take the first and then check the years to make sure compatible with TODAY
+base <- soma %>% arrange(releaseid,Date.Drawn) %>% group_by(releaseid) %>% filter(row_number()==1)
+
+# these 3 release IDs have first sample after end of recruitment, so they must be missing the baseline visit
+base <- base %>% filter(!releaseid %in% c("65-85903","65-47984","65-25901"))
+
+# merge in complication data
+base <- merge(base, comorb, by="releaseid",all.x=T, all.y=F)
+
+# merge in baseline risk factors
+base <- merge(base, baserisk, by="releaseid",all.x=T, all.y=F)
+
+# identify columns corresponding to proteins
+#is_seq <- function(.x) grepl("^seq\\.[0-9]{4}", .x) # regex for analytes
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(base))
+
+# convert to numeric
+base[,seq] <- apply(base[,seq],2,as.numeric)
+
+# are there proteins with low variability?
+#no_var = caret::nearZeroVar(base[,seq])
+# none
+
+# log transform
+base_log <- base %>% modify_if(is_seq(names(.)), log)
+
+# scale by SD
+base_log_scale <- base_log
+predictors <- colnames(base_log[seq])
+for (i in 1:length(predictors)) {
+  base_log_scale[predictors[i]] <- base_log_scale[predictors[i]]/sd(base_log[,paste0(predictors[i])])
+}
+
+# TODAY2 TME
+tme <- read.csv("./Clinical data/TODAY2/TME.csv")
+tme <- tme %>% select(RELEASEID,TMETYPE,DAYSTOTME)
+colnames(tme) <- c("releaseid","TMETYPE","DAYSTOTME")
+tme <- tme %>% filter(TMETYPE==4)
+
+# TODAY2 PSG
+psg <- read.csv("./Clinical data/TODAY2/PSG.csv")
+psg$releaseid <- psg$RELEASEID
+psg$RELEASEID <- NULL
+psg <- psg %>% select(releaseid,CENTRAL_AHI)
+
+# merge base_log (not scaled data) with PSG data
+analytes_keep <- analytes %>% filter(AptName %in% c("seq.13408.23","seq.19563.3","seq.7957.2","seq.2999.6","seq.18896.23","seq.5109.24",
+                                                    "seq.9211.19","seq.18339.207","seq.18376.19","seq.18935.14","seq.24948.79","seq.4330.4"))
+key <- analytes_keep[,c("AptName","UniProt","Target","TargetFullName")]
+base_log_keep <- base_log %>% select(c("releaseid",all_of(analytes_keep$AptName)))
+base_log_keep <- merge(base_log_keep,psg,by="releaseid",all.x = F, all.y = F)
+base_log_keep <- base_log_keep %>% select(-releaseid)
+```
+
+# Results
+
+## Summary statistics for AHI
+
+```{r, include=FALSE}
+t <- CreateTableOne(vars="CENTRAL_AHI",data=base_log_keep)
+t <- print(t, nonnorm="CENTRAL_AHI", minMax=T)
+```
+
+```{r, include=TRUE}
+kable(t)
+```
+
+## Key to protein names
+
+```{r, include=TRUE}
+kable(key)
+```
+
+## Correlation between AHI and proteins
+
+```{r, include=TRUE}
+ # Correlations
+  M <- corr.test(data.matrix(base_log_keep), normal = F, method = "spearman")
+  r <- data.frame(round(M$r, 3))
+#  r <- r %>% filter(rownames(r)=="CENTRAL_AHI")
+#  r <- r %>% select(-releaseid)
+#  p <- data.frame(round(M$p, 3))
+#  p <- p %>% filter(rownames(p)=="CENTRAL_AHI")
+#  p <- p %>% select(-releaseid)
+  emphasize.strong.cells(which(M$p <= 0.05, arr.ind = TRUE))
+  cat("\n")
+  pander(r, caption = "Coefficients")
+  cat("\n")
+```
+
