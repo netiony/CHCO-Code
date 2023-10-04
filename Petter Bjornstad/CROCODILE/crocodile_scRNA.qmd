@@ -22,6 +22,9 @@ library(future)
 library(tidyverse)
 library(colorspace)
 library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggtree)
 ```
 
 ```{r scRNA data setup}
@@ -30,7 +33,7 @@ library(patchwork)
 plan(multicore, workers = 16)
 options(future.globals.maxSize=2e9)
 # Import
-so <- readRDS("/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/data_clean/seurat_data_no_computations.RDS")
+so <- readRDS("/home/yejichoi/UCD/Petter Bjornstad/scRNA/data_clean/seurat_data_no_computations.RDS")
 # CROCODILE only
 so <- so[, grepl("CRC", so$michigan_id)]
 # Exclude control with IgA
@@ -41,6 +44,7 @@ so <- NormalizeData(so)
 so <- ScaleData(so)
 # PCA
 so <- RunPCA(so, features = VariableFeatures(object = so))
+# ElbowPlot(so)
 # Cluster cells
 so <- FindNeighbors(so)
 so <- FindClusters(so)
@@ -54,9 +58,10 @@ Idents(so) <- so$LR_clusters
 genes <- c(
   "ACO1", "ACO2", "IDH1", "IDH2", "IDH3A", "IDH3B", "IDH3G", "OGDH", "OGDHL",
   "SUCLA2", "SUCLG1", "SUCLG2", "SDHA", "SDHB", "SDHC", "SDHD", "FH", "MDH1",
-  "MDH2"
+  "MDH2", "FAS", "CS"
 )
 genes = sort(genes)
+all.genes = rownames(so)
 ```
 
 
@@ -100,7 +105,7 @@ ggsave(filename = "/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projec
        plot = umap,scale = 3,width = 1200,height = 900,units = "px")
 ```
 
-## By cell type
+## By cell type (general)
 
 ```{r}
 Idents(so) = so$generaltype
@@ -115,11 +120,26 @@ p
 ggsave(filename = "/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Dissemination/Figures/UMAP_Cell_Type_1200x900.jpeg",
        plot = p,scale = 3,width = 1200,height = 900,units = "px")
 ```
+## By cell type
 
+```{r}
+Idents(so) = so$celltype
+order = sort(as.character(unique(Idents(so))),decreasing = T)
+order = c(order[-which(order=="PT")], order[which(order=="PT")])
+p = DimPlot(so,
+  reduction = "umap",
+  order = order,
+  label = T
+) + scale_color_discrete_qualitative(palette = "Pastel 1")
+p
+# Save image
+ggsave(filename = "/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Dissemination/Figures/UMAP_Cell_Type_1200x900.jpeg",
+       plot = p,scale = 3,width = 1200,height = 900,units = "px")
+```
 ## By group and feature
 
 ```{r results='asis'}
-invisible(lapply(genes_subset, function(g) {
+invisible(lapply(genes, function(g) {
   cat("\n")
   cat("###", g)
   cat("\n")
@@ -137,6 +157,62 @@ invisible(lapply(genes_subset, function(g) {
 
 # Violin plots
 
+## Split violin plot function
+```{r}
+GeomSplitViolin <- ggproto(
+  "GeomSplitViolin", 
+  GeomViolin, 
+  draw_group = function(self, data, ..., draw_quantiles = NULL) {
+    data <- transform(data, 
+                      xminv = x - violinwidth * (x - xmin), 
+                      xmaxv = x + violinwidth * (xmax - x))
+    grp <- data[1,'group']
+    newdata <- plyr::arrange(
+      transform(data, x = if(grp%%2==1) xminv else xmaxv), 
+      if(grp%%2==1) y else -y
+    )
+    newdata <- rbind(newdata[1, ], newdata, newdata[nrow(newdata), ], newdata[1, ])
+    newdata[c(1,nrow(newdata)-1,nrow(newdata)), 'x'] <- round(newdata[1, 'x']) 
+    if (length(draw_quantiles) > 0 & !scales::zero_range(range(data$y))) {
+      stopifnot(all(draw_quantiles >= 0), all(draw_quantiles <= 1))
+      quantiles <- ggplot2:::create_quantile_segment_frame(data, draw_quantiles)
+      aesthetics <- data[rep(1, nrow(quantiles)), setdiff(names(data), c("x", "y")), drop = FALSE]
+      aesthetics$alpha <- rep(1, nrow(quantiles))
+      both <- cbind(quantiles, aesthetics)
+      quantile_grob <- GeomPath$draw_panel(both, ...)
+      ggplot2:::ggname("geom_split_violin", 
+                       grid::grobTree(GeomPolygon$draw_panel(newdata, ...), quantile_grob))
+    } else {
+      ggplot2:::ggname("geom_split_violin", GeomPolygon$draw_panel(newdata, ...))
+    }
+  }
+)
+
+geom_split_violin <- function (mapping = NULL, 
+                               data = NULL, 
+                               stat = "ydensity", 
+                               position = "identity", ..., 
+                               draw_quantiles = NULL, 
+                               trim = TRUE, 
+                               scale = "area", 
+                               na.rm = FALSE, 
+                               show.legend = NA, 
+                               inherit.aes = TRUE) {
+  layer(data = data, 
+        mapping = mapping, 
+        stat = stat, 
+        geom = GeomSplitViolin, 
+        position = position, 
+        show.legend = show.legend, 
+        inherit.aes = inherit.aes, 
+        params = list(trim = trim, 
+                      scale = scale, 
+                      draw_quantiles = draw_quantiles, 
+                      na.rm = na.rm, ...)
+  )
+}
+```
+
 ## In PT cells
 
 ```{r}
@@ -144,9 +220,12 @@ invisible(lapply(genes_subset, function(g) {
   cat("\n")
   cat("###", g)
   cat("\n")
-  d = VlnPlot(so, features = g, group.by = "Group", idents = "PT") 
+  d = VlnPlot(so, features = g, split.by = "Group", idents = "PT", split.plot = T, pt.size = 0) 
   d = d$data
-  p = ggplot(d,aes(x=ident,y = !!sym(g),fill=ident))+geom_point()+geom_violin()+theme_bw()+theme(legend.title = element_blank(),axis.title.x = element_blank())+ ylab(paste0(g," in  PT Cells"))
+  p = ggplot(d,aes(x=ident,y = !!sym(g),fill=split))+
+    geom_jitter(position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.9), size = 0.2, alpha = 0.3, show.legend = T, aes(color = split))+
+    geom_split_violin(trim = T) +theme_bw()+theme(legend.title = element_blank(),axis.title.x = element_blank(), axis.text.x=element_blank())+ ylab(paste0(g," in  PT Cells")) +
+    scale_fill_manual(values=c("#6B9080", "#fcbf49")) + scale_color_manual(values=c("#6B9080", "#fcbf49"))
   print(p)
   cat("\n")
   # Save
@@ -185,16 +264,95 @@ ggsave(filename = "/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projec
 ## PT cells only
 
 ```{r}
-dp1 = DotPlot(so,
-  features = genes_subset[1:5],idents = "PT", group.by = "Group",
-  scale = F,dot.scale = 20
-)
 dp2 = DotPlot(so,
-  features = genes_subset[6:9],idents = "PT", group.by = "Group",
-  scale = F,dot.scale = 20
+  features = genes_subset,idents = "PT", group.by = "Group",
+  scale = F,dot.scale = 20, cols = "RdYlBu"
 )
 dp =dp1 / dp2
 ggsave(filename = "/home/tim/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Dissemination/Figures/Dot_PT_cells_1920x1080.jpeg",
        plot = dp,scale = 3,
        width = 1920,height = 1080,units = "px")
+```
+# Dot plot of PT subtypes combined
+```{r}
+pt.combined <- DotPlot(so,
+  features = genes_subset,idents = "PT", group.by = "Group",
+  scale = F, cols = "RdYlBu"
+)$data 
+pt.1 <- DotPlot(subset(so, celltype == "PT-1"),
+  features = genes_subset,idents = "PT", group.by = "Group",
+  scale = F, cols = "RdYlBu"
+)$data %>% mutate(pt.celltype = paste0("PT-1:",id))
+pt.2 <- DotPlot(subset(so, celltype == "PT-2"),
+  features = genes_subset,idents = "PT", group.by = "Group",
+  scale = F, cols = "RdYlBu"
+)$data %>% mutate(pt.celltype = paste0("PT-2:",id))
+pt.3 <- DotPlot(subset(so, celltype == "PT-3"),
+  features = genes_subset,idents = "PT", group.by = "Group",
+  scale = F, cols = "RdYlBu"
+)$data %>% mutate(pt.celltype = paste0("PT-3:",id))
+pt.4 <- DotPlot(subset(so, celltype == "PT-4"),
+  features = genes_subset,idents = "PT", group.by = "Group",
+  scale = F, cols = "RdYlBu"
+)$data %>% mutate(pt.celltype = paste0("PT-4:",id))
+pt.5 <- DotPlot(subset(so, celltype == "PT-5"),
+  features = genes_subset,idents = "PT", group.by = "Group",
+  scale = F, cols = "RdYlBu"
+)$data %>% mutate(pt.celltype = paste0("PT-5:",id))
+
+pt_dot <-rbind(pt.1, pt.2, pt.3, pt.4, pt.5)
+pt_dot_123 <- rbind(pt.1, pt.2, pt.3)
+pt_dot_45 <- rbind(pt.4, pt.5)
+
+pt_dot %>% 
+  ggplot(aes(x=features.plot, y = pt.celltype, color = avg.exp.scaled, size = pct.exp)) + 
+  geom_point() +
+  theme_bw() +
+  scale_color_gradient2(low = "#8ecae6", mid = "#fcbf49", high = "#d90429", midpoint = 2) +
+  scale_size(range = c(0,10)) +
+  theme(panel.grid = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  labs(color = "Count (Log-scaled)",
+       size = "Expression (%)") +
+  geom_hline(yintercept = 2.5, size = .3, color = "gray") +
+  geom_hline(yintercept = 4.5, size = .3, color = "gray") +
+  geom_hline(yintercept = 6.5, size = .3, color = "gray") +
+  geom_hline(yintercept = 8.5, size = .3, color = "gray")
+
+pt.combined %>% 
+  ggplot(aes(x=features.plot, y = id, color = avg.exp.scaled, size = pct.exp)) + 
+  geom_point() +
+  theme_bw() +
+  scale_color_gradient2(low = "#8ecae6", mid = "#fcbf49", high = "#d90429", midpoint = 2) +
+  scale_size(range = c(0,20)) +
+  theme(panel.grid = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  labs(color = "Count (Log-scaled)",
+       size = "Expression (%)")
+
+pt_dot_123 %>% 
+  ggplot(aes(x=features.plot, y = pt.celltype, color = avg.exp.scaled, size = pct.exp)) + 
+  geom_point() +
+  theme_bw() +
+  scale_color_gradient2(low = "#8ecae6", mid = "#fcbf49", high = "#d90429", midpoint = 2) +
+  scale_size(range = c(0,10)) +
+  theme(panel.grid = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  labs(color = "Count (Log-scaled)",
+       size = "Expression (%)")
+
+pt_dot_45 %>% 
+  ggplot(aes(x=features.plot, y = pt.celltype, color = avg.exp.scaled, size = pct.exp)) + 
+  geom_point() +
+  theme_bw() +
+  scale_color_gradient2(low = "#8ecae6", mid = "#fcbf49", high = "#d90429", midpoint = 2) +
+  scale_size(range = c(0,10)) +
+  theme(panel.grid = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  labs(color = "Count (Log-scaled)",
+       size = "Expression (%)")
 ```
