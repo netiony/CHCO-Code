@@ -122,8 +122,7 @@ def clean_casper():
     # Replace missing values
     phys.replace(rep, np.nan, inplace=True)
     phys["procedure"] = "physical_exam"
-    phys.drop(["phys_norm", "phys_no", "breast_tanner",
-               "testicular_volume", "lmp", "screen_bmi_percentile",
+    phys.drop(["phys_norm", "phys_no", "lmp", "screen_bmi_percentile",
                "male_activity_factor", "fem_activity_factor", "schofield_male",
                "schofield_female"], axis=1, inplace=True)
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)

@@ -127,7 +127,7 @@ def clean_panther():
     phys.columns = phys.columns.str.replace(r"phys_|screen_", "", regex=True)
     phys.rename({"sysbp": "sbp", "diasbp": "dbp"}, inplace=True, axis=1)
     phys.drop(["norm", "abnormal", "age"], axis=1, inplace=True)
-    phys=phys.loc[:, ~phys.columns.str.startswith("tan_")].copy()
+    #phys=phys.loc[:, ~phys.columns.str.startswith("tan_")].copy()
     phys["acan"].replace({"1": "Yes", "0": "No"}, inplace=True)
     phys["acan_sev"].replace({"1": "Mild", "2": "Moderate", "3": "Severe"}, inplace=True)
     phys["procedure"] = "physical_exam"
