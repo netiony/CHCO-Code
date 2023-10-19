@@ -18,3 +18,7 @@ M <- 12
 deff <- 1 + (M - 1)*icc
 n_eff <- 100/deff
 # 65 per group
+
+# assume 15% attrition
+n_eff <- 85/deff
+# 59 per group
