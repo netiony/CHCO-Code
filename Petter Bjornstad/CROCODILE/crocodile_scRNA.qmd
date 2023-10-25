@@ -27,6 +27,13 @@ library(cowplot)
 library(ggtree)
 library(ggpubr)
 library(rstatix)
+library(table1)
+library(GSVA)
+library(Biobase)
+library(ReactomeGSA)
+library(GSEABase)
+library(GSVAdata)
+library(msigdbr)
 ```
 
 ```{r scRNA data setup}
@@ -35,7 +42,7 @@ library(rstatix)
 plan(multicore, workers = 16)
 options(future.globals.maxSize=2e9)
 # Import
-so <- readRDS("/home/yejichoi/UCD/Petter Bjornstad/scRNA/data_clean/seurat_data_no_computations.RDS")
+so <- readRDS("/run/user/1014/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/data_clean/seurat_data_no_computations.RDS")
 # CROCODILE only
 so <- so[, grepl("CRC", so$michigan_id)]
 # Exclude control with IgA
@@ -78,7 +85,18 @@ ckd_genes <- c(
 ir_genes <- c(
   "TFAM", "ACLY", "DGAT1", "SPTLC1", "IDH1", "PRKAA2", "NFE2L2", 
   "INSR", "IRS1", "IRS2", "PDHA1", "PDHB", "ACACA", "FASN",
-  "PPARGC1A", "SLC2A4", "PC", "GLUD1", "CACNA1C"
+  "PPARGC1A", "SLC2A4", "PC", "GLUD1", "CACNA1C", 
+  "IL6", "TNF", "MRPL12", "MTOR", "FOXP3"
+)
+
+sglt2_genes <- c(
+  "SLC2A2", "INSR", "ACADM", "ACADS",
+  "HMGCS2", "BDH1", "NOX4", "SOD1", "PPARGC1A", "NOS3"
+)
+
+oxy_phos_genes <- c(
+  "NDUFS6", "SDHA", "SDHB", "SDHC", "SDHD",
+  "UQCRC1", "UQCRC2", "COX4I1", "COX4I2", "ATP5PF"
 )
 ```
 
@@ -91,10 +109,10 @@ In the table below, HC are group 1 and T1D are group 2. Positive values indicate
 # function for de.markers
 de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, extension){
   m = FindMarkers(seurat_object, features = genes,group.by = group.by,ident.1 = id1, 
-                  ident.2 = id2,subset.ident = celltype,verbose = F,logfc.threshold=0.1,
+                  ident.2 = id2,subset.ident = celltype,verbose = T,logfc.threshold=0.1,
                   min.pct = .1)
   m$p_val_adj = p.adjust(m$p_val,method = "bonferroni")
-  m <- m %>% select(avg_log2FC,pct.1,pct.2,p_val,p_val_adj) %>% arrange(p_val)
+  m <- m %>% dplyr::select(avg_log2FC,pct.1,pct.2,p_val,p_val_adj) %>% arrange(p_val)
   genes_subset <- rownames(m)[m$p_val_adj <= 0.05]
 
   if (length(genes_subset) > 0){
@@ -115,6 +133,13 @@ de.markers(so, ckd_genes, "Group", "HC", "T1D", "PT", "_ckd")
 
 # IR genes
 de.markers(so, ir_genes, "Group", "HC", "T1D", "PT", "_ir")
+
+# SGLT2i genes
+de.markers(so, sglt2_genes, "Group", "HC", "T1D", "PT", "_sglt2")
+
+# Oxygen phophorylation genes
+de.markers(so, oxy_phos_genes, "Group", "HC", "T1D", "PT", "_oxy_phos")
+
 ```
 # Differential expression in sub PT celltypes
 
@@ -165,14 +190,14 @@ umap
 ## By cell type (general)
 
 ```{r}
-Idents(so) = so$generaltype
-order = sort(as.character(unique(Idents(so))),decreasing = T)
-order = c(order[-which(order=="PT")], order[which(order=="PT")])
-p = DimPlot(so,
-  reduction = "umap",
-  order = order
-) + scale_color_discrete_qualitative(palette = "Pastel 1")
-p
+# Idents(so) = so$generaltype
+# order = sort(as.character(unique(Idents(so))),decreasing = T)
+# order = c(order[-which(order=="PT")], order[which(order=="PT")])
+# p = DimPlot(so,
+#   reduction = "umap",
+#   order = order
+# ) + scale_color_discrete_qualitative(palette = "Pastel 1")
+# p
 # Save image
 # ggsave(filename = "/home/yejichoi/Documents/lin_temp_folder/UMAP_Cell_Type_1200x900.jpeg",
 #        plot = p,scale = 3,width = 1200,height = 900,units = "px")
@@ -180,15 +205,15 @@ p
 ## By cell type
 
 ```{r}
-Idents(so) = so$celltype
-order = sort(as.character(unique(Idents(so))),decreasing = T)
-order = c(order[-which(order=="PT")], order[which(order=="PT")])
-p = DimPlot(so,
-  reduction = "umap",
-  order = order,
-  label = T
-) + scale_color_discrete_qualitative(palette = "Pastel 1")
-p
+# Idents(so) = so$celltype
+# order = sort(as.character(unique(Idents(so))),decreasing = T)
+# order = c(order[-which(order=="PT")], order[which(order=="PT")])
+# p = DimPlot(so,
+#   reduction = "umap",
+#   order = order,
+#   label = T
+# ) + scale_color_discrete_qualitative(palette = "Pastel 1")
+# p
 # Save image
 # ggsave(filename = "/home/yejichoi/Documents/lin_temp_folder/UMAP_Cell_Type_1200x900.jpeg",
 #        plot = p,scale = 3,width = 1200,height = 900,units = "px")
@@ -214,7 +239,7 @@ invisible(lapply(genes, function(g) {
 # Cell count
 ```{r}
 # By PT subtypes
-so@meta.data %>% 
+cellcount<- so@meta.data %>% 
   filter(generaltype == "PT") %>%
   filter(celltype != "PT_lowQuality") %>%
   ggplot(aes(Group, fill = celltype)) + 
@@ -227,6 +252,7 @@ so@meta.data %>%
   theme(plot.title = element_text(hjust=0.5, face="bold")) +
   ggtitle("Proportion of cells") +
   scale_fill_manual(values = c("#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51"))
+ggsave(plot = cellcount, filename = "/home/yejichoi/Documents/lin_temp_folder/PT_cell_proportions.jpg")
 ```
 
 # TCA cycle genes
@@ -342,7 +368,7 @@ split.vp.combined <- function(seurat_object, genes, filepath, color1 = "#6c9a8b"
   cat("\n")
  # Save
   ggsave(filename = paste0(filepath,"Violin_combined",".jpeg"),plot = p,scale = 5,
-        width = 800,height = 600,units = "px")
+        width = 1000,height = 600,units = "px")
 
 }
 
@@ -471,6 +497,7 @@ m1.label <- m.1 %>% mutate(m1.label = case_when(p_val_adj <= 0.05 & pct.1 > pct.
                                                 p_val_adj <= 0.05 & pct.1 < pct.2 ~ ">"))%>%
   select(m1.label) %>%
   mutate(genes_subset = rownames(m.1))
+genes_subset.2 <- ""
 match_2 <- (genes_subset %in% genes_subset.2) * 7.5
 m2.label <- m.2 %>% mutate(m2.label = case_when(p_val_adj <= 0.05 & pct.1 > pct.2 ~ "<",
                                                 p_val_adj <= 0.05 & pct.1 < pct.2 ~ ">")) %>%
@@ -573,6 +600,7 @@ ggsave(filename = "/home/yejichoi/Documents/lin_temp_folder/Dot_PT_subcells_1920
 ## Violin plots
 ```{r}
 split.vp(seurat_object = so, genes = genes_subset_acetylcoa, filepath = "/home/yejichoi/Documents/lin_temp_folder/")
+split.vp.combined(seurat_object = so, genes = genes_subset_acetylcoa, filepath = "/home/yejichoi/Documents/lin_temp_folder/acetylcoa_")
 ```
 ## Dot Plot
 ```{r}
@@ -588,6 +616,7 @@ ggsave(filename = "/home/yejichoi/Documents/lin_temp_folder/Dot_PT_cells_acetylc
 ## Violin plots
 ```{r}
 split.vp(seurat_object = so, genes = genes_subset_ir, filepath = "/home/yejichoi/Documents/lin_temp_folder/")
+split.vp.combined(seurat_object = so, genes = genes_subset_ir, filepath = "/home/yejichoi/Documents/lin_temp_folder/ir_")
 ```
 
 ## Dot Plot
@@ -603,6 +632,7 @@ ggsave(filename = "/home/yejichoi/Documents/lin_temp_folder/Dot_PT_cells_IR.jpeg
 ## Violin plots
 ```{r}
 split.vp(seurat_object = so, genes = genes_subset_ckd, filepath = "/home/yejichoi/Documents/lin_temp_folder/")
+split.vp.combined(seurat_object = so, genes = genes_subset_ckd, filepath = "/home/yejichoi/Documents/lin_temp_folder/ckd_")
 ```
 ## Dot Plot
 ```{r}
@@ -614,46 +644,276 @@ ggsave(filename = "/home/yejichoi/Documents/lin_temp_folder/Dot_PT_cells_ckd.jpe
        width = 1000,height = 500,units = "px")
 ```
 
+# Oxygen phosphorylation genes
+## Violin plots
+```{r}
+split.vp(seurat_object = so, genes = genes_subset_oxy_phos, filepath = "/home/yejichoi/Documents/lin_temp_folder/")
+split.vp.combined(seurat_object = so, genes = genes_subset_oxy_phos, filepath = "/home/yejichoi/Documents/lin_temp_folder/oxy_phos_")
+```
+## Dot Plot
+```{r}
+pt.plot_table_oxy_phos <- dp.formatted(seurat_object = so, genes = genes_subset_oxy_phos, group.by = "Group",
+                   celltype = "PT", m = m_oxy_phos)
+
+ggsave(filename = "/home/yejichoi/Documents/lin_temp_folder/Dot_PT_cells_oxy_phos.jpeg",
+       plot = pt.plot_table_oxy_phos, scale = 3,
+       width = 1000,height = 500,units = "px")
+```
+
+# SGLT2i genes
+## Violin plots
+```{r}
+split.vp(seurat_object = so, genes = genes_subset_sglt2, filepath = "/home/yejichoi/Documents/lin_temp_folder/")
+split.vp.combined(seurat_object = so, genes = genes_subset_sglt2, filepath = "/home/yejichoi/Documents/lin_temp_folder/sglt2_")
+```
+## Dot Plot
+```{r}
+pt.plot_table_sglt2 <- dp.formatted(seurat_object = so, genes = genes_subset_sglt2, group.by = "Group",
+                   celltype = "PT", m = m_sglt2)
+
+ggsave(filename = "/home/yejichoi/Documents/lin_temp_folder/Dot_PT_cells_sglt2.jpeg",
+       plot = pt.plot_table_sglt2, scale = 3,
+       width = 1000,height = 500,units = "px")
+```
 # Import CROC data from RedCap
 ```{r}
-load("/home/yejichoi/UCD/Petter Bjornstad/CROCODILE/Data_Cleaned/croc_data.RData")
+load("/run/user/1014/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/croc_data.RData")
+source("/home/yejichoi/Documents/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/label_harmonized_function.R")
+
+# Blood metabolomics
+blood_metab <- c("citrate", "two_oxoglutarate", "succinate", 
+                 "fumarate", "malate", "aspartate",
+                 "glutamate", "alanine", "arginine", "cystine", "histidine", 
+                 "leucine_isoleucine", "lysine", "methionine", "phenylalanine", 
+                 "proline", "serine", "thereonine",
+                 "tyrosine", "valine", "glutamine")
+
+# Spatial metabolomics
+spatial_metab <- dat %>% dplyr::select(ends_with("_tissue")) %>% colnames()
+spatial_metab_tca <- c("isocitric_citric_acid_tissue",
+                   "aconitic_acid_tissue",
+                   "succinic_acid_tissue",
+                   "fumaric_acid_tissue",
+                   "malic_acid_tissue")
 ```
+
+## Extract individual level expression in scRNA
+```{r warning = F}
+meta_features <- so[["RNA"]]@meta.features
+a <- rownames(meta_features)
+var_list <- c("sample", "ident", "michigan_id", a)
+pt_md <- FetchData(so, vars = var_list) %>%
+  filter(ident == "PT")
+
+pt_md <- pt_md %>%
+  group_by(michigan_id) %>%
+  summarise(across(where(is.numeric), ~ mean(.x > 0, na.rm = TRUE)))
+
+pt_md_tca <- pt_md %>%
+  dplyr::select(michigan_id, genes_subset) %>% 
+  dplyr::rename(record_id = michigan_id) %>%
+  left_join(dat)
+
+pt_md_ir <- pt_md %>%
+  dplyr::select(michigan_id, genes_subset_ir) %>% 
+  dplyr::rename(record_id = michigan_id) %>%
+  left_join(dat)
+```
+
 ## Associate spatial metabolomics with sc PT transcripts
 ```{r}
+metabo_sc <- function(data, gene, transcripts, gene_name) {
+  plots <- list()
+  for (i in 1:length(transcripts)) {
+    plot <- data %>%
+      ggplot(aes_string(y = gene, x = transcripts[i], color = "group")) +
+      geom_point() +
+      geom_smooth(method = lm, se = F) +
+      labs(color = "Group",
+           y = gene_name) +
+      theme_bw()
+    plots[[i]] <- plot
+  }
+  ggarrange(plotlist = plots, common.legend = T)
+}
+```
 
+```{r warning = F, message = F}
+# Plots
+metabo_sc(data = pt_md_tca, gene = "isocitric_citric_acid_tissue", 
+          transcripts = c("ACO1", "ACO2", "IDH1"),
+          gene_name = "Isocitric/citric acid")
+metabo_sc(data = pt_md_tca, gene = "aconitic_acid_tissue", 
+          transcripts = c("ACO1", "ACO2"),
+          gene_name = "Aconitate")
+metabo_sc(data = pt_md_tca, gene = "succinic_acid_tissue", 
+          transcripts = c("OGDH", "OGDHL", "SUCLG1", "SUCLG2", "SDHB", "SDHC"),
+          gene_name = "Succinate")
+metabo_sc(data = pt_md_tca, gene = "fumaric_acid_tissue", 
+          transcripts = c("SDHB", "SDHC"),
+          gene_name = "Fumarate")
+metabo_sc(data = pt_md_tca, gene = "malic_acid_tissue", 
+          transcripts = c("ACO1", "ACO2", "IDH1"),
+          gene_name = "Malate")
+  
 ```
 
 ## Associate GBM width with sc PT transcripts
-```{r}
 
+```{r message=F, warning=F}
+# Log GBM width, and group the two groups
+metabo_sc(data = pt_md_tca, gene = "gbm_thick_artmean", 
+          transcripts = genes_subset,
+          gene_name = "GBM width")
 ```
 
 ## Associate GBM width with spatial metabolomics
 ```{r}
-
+metabo_sc(data = pt_md_tca, gene = "gbm_thick_artmean", 
+          transcripts = spatial_metab_tca,
+          gene_name = "GBM Width")
 ```
 
 ## Associate global k2 with sc PT transcripts
 ```{r}
-
+metabo_sc(data = pt_md_tca, gene = "avg_c_k2", 
+          transcripts = genes_subset,
+          gene_name = "Cortex k2")
 ```
 
 ## Associate global k2 with spatial metabolomics
 ```{r}
-
+metabo_sc(data = pt_md_tca, gene = "avg_c_k2", 
+          transcripts = spatial_metab_tca,
+          gene_name = "Cortex k2")
 ```
 
 ## Associate voxelwise k2 with sc PT transcripts
 ```{r}
-
+metabo_sc(data = pt_md_tca, gene = "avg_c_k2_wo_cyst_vw", 
+          transcripts = genes_subset,
+          gene_name = "Voxel-wise Cortex k2")
 ```
 
 ## Associate voxelwise k2 with spatial metabolomics
 ```{r}
-
+metabo_sc(data = pt_md_tca, gene = "avg_c_k2_wo_cyst_vw", 
+          transcripts = spatial_metab_tca,
+          gene_name = "Voxel-wise Cortex k2")
 ```
 
-## Insulin sensitivity with sc PT transcripts
+## Associate insulin sensitivity with sc PT transcripts
 ```{r}
+metabo_sc(data = pt_md_tca, gene = "p2_raw_m", 
+          transcripts = genes_subset,
+          gene_name = "M-value")
 
+metabo_sc(data = pt_md_ir, gene = "p2_raw_m", 
+          transcripts = genes_subset_ir,
+          gene_name = "M-value")
+```
+
+# Correlations
+## 
+```{r}
+source("/home/yejichoi/Documents/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/correlation_function.R")
+
+```
+# Pathway activity scores
+## Krebs cycle pathway activity score
+```{r}
+gsva_result <- analyse_sc_clusters(so)
+pathways_full <- gsva_result@results$Seurat$pathways 
+pathways_tca <- pathways_full %>% filter(grepl("tca|kreb|citric acid", Name, ignore.case = T))
+pathways_ir <- pathways_full %>% filter(grepl("insulin|mitochon|fatty acid ox", Name, ignore.case = T))
+
+# Pathway scores
+plot_gsva_pathway(gsva_result, pathway_id = rownames(max_difference)[1])
+plot_gsva_heatmap(gsva_result, pathway_ids = pathways_tca$Pathway,
+                  scale = "row",
+                  dendrogram = "col",
+                  truncate_names = T)
+
+genesets <- msigdbr::msigdbr(subcategory = "CP:REACTOME") %>%
+  filter(gs_exact_source %in% pathways_tca$Pathway)
+pathway_list <- split(
+  genesets$gene_symbol,
+  genesets$gs_name
+)
+
+mapped_df <- pt_md %>% data.table::transpose(make.names = "michigan_id")
+rownames(mapped_df) <- all.genes
+gene_means <- rowMeans(mapped_df)
+mapped_df <- mapped_df %>%
+  dplyr::mutate(gene_means) %>%
+  arrange(desc(gene_means)) %>%
+  dplyr::select(-gene_means) %>%
+  as.matrix()
+
+gsva_results <- gsva(
+  mapped_df,
+  pathway_list,
+  method = "ssgsea"
+) %>% t() %>% as.data.frame() %>%
+  rownames_to_column(var = "record_id")
+
+gsva_annotated <- gsva_results %>%
+  left_join(dat)
+
+summary(arsenal::tableby(group ~ REACTOME_CITRIC_ACID_CYCLE_TCA_CYCLE +
+                   REACTOME_PYRUVATE_METABOLISM_AND_CITRIC_ACID_TCA_CYCLE +
+                   REACTOME_THE_CITRIC_ACID_TCA_CYCLE_AND_RESPIRATORY_ELECTRON_TRANSPORT,
+                 data = gsva_annotated, total = F))
+
+## Insulin resistance
+genesets_ir <- msigdbr::msigdbr(subcategory = "CP:REACTOME") %>%
+  filter(gs_exact_source %in% pathways_ir$Pathway)
+pathway_list_ir <- split(
+  genesets_ir$gene_symbol,
+  genesets_ir$gs_name
+)
+
+gsva_results <- gsva(
+  mapped_df,
+  pathway_list_ir,
+  method = "ssgsea"
+) %>% t() %>% as.data.frame() %>%
+  rownames_to_column(var = "record_id")
+
+gsva_ir_annotated <- gsva_results %>%
+  left_join(dat) %>%
+  dplyr::select(group, starts_with("REACTOME"))
+
+summary(arsenal::tableby(group ~ .,
+                 data = gsva_ir_annotated, total = F))
+
+## All pathways
+genesets_full <- msigdbr::msigdbr(subcategory = "CP:REACTOME")
+pathway_list_full <- split(
+  genesets_full$gene_symbol,
+  genesets_full$gs_name
+)
+
+gsva_results_full <- gsva(
+  mapped_df,
+  pathway_list_full,
+  method = "ssgsea"
+) %>% t() %>% as.data.frame() %>%
+  rownames_to_column(var = "record_id")
+
+gsva_full_annotated <- gsva_results_full %>%
+  left_join(dat) %>%
+  dplyr::select(group, starts_with("REACTOME")) %>%
+  dplyr::summarise(across(.cols = where(is.numeric),.fns = mean), .by = group) %>%
+  t()
+colnames(gsva_full_annotated) <- c("T1D", "HC")
+gsva_full_annotated <- gsva_full_annotated[-1,] %>%
+  as.data.frame() %>%
+  mutate(delta = as.numeric(T1D) - as.numeric(HC),
+         T1D = as.numeric(T1D),
+         HC = as.numeric(HC)) %>%
+  arrange(delta)
+
+
+  
 ```
