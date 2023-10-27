@@ -217,7 +217,7 @@ so <- readRDS("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/
 so <- so[, !grepl("_12M", so$michigan_id)]
 # Limit to those with SOMA and Olink
 so$michigan_id <- sub("_BL", "", so$michigan_id)
-so <- so[, so$michigan_id %in% ids]
+#so <- so[, so$michigan_id %in% ids]
 # Combined groups
 so$diabetes <- sub("i", "", so$T2D_HC_Phil)
 so$SGLT2i <- factor(so$T2D_HC_Phil,
