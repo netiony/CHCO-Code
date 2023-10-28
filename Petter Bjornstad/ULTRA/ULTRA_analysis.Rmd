@@ -1,0 +1,422 @@
+---
+title: "ULTRA Analysis"
+author: "Callie Rountree-Jablin"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    toc_loc: left
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(kableExtra)
+library(lubridate)
+library(gtsummary)
+library(ggplot2)
+pacman::p_load(naniar)
+
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "B:/Petter Bjornstad"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  home_dir = "/Volumes/Peds Endo/Petter Bjornstad/"
+} 
+knitr::opts_knit$set(echo=FALSE, root.dir = home_dir)
+```
+
+```{r read, include=FALSE}
+# read raw data
+raw_dat <- read_csv("./ULTRA/raw_data/ULTRAT2D_DATA_2023-10-19_1426.csv")
+raw_dat <- raw_dat %>% 
+  select(-c(name_last, name_first, mrn, dob, phone))
+```
+
+```{r data cleaning, include=FALSE}
+## subset full raw df into separate screening and visit dfs for analysis
+
+# screening cleaning
+screening_dat <- raw_dat %>%
+  filter(redcap_event_name=='screening_visit_arm_1') %>%
+  mutate(Race=case_when(race___1==1~'American Indian or Alaskan Native',
+                        race___2==1~'Asian',
+                        race___3==1~'Hawaiian or Pacific Islander',
+                        race___4==1~'Black or African American',
+                        race___5==1~'White',
+                        race___6==1~'Unknown',
+                        race___7==1~'Other',
+                        .default=NA),
+         Ethnicity=case_when(ethnicity___1==1~'Hispanic',
+                             ethnicity___2==1~'Non-Hispanic',
+                             ethnicity___3==1~'Unknown/Not Reported',
+                             .default=NA),
+         t2d_less_21=factor(t2d_less_21, levels=c(0,1), labels=c('No','Yes')),
+         diabetes_meds___1=factor(diabetes_meds___1, levels=c(0,1), labels=c('No','Yes')),
+         diabetes_meds___2=factor(diabetes_meds___2, levels=c(0,1), labels=c('No','Yes')),
+         diabetes_meds___3=factor(diabetes_meds___3, levels=c(0,1), labels=c('No','Yes')),
+         diabetes_meds___4=factor(diabetes_meds___4, levels=c(0,1), labels=c('No','Yes')),
+         diabetes_meds___5=factor(diabetes_meds___5, levels=c(0,1), labels=c('No','Yes')),
+         diabetes_meds___6=factor(diabetes_meds___6, levels=c(0,1), labels=c('No','Yes')),
+         diabetes_meds___7=factor(diabetes_meds___7, levels=c(0,1), labels=c('No','Yes')),
+         insulin_type=case_when(insulin_type___1==1~'Long acting',
+                                insulin_type___2==1~'Short acting',
+                                insulin_type___3==1~'Other',
+                                .default=NA),
+         med_hx_hypertension=factor(med_hx_hypertension, levels=c(0,1), labels=c('No','Yes')),
+         hypertension_meds=factor(hypertension_meds, levels=c(0,1), labels=c('No','Yes')),
+         hypertension_med_type___1=factor(hypertension_med_type___1, levels=c(0,1), labels=c('No','Yes')),
+         hypertension_med_type___2=factor(hypertension_med_type___2, levels=c(0,1), labels=c('No','Yes')),
+         hypertension_med_type___3=factor(hypertension_med_type___3, levels=c(0,1), labels=c('No','Yes')),
+         hypertension_med_type___4=factor(hypertension_med_type___4, levels=c(0,1), labels=c('No','Yes')),
+         hypertension_med_type___5=factor(hypertension_med_type___5, levels=c(0,1), labels=c('No','Yes')),
+         hypertension_med_type___6=factor(hypertension_med_type___6, levels=c(0,1), labels=c('No','Yes')),
+         hypertension_med_type___7=factor(hypertension_med_type___7, levels=c(0,1), labels=c('No','Yes')),
+         medhx_cvd=factor(medhx_cvd, levels=c(0,1), labels=c('No','Yes')),
+         medhx_met=factor(medhx_met, levels=c(0,1), labels=c('No','Yes')),
+         met_hx___1=factor(met_hx___1, levels=c(0,1), labels=c('No','Yes')),
+         met_hx___3=factor(met_hx___3, levels=c(0,1), labels=c('No','Yes')),
+         met_hx___4=factor(met_hx___4, levels=c(0,1), labels=c('No','Yes')),
+         met_hx___5=factor(met_hx___5, levels=c(0,1), labels=c('No','Yes')),
+         metdx_meds=factor(metdx_meds, levels=c(0,1), labels=c('No','Yes')),
+         g6pd=factor(g6pd, levels=c(2,1), labels=c('Negative','Positive')),
+         diabetes_yrs=(interval(as.Date(diabetes_diag, format='%Y-%m-%d'),
+                                as.Date(consent_date, format='%Y-%m-%d'))/years(1))) %>% 
+  select(-c(redcap_event_name:redcap_repeat_instance, 
+            race___1:ethnicity___3,
+            studyvisit_type:imaging_complete,
+            insulin_type___1:insulin_other)) %>% 
+  relocate(insulin_type, .before=insulin_tdd) %>% 
+  relocate(c(Race,Ethnicity), .after=age) %>% 
+  relocate(diabetes_yrs, .after=diabetes_months) %>%
+  filter(record_id!='UT2D-02') %>% 
+  filter(record_id!='UT2D-04')
+
+# add labels
+source('B:/Petter Bjornstad/ULTRA/raw_data/RedCap_labels_screeningdat.r')
+
+# study visit cleaning
+visit_dat <-raw_dat %>% 
+  filter(redcap_event_name=='study_visit_arm_1') %>% 
+  filter(record_id!='UT2D-02') %>% 
+  mutate(studyvisit_type=factor(studyvisit_type, levels=c(1,2), labels=c('Baseline','1 Week'))) %>% 
+  select(-c(redcap_repeat_instrument:screening_labs_complete))
+
+# add labels
+source('B:/Petter Bjornstad/ULTRA/raw_data/RedCap_labels_visitdat.r')
+```
+
+# Results: All Subjects
+
+## Descriptive Statistics of Participants
+
+The below table summarizes the data on participants who completed both Visit 1 (Baseline) and Visit 2 (1 Week).
+
+```{r table 1, echo=FALSE}
+# descriptive stats table 
+table1::table1(~ age + Race + Ethnicity + diabetes_yrs + diabetes_age + t2d_less_21 + diabetes_meds___1 +
+                 diabetes_meds___2 + diabetes_meds___3 + diabetes_meds___4 + diabetes_meds___5 + diabetes_meds___6 +
+                 diabetes_meds___7 + insulin_type + insulin_tdd + med_hx_hypertension + hypertension_meds + 
+                 hypertension_med_type___1 + hypertension_med_type___2 + hypertension_med_type___3 + 
+                 hypertension_med_type___4 + hypertension_med_type___5 + hypertension_med_type___6 + 
+                 hypertension_med_type___7 + medhx_cvd + medhx_met + met_hx___1 + met_hx___3 + met_hx___4 +
+                 met_hx___5 + metdx_meds + pe_bmi + pe_bmi_percent + pe_waist + pe_hip + pe_sbp + pe_dbp +
+                 pe_map + pe_pulse + a1c + sua + g6pd, data=screening_dat)
+```
+
+
+```{r visit missingness summary, include=FALSE}
+# look into missingness patterns 
+
+visit_dat %>%
+  select(c(record_id, studyvisit_type, vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
+         vitals_pulse, labs_bg, labs_s_na, labs_s_k, labs_s_cl, labs_s_hc03, labs_glucose, 
+         labs_bun, labs_s_ca, labs_tot_prot, labs_albumin, labs_bili, labs_alk_phos, labs_got_ast, 
+         labs_gpt_alt, labs_sua, labs_u_na, labs_u_glucose, labs_uua, labs_cystatinc, 
+         labs_s_creatinine, labs_insulin, labs_cholesterol, labs_hdl, labs_ldl,
+         labs_triglycerides, labs_u_creatinine, labs_u_microalbumin, labs_acr,
+         pilabs_s_osmo, pilabs_u_osmo, pilabs_copeptin, egfr, iohexol_abs_gfr,
+         iohexol_bsa_gfr, iohexol_ecv, iohexol_ecv_gfr, iohexol_gfr_ecv_std,
+         edv_ml, esv_ml, sv_ml, ef_percent, cardiac_output, myo_mass_dias,
+         myo_mass_syst, radial_peak, circum_peak, long_peak)) %>% 
+  miss_var_summary() %>% 
+  kable()
+
+vars <- c('studyvisit_type', 'vitals_weight', 'vitals_sbp', 'vitals_dbp', 'vitals_map',
+'vitals_pulse', 'labs_bg', 'labs_s_na', 'labs_s_k', 'labs_s_cl', 'labs_s_hc03', 'labs_glucose', 
+'labs_bun', 'labs_s_ca', 'labs_tot_prot', 'labs_albumin', 'labs_bili', 'labs_alk_phos', 'labs_got_ast', 
+'labs_gpt_alt', 'labs_sua', 'labs_u_na', 'labs_u_glucose', 'labs_uua', 'labs_cystatinc', 'labs_s_creatinine', 
+'labs_insulin', 'labs_cholesterol', 'labs_hdl', 'labs_ldl', 'labs_triglycerides', 'labs_u_creatinine', 
+'labs_u_microalbumin', 'labs_acr', 'pilabs_s_osmo', 'pilabs_u_osmo', 'pilabs_copeptin', 'egfr', 'iohexol_abs_gfr', 
+'iohexol_bsa_gfr', 'iohexol_ecv', 'iohexol_ecv_gfr', 'iohexol_gfr_ecv_std', 'edv_ml', 'esv_ml', 'sv_ml', 'ef_percent', 
+'cardiac_output', 'myo_mass_dias', 'myo_mass_syst', 'radial_peak', 'circum_peak', 'long_peak')
+
+miss_plot <- expss::use_labels(visit_dat[,vars],
+                              {gg_miss_var(..data, facet=studyvisit_type)})
+```
+
+```{r distributions, include=FALSE}
+# switch to wide format
+wide_visit <- visit_dat %>% 
+  pivot_wider(id_cols=record_id,
+              names_from=studyvisit_type,
+              names_prefix='Study_Visit_',
+              values_from=c(vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
+                            vitals_pulse, labs_bg, labs_s_na, labs_s_k, labs_s_cl,
+                            labs_s_hc03, labs_glucose, labs_bun, labs_s_ca, labs_tot_prot,
+                            labs_albumin, labs_bili, labs_alk_phos, labs_got_ast, labs_gpt_alt,
+                            labs_sua, labs_u_na, labs_u_glucose, labs_uua, labs_cystatinc, 
+                            labs_s_creatinine, labs_insulin, labs_cholesterol, labs_hdl, labs_ldl,
+                            labs_triglycerides, labs_u_creatinine, labs_u_microalbumin, labs_acr,
+                            #pilabs_s_osmo, pilabs_u_osmo, pilabs_copeptin, egfr,
+                            iohexol_abs_gfr,
+                            iohexol_bsa_gfr, iohexol_ecv, iohexol_ecv_gfr, iohexol_gfr_ecv_std,
+                            edv_ml, esv_ml, sv_ml, ef_percent, cardiac_output, myo_mass_dias,
+                            myo_mass_syst, radial_peak, circum_peak, long_peak))
+
+# histograms of variables of interest
+var_labels <- sjlabelled::get_label(wide_visit)
+
+for (col in 2:ncol(wide_visit)) {
+  var_name <- colnames(wide_visit)[col]
+  plot <- ggplot(wide_visit, aes(x = .data[[var_name]])) +
+    geom_histogram() +
+    labs(title = var_labels[var_name]) +
+    theme_bw()
+  
+  print(plot)
+}
+
+rm(var_labels)
+```
+
+## Nonparametric: Baseline vs. 1-Week Visit Measures
+
+The below table provides a comparison of baseline versus 1-week variables of interest. P-values are calculated using a Wilcoxon signed rank test. As no data is available for urine osmolality, serum osmolality, eGFR, or copeptin, these measures are not summarized.
+
+```{r table 2, echo=FALSE, message=FALSE, warning=FALSE}
+# WRS analysis results table
+
+visit_dat %>%
+  select(record_id, studyvisit_type, vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
+         vitals_pulse, labs_bg, labs_s_na, labs_s_k, labs_s_cl, labs_s_hc03, labs_glucose, 
+         labs_bun, labs_s_ca, labs_tot_prot, labs_albumin, labs_bili, labs_alk_phos, labs_got_ast, 
+         labs_gpt_alt, labs_sua, labs_u_na, labs_u_glucose, labs_uua, labs_cystatinc, 
+         labs_s_creatinine, labs_insulin, labs_cholesterol, labs_hdl, labs_ldl,
+         labs_triglycerides, labs_u_creatinine, labs_u_microalbumin, labs_acr, iohexol_abs_gfr,
+         iohexol_bsa_gfr, iohexol_ecv, iohexol_ecv_gfr, iohexol_gfr_ecv_std,
+         edv_ml, esv_ml, sv_ml, ef_percent, cardiac_output, myo_mass_dias,
+         myo_mass_syst, radial_peak, circum_peak, long_peak) %>% 
+  tbl_summary(by=studyvisit_type, include=-record_id,
+              type=list(c(vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
+                          vitals_pulse, labs_bg, labs_s_na, labs_s_k, labs_s_cl, labs_s_hc03, labs_glucose, 
+                          labs_bun, labs_s_ca, labs_tot_prot, labs_albumin, labs_bili, labs_alk_phos, labs_got_ast, 
+                          labs_gpt_alt, labs_sua, labs_u_na, labs_u_glucose, labs_uua, labs_cystatinc, 
+                          labs_s_creatinine, labs_insulin, labs_cholesterol, labs_hdl, labs_ldl,
+                          labs_triglycerides, labs_u_creatinine, labs_u_microalbumin, labs_acr, iohexol_abs_gfr,
+                          iohexol_bsa_gfr, iohexol_ecv, iohexol_ecv_gfr, iohexol_gfr_ecv_std,
+                          edv_ml, esv_ml, sv_ml, ef_percent, cardiac_output, myo_mass_dias,
+                          myo_mass_syst, radial_peak, circum_peak, long_peak) ~ 'continuous', 
+                        studyvisit_type~'dichotomous'),
+    statistic=list(all_continuous() ~ '{median} (Min: {min}, Max: {max}; 25% Pi: {p25}, 75% Pi: {p75}; )')) %>% 
+  add_p(test = all_continuous() ~ 'paired.wilcox.test', group=record_id,
+        pvalue_fun=~style_pvalue(.x, digits=3)) %>% 
+  modify_header(label='**Measurement**')
+
+```
+
+```{r wilcoxon signed rank check, eval=FALSE, include=FALSE}
+# check against gtsummary
+wilcox.test(wide_visit$vitals_weight_Study_Visit_Baseline, wide_visit$`vitals_weight_Study_Visit_1 Week`, paired=T)
+```
+## Parametric: Baseline vs. 1-Week Visit Measures
+
+The below table provides a comparison of baseline versus 1-week variables of interest. P-values are calculated using a paired t-test. As no data is available for urine osmolality, serum osmolality, eGFR, or copeptin, these measures are not summarized.
+
+```{r table 3, echo=FALSE, message=FALSE, warning=FALSE}
+# paired t-test analysis results table
+
+visit_dat %>%
+  select(record_id, studyvisit_type, vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
+         vitals_pulse, labs_bg, labs_s_na, labs_s_k, labs_s_cl, labs_s_hc03, labs_glucose, 
+         labs_bun, labs_s_ca, labs_tot_prot, labs_albumin, labs_bili, labs_alk_phos, labs_got_ast, 
+         labs_gpt_alt, labs_sua, labs_u_na, labs_u_glucose, labs_uua, labs_cystatinc, 
+         labs_s_creatinine, labs_insulin, labs_cholesterol, labs_hdl, labs_ldl,
+         labs_triglycerides, labs_u_creatinine, labs_u_microalbumin, labs_acr, iohexol_abs_gfr,
+         iohexol_bsa_gfr, iohexol_ecv, iohexol_ecv_gfr, iohexol_gfr_ecv_std,
+         edv_ml, esv_ml, sv_ml, ef_percent, cardiac_output, myo_mass_dias,
+         myo_mass_syst, radial_peak, circum_peak, long_peak) %>% 
+  tbl_summary(by=studyvisit_type, include=-record_id,
+              type=list(c(vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
+                          vitals_pulse, labs_bg, labs_s_na, labs_s_k, labs_s_cl, labs_s_hc03, labs_glucose, 
+                          labs_bun, labs_s_ca, labs_tot_prot, labs_albumin, labs_bili, labs_alk_phos, labs_got_ast, 
+                          labs_gpt_alt, labs_sua, labs_u_na, labs_u_glucose, labs_uua, labs_cystatinc, 
+                          labs_s_creatinine, labs_insulin, labs_cholesterol, labs_hdl, labs_ldl,
+                          labs_triglycerides, labs_u_creatinine, labs_u_microalbumin, labs_acr, iohexol_abs_gfr,
+                          iohexol_bsa_gfr, iohexol_ecv, iohexol_ecv_gfr, iohexol_gfr_ecv_std,
+                          edv_ml, esv_ml, sv_ml, ef_percent, cardiac_output, myo_mass_dias,
+                          myo_mass_syst, radial_peak, circum_peak, long_peak) ~ 'continuous', 
+                        studyvisit_type~'dichotomous'),
+    statistic=list(all_continuous() ~ '{median} (Min: {min}, Max: {max}; 25% Pi: {p25}, 75% Pi: {p75}; )')) %>% 
+  add_p(test = all_continuous() ~ 'paired.t.test', group=record_id,
+        pvalue_fun=~style_pvalue(.x, digits=3)) %>% 
+  modify_header(label='**Measurement**')
+
+```
+
+```{r paired t-test check, eval=FALSE, include=FALSE}
+# check against gtsummary
+t.test(wide_visit$vitals_weight_Study_Visit_Baseline, wide_visit$`vitals_weight_Study_Visit_1 Week`, paired=T)
+```
+
+## Missingness
+
+The below plot visualizes the number of missing observations for each variable of interest by visit type (baseline vs. 1 week).
+
+```{r echo=FALSE}
+miss_plot
+```
+
+# Results: Responders Only
+
+```{r responders dat, include=FALSE}
+# subset data to include responders only (Delta SUA >= 3 mg/dL)
+
+wide_visit <- wide_visit %>% 
+  group_by(record_id) %>% 
+  mutate(delta_SUA=abs(`labs_sua_Study_Visit_1 Week`-labs_sua_Study_Visit_Baseline)) %>%
+  ungroup() %>% 
+  relocate(delta_SUA, .after=`labs_sua_Study_Visit_1 Week`)
+
+Hmisc::label(wide_visit$delta_SUA) <- 'Week 1 - Baseline SUA (Abs Value)'
+
+SUA_status <- wide_visit %>% 
+  select(record_id, delta_SUA)
+
+screening_dat <- left_join(screening_dat, SUA_status, by='record_id')
+responders_screening_dat <- screening_dat %>% 
+  filter(delta_SUA >=3)
+
+visit_dat <- left_join(visit_dat, SUA_status, by='record_id')
+responders_visit_dat <- visit_dat %>% 
+  filter(delta_SUA >= 3)
+```
+
+## Descriptive Statistics of Responders
+
+The below table summarizes the data on participants who completed both Visit 1 (Baseline) and Visit 2 (1 Week) and had an optimal serum uric acid lowering response to pegloticase. Out of the 9 subjects used for the main analysis, 7 subjects were considered responders (Delta SUA >= 3 mg/dL).
+
+```{r responders table 1, echo=FALSE}
+# descriptive stats table 
+table1::table1(~ age + Race + Ethnicity + diabetes_yrs + diabetes_age + t2d_less_21 + diabetes_meds___1 +
+                 diabetes_meds___2 + diabetes_meds___3 + diabetes_meds___4 + diabetes_meds___5 + diabetes_meds___6 +
+                 diabetes_meds___7 + insulin_type + insulin_tdd + med_hx_hypertension + hypertension_meds + 
+                 hypertension_med_type___1 + hypertension_med_type___2 + hypertension_med_type___3 + 
+                 hypertension_med_type___4 + hypertension_med_type___5 + hypertension_med_type___6 + 
+                 hypertension_med_type___7 + medhx_cvd + medhx_met + met_hx___1 + met_hx___3 + met_hx___4 +
+                 met_hx___5 + metdx_meds + pe_bmi + pe_bmi_percent + pe_waist + pe_hip + pe_sbp + pe_dbp +
+                 pe_map + pe_pulse + a1c + sua + g6pd, data=responders_screening_dat)
+```
+
+
+```{r responders visit missingness summary, include=FALSE}
+# look into missingness patterns 
+
+responders_visit_dat %>%
+  select(c(record_id, studyvisit_type, vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
+         vitals_pulse, labs_bg, labs_s_na, labs_s_k, labs_s_cl, labs_s_hc03, labs_glucose, 
+         labs_bun, labs_s_ca, labs_tot_prot, labs_albumin, labs_bili, labs_alk_phos, labs_got_ast, 
+         labs_gpt_alt, labs_sua, labs_u_na, labs_u_glucose, labs_uua, labs_cystatinc, 
+         labs_s_creatinine, labs_insulin, labs_cholesterol, labs_hdl, labs_ldl,
+         labs_triglycerides, labs_u_creatinine, labs_u_microalbumin, labs_acr,
+         pilabs_s_osmo, pilabs_u_osmo, pilabs_copeptin, egfr, iohexol_abs_gfr,
+         iohexol_bsa_gfr, iohexol_ecv, iohexol_ecv_gfr, iohexol_gfr_ecv_std,
+         edv_ml, esv_ml, sv_ml, ef_percent, cardiac_output, myo_mass_dias,
+         myo_mass_syst, radial_peak, circum_peak, long_peak)) %>% 
+  miss_var_summary() %>% 
+  kable()
+
+miss_plot2 <- expss::use_labels(responders_visit_dat[,vars],
+                              {gg_miss_var(..data, facet=studyvisit_type)})
+```
+
+## Nonparametric: Baseline vs. 1-Week Visit Measures
+
+The below table provides a comparison of baseline versus 1-week variables of interest for responders. P-values are calculated using a Wilcoxon signed rank test. As no data is available for urine osmolality, serum osmolality, eGFR, or copeptin, these measures are not summarized.
+
+```{r responders table 2, echo=FALSE, message=FALSE, warning=FALSE}
+# WRS analysis results table
+
+responders_visit_dat %>%
+  select(record_id, studyvisit_type, vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
+         vitals_pulse, labs_bg, labs_s_na, labs_s_k, labs_s_cl, labs_s_hc03, labs_glucose, 
+         labs_bun, labs_s_ca, labs_tot_prot, labs_albumin, labs_bili, labs_alk_phos, labs_got_ast, 
+         labs_gpt_alt, labs_sua, labs_u_na, labs_u_glucose, labs_uua, labs_cystatinc, 
+         labs_s_creatinine, labs_insulin, labs_cholesterol, labs_hdl, labs_ldl,
+         labs_triglycerides, labs_u_creatinine, labs_u_microalbumin, labs_acr, iohexol_abs_gfr,
+         iohexol_bsa_gfr, iohexol_ecv, iohexol_ecv_gfr, iohexol_gfr_ecv_std,
+         edv_ml, esv_ml, sv_ml, ef_percent, cardiac_output, myo_mass_dias,
+         myo_mass_syst, radial_peak, circum_peak, long_peak) %>% 
+  tbl_summary(by=studyvisit_type, include=-record_id,
+              type=list(c(vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
+                          vitals_pulse, labs_bg, labs_s_na, labs_s_k, labs_s_cl, labs_s_hc03, labs_glucose, 
+                          labs_bun, labs_s_ca, labs_tot_prot, labs_albumin, labs_bili, labs_alk_phos, labs_got_ast, 
+                          labs_gpt_alt, labs_sua, labs_u_na, labs_u_glucose, labs_uua, labs_cystatinc, 
+                          labs_s_creatinine, labs_insulin, labs_cholesterol, labs_hdl, labs_ldl,
+                          labs_triglycerides, labs_u_creatinine, labs_u_microalbumin, labs_acr, iohexol_abs_gfr,
+                          iohexol_bsa_gfr, iohexol_ecv, iohexol_ecv_gfr, iohexol_gfr_ecv_std,
+                          edv_ml, esv_ml, sv_ml, ef_percent, cardiac_output, myo_mass_dias,
+                          myo_mass_syst, radial_peak, circum_peak, long_peak) ~ 'continuous', 
+                        studyvisit_type~'dichotomous'),
+    statistic=list(all_continuous() ~ '{median} (Min: {min}, Max: {max}; 25% Pi: {p25}, 75% Pi: {p75}; )')) %>% 
+  add_p(test = all_continuous() ~ 'paired.wilcox.test', group=record_id,
+        pvalue_fun=~style_pvalue(.x, digits=3)) %>% 
+  modify_header(label='**Measurement**')
+
+```
+
+## Parametric: Baseline vs. 1-Week Visit Measures
+
+The below table provides a comparison of baseline versus 1-week variables of interest for responders. P-values are calculated using a paired t-test. As no data is available for urine osmolality, serum osmolality, eGFR, or copeptin, these measures are not summarized.
+
+```{r responders table 3, echo=FALSE, message=FALSE, warning=FALSE}
+# paired t-test analysis results table
+
+responders_visit_dat %>%
+  select(record_id, studyvisit_type, vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
+         vitals_pulse, labs_bg, labs_s_na, labs_s_k, labs_s_cl, labs_s_hc03, labs_glucose, 
+         labs_bun, labs_s_ca, labs_tot_prot, labs_albumin, labs_bili, labs_alk_phos, labs_got_ast, 
+         labs_gpt_alt, labs_sua, labs_u_na, labs_u_glucose, labs_uua, labs_cystatinc, 
+         labs_s_creatinine, labs_insulin, labs_cholesterol, labs_hdl, labs_ldl,
+         labs_triglycerides, labs_u_creatinine, labs_u_microalbumin, labs_acr, iohexol_abs_gfr,
+         iohexol_bsa_gfr, iohexol_ecv, iohexol_ecv_gfr, iohexol_gfr_ecv_std,
+         edv_ml, esv_ml, sv_ml, ef_percent, cardiac_output, myo_mass_dias,
+         myo_mass_syst, radial_peak, circum_peak, long_peak) %>% 
+  tbl_summary(by=studyvisit_type, include=-record_id,
+              type=list(c(vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
+                          vitals_pulse, labs_bg, labs_s_na, labs_s_k, labs_s_cl, labs_s_hc03, labs_glucose, 
+                          labs_bun, labs_s_ca, labs_tot_prot, labs_albumin, labs_bili, labs_alk_phos, labs_got_ast, 
+                          labs_gpt_alt, labs_sua, labs_u_na, labs_u_glucose, labs_uua, labs_cystatinc, 
+                          labs_s_creatinine, labs_insulin, labs_cholesterol, labs_hdl, labs_ldl,
+                          labs_triglycerides, labs_u_creatinine, labs_u_microalbumin, labs_acr, iohexol_abs_gfr,
+                          iohexol_bsa_gfr, iohexol_ecv, iohexol_ecv_gfr, iohexol_gfr_ecv_std,
+                          edv_ml, esv_ml, sv_ml, ef_percent, cardiac_output, myo_mass_dias,
+                          myo_mass_syst, radial_peak, circum_peak, long_peak) ~ 'continuous', 
+                        studyvisit_type~'dichotomous'),
+    statistic=list(all_continuous() ~ '{median} (Min: {min}, Max: {max}; 25% Pi: {p25}, 75% Pi: {p75}; )')) %>% 
+  add_p(test = all_continuous() ~ 'paired.t.test', group=record_id,
+        pvalue_fun=~style_pvalue(.x, digits=3)) %>% 
+  modify_header(label='**Measurement**')
+```
+
+## Missingness
+
+The below plot visualizes the number of missing observations for each variable of interest by visit type (baseline vs. 1 week) for those categorized as responders.
+```{r echo=FALSE}
+miss_plot2
+```
+
