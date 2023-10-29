@@ -211,36 +211,39 @@ save(df, plasma, urine, analytes, olink_map,
   de_genes_mac_10, de_genes_mic_10, de_genes_hyp_10, de_genes_rapid_10, de_genes_htn_10, de_genes_htn_sbp_10,
   file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and HTN/Data_Cleaned/analysis_dataset.RData"
 )
-# Read in scRNA object
-so <- readRDS("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/Data_Clean/seurat_data_no_computations.RDS")
-# Limit to RH/IMPROVE baseline visit
-so <- so[, !grepl("_12M", so$michigan_id)]
-# Limit to those with SOMA and Olink
-so$michigan_id <- sub("_BL", "", so$michigan_id)
-#so <- so[, so$michigan_id %in% ids]
-# Combined groups
-so$diabetes <- sub("i", "", so$T2D_HC_Phil)
-so$SGLT2i <- factor(so$T2D_HC_Phil,
-  levels = c("HC", "T2D", "T2Di"),
-  labels = c("SGLT2i-", "SGLT2i-", "SGLT2i+")
-)
-so$elevated_uacr <- df$elevated_uacr[match(so$michigan_id, df$record_id)]
-so$htn <- df$htn[match(so$michigan_id, df$record_id)]
-so$hyp <- df$hyp[match(so$michigan_id, df$record_id)]
-# Normalize and scale
-so <- NormalizeData(so)
-so <- ScaleData(so, features = rownames(so))
-# PCA
-so <- RunPCA(so, features = VariableFeatures(object = so))
-# Cluster cells
-so <- FindNeighbors(so)
-so <- FindClusters(so)
-# Perform UMAP
-so <- RunUMAP(so, dims = 1:20)
-# General cell types as identifiers
-so$generaltype <- sub("_.*", "", so$LR_clusters)
-Idents(so) <- so$generaltype
-# Save
-save(so,
-  file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and HTN/Data_Cleaned/analysis_seurat_object.RData"
-)
+
+# commenting out scRNA seq for now - taking forever to run and don't need it for TODAY HTN paper
+
+# # Read in scRNA object
+# so <- readRDS("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/Data_Clean/seurat_data_no_computations.RDS")
+# # Limit to RH/IMPROVE baseline visit
+# so <- so[, !grepl("_12M", so$michigan_id)]
+# # Limit to those with SOMA and Olink
+# so$michigan_id <- sub("_BL", "", so$michigan_id)
+# #so <- so[, so$michigan_id %in% ids]
+# # Combined groups
+# so$diabetes <- sub("i", "", so$T2D_HC_Phil)
+# so$SGLT2i <- factor(so$T2D_HC_Phil,
+#   levels = c("HC", "T2D", "T2Di"),
+#   labels = c("SGLT2i-", "SGLT2i-", "SGLT2i+")
+# )
+# so$elevated_uacr <- df$elevated_uacr[match(so$michigan_id, df$record_id)]
+# so$htn <- df$htn[match(so$michigan_id, df$record_id)]
+# so$hyp <- df$hyp[match(so$michigan_id, df$record_id)]
+# # Normalize and scale
+# so <- NormalizeData(so)
+# so <- ScaleData(so, features = rownames(so))
+# # PCA
+# so <- RunPCA(so, features = VariableFeatures(object = so))
+# # Cluster cells
+# so <- FindNeighbors(so)
+# so <- FindClusters(so)
+# # Perform UMAP
+# so <- RunUMAP(so, dims = 1:20)
+# # General cell types as identifiers
+# so$generaltype <- sub("_.*", "", so$LR_clusters)
+# Idents(so) <- so$generaltype
+# # Save
+# save(so,
+#   file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and HTN/Data_Cleaned/analysis_seurat_object.RData"
+# )
