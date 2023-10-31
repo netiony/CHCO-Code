@@ -197,7 +197,8 @@ def clean_renal_heir():
     num_vars = ["d20_infusion", "weight"]
     clamp[num_vars] = clamp[num_vars].apply(
         pd.to_numeric, errors='coerce')
-    clamp["raw_m"] = (clamp["d20_infusion"] * 190 / 60) / clamp["weight"]
+    clamp["gir_190"] = (clamp["d20_infusion"] * 190 / 60) / clamp["weight"] # previously M-value
+    clamp["gir_200"] = (clamp["d20_infusion"] * 200 / 60) / clamp["weight"]
     # FFA
     # See /home/timvigers/Work/CHCO/Petter Bjornstad/IHD/Background/Renal Heir Equations.docx
     ffa = [c for c in clamp.columns if "ffa_" in c]
@@ -236,7 +237,7 @@ def clean_renal_heir():
     clamp.loc[clamp["airg"] < 0, "airg"] = 0.01    
     # DI
     clamp["di"] = \
-        (clamp["raw_m"] / clamp["steady_state_insulin"]) * clamp["airg"]
+        (clamp["gir_190"] / clamp["steady_state_insulin"]) * clamp["airg"]
 
     # Hematocrit average
     hematocrit_vars = ["hematocrit_90", "hematocrit_120"]

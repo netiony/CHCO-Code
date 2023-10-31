@@ -173,7 +173,8 @@ def clean_coffee():
     num_vars = ["d20_infusion", "weight", "hematocrit_minus_5", "hematocrit_90", "hematocrit_120"]
     clamp[num_vars] = clamp[num_vars].apply(
         pd.to_numeric, errors='coerce')
-    clamp["raw_m"] = (clamp["d20_infusion"] * 190 / 60) / clamp["weight"]
+    clamp["gir_190"] = (clamp["d20_infusion"] * 190 / 60) / clamp["weight"] # previously M-value
+    clamp["gir_200"] = (clamp["d20_infusion"] * 200 / 60) / clamp["weight"]
     clamp["visit"] = "baseline"
     # Hematocrit average
     clamp["hematocrit_avg"] = clamp[["hematocrit_minus_5", "hematocrit_90", "hematocrit_120"]].mean(axis=1)

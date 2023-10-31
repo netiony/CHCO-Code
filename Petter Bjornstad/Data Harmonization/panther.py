@@ -191,7 +191,7 @@ def clean_panther():
     # ivgtt["airg"] = ivgtt[['insulin_2', 'insulin_4',
     #                        'insulin_6', 'insulin_8', 'insulin_10']].mean(axis=1) * 6 - ivgtt[['insulin_minus_10', 'insulin_minus_5']].mean(axis=1) * 6
     # # DI
-    # ivgtt["di"] = (ivgtt["raw_m"] /
+    # ivgtt["di"] = (ivgtt["gir_190"] /
     #                ivgtt["steady_state_insulin"]) * ivgtt["airg"]
               
     ivgtt["procedure"] = "ivgtt"

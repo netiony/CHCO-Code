@@ -279,7 +279,8 @@ def clean_improve():
     # M
     num_vars = ["d20_infusion", "weight"]
     clamp[num_vars] = clamp[num_vars].apply(pd.to_numeric, errors='coerce')
-    clamp["raw_m"] = (clamp["d20_infusion"] * 190 / 60) / clamp["weight"]
+    clamp["gir_190"] = (clamp["d20_infusion"] * 190 / 60) / clamp["weight"] # previously M-value
+    clamp["gir_200"] = (clamp["d20_infusion"] * 200 / 60) / clamp["weight"]
     # No FFA
     # Insulin
     ins = ['insulin_minus_10', 'insulin_minus_5', 'insulin_2', 'insulin_4',
@@ -305,11 +306,15 @@ def clean_improve():
     # ACPRg
     clamp["acprg"] = clamp[['cpeptide_2', 'cpeptide_4',
                             'cpeptide_6', 'cpeptide_8', 'cpeptide_10']].mean(axis=1) - clamp[['cpeptide_minus_10', 'cpeptide_minus_5']].mean(axis=1)
-    # AIRg
+    # Negative ACPRg to 0.01
+    clamp.loc[clamp["acprg"] < 0, "acprg"] = 0.01
+    #AIRg
     clamp["airg"] = clamp[['insulin_2', 'insulin_4',
                            'insulin_6', 'insulin_8', 'insulin_10']].mean(axis=1) * 6 - clamp[['insulin_minus_10', 'insulin_minus_5']].mean(axis=1) * 6
+    # Negative AIRg to 0.01
+    clamp.loc[clamp["airg"] < 0, "airg"] = 0.01
     # DI
-    clamp["di"] = (clamp["raw_m"] /
+    clamp["di"] = (clamp["gir_190"] /
                    clamp["steady_state_insulin"]) * clamp["airg"]
     # Accelerometry done 1 day before clamp
     accel["date"] = [pd.to_datetime(d) - timedelta(days=1)
