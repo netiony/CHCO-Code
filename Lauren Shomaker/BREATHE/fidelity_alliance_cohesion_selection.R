@@ -8,7 +8,7 @@ data <- unique(data)
 data <- arrange(data,Cohort)
 data$Lead_Cohort <- paste(data$`Lead Facilitator`,data$Cohort)
 
-# first select 30% of sessions for intervention fidelity, stratified by cohort 
+# first select 30% of sessions for intervention fidelity, stratified by Lead Facilitator 
 set.seed(3654)
 numvisits <- table(data$`Lead Facilitator`)
 numvisits_select <- floor(table(data$`Lead Facilitator`)*0.3)
@@ -18,7 +18,29 @@ for (i in 1:8) {
 temp <- strata(data=data, stratanames = "Lead Facilitator", size=numvisits_select, method="srswor")
 res <- getdata(data, temp)
 res <- res[,c("Modality","Cohort","Session #","Lead Facilitator")]
-
+# now assign 70% of each modality to the corresponding expert
+numvisits_modality <- table(res$Modality)
+numvisits_modality_select <- floor(table(res$Modality)*0.7)
+res <- arrange(res,Modality)
+temp_modality <- strata(data=res, stratanames = "Modality", size=numvisits_modality_select, method="srswor")
+res_modality <- getdata(res, temp_modality)
+res_modality$Expert <- ifelse(res_modality$Modality=="HE","Lauren",
+                              ifelse(res_modality$Modality=="L2B","Trish",
+                                     ifelse(res_modality$Modality=="CBT","Heather",NA)))
+res_modality <- res_modality[,c("Cohort","Session #","Modality","Expert")]
+# merge back to res
+res <- merge(res, res_modality, by=c("Cohort","Session #","Modality"), all.x = T, all.y = T)
+# now randomly assign the remaining sessions
+res_unassigned <- res[is.na(res$Expert),]
+res_unassigned <- arrange(res_unassigned, Cohort)
+nn <- floor(nrow(res_unassigned)*0.33)
+res_unassigned$Expert <- c(rep("Lauren",nn),rep("Trish",nn),rep("Heather",nrow(res_unassigned)-(2*nn)))
+res_unassigned <- res_unassigned[,c("Cohort","Session #","Modality","Expert")]
+# merge back to res
+res <- merge(res, res_unassigned, by=c("Cohort","Session #","Modality"), all.x = T, all.y = T)
+res$Expert <- ifelse(is.na(res$Expert.x),res$Expert.y,res$Expert.x)
+res$Expert.x <- NULL
+res$Expert.y <- NULL
 write.csv(res,"/Volumes/Shared/Shared Projects/Laura/Peds Endo/Lauren Shomaker/BREATHE U01/Session ratings/Intervention fidelity ratings selected visits.csv",
           row.names = F)
 
