@@ -7,3 +7,5 @@ df_justin <- df %>% select(ID, visit, all_of(apt_keep))
 
 write.csv(df_justin, "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/soma_sex_hormone_Justin.csv",
           row.names = F)
+write.csv(analyte_sh, "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/analyte_info.csv",
+          row.names = F)
