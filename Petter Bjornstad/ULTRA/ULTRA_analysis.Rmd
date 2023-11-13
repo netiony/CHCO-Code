@@ -14,10 +14,11 @@ output:
 
 ```{r setup, include=FALSE}
 library(tidyverse)
-library(kableExtra)
-library(lubridate)
 library(gtsummary)
+library(kableExtra)
 library(ggplot2)
+library(Hmisc)
+library(patchwork)
 pacman::p_load(naniar)
 
 if(Sys.info()["sysname"] == "Windows"){
@@ -110,27 +111,8 @@ visit_dat <-raw_dat %>%
 source('B:/Petter Bjornstad/ULTRA/raw_data/RedCap_labels_visitdat.r')
 ```
 
-# Results: All Subjects
-
-## Descriptive Statistics of Participants
-
-The below table summarizes the data on participants who completed both Visit 1 (Baseline) and Visit 2 (1 Week).
-
-```{r table 1, echo=FALSE}
-# descriptive stats table 
-table1::table1(~ age + Race + Ethnicity + diabetes_yrs + diabetes_age + t2d_less_21 + diabetes_meds___1 +
-                 diabetes_meds___2 + diabetes_meds___3 + diabetes_meds___4 + diabetes_meds___5 + diabetes_meds___6 +
-                 diabetes_meds___7 + insulin_type + insulin_tdd + med_hx_hypertension + hypertension_meds + 
-                 hypertension_med_type___1 + hypertension_med_type___2 + hypertension_med_type___3 + 
-                 hypertension_med_type___4 + hypertension_med_type___5 + hypertension_med_type___6 + 
-                 hypertension_med_type___7 + medhx_cvd + medhx_met + met_hx___1 + met_hx___3 + met_hx___4 +
-                 met_hx___5 + metdx_meds + pe_bmi + pe_bmi_percent + pe_waist + pe_hip + pe_sbp + pe_dbp +
-                 pe_map + pe_pulse + a1c + sua + g6pd, data=screening_dat)
-```
-
-
-```{r visit missingness summary, include=FALSE}
-# look into missingness patterns 
+```{r all subjects visit missingness summary, include=FALSE}
+## look into missingness patterns 
 
 visit_dat %>%
   select(c(record_id, studyvisit_type, vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
@@ -159,39 +141,81 @@ miss_plot <- expss::use_labels(visit_dat[,vars],
                               {gg_miss_var(..data, facet=studyvisit_type)})
 ```
 
-```{r distributions, include=FALSE}
-# switch to wide format
+```{r wide format, include=FALSE}
+## create df with wide format for use with later plots/analyses
+
 wide_visit <- visit_dat %>% 
   pivot_wider(id_cols=record_id,
               names_from=studyvisit_type,
               names_prefix='Study_Visit_',
-              values_from=c(vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
-                            vitals_pulse, labs_bg, labs_s_na, labs_s_k, labs_s_cl,
-                            labs_s_hc03, labs_glucose, labs_bun, labs_s_ca, labs_tot_prot,
-                            labs_albumin, labs_bili, labs_alk_phos, labs_got_ast, labs_gpt_alt,
-                            labs_sua, labs_u_na, labs_u_glucose, labs_uua, labs_cystatinc, 
-                            labs_s_creatinine, labs_insulin, labs_cholesterol, labs_hdl, labs_ldl,
-                            labs_triglycerides, labs_u_creatinine, labs_u_microalbumin, labs_acr,
-                            #pilabs_s_osmo, pilabs_u_osmo, pilabs_copeptin, egfr,
-                            iohexol_abs_gfr,
-                            iohexol_bsa_gfr, iohexol_ecv, iohexol_ecv_gfr, iohexol_gfr_ecv_std,
-                            edv_ml, esv_ml, sv_ml, ef_percent, cardiac_output, myo_mass_dias,
-                            myo_mass_syst, radial_peak, circum_peak, long_peak))
+              values_from=c(vitals_sbp, vitals_dbp, vitals_map, labs_sua, labs_uua, labs_bili, iohexol_abs_gfr,
+                            iohexol_bsa_gfr, edv_ml, long_peak))
+```
 
-# histograms of variables of interest
-var_labels <- sjlabelled::get_label(wide_visit)
 
-for (col in 2:ncol(wide_visit)) {
-  var_name <- colnames(wide_visit)[col]
-  plot <- ggplot(wide_visit, aes(x = .data[[var_name]])) +
-    geom_histogram() +
-    labs(title = var_labels[var_name]) +
-    theme_bw()
-  
-  print(plot)
-}
+```{r responders dat, include=FALSE}
+## create responders only dfs for sensitivity analyses
 
-rm(var_labels)
+# subset data to include responders only (Delta SUA >= 3 mg/dL)
+wide_visit <- wide_visit %>% 
+  group_by(record_id) %>% 
+  mutate(abs_delta_SUA=abs(`labs_sua_Study_Visit_1 Week`-labs_sua_Study_Visit_Baseline)) %>%
+  ungroup() %>% 
+  relocate(abs_delta_SUA, .after=`labs_sua_Study_Visit_1 Week`)
+
+label(wide_visit$abs_delta_SUA) <- 'Week 1 - Baseline SUA (Abs Value)'
+
+SUA_status <- wide_visit %>% 
+  select(record_id, abs_delta_SUA)
+
+screening_dat <- left_join(screening_dat, SUA_status, by='record_id')
+responders_screening_dat <- screening_dat %>% 
+  filter(abs_delta_SUA >=3)
+
+visit_dat <- left_join(visit_dat, SUA_status, by='record_id')
+responders_visit_dat <- visit_dat %>% 
+  filter(abs_delta_SUA >= 3)
+
+rm(SUA_status)
+```
+
+```{r responders visit missingness summary, message=FALSE, include=FALSE}
+## look into missingness patterns 
+
+responders_visit_dat %>%
+  select(c(record_id, studyvisit_type, vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
+         vitals_pulse, labs_bg, labs_s_na, labs_s_k, labs_s_cl, labs_s_hc03, labs_glucose, 
+         labs_bun, labs_s_ca, labs_tot_prot, labs_albumin, labs_bili, labs_alk_phos, labs_got_ast, 
+         labs_gpt_alt, labs_sua, labs_u_na, labs_u_glucose, labs_uua, labs_cystatinc, 
+         labs_s_creatinine, labs_insulin, labs_cholesterol, labs_hdl, labs_ldl,
+         labs_triglycerides, labs_u_creatinine, labs_u_microalbumin, labs_acr,
+         pilabs_s_osmo, pilabs_u_osmo, pilabs_copeptin, egfr, iohexol_abs_gfr,
+         iohexol_bsa_gfr, iohexol_ecv, iohexol_ecv_gfr, iohexol_gfr_ecv_std,
+         edv_ml, esv_ml, sv_ml, ef_percent, cardiac_output, myo_mass_dias,
+         myo_mass_syst, radial_peak, circum_peak, long_peak)) %>% 
+  miss_var_summary() %>% 
+  kable()
+
+miss_plot2 <- expss::use_labels(responders_visit_dat[,vars],
+                              {gg_miss_var(..data, facet=studyvisit_type)})
+```
+
+# Results: All Subjects
+
+## Descriptive Statistics of Participants
+
+The below table summarizes the data on participants who completed both Visit 1 (Baseline) and Visit 2 (1 Week).
+
+```{r table 1, echo=FALSE}
+## descriptive stats table 
+table1::table1(~ age + Race + Ethnicity + diabetes_yrs + diabetes_age + t2d_less_21 + diabetes_meds___1 +
+                 diabetes_meds___2 + diabetes_meds___3 + diabetes_meds___4 + diabetes_meds___5 + diabetes_meds___6 +
+                 diabetes_meds___7 + insulin_type + insulin_tdd + med_hx_hypertension + hypertension_meds + 
+                 hypertension_med_type___1 + hypertension_med_type___2 + hypertension_med_type___3 + 
+                 hypertension_med_type___4 + hypertension_med_type___5 + hypertension_med_type___6 + 
+                 hypertension_med_type___7 + medhx_cvd + medhx_met + met_hx___1 + met_hx___3 + met_hx___4 +
+                 met_hx___5 + metdx_meds + pe_bmi + pe_bmi_percent + pe_waist + pe_hip + pe_sbp + pe_dbp +
+                 pe_map + pe_pulse + a1c + sua + g6pd, data=screening_dat)
 ```
 
 ## Nonparametric: Baseline vs. 1-Week Visit Measures
@@ -199,7 +223,7 @@ rm(var_labels)
 The below table provides a comparison of baseline versus 1-week variables of interest. P-values are calculated using a Wilcoxon signed rank test. As no data is available for urine osmolality, serum osmolality, eGFR, or copeptin, these measures are not summarized.
 
 ```{r table 2, echo=FALSE, message=FALSE, warning=FALSE}
-# WRS analysis results table
+## WRS analysis results table
 
 visit_dat %>%
   select(record_id, studyvisit_type, vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
@@ -229,16 +253,12 @@ visit_dat %>%
 
 ```
 
-```{r wilcoxon signed rank check, eval=FALSE, include=FALSE}
-# check against gtsummary
-wilcox.test(wide_visit$vitals_weight_Study_Visit_Baseline, wide_visit$`vitals_weight_Study_Visit_1 Week`, paired=T)
-```
 ## Parametric: Baseline vs. 1-Week Visit Measures
 
 The below table provides a comparison of baseline versus 1-week variables of interest. P-values are calculated using a paired t-test. As no data is available for urine osmolality, serum osmolality, eGFR, or copeptin, these measures are not summarized.
 
 ```{r table 3, echo=FALSE, message=FALSE, warning=FALSE}
-# paired t-test analysis results table
+## paired t-test analysis results table
 
 visit_dat %>%
   select(record_id, studyvisit_type, vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
@@ -268,11 +288,6 @@ visit_dat %>%
 
 ```
 
-```{r paired t-test check, eval=FALSE, include=FALSE}
-# check against gtsummary
-t.test(wide_visit$vitals_weight_Study_Visit_Baseline, wide_visit$`vitals_weight_Study_Visit_1 Week`, paired=T)
-```
-
 ## Missingness
 
 The below plot visualizes the number of missing observations for each variable of interest by visit type (baseline vs. 1 week).
@@ -281,30 +296,171 @@ The below plot visualizes the number of missing observations for each variable o
 miss_plot
 ```
 
-# Results: Responders Only
+## Peak Longitudinal Strain Histograms
 
-```{r responders dat, include=FALSE}
-# subset data to include responders only (Delta SUA >= 3 mg/dL)
+As the analysis results indicated that the difference in peak longitudinal strain between baseline and 1 week is significant with the parametric test (p<0.05) but not significant with the nonparametric test (p>0.05), the plots of the distribution of observations for peak longitudinal strain at each timepoint are presented below. 
 
+```{r distributions, echo=FALSE, message=FALSE, warning=FALSE}
+## peak longitudinal strain histograms
+
+base_hist <- wide_visit %>% 
+  ggplot(aes(x=long_peak_Study_Visit_Baseline)) +
+  geom_histogram() +
+  labs(title='Baseline',
+       x='Peak Longitudinal Strain') +
+  theme_bw()
+
+v1_hist <- wide_visit %>% 
+  ggplot(aes(x=`long_peak_Study_Visit_1 Week`)) +
+  geom_histogram() +
+  labs(title='1 Week',
+       x='Peak Longitudinal Strain') +
+  theme_bw()
+
+base_hist + v1_hist
+```
+
+## Individual-Level Plots
+
+The figures below show pre- and post (baseline vs. 1 week) changes in the variables of interest. 
+
+```{r spaghetti plot, echo=FALSE}
+## spaghetti plots for variables of interest
+# non-responders in a different color
+visit_dat <- visit_dat %>% 
+  mutate(Status=case_when(abs_delta_SUA >= 3 ~ 'Responder', .default='Non-responder'))
+label(visit_dat$Status) <- 'Responder Status'
+
+visit_dat %>% 
+  ggplot(aes(studyvisit_type, vitals_sbp, group=record_id)) +
+  geom_point(alpha=0.5, size=0.5, aes(color=Status)) +
+  geom_line(aes(color=Status), alpha=0.4) +
+  labs(x='timepoint', y='Systolic Blood Pressure', title='SBP Across Timepoints') +
+  scale_color_manual(values=c('red','black')) +
+  theme_bw()
+
+visit_dat %>% 
+  ggplot(aes(studyvisit_type, vitals_dbp, group=record_id)) +
+  geom_point(alpha=0.5, size=0.5, aes(color=Status)) +
+  geom_line(aes(color=Status), alpha=0.4) +
+  labs(x='timepoint', y='Diastolic Blood Pressure', title='DBP Across Timepoints') +
+  scale_color_manual(values=c('red','black')) +
+  theme_bw()
+
+visit_dat %>% 
+  ggplot(aes(studyvisit_type, vitals_map, group=record_id)) +
+  geom_point(alpha=0.5, size=0.5, aes(color=Status)) +
+  geom_line(aes(color=Status), alpha=0.4) +
+  labs(x='timepoint', y='Mean Arterial Pressure', title='MAP Across Timepoints') +
+  scale_color_manual(values=c('red','black')) +
+  theme_bw()
+
+visit_dat %>% 
+  ggplot(aes(studyvisit_type, labs_sua, group=record_id)) +
+  geom_point(alpha=0.5, size=0.5, aes(color=Status)) +
+  geom_line(aes(color=Status), alpha=0.4) +
+  labs(x='timepoint', y='Serum Uric Acid (mg/dl)', title='SUA Across Timepoints') +
+  scale_color_manual(values=c('red','black')) +
+  theme_bw()
+
+visit_dat %>% 
+  ggplot(aes(studyvisit_type, labs_uua, group=record_id)) +
+  geom_point(alpha=0.5, size=0.5, aes(color=Status)) +
+  geom_line(aes(color=Status), alpha=0.4) +
+  labs(x='timepoint', y='Urine Uric Acid (mg/dl)', title='UUA Across Timepoints') +
+  scale_color_manual(values=c('red','black')) +
+  theme_bw()
+
+visit_dat %>% 
+  ggplot(aes(studyvisit_type, labs_bili, group=record_id)) +
+  geom_point(alpha=0.5, size=0.5, aes(color=Status)) +
+  geom_line(aes(color=Status), alpha=0.4) +
+  labs(x='timepoint', y='Serum Bilirubin (mg/dl)', title='Bilirubin Across Timepoints') +
+  scale_color_manual(values=c('red','black')) +
+  theme_bw()
+
+visit_dat %>%
+  filter(record_id!='UT2D-06') %>% # filter for complete pairs
+  ggplot(aes(studyvisit_type, iohexol_abs_gfr, group=record_id)) +
+  geom_point(alpha=0.5, size=0.5, aes(color=Status)) +
+  geom_line(aes(color=Status), alpha=0.4) +
+  labs(x='timepoint', y='Absolute GFR (ml/min)', title='Absolute GFR Across Timepoints',
+       caption='Note: 1 subject is not represented due to missing data') +
+  scale_color_manual(values=c('red','black')) +
+  theme_bw() +
+  theme(plot.caption = element_text(hjust=0))
+
+visit_dat %>%
+  filter(record_id!='UT2D-06') %>% # filter for complete pairs
+  ggplot(aes(studyvisit_type, iohexol_bsa_gfr, group=record_id)) +
+  geom_point(alpha=0.5, size=0.5, aes(color=Status)) +
+  geom_line(aes(color=Status), alpha=0.4) +
+  labs(x='timepoint', y='GFR BSA Standardized (ml/min/1.73m2)', title='BSA-Adjusted GFR Across Timepoints',
+       caption='Note: 1 subject is not represented due to missing data') +
+  scale_color_manual(values=c('red','black')) +
+  theme_bw() +
+  theme(plot.caption = element_text(hjust=0))
+
+visit_dat %>%
+  filter(record_id!= 'UT2D-06', record_id!= 'UT2D-07') %>% # filter for complete pairs
+  ggplot(aes(studyvisit_type, edv_ml, group=record_id)) +
+  geom_point(alpha=0.5, size=0.5, aes(color=Status)) +
+  geom_line(aes(color=Status), alpha=0.4) +
+  labs(x='timepoint', y='End diastolic volume (mL)', title='End Diastolic Volume Across Timepoints',
+       caption='Note: 2 subjects are not represented due to missing data') +
+  scale_color_manual(values=c('red','black')) +
+  theme_bw() +
+  theme(plot.caption = element_text(hjust=0))
+
+visit_dat %>% 
+  ggplot(aes(studyvisit_type, long_peak, group=record_id)) +
+  geom_point(alpha=0.5, size=0.5, aes(color=Status)) +
+  geom_line(aes(color=Status), alpha=0.3) +
+  labs(x='timepoint', y='Peak longitudinal strain', title='Longitudinal Strain Across Timepoints') +
+  scale_color_manual(values=c('red','black')) +
+  theme_bw()
+```
+
+## Change in SUA vs. Change in Variables of Interest
+
+This section includes model output testing the correlation between change in serum uric acid (SUA) and change in the variables of interest. Note that change refers to the difference between 1 week and baseline values and corresponds to "delta" in the results. Diagnostic plots for checking linear regression assumptions are also included.
+
+```{r regression mods, echo=FALSE}
+# calculate difference in week 1 and baseline measures of interest
 wide_visit <- wide_visit %>% 
   group_by(record_id) %>% 
-  mutate(delta_SUA=abs(`labs_sua_Study_Visit_1 Week`-labs_sua_Study_Visit_Baseline)) %>%
-  ungroup() %>% 
-  relocate(delta_SUA, .after=`labs_sua_Study_Visit_1 Week`)
+  mutate(delta_SUA=`labs_sua_Study_Visit_1 Week`-labs_sua_Study_Visit_Baseline,
+         delta_SBP=`vitals_sbp_Study_Visit_1 Week`- vitals_sbp_Study_Visit_Baseline,
+         delta_DBP=`vitals_dbp_Study_Visit_1 Week`- vitals_dbp_Study_Visit_Baseline,
+         delta_MAP=`vitals_map_Study_Visit_1 Week` - vitals_map_Study_Visit_Baseline,
+         delta_UUA=`labs_uua_Study_Visit_1 Week`- labs_uua_Study_Visit_Baseline,
+         delta_bili=`labs_bili_Study_Visit_1 Week`- labs_bili_Study_Visit_Baseline,
+         delta_abs_gfr= `iohexol_abs_gfr_Study_Visit_1 Week`- iohexol_abs_gfr_Study_Visit_Baseline,
+         delta_bsa_gfr= `iohexol_bsa_gfr_Study_Visit_1 Week`- iohexol_bsa_gfr_Study_Visit_Baseline,
+         delta_edv=`edv_ml_Study_Visit_1 Week`- edv_ml_Study_Visit_Baseline,
+         delta_long_peak=`long_peak_Study_Visit_1 Week`- long_peak_Study_Visit_Baseline) %>%
+  ungroup()
 
-Hmisc::label(wide_visit$delta_SUA) <- 'Week 1 - Baseline SUA (Abs Value)'
+label(wide_visit$delta_SUA) <- ''
 
-SUA_status <- wide_visit %>% 
-  select(record_id, delta_SUA)
+# fit regression models with delta_SUA as outcome
+vars <- c('delta_SBP','delta_DBP','delta_MAP','delta_UUA','delta_bili','delta_abs_gfr','delta_bsa_gfr','delta_edv','delta_long_peak')
 
-screening_dat <- left_join(screening_dat, SUA_status, by='record_id')
-responders_screening_dat <- screening_dat %>% 
-  filter(delta_SUA >=3)
-
-visit_dat <- left_join(visit_dat, SUA_status, by='record_id')
-responders_visit_dat <- visit_dat %>% 
-  filter(delta_SUA >= 3)
+for (v in vars) {
+  form = as.formula(paste0('delta_SUA','~', v))
+  mod <- lm(form, data = wide_visit)
+  print(noquote(c("Correlation between delta SUA and", noquote(v))))
+  print(summary(mod))
+  plot(x=wide_visit[[v]], y=wide_visit$delta_SUA, ylab='delta_SUA', xlab=noquote(v), main='Y-X Scatterplot'); abline(mod, col='gray', lty=2)
+  plot(mod, which=1)
+  plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), xlab='Observed Cumulative Probability', ylab='Expected Cumulative Probability',
+       main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
+  hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
+  cat('\n\n')
+}
 ```
+
+# Results: Responders Only
 
 ## Descriptive Statistics of Responders
 
@@ -320,28 +476,6 @@ table1::table1(~ age + Race + Ethnicity + diabetes_yrs + diabetes_age + t2d_less
                  hypertension_med_type___7 + medhx_cvd + medhx_met + met_hx___1 + met_hx___3 + met_hx___4 +
                  met_hx___5 + metdx_meds + pe_bmi + pe_bmi_percent + pe_waist + pe_hip + pe_sbp + pe_dbp +
                  pe_map + pe_pulse + a1c + sua + g6pd, data=responders_screening_dat)
-```
-
-
-```{r responders visit missingness summary, include=FALSE}
-# look into missingness patterns 
-
-responders_visit_dat %>%
-  select(c(record_id, studyvisit_type, vitals_weight, vitals_sbp, vitals_dbp, vitals_map,
-         vitals_pulse, labs_bg, labs_s_na, labs_s_k, labs_s_cl, labs_s_hc03, labs_glucose, 
-         labs_bun, labs_s_ca, labs_tot_prot, labs_albumin, labs_bili, labs_alk_phos, labs_got_ast, 
-         labs_gpt_alt, labs_sua, labs_u_na, labs_u_glucose, labs_uua, labs_cystatinc, 
-         labs_s_creatinine, labs_insulin, labs_cholesterol, labs_hdl, labs_ldl,
-         labs_triglycerides, labs_u_creatinine, labs_u_microalbumin, labs_acr,
-         pilabs_s_osmo, pilabs_u_osmo, pilabs_copeptin, egfr, iohexol_abs_gfr,
-         iohexol_bsa_gfr, iohexol_ecv, iohexol_ecv_gfr, iohexol_gfr_ecv_std,
-         edv_ml, esv_ml, sv_ml, ef_percent, cardiac_output, myo_mass_dias,
-         myo_mass_syst, radial_peak, circum_peak, long_peak)) %>% 
-  miss_var_summary() %>% 
-  kable()
-
-miss_plot2 <- expss::use_labels(responders_visit_dat[,vars],
-                              {gg_miss_var(..data, facet=studyvisit_type)})
 ```
 
 ## Nonparametric: Baseline vs. 1-Week Visit Measures
