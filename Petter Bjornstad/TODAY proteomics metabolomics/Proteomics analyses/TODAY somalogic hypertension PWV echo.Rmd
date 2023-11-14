@@ -31,6 +31,8 @@ library(tableone)
 library(polycor)
 library(piercer)
 library(RColorBrewer)
+library(data.table)
+library(gtools)
 
 knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
 
@@ -45,6 +47,103 @@ if(Sys.info()["sysname"] == "Windows"){
   }
 knitr::opts_knit$set(root.dir = home_dir)
 
+#source("/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/correlation_function.R")
+
+```
+
+```{r, include=FALSE}
+corr_plot_modified_nodict <- function(data, X, Y, cor_method = "pearson", adj_var = NULL, 
+                               method = "color", insig = "pch", coef_col = NULL,
+                               pch = 4, pch.col = "black", pch.cex = 0) {
+  n_cols = length(Y)
+  M <- cor(y = subset(data, select = Y),
+           x = subset(data, select = X),
+           use = "pairwise.complete.obs",
+           method = cor_method)
+  
+  if (!is.na(adj_var)){
+    x_vars <- rep(X, times = length(Y))
+    x_coord <- rep(seq(1,length(Y)), each = length(X))
+    y_vars <- rep(Y, each = length(X))
+    y_coord <- rep(seq(length(X),1), times = length(Y))
+    lm_extracted <- data.frame(yName = character(0),
+                               xName = character(0),
+                               x = numeric(0),
+                               y = numeric(0),
+                               adj_var = character(0),
+                               adj_x_coef = numeric(0),
+                               adj_x_pval = numeric(0))
+    for (i in 1:length(x_vars)) {
+      if(x_vars[i] != y_vars[i]) {
+        lm_formula <- as.formula(paste0(y_vars[i], "~", x_vars[i], "+", adj_var))
+        lm_model <- lm(lm_formula, data = data)
+        lm_summary <- summary(lm_model)
+        lm_coef <- lm_summary$coefficient[x_vars[i], "Estimate"]
+        lm_p_val <- lm_summary$coefficient[x_vars[i], "Pr(>|t|)"]
+        lm_extracted <- rbind(lm_extracted,
+                              data.frame(
+                                yName = y_vars[i],
+                                xName = x_vars[i],
+                                x = x_coord[i],
+                                y = y_coord[i],
+                                adj_var = adj_var,
+                                adj_x_coef = lm_coef,
+                                adj_x_pval = lm_p_val))
+      }
+    }
+  }
+  
+  correlation_p_value <- correlation_p_value_matrix(data, relevant_vars = c(Y, X), n_cols = n_cols, cor_method = cor_method)
+  
+  corrplot(M,
+           p.mat = correlation_p_value,
+           method = method,
+           tl.col = "black",
+           tl.srt = 45,
+           tl.cex = .8,
+           insig = insig,
+           addCoef.col = coef_col,
+           addgrid.col = 'lightgray',
+           number.digits = 2,
+           pch.col = pch.col, 
+           pch = pch,
+           pch.cex = pch.cex)$corrPos -> p1
+  p1_sub <- subset(p1, p.value <= 0.05)
+  p1_sub2 <- subset(p1, p.value <= 0.05 & abs(corr) >= 0.7)
+  
+  if (nrow(p1) > 0) {
+    graphics::text(p1$x, p1$y, sprintf("%.2f", p1$corr), adj = c(0.5, 0))
+    graphics::text(p1_sub$x, p1_sub$y, stars.pval(p1_sub$p.value), adj = c(0.5, 2))
+  }
+  if (nrow(p1_sub2) > 0) {
+    graphics::text(p1_sub2$x, p1_sub2$y, sprintf("%.2f", p1_sub2$corr), col = "white", adj = c(0.5, 0))
+    graphics::text(p1_sub2$x, p1_sub2$y, stars.pval(p1_sub2$p.value), col = "white", adj = c(0.5, 2))
+  }
+  if (!is.na(adj_var)) {
+    lm_extracted <- subset(lm_extracted, adj_x_pval <= 0.05)
+    if (nrow(lm_extracted) > 0){
+      graphics::rect(xleft = lm_extracted$x-.45, 
+                     ybottom = lm_extracted$y-.45,
+                     xright = lm_extracted$x+.45,
+                     ytop = lm_extracted$y+.45)
+    }
+  }
+}
+
+
+correlation_p_value_matrix <- function(data, relevant_vars, n_cols, cor_method = "pearson") {
+  # Filter relevant variables for the correlation matrix
+  dat_correlation <- data %>%
+    dplyr::select(all_of(relevant_vars))
+  
+  # Compute p-values 
+  res2 <- Hmisc::rcorr(as.matrix(dat_correlation),
+                       type = cor_method)
+  corr_pval <- as.data.frame(res2$P) %>%
+    dplyr::select(all_of(relevant_vars[1:n_cols]))
+  corr_pval = corr_pval[(n_cols + 1):nrow(corr_pval),]
+  return(as.matrix(corr_pval))
+}
 ```
 
 ```{r, include=FALSE}
@@ -103,6 +202,8 @@ today_echo$TIMEPOINT <- "1"
 # TODAY2 ECHO
 today2_echo <- read.csv("./Clinical data/TODAY2/echo.csv")
 today2_echo$TIMEPOINT <- "2"
+drop_cols <- c("DOPPLERQC","MMODEQC","OVERALLQC","PLAXQC","SAXQC","APICALQC")
+today2_echo <- today2_echo %>% select(-one_of(drop_cols))
 # combine echo datasets - need to calculate deltas, but there are some variables that exist in timepoint 2 but not 1
 echo <- bind_rows(today2_echo, today_echo)
 echo$TIMEPOINT <- as.factor(echo$TIMEPOINT)
@@ -153,12 +254,6 @@ echo_wide$delta_lvstroke   <-  echo_wide$lvstroke.2 -  echo_wide$lvstroke.1
 echo_wide$delta_tapse  <-  echo_wide$tapse.2 -  echo_wide$tapse.1
 echo_wide$delta_walthick  <- echo_wide$walthick.2 -  echo_wide$walthick.1  
 echo_wide$delta_lvmassht   <- echo_wide$lvmassht.2 -  echo_wide$lvmassht.1 
-echo_wide$delta_dopplerqc  <- echo_wide$dopplerqc.2 -  echo_wide$dopplerqc.1
-echo_wide$delta_mmodeqc  <-    echo_wide$mmodeqc.2 -  echo_wide$mmodeqc.1
-echo_wide$delta_overallqc  <- echo_wide$overallqc.2 -  echo_wide$overallqc.1 
-echo_wide$delta_plaxqc   <- echo_wide$plaxqc.2 -  echo_wide$plaxqc.1   
-echo_wide$delta_saxqc   <- echo_wide$saxqc.2 -  echo_wide$saxqc.1    
-echo_wide$delta_apicalqc  <- echo_wide$apicalqc.2 -  echo_wide$apicalqc.1  
 echo_wide$delta_ladiamht   <-  echo_wide$ladiamht.2 -  echo_wide$ladiamht.1
 echo_wide$delta_lvdiasht   <- echo_wide$lvdiasht.2 -  echo_wide$lvdiasht.1 
 echo_wide$delta_lvbsa  <- echo_wide$lvbsa.2 -  echo_wide$lvbsa.1
@@ -202,6 +297,7 @@ analytes_keep <- analytes %>% filter(AptName %in% c("seq.13408.23","seq.19563.3"
                                                     "seq.9211.19","seq.18339.207","seq.18376.19","seq.18935.14","seq.24948.79","seq.4330.4"))
 key <- analytes_keep[,c("AptName","UniProt","Target","TargetFullName")]
 base_log_keep <- base_log %>% select(c("releaseid",all_of(analytes_keep$AptName)))
+data.table::setnames(base_log_keep, as.character(analytes_keep$AptName), as.character(analytes_keep$Target), skip_absent = T)
 
 # with echo data - TODAY
 today_echo <- merge(base_log_keep,today_echo,by="releaseid",all.x = F, all.y = F)
@@ -297,11 +393,13 @@ today_echo_corr <- today_echo %>% select(-c(releaseid, days, TIMEPOINT))
   pander(r, caption = "Coefficients")
   cat("\n")
 
-M <-cor(today_echo_corr, use="pairwise.complete.obs")    
-corrplot(M, type="upper", order="hclust",
-         col=brewer.pal(n=8, name="RdYlBu"))
-#heat <- as.matrix(today_echo_corr)
-#heatmap(heat)
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/today_echo_corr.png", res = 170)
+corr_plot_modified_nodict(data=today_echo_corr, 
+                   Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                   X=c("ascend2d","diasto2d","systol2d","laarea2d","diavol2d","lve","lvem","lvratio","peakvelo","rvsystol","aortroot","ladimen","mmodehr",
+                       "ivsdias","ivssyst","lvindex","lvoutput","lveject","diavolmm","sysvolmm","pctshort","lvdiast","lvsystol","lvmass","walldias",
+                       "wallsyst","lvstroke","tapse","mmodeqc","walthick","ladiamht","lvdiasht","lvbsa","lvmassht"), cor_method="spearman", adj_var = NA)
+dev.off()
 ```
 
 ### Correlation between TODAY2 echo and baseline proteins
