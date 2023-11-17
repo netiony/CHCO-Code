@@ -20,6 +20,7 @@ library(skimr)
 library(dplyr)
 library(stringr)
 library(growthcleanr)
+library(data.table)
 
 knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
 ```
@@ -34,25 +35,77 @@ ds$sex_num <- ifelse(ds$gender=="Male", 0, 1)
 # some records have age <0 and age >18
 ds <- ds %>% subset(age>=2)
 ds <- ds %>% subset(age<=18)
-# need to clean up height too - range is 0 to 304.8 cm
 
-clean_stats_weight <- cleangrowth(subjid = ds$person_id, param = "WEIGHTKG", 
-                           agedays = ds$age_days, sex = ds$sex_num, 
-                           measurement = ds$wgt)
-clean_stats_height <- cleangrowth(subjid = ds$person_id, param = "HEIGHTCM", 
-                           agedays = ds$age_days, sex = ds$sex_num, 
-                           measurement = ds$hgt)
+# create a doubly long dataset with height and weight only, and keep the other variables separate
+ds_weight <- ds[,c("person_id","age_days","sex_num","wgt")]
+ds_weight$measurement <- ds_weight$wgt
+ds_weight$wgt <- NULL
+ds_weight$param <- "WEIGHTKG"
+ds_height <- ds[,c("person_id","age_days","sex_num","hgt")]
+ds_height$measurement <- ds_height$hgt
+ds_height$hgt <- NULL
+ds_height$param <- "HEIGHTCM"
+ds_keep <- rbind(ds_weight,ds_height)
+ds_keep <- as.data.table(ds_keep)
 
+cleaned_data <- ds_keep[, gcr_result := cleangrowth(person_id, param, age_days, sex_num, measurement)]
+cleaned_wt <- cleaned_data %>% filter(param=="WEIGHTKG" & gcr_result=="Include")
+cleaned_wt$weight_kg <- cleaned_wt$measurement
+cleaned_wt$measurement <- NULL
+cleaned_wt$param <- NULL
+cleaned_wt$gcr_result <- NULL
+cleaned_ht <- cleaned_data %>% filter(param=="HEIGHTCM" & gcr_result=="Include")
+cleaned_ht$height_cm <- cleaned_ht$measurement
+cleaned_ht$measurement <- NULL
+cleaned_ht$param <- NULL
+cleaned_ht$gcr_result <- NULL
+cleaned_data_wide <- merge(cleaned_wt, cleaned_ht, by=c("person_id", "age_days"), all.x = T, all.y = T)
+cleaned_data_wide$bmi <- cleaned_data_wide$weight_kg / (cleaned_data_wide$height_cm / 100)
+cleaned_data_wide$sex_num <- ifelse(!is.na(cleaned_data_wide$sex_num.x),cleaned_data_wide$sex_num.x,cleaned_data_wide$sex_num.y)
+cleaned_data_wide$sex_num.x <- NULL
+cleaned_data_wide$sex_num.y <- NULL
+cleaned_data_wide$age <- floor(cleaned_data_wide$age_days/365.25)
 
+# CAH subset
 ds_subset <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/PEDSNet/CAH/Data_raw/CAH_BMI_Demo_subset_23.10.03.csv")
 ds_subset$dob <- as.Date(ds_subset$dob, format="%m/%d/%Y")
 ds_subset$measurement_date <- as.Date(ds_subset$measurement_date, format = "%Y-%m-%d")
 ds_subset$age <- floor((ds_subset$measurement_date - ds_subset$dob)/365.25)
 ds_subset$age_days <- floor(ds_subset$measurement_date - ds_subset$dob)
 ds_subset$sex_num <- ifelse(ds_subset$gender=="Male", 0, 1)
-# some records have age <0 and age >18
+# some records_subset have age <0 and age >18
 ds_subset <- ds_subset %>% subset(age>=2)
 ds_subset <- ds_subset %>% subset(age<=18)
+
+# create a doubly long dataset with height and weight only, and keep the other variables separate
+ds_subset_weight <- ds_subset[,c("person_id","age_days","sex_num","wgt")]
+ds_subset_weight$measurement <- ds_subset_weight$wgt
+ds_subset_weight$wgt <- NULL
+ds_subset_weight$param <- "WEIGHTKG"
+ds_subset_height <- ds_subset[,c("person_id","age_days","sex_num","hgt")]
+ds_subset_height$measurement <- ds_subset_height$hgt
+ds_subset_height$hgt <- NULL
+ds_subset_height$param <- "HEIGHTCM"
+ds_subset_keep <- rbind(ds_subset_weight,ds_subset_height)
+ds_subset_keep <- as.data.table(ds_subset_keep)
+
+cleaned_data_subset <- ds_subset_keep[, gcr_result := cleangrowth(person_id, param, age_days, sex_num, measurement)]
+cleaned_wt_subset <- cleaned_data_subset %>% filter(param=="WEIGHTKG" & gcr_result=="Include")
+cleaned_wt_subset$weight_kg <- cleaned_wt_subset$measurement
+cleaned_wt_subset$measurement <- NULL
+cleaned_wt_subset$param <- NULL
+cleaned_wt_subset$gcr_result <- NULL
+cleaned_ht_subset <- cleaned_data_subset %>% filter(param=="HEIGHTCM" & gcr_result=="Include")
+cleaned_ht_subset$height_cm <- cleaned_ht_subset$measurement
+cleaned_ht_subset$measurement <- NULL
+cleaned_ht_subset$param <- NULL
+cleaned_ht_subset$gcr_result <- NULL
+cleaned_data_wide_subset <- merge(cleaned_wt_subset, cleaned_ht_subset, by=c("person_id", "age_days"), all.x = T, all.y = T)
+cleaned_data_wide_subset$bmi <- cleaned_data_wide_subset$weight_kg / (cleaned_data_wide_subset$height_cm / 100)
+cleaned_data_wide_subset$sex_num <- ifelse(!is.na(cleaned_data_wide_subset$sex_num.x),cleaned_data_wide_subset$sex_num.x,cleaned_data_wide_subset$sex_num.y)
+cleaned_data_wide_subset$sex_num.x <- NULL
+cleaned_data_wide_subset$sex_num.y <- NULL
+cleaned_data_wide_subset$age <- floor(cleaned_data_wide_subset$age_days/365.25)
 ```
 
 # All CAH data
@@ -64,8 +117,8 @@ ds_subset <- ds_subset %>% subset(age<=18)
 set.seed(3654)
 tau2=c(0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95)
 tau3=c(0.1, 0.5, 0.9)
-mform <-gcrq(data=ds, hgt ~ ps(age, monotone=1), tau=tau2)
-mform_red <- gcrq(data=ds, hgt ~ ps(age, monotone=1), tau=tau3)
+mform <-gcrq(data=cleaned_data_wide, height_cm ~ ps(age, monotone=1), tau=tau2)
+mform_red <- gcrq(data=cleaned_data_wide, height_cm ~ ps(age, monotone=1), tau=tau3)
 ```
 
 ### Very basic plots
@@ -101,8 +154,8 @@ axis(4, at=seq(0,200,5), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
 set.seed(3654)
 tau2=c(0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95)
 tau3=c(0.1, 0.5, 0.9)
-mform <-gcrq(data=ds, wgt ~ ps(age, monotone=1), tau=tau2)
-mform_red <- gcrq(data=ds, wgt ~ ps(age, monotone=1), tau=tau3)
+mform <-gcrq(data=cleaned_data_wide, weight_kg ~ ps(age, monotone=1), tau=tau2)
+mform_red <- gcrq(data=cleaned_data_wide, weight_kg ~ ps(age, monotone=1), tau=tau3)
 ```
 
 ### Very basic plots
@@ -124,7 +177,7 @@ p <- plot(mform, legend=TRUE, overlap=15, grid=list(x=15,y=10), col=2, lty=1,yla
 ```{r echo=FALSE}
 plot(mform, lwd=2, legend=TRUE, 
      lty=1, cex=0.5,col=1,xaxt="n",yaxt="n",
-     ylab="Weight", xlab="Age (yrs))", xlim=c(0,18),ylim=c(0,200))
+     ylab="Weight", xlab="Age (yrs))", xlim=c(0,18),ylim=c(0,140))
 axis(1, at=0:18, lwd=0.5, tck=1, cex.axis=0.95, padj=-1.7)
 axis(2, at=seq(0,140,10), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
 axis(4, at=seq(0,140,5), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
@@ -138,8 +191,8 @@ axis(4, at=seq(0,140,5), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
 set.seed(3654)
 tau2=c(0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95)
 tau3=c(0.1, 0.5, 0.9)
-mform <-gcrq(data=ds, bmi ~ ps(age, monotone=1), tau=tau2)
-mform_red <- gcrq(data=ds, bmi ~ ps(age, monotone=1), tau=tau3)
+mform <-gcrq(data=cleaned_data_wide, bmi ~ ps(age, monotone=1), tau=tau2)
+mform_red <- gcrq(data=cleaned_data_wide, bmi ~ ps(age, monotone=1), tau=tau3)
 ```
 
 ### Very basic plots
@@ -161,10 +214,10 @@ p <- plot(mform, legend=TRUE, overlap=15, grid=list(x=15,y=10), col=2, lty=1,yla
 ```{r echo=FALSE}
 plot(mform, lwd=2, legend=TRUE, 
      lty=1, cex=0.5,col=1,xaxt="n",yaxt="n",
-     ylab="BMI", xlab="Age (yrs))", xlim=c(0,18),ylim=c(0,200))
+     ylab="BMI", xlab="Age (yrs))", xlim=c(0,18),ylim=c(0,70))
 axis(1, at=0:18, lwd=0.5, tck=1, cex.axis=0.95, padj=-1.7)
-axis(2, at=seq(0,50,10), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
-axis(4, at=seq(0,50,5), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
+axis(2, at=seq(0,70,10), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
+axis(4, at=seq(0,70,5), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
 # axis(3, at=3:19, lwd=0.5, tck=1, cex.axis=0.95, padj=3.65)
 ```
 
@@ -176,8 +229,8 @@ axis(4, at=seq(0,50,5), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
 # fit the model
 tau2=c(0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95)
 tau3=c(0.1, 0.5, 0.9)
-mform <-gcrq(data=ds_subset, hgt ~ ps(age, monotone=1), tau=tau2)
-mform_red <- gcrq(data=ds_subset, hgt ~ ps(age, monotone=1), tau=tau3)
+mform <-gcrq(data=cleaned_data_wide_subset, height_cm ~ ps(age, monotone=1), tau=tau2)
+mform_red <- gcrq(data=cleaned_data_wide_subset, height_cm ~ ps(age, monotone=1), tau=tau3)
 ```
 
 ### Very basic plots
@@ -213,8 +266,8 @@ axis(4, at=seq(0,200,5), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
 set.seed(3654)
 tau2=c(0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95)
 tau3=c(0.1, 0.5, 0.9)
-mform <-gcrq(data=ds_subset, wgt ~ ps(age, monotone=1), tau=tau2)
-mform_red <- gcrq(data=ds_subset, wgt ~ ps(age, monotone=1), tau=tau3)
+mform <-gcrq(data=cleaned_data_wide_subset, weight_kg ~ ps(age, monotone=1), tau=tau2)
+mform_red <- gcrq(data=cleaned_data_wide_subset, weight_kg ~ ps(age, monotone=1), tau=tau3)
 ```
 
 ### Very basic plots
@@ -236,7 +289,7 @@ p <- plot(mform, legend=TRUE, overlap=15, grid=list(x=15,y=10), col=2, lty=1,yla
 ```{r echo=FALSE}
 plot(mform, lwd=2, legend=TRUE, 
      lty=1, cex=0.5,col=1,xaxt="n",yaxt="n",
-     ylab="Weight", xlab="Age (yrs))", xlim=c(0,18),ylim=c(0,200))
+     ylab="Weight", xlab="Age (yrs))", xlim=c(0,18),ylim=c(0,140))
 axis(1, at=0:18, lwd=0.5, tck=1, cex.axis=0.95, padj=-1.7)
 axis(2, at=seq(0,140,10), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
 axis(4, at=seq(0,140,5), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
@@ -250,8 +303,8 @@ axis(4, at=seq(0,140,5), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
 set.seed(3654)
 tau2=c(0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95)
 tau3=c(0.1, 0.5, 0.9)
-mform <-gcrq(data=ds_subset, bmi ~ ps(age, monotone=1), tau=tau2)
-mform_red <- gcrq(data=ds_subset, bmi ~ ps(age, monotone=1), tau=tau3)
+mform <-gcrq(data=cleaned_data_wide_subset, bmi ~ ps(age, monotone=1), tau=tau2)
+mform_red <- gcrq(data=cleaned_data_wide_subset, bmi ~ ps(age, monotone=1), tau=tau3)
 ```
 
 ### Very basic plots
@@ -273,9 +326,9 @@ p <- plot(mform, legend=TRUE, overlap=15, grid=list(x=15,y=10), col=2, lty=1,yla
 ```{r echo=FALSE}
 plot(mform, lwd=2, legend=TRUE, 
      lty=1, cex=0.5,col=1,xaxt="n",yaxt="n",
-     ylab="BMI", xlab="Age (yrs))", xlim=c(0,18),ylim=c(0,200))
+     ylab="BMI", xlab="Age (yrs))", xlim=c(0,18),ylim=c(0,70))
 axis(1, at=0:18, lwd=0.5, tck=1, cex.axis=0.95, padj=-1.7)
-axis(2, at=seq(0,50,10), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
-axis(4, at=seq(0,50,5), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
+axis(2, at=seq(0,70,10), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
+axis(4, at=seq(0,70,5), lwd=0.5, tck=1, cex.axis=0.95, las=1, hadj=0.5)
 # axis(3, at=3:19, lwd=0.5, tck=1, cex.axis=0.95, padj=3.65)
 ```
