@@ -111,8 +111,13 @@ def harmonize_data():
     harmonized["total_kidney_volume_ml"] = \
         harmonized["left_kidney_volume_ml"] + \
         harmonized["right_kidney_volume_ml"]
+    harmonized["total_kidney_volume_ml_manual"] = \
+        harmonized["volume_left_manual"] + \
+        harmonized["volume_right_manual"]
     harmonized = harmonized.assign(
         ht_adj_tkv = harmonized["total_kidney_volume_ml"] / (harmonized.groupby("record_id")["height"].transform("mean") / 100))
+    harmonized = harmonized.assign(
+        ht_adj_tkv_manual = harmonized["total_kidney_volume_ml_manual"] / (harmonized.groupby("record_id")["height"].transform("mean") / 100))
     # PCASL
     harmonized["avg_pcascl"] = \
         harmonized[["pcasl3d_left", "pcasl3d_right"]].apply(lambda x: x.mean(), axis=1)
