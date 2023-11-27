@@ -103,9 +103,10 @@ de_genes_glyc_a1c_10 <- top_glyc_a1c_df_10[top_glyc_a1c_df_10$P.Value <= 0.05, c
 de_genes_glyc_a1c_10 <- setNames(de_genes_glyc_a1c_10$logFC, de_genes_glyc_a1c_10$EntrezGeneID)
 # Import and clean data
 df <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = "")
+df_check <- df
 df <- df %>%
   filter(
-    study %in% c("CROCODILE", "IMPROVE", "RENAL-HEIR"),
+    study %in% c("IMPROVE", "RENAL-HEIR"),
     !grepl("IT2D", co_enroll_id), participation_status == "Participated"
   ) %>%
   select(
@@ -115,12 +116,25 @@ df <- df %>%
     gfr_raw_plasma_urine, acr_u, map, sbp, dbp, height, eGFR_fas_cr
   ) %>%
   group_by(record_id, visit) %>%
-  summarise(across(where(is.character), ~ last(na.omit(.x))),
-    across(where(is.factor), ~ last(na.omit(.x))),
-    across(where(is.numeric), ~ mean(.x, na.rm = T)),
-    .groups = "drop"
+    summarise(across(where(is.character), ~ last(na.omit(.x))),
+      across(where(is.factor), ~ last(na.omit(.x))),
+      across(where(is.numeric), ~ mean(.x, na.rm = T)),
+      .groups = "drop"
   ) %>%
   mutate_all(~ ifelse(is.nan(.), NA, .))
+
+df_check <- df_check %>% 
+  filter(
+  study %in% c("IMPROVE", "RENAL-HEIR"),
+  !grepl("IT2D", co_enroll_id), participation_status == "Participated"
+) %>%
+  select(
+    record_id, co_enroll_id, visit, group, age, sex, race, ethnicity,
+    diabetes_duration, sglti_timepoint, sglt2i_ever, elevated_albuminuria,
+    bmi, hba1c, gfr_bsa_plasma, gfr_raw_plasma, gfr_bsa_plasma_urine,
+    gfr_raw_plasma_urine, acr_u, map, sbp, dbp, height, eGFR_fas_cr
+  ) 
+
 # Import proteomics data for RH and IMPROVE
 load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Renal HERITAGE/Somalogic data/analytes.Rdata")
 load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Renal HERITAGE/Somalogic data/rh_soma.Rdata")
