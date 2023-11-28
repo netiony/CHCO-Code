@@ -22,6 +22,10 @@ analytes <- analytes %>% select(AptName,SeqId,SeqIdVersion,SomaId,TargetFullName
 # read in 2nd dataset
 soma2 <- read_adat("./Local cohort Somalogic data/WUS-23-004/WUS_23_004_2023-11-15/WUS_23_004_v4.1_EDTAPlasma.hybNorm_medNormInt_plateScale_calibrate_anmlQC_qcCheck_anmlSMP.adat")
 soma2 <- soma2 %>% filter(!is.na(SampleDescription))
+# delete extraneous stuff in the sample description
+soma2$SampleDescription <- str_sub(soma2$SampleDescription, 12)
+soma2$SampleDescription <- str_remove(soma2$SampleDescription, " ")
+soma2$SampleDescription <- str_remove_all(soma2$SampleDescription, "\\(\\S+")
 analytes2 <- getAnalyteInfo(soma2)
 # 2nd analytes file is esssentially the same as the first except for some batch specific information we don't need
 # will keep the first file
