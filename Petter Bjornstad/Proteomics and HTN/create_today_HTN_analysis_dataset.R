@@ -1,3 +1,8 @@
+# Getting an error when joining df and soma, because there are duplicate records for RH-14-O baseline visit
+# need to carefully check number of observations by study and group
+# starting with individual study soma files, through combined df in this file, to analysis code for correlations
+# I don't think I'm getting as many participants in the correlations as I should
+
 library(tidyverse)
 library(readxl)
 library(Seurat)
@@ -152,6 +157,7 @@ soma <- soma %>%
     record_id = sub("IT2D-", "IT_", record_id),
     visit = case_when(
       visit == "BL" ~ "baseline",
+      visit == "Baseline" ~ "baseline",
       visit == "3M" ~ "3_months_post_surgery",
       visit == "12M" ~ "12_months_post_surgery"
     )
@@ -202,6 +208,7 @@ olink_urine <- olink_urine %>%
   mutate(
     visit = case_when(
       visit == "BL" ~ "baseline",
+      visit == "Baseline" ~ "baseline",
       visit == "3M" ~ "3_months_post_surgery",
       visit == "12M" ~ "12_months_post_surgery",
       is.na(visit) ~ "baseline"
