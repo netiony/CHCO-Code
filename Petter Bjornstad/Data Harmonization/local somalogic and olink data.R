@@ -1,40 +1,55 @@
 library(SomaDataIO)
 library(stringr)
 library(dplyr)
+library(arsenal)
 
 if(Sys.info()["sysname"] == "Windows"){
   home_dir = "E:/Petter Bjornstad"
 } else if (Sys.info()["sysname"] == "Linux"){
   home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad"
 } else if (Sys.info()["sysname"] == "Darwin"){
-  home_dir = "/Volumes/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad"
+  home_dir = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/"
 }
 setwd(home_dir)
 
 # read in data - we want to use the fully processed, normalized file ending in "anmlSMP.adat"
-soma <- read_adat("./Local cohort Somalogic data/WUS-22-002_v4.1_EDTAPlasma_hybNorm_medNormInt_plateScale_calibrate_anmlQC_qcCheck_anmlSMP.adat")
+soma <- read_adat("./Local cohort Somalogic data/WUS-22-002/WUS-22-002_v4.1_EDTAPlasma_hybNorm_medNormInt_plateScale_calibrate_anmlQC_qcCheck_anmlSMP.adat")
+soma <- soma %>% select(-Optional2)
+soma <- soma %>% filter(!is.na(SampleDescription))
 analytes <- getAnalyteInfo(soma)
+analytes <- analytes %>% select(AptName,SeqId,SeqIdVersion,SomaId,TargetFullName,Target,UniProt,EntrezGeneID,EntrezGeneSymbol,Organism,Units,Type)
+
+# read in 2nd dataset
+soma2 <- read_adat("./Local cohort Somalogic data/WUS-23-004/WUS_23_004_2023-11-15/WUS_23_004_v4.1_EDTAPlasma.hybNorm_medNormInt_plateScale_calibrate_anmlQC_qcCheck_anmlSMP.adat")
+soma2 <- soma2 %>% filter(!is.na(SampleDescription))
+analytes2 <- getAnalyteInfo(soma2)
+# 2nd analytes file is esssentially the same as the first except for some batch specific information we don't need
+# will keep the first file
 
 olink_plasma = read.csv("./Olink Data/Data_Clean/plasma_cleaned.csv")
 olink_urine = read.csv("./Olink Data/Data_Clean/urine_cleaned.csv")
 
 # filter out Q/C samples
-soma <- soma %>% filter(!is.na(SampleDescription))
+soma <- rbind(soma,soma2)
+# delete Pima data
+soma <- soma %>% filter(!str_detect(SampleDescription,"CKDS"))
 
 # create dataframes for each study
-croc_soma <- soma %>% filter(str_sub(SampleDescription,1,3)=="CRC")
+croc_soma <- soma %>% filter(str_detect(SampleDescription,"CRC"))
 croc_olink_plasma = olink_plasma %>% filter(grepl("CRC",record_id))
 croc_olink_urine = olink_urine %>% filter(grepl("CRC",record_id))
 
-improve_soma <- soma %>% filter(str_sub(SampleDescription,1,4)=="IT2D")
+improve_soma <- soma %>% filter(str_detect(SampleDescription,"IT2D"))
 improve_olink_plasma = olink_plasma %>% filter(grepl("IT",record_id))
 improve_olink_urine = olink_urine %>% filter(grepl("IT",record_id))
 
-rh_soma <- soma %>% filter(str_sub(SampleDescription,1,2)=="RH")
+rh_soma <- soma %>% filter(str_detect(SampleDescription,"RH"))
 rh_olink_plasma = olink_plasma %>% filter(grepl("RH",record_id))
 rh_olink_urine = olink_urine %>% filter(grepl("RH",record_id))
 
-pima_soma <- soma %>% filter(str_sub(SampleDescription,1,4)=="CKDS")
+pen_soma <- soma %>% filter(str_detect(SampleDescription,"PEN"))
+
+knight_soma <- soma %>% filter(str_detect(SampleDescription,"KGHT") | str_detect(SampleDescription,"SHB"))
 
 # Save CROCODILE
 save(croc_soma,file = "./CROCODILE/Somalogic data/croc_soma.Rdata")
@@ -54,6 +69,10 @@ save(analytes,file = "./Renal HERITAGE/Somalogic data/analytes.Rdata")
 save(rh_olink_plasma,file = "./Renal HERITAGE/Olink Data/rh_olink_plasma.Rdata")
 save(rh_olink_urine,file = "./Renal HERITAGE/Olink Data/rh_olink_urine.Rdata")
 
-# save Pima
-save(pima_soma,file = "./Pima/Somalogic data/pima_soma.Rdata")
-save(analytes,file = "./Pima/Somalogic data/analytes.Rdata")
+# save PENGUIN
+save(pen_soma,file = "./PENGUIN/Somalogic data/penguin_soma.Rdata")
+save(analytes,file = "./PENGUIN/Somalogic data/analytes.Rdata")
+
+# save KNIGHT
+save(pen_soma,file = "./KNIGHT/Somalogic data/knight_soma.Rdata")
+save(analytes,file = "./KNIGHT/Somalogic data/analytes.Rdata")
