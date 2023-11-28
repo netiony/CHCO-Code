@@ -149,7 +149,8 @@ def clean_renal_heiritage():
               "erpf_raw": "erpf_raw_plasma_urine", "erpf": "erpf_bsa_plasma_urine",
               "gfr_15mgmin": "gfr_raw_plasma", "gfrbsa": "gfr_bsa_plasma",
               "erpf_pah_85": "erpf_raw_plasma", "erpfbsa": "erpf_bsa_plasma",
-              "phys_map": "map", "pah_bsa": "pah_bsa_plasma_urine", "pahbsa": "pah_clear_bsa"}
+              "phys_map": "map", "pah_bsa": "pah_bsa_plasma_urine", "pahbsa": "pah_clear_bsa",
+              "rc_lab_date": "date"}
     rct.rename(rename, axis=1, inplace=True)
     rct.columns = rct.columns.str.replace(
         r"bl_", "", regex=True)
@@ -214,12 +215,14 @@ def clean_renal_heiritage():
     bold_mri = out[["record_id"] + bold_mri_cols].copy()
     out = out[list(set(out.columns).difference(bold_mri_cols))]
     rename = {"volume_left": "left_kidney_volume_ml",
-              "volume_right": "right_kidney_volume_ml"}
+              "volume_right": "right_kidney_volume_ml",
+              "mri_lab_date": "date"}
     out.rename(rename, axis=1, inplace=True)
     out["procedure"] = "clamp"
     out["visit"] = "baseline"
     bold_mri["procedure"] = "bold_mri"
     bold_mri["visit"] = "baseline"
+    bold_mri["date"] = out["date"]
 
     # --------------------------------------------------------------------------
     # PET scan
