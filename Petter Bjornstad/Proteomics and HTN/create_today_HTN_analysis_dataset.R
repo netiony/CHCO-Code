@@ -106,47 +106,14 @@ de_genes_glyc_10 <- setNames(de_genes_glyc_10$logFC, de_genes_glyc_10$EntrezGene
 top_glyc_a1c_df_10 <- read_excel("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "glyc_with_a1c_moderated_FDR")
 de_genes_glyc_a1c_10 <- top_glyc_a1c_df_10[top_glyc_a1c_df_10$P.Value <= 0.05, c("EntrezGeneID", "logFC")]
 de_genes_glyc_a1c_10 <- setNames(de_genes_glyc_a1c_10$logFC, de_genes_glyc_a1c_10$EntrezGeneID)
-# Import and clean data
-df <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = "")
-df_check <- df
-df <- df %>%
-  filter(
-    study %in% c("IMPROVE", "RENAL-HEIR"),
-    !grepl("IT2D", co_enroll_id), participation_status == "Participated"
-  ) %>%
-  select(
-    record_id, co_enroll_id, visit, group, age, sex, race, ethnicity,
-    diabetes_duration, sglti_timepoint, sglt2i_ever, elevated_albuminuria,
-    bmi, hba1c, gfr_bsa_plasma, gfr_raw_plasma, gfr_bsa_plasma_urine,
-    gfr_raw_plasma_urine, acr_u, map, sbp, dbp, height, eGFR_fas_cr
-  ) %>%
-  group_by(record_id, visit) %>%
-    summarise(across(where(is.character), ~ last(na.omit(.x))),
-      across(where(is.factor), ~ last(na.omit(.x))),
-      across(where(is.numeric), ~ mean(.x, na.rm = T)),
-      .groups = "drop"
-  ) %>%
-  mutate_all(~ ifelse(is.nan(.), NA, .))
-
-df_check <- df_check %>% 
-  filter(
-  study %in% c("IMPROVE", "RENAL-HEIR"),
-  !grepl("IT2D", co_enroll_id), participation_status == "Participated"
-) %>%
-  select(
-    record_id, co_enroll_id, visit, group, age, sex, race, ethnicity,
-    diabetes_duration, sglti_timepoint, sglt2i_ever, elevated_albuminuria,
-    bmi, hba1c, gfr_bsa_plasma, gfr_raw_plasma, gfr_bsa_plasma_urine,
-    gfr_raw_plasma_urine, acr_u, map, sbp, dbp, height, eGFR_fas_cr
-  ) 
 
 # Import proteomics data for RH and IMPROVE
 load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Renal HERITAGE/Somalogic data/analytes.Rdata")
 load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Renal HERITAGE/Somalogic data/rh_soma.Rdata")
 load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/IMPROVE T2D/Somalogic data/improve_soma.Rdata")
 # Format and combine
-improve_soma <- improve_soma %>% select(SampleDescription, TimePoint, contains("seq."))
-rh_soma <- rh_soma %>% select(SampleDescription, TimePoint, contains("seq."))
+improve_soma <- improve_soma %>% dplyr::select(SampleDescription, TimePoint, contains("seq."))
+rh_soma <- rh_soma %>% dplyr::select(SampleDescription, TimePoint, contains("seq."))
 soma <- rbind(improve_soma, rh_soma)
 # Transform
 soma[, 3:ncol(soma)] <- lapply(soma[, 3:ncol(soma)], log)
@@ -162,6 +129,38 @@ soma <- soma %>%
       visit == "12M" ~ "12_months_post_surgery"
     )
   )
+
+# Import and clean harmonized data
+df <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = c(" ", "", "-9999",-9999))
+coenroll_id <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Renal HERITAGE/Data_Cleaned/coenrolled_ids.csv") %>%
+  filter(rh2_id!="") %>%
+  pivot_longer(cols = 'improve_id':'rh2_id',
+               values_to = "record_id") %>% 
+  dplyr::select(merged_id, record_id) %>%
+  filter(record_id != "")
+df <- df %>%
+  filter(study == "RENAL-HEIRitage"|study == "RENAL-HEIR"|study == "IMPROVE") %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+                   .by = c(record_id)) %>%
+  filter(participation_status!="Removed"|is.na(participation_status)) %>%
+  mutate(race_ethnicity_condensed = case_when(race == "White" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino White",
+                                              race == "Black or African American" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino Black",
+                                              ethnicity == "Hispanic or Latino" ~ "Hispanic or Latino",
+                                              T ~ "Not Hispanic or Latino Other")) %>%
+  mutate(elevated_albuminuria = case_when(elevated_albuminuria == "Yes" ~ "Elevated albuminuria",
+                                          elevated_albuminuria == "No" ~ "Normoalbuminuria")) %>% 
+  mutate_at(vars(starts_with("fsoc")), function(x) case_when(x < 0 ~ 0, T~x)) %>%
+  left_join(coenroll_id)
+df <- df %>% 
+  dplyr::select(record_id, merged_id, study, visit, group, age, sex, race, ethnicity,
+                diabetes_duration, sglti_timepoint, sglt2i_ever, elevated_albuminuria,
+                bmi, hba1c, gfr_bsa_plasma, gfr_raw_plasma, gfr_bsa_plasma_urine,
+                gfr_raw_plasma_urine, acr_u, map, sbp, dbp, height, eGFR_fas_cr)
+# keep only participants with type 2 diabetes and IMPROVE participants
+df <- df %>% filter(group=="Type 2 Diabetes" | study=="IMPROVE")
 # BP percentiles and HTN
 df$bp_age <- df$age * 12
 df$bp_age[df$bp_age >= 19 * 12] <- 19 * 12 - 1e-8
@@ -182,7 +181,10 @@ df$hyp <- factor(df$eGFR_fas_cr >= 135, levels = c(F, T), labels = c("eGFR < 135
 # UACR
 df$elevated_uacr <- factor(df$acr_u >= 30, labels = c("UACR < 30", "UACR >= 30"))
 # Merge
-df <- full_join(df, soma, by = c("record_id", "visit"))
+df <- merge(df, soma, by = c("record_id", "visit"), all.x = T, all.y = T)
+# Baseline visit only for IMPROVE
+df <- df %>% filter(visit == "baseline")
+
 # Import Olink data and combine
 olink_map <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Olink Data/Data_Clean/olink_id_map.csv")
 load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/IMPROVE T2D/Olink Data/improve_olink_plasma.Rdata")
@@ -215,15 +217,10 @@ olink_urine <- olink_urine %>%
     ),
     record_id = sub("_BL|_3M|_12M", "", record_id)
   )
-# Baseline visit only for IMPROVE
-df <- df %>% filter(visit == "baseline")
+
 # Combine
 plasma <- left_join(df, olink_plasma, by = c("record_id", "visit"))
 urine <- left_join(df, olink_urine, by = c("record_id", "visit"))
-# Limit df to those with all data
-# We are not putting this restriction on the HTN analysis
-#ids <- intersect(soma$record_id, olink_plasma$record_id)
-#df <- df %>% filter(record_id %in% ids)
 # Save
 save(df, plasma, urine, analytes, olink_map,
   top_mac, top_mic, top_hyp, top_rapid, top_htn, top_htn_sbp,
