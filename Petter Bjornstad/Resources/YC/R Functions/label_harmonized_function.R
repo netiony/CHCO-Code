@@ -26,6 +26,7 @@ label_harmonized_raw <- function(data, dict) {
 }
 
 label_harmonized_dict <- function(data, dict) {
+  dict <- dict %>% dplyr::select(-units, -notes)
   dict <- setNames(data.frame(t(dict[ , - 1])), dict[ , 1]) # Transpose
   dict <- dict[intersect(names(data), names(dict))]
   dict[setdiff(names(data), names(dict))] <- ""
