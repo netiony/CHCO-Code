@@ -26,6 +26,8 @@ soma2 <- soma2 %>% filter(!is.na(SampleDescription))
 soma2$SampleDescription <- str_sub(soma2$SampleDescription, 12)
 soma2$SampleDescription <- str_remove(soma2$SampleDescription, " ")
 soma2$SampleDescription <- str_remove_all(soma2$SampleDescription, "\\(\\S+")
+# there is one duplicate sample - delete the second result
+soma2 <- soma2 %>% filter(!SampleDescription=="RH-14-O")
 analytes2 <- getAnalyteInfo(soma2)
 # 2nd analytes file is esssentially the same as the first except for some batch specific information we don't need
 # will keep the first file
@@ -54,6 +56,7 @@ rh_olink_urine = olink_urine %>% filter(grepl("RH",record_id))
 pen_soma <- soma %>% filter(str_detect(SampleDescription,"PEN"))
 
 knight_soma <- soma %>% filter(str_detect(SampleDescription,"KGHT") | str_detect(SampleDescription,"SHB"))
+knight_soma$SampleDescription <- str_trim(knight_soma$SampleDescription)
 
 # Save CROCODILE
 save(croc_soma,file = "./CROCODILE/Somalogic data/croc_soma.Rdata")
