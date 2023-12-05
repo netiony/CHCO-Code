@@ -159,8 +159,6 @@ df <- df %>%
                 diabetes_duration, sglti_timepoint, sglt2i_ever, elevated_albuminuria,
                 bmi, hba1c, gfr_bsa_plasma, gfr_raw_plasma, gfr_bsa_plasma_urine,
                 gfr_raw_plasma_urine, acr_u, map, sbp, dbp, height, eGFR_fas_cr)
-# keep only participants with type 2 diabetes and IMPROVE participants
-df <- df %>% filter(group=="Type 2 Diabetes" | study=="IMPROVE")
 # BP percentiles and HTN
 df$bp_age <- df$age * 12
 df$bp_age[df$bp_age >= 19 * 12] <- 19 * 12 - 1e-8
