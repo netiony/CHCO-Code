@@ -24,6 +24,11 @@ library(tidyverse)
 library(arsenal)
 library(dplyr)
 library(labelled)
+library(nlme)
+library(lme4)
+library(emmeans)
+library(sjPlot)
+library(knitr)
 ```
 
 ```{r data import}
@@ -97,20 +102,66 @@ keep_wide$week16_abswtchange <- keep_wide$week16_weight - keep_wide$baseline_wei
 
 # calculate percent weight change (baseline as reference)
 keep_wide$week8_perwtchange <- (keep_wide$week8_abswtchange / keep_wide$baseline_weight ) * 100
-keep_wide$week16perwtchange <- (keep_wide$week16_abswtchange / keep_wide$baseline_weight) * 100
+keep_wide$week16_perwtchange <- (keep_wide$week16_abswtchange / keep_wide$baseline_weight) * 100
 
 # create long dataset for mixed models
 keep_long <- keep_wide %>% pivot_longer(cols = !c("subject_id", "study_group.factor", "age", "bmi_cat.factor", "tanner"),
                                         names_to = c("visit", ".value"), names_sep = "_", values_drop_na = T)
+# create a variable equal to weight at baseline
+wtbas <- keep_long %>% filter(visit=="baseline")
+wtbas <- wtbas %>% select(subject_id, weight)
+names(wtbas) <- c("subject_id", "baseline_weight")
+keep_long <- merge(keep_long, wtbas, by="subject_id", all.x = T, all.y = T)
+# create numeric time variable
+keep_long$num_time <- ifelse(keep_long$visit == "screen", -4, 
+                             ifelse(keep_long$visit == "baseline", 0, 
+                                    ifelse(keep_long$visit == "week8", 8, 16)))
+
+# create df without screening and baseline
+keep_long_nobase <- keep_long %>% filter(visit == "week8" | visit == "week16")
 ```
 
 ```{r functions}
+# what needs to be done
+# fix the function below - getting an error on the model statement
+# make sure it's printing the pieces I want (emmeans, pairs) and remove pieces not needed
+# create adjusted version of the function
 
+model_and_plot = function(outcome_name,df,pois = F){
+  # Convert to numeric
+  df[,outcome_name] = as.numeric(df[,outcome_name])
+  # Fit a mixed model. Some of these are essentially count data and may require a Poisson model
+  mod = lme(as.formula(paste0(outcome_name,"~as.factor(num_time)*study_group.factor, random=~1|subject_id, data="),df))
+  anova_table <- anova.lme(mod, type="marginal")
+  # Means by timepoint
+  means = as.data.frame(emmeans(mod,c("num_time","study_group.factor")))
+  means$num_time = c(-4,0,8,16)
+  # Plot
+  p <- plot_model(mod, type="emm", terms=c("num_time","study_group.factor"), title = "") + geom_line() + 
+    labs(x="Weeks", y="Weight (kg)", colour = "") 
+  # Print plot and model results
+  print(p)
+  print(kable(anova(mod),digits = 3,caption = "Type III ANOVA"))
+  print(anova_table)
+  print(kable(summary(mod)$coefficients,digits = 3,caption = "Fixed Effects"))
+}
 ```
 
 # Header 1
 
 ```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
+# NEED TO TURN THIS INTO A FUNCTION
+mod <- lme(weight ~ visit*study_group.factor + baseline_weight,random=~1|subject_id,data = keep_long_nobase,na.action = na.omit)
+anova_table <- anova.lme(mod, type="marginal")
+ttable <- summary(mod)$tTable
+mod_means <- emmeans(mod,c("visit","study_group.factor"))
+mod_pairs <-  pairs(mod_means,adjust="tukey", simple="each")
+plot_model(mod, type="emm", terms=c("visit","study_group.factor")) + geom_line()
 
+# unadjusted model - include screen?
+model_and_plot(outcome_name = "weight", df = keep_long)
+
+# model adjusted for baselino weight
+#model_adjusted(data = keep_long_nobase, outcome = "weight", covar = "baseline_weight")
 ```
 
