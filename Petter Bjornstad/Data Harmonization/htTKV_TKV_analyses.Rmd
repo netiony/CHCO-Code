@@ -1,0 +1,332 @@
+---
+title: "Harmonized Data and PANTHER Analyses"
+author: "Callie Rountree-Jablin"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    toc_loc: left
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(kableExtra)
+library(magrittr)
+library(Hmisc)
+library(gtsummary)
+pacman::p_load(naniar)
+
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "B:/Petter Bjornstad"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  home_dir = "/Volumes/Peds Endo/Petter Bjornstad/"
+} 
+knitr::opts_knit$set(echo=FALSE, root.dir = home_dir)
+```
+
+The aim of this report is to:
+
+ 1. Describe total kidney volume (TKV) across the harmonized dataset by age and disease type. 
+ 2. Describe TKV by Tanner stage and IGF-1 concentrations in the PANTHER study.
+ 
+```{r read, include=FALSE}
+## read raw data
+dat <- read.csv("./Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = c(" ", "", "-99"))
+vars <- read.csv("./Data Harmonization/data_dictionary_master.csv", na.strings = c(" ", "", "-99"))
+```
+
+```{r data cleaning, include=FALSE}
+
+##########################################################################################################################
+#  General Harmonized Data Cleaning Code-
+#
+#  Purpose: Subjects have multiple record ID's in raw dataset if they participated in multiple studies 
+#           (co-enroll ID denotes what their other ID's are, if applicable). The below code was adapted 
+#           from Ye Ji's IHD code and cleans the harmonized dataset so that subjects are only represented 
+#           once.
+#  
+#  Cleaning Steps:
+#  1. rename IT2D co-enroll IDs to IT for consistent naming between record_ID and co_enroll_id cols
+#  2. rename the record ID for subjects on multiple studies to consist of the combination of all their 
+#     individual record IDs so that even if a subject is listed twice in the df, they only have one unique record ID
+#  3. simplify df so that each subject only has one row per visit (most subjects only have one row)
+#  4. subset df to include all subjects except those who were removed from study
+#  5. add labels
+
+clean_dat <- dat %>%
+  mutate(across('co_enroll_id', ~str_replace(., 'IT2D-', 'IT_'))) %>%
+  mutate(record_id = case_when(!is.na(co_enroll_id) ~ 
+                                 paste0(pmin(record_id, co_enroll_id), pmax(record_id, co_enroll_id)), 
+                          T ~ record_id)) %>%
+  group_by(record_id, visit) %>%
+  fill(names(dat)) %>%
+  mutate(study = paste(sort(unique(study)), collapse = '')) %>% 
+  summarise_all(last) %>%
+  filter(participation_status != "Removed")
+
+ rownames(vars) <- vars$variable_name
+ vars %<>% select("label")
+ vars <- t(vars) %>% as.data.frame(vars)
+ rownames(vars) <- "label"
+ vars <- vars[intersect(names(clean_dat), names(vars))]
+ vars[setdiff(names(clean_dat), names(vars))] <- " " 
+ label(clean_dat) = as.list(vars[match(names(clean_dat), names(vars))])
+
+##########################################################################################################################
+
+# add additional labels
+ label(clean_dat$total_kidney_volume_ml_manual) <- "Manual Total Kidney Volume (mL)"
+ label(clean_dat$ht_adj_tkv) <- "Height Adjusted Total Kidney Volume (mL)"
+ label(clean_dat$ht_adj_tkv_manual) <- "Height Adjusted Manual Total Kidney Volume (mL)"
+ label(clean_dat$tan_tveq) <- "Tanner Stage by Testicular Volume"
+ label(clean_dat$tan_fgd) <- "Tanner Stage by Breast Development"
+
+check <- clean_dat %>% 
+  filter(visit != 'baseline')
+check %>% 
+  select(c(total_kidney_volume_ml, total_kidney_volume_ml_manual, ht_adj_tkv, ht_adj_tkv_manual))
+rm(check)
+
+# no subjects with outcomes of interest at non-baseline timepoints so will only use baseline entries for all analyses
+clean_dat <- clean_dat %>% 
+  filter(visit == 'baseline')
+
+# log transformation of tkv and height adjusted tkv vars due to notable right skew
+clean_dat <- clean_dat %>%
+    mutate(log_total_kidney_volume_ml = log(total_kidney_volume_ml),
+         log_ht_adj_tkv = log(ht_adj_tkv))
+
+label(clean_dat$log_total_kidney_volume_ml) <- "Logged Total Kidney Volume (mL)"
+label(clean_dat$log_ht_adj_tkv) <- "Logged Height Adjusted Manual Total Kidney Volume (mL)"
+
+# create subset df for PANTHER subjects
+panther_dat <- clean_dat %>% 
+  filter(study == 'PANTHER')
+
+# factor tanner stage vars
+panther_dat <- panther_dat %>% 
+  mutate(tan_fgd = factor(tan_fgd, levels=c(1,2,3,4,5), labels=c('I', 'II', 'III', 'IV', 'V')),
+         tan_tveq = factor(tan_tveq, levels=c(1,2,3,4,5), labels=c('I', 'II', 'III', 'IV', 'V')))
+```
+
+
+```{r EDA, include=FALSE}
+## data exploration
+
+# descriptive stats
+tab1 <- table1::table1(~ total_kidney_volume_ml + log_total_kidney_volume_ml +
+                         total_kidney_volume_ml_manual + ht_adj_tkv + log_ht_adj_tkv +
+                         ht_adj_tkv_manual + sex + age + group + igf_1, data=clean_dat, 
+                       caption='Descriptive statistics of all participants')
+tab1_panth <- table1::table1(~ total_kidney_volume_ml + total_kidney_volume_ml_manual + ht_adj_tkv + 
+                               ht_adj_tkv_manual + sex + age + group + igf_1, data=panther_dat, 
+                             caption='Descriptive statistics of PANTHER participants')
+
+# create missingness dfs for inline coding
+miss <- clean_dat %>% 
+  select(c(total_kidney_volume_ml, total_kidney_volume_ml_manual, ht_adj_tkv, ht_adj_tkv_manual))
+miss_dat <- as.data.frame(miss_var_summary(miss[,-c(1)]))
+rm(miss)
+
+miss_panth <- panther_dat %>% 
+  select(c(total_kidney_volume_ml, total_kidney_volume_ml_manual, ht_adj_tkv, ht_adj_tkv_manual))
+miss_panth_dat <- as.data.frame(miss_var_summary(miss_panth[,-c(1)]))
+rm(miss_panth)
+
+# missingness plot for harmonized dataset
+miss_upset <- clean_dat %>%
+  select(c(total_kidney_volume_ml, total_kidney_volume_ml_manual, ht_adj_tkv, ht_adj_tkv_manual)) %>%
+  rename(c('Total Kidney Volume'='total_kidney_volume_ml',
+           'Manual Total Kidney Volume'='total_kidney_volume_ml_manual',
+           'Height Adjusted Total Kidney Volume'='ht_adj_tkv',
+           'Height Adjusted Manual Total Kidney Volume'='ht_adj_tkv_manual')) %>% 
+  gg_miss_upset() 
+```
+
+# Methods
+
+There were four outcome variables available for describing TKV: total kidney volume in mL (TKV), manually calculated total kidney volume in mL (manual TKV), height adjusted total kidney volume in mL/m (height adjusted TKV), and manually calculated height adjusted total kidney volume in mL/m (height adjusted manual TKV). The harmonized dataset analyses include results for all four of these outcomes, whereas the PANTHER analyses only include results for the non-manual outcomes since no data was available for the manual TKV and height adjusted TKV measures. Additionally, as no data was available for the outcomes at non-baseline visits, analyses for both the harmonized dataset and PANTHER were based on baseline visit entries only.
+
+There were `r length(unique(clean_dat$record_id))` subjects with data available for describing TKV across all studies in the harmonized dataset. If a subject was enrolled on multiple studies, their data was combined such that they were only represented once. Due to a notable right skew, the TKV and height adjusted TKV outcomes were modeled on a log scale for harmonized analyses. Across all studies, there were `r round(miss_dat[4,3],1)`% of TKV, `r round(miss_dat[2,3],1)`% of manual TKV, `r round(miss_dat[3,3],1)`% of height adjusted TKV, and `r round(miss_dat[1,3],1)`% of height adjusted manual TKV observations missing. The below plot further characterizes patterns of missingness. Descriptive statistics for the harmonized dataset follow the plot.
+
+<div align="center">
+```{r print upset plot and tab1, echo=FALSE}
+ miss_upset
+ tab1
+```
+
+</div>
+$$\\[0.4in]$$
+
+In the PANTHER dataset that was subsetted from the harmonized dataset, there were `r length(unique(panther_dat$record_id))` subjects. As no notable right skew was observed, the TKV and height adjusted TKV outcomes were not modeled on a log scale for PANTHER analyses. `r round(miss_panth_dat[3,3],1)`% of observations were missing for the TKV and height adjusted TKV variables. The below table presents descriptive statistics for subjects in the PANTHER study.
+<div align="center">
+```{r print panther tab1, echo=FALSE}
+tab1_panth
+```
+
+</div>
+
+# Results
+
+## TKV by Age
+
+This section includes model output testing the association between each of the four TKV outcomes of interest and age for subjects in the harmonized dataset. Due to a notable right skew in the variables for total kidney volume and height adjusted total kidney volume, a log transformation of these two variables was performed to meet regression normality assumptions. Diagnostic plots for checking linear regression assumptions are also included.
+
+```{r tkv by age, echo=FALSE}
+outcome_vars <- c('log_total_kidney_volume_ml','total_kidney_volume_ml_manual','log_ht_adj_tkv','ht_adj_tkv_manual')
+
+for (v in outcome_vars) {
+  form = as.formula(paste0(v,'~ age'))
+  mod <- lm(form, data = clean_dat)
+  print(noquote(c("Association between age and", noquote(v))))
+  print(summary(mod))
+  plot(x=clean_dat$age, y=clean_dat[[v]], xlab='age', ylab=noquote(v), main='Y-X Scatterplot'); abline(mod, col='gray', lty=2)
+  plot(mod, which=1)
+  plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), xlab='Observed Cumulative Probability', ylab='Expected Cumulative Probability',
+       main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
+  hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
+  cat('\n\n')
+}
+```
+
+## TKV by Disease Type
+
+The below table reports the mean and standard deviation (SD) of the TKV outcomes of interest by disease type across all subjects in the harmonized dataset. Welch's One-Way ANOVA was used to evaluate whether there was a significant difference in means between the groups. Logged values of total kidney volume and height adjusted total kidney volume were again used to meet normality assumptions.
+
+
+```{r tkv by disease type assumptions, eval=FALSE, include=FALSE}
+# assumptions check
+outcome_vars <- c('log_total_kidney_volume_ml','total_kidney_volume_ml_manual','log_ht_adj_tkv','ht_adj_tkv_manual')
+
+for (v in outcome_vars) {
+  form = as.formula(paste0(v,'~ group'))
+  mod <- aov(form, data = clean_dat)
+
+  qqnorm(mod$residuals)
+  qqline(mod$residuals)
+
+  bartlett_result <- bartlett.test(form, data = clean_dat)
+  print(bartlett_result)
+}
+# normality OK for all outcomes
+# variance assumption violated for log(total_kidney_volume_ml) and log(ht_adj_tkv)
+```
+
+```{r tkv by disease type analysis, echo=FALSE, message=FALSE}
+# summary table with p-values based on Welch's one-way ANOVA
+clean_dat %>%
+  select(record_id, log_total_kidney_volume_ml, total_kidney_volume_ml_manual, log_ht_adj_tkv,
+         ht_adj_tkv_manual, group) %>% 
+  tbl_summary(by=group, include=-record_id,
+              type=list(c(log_total_kidney_volume_ml, total_kidney_volume_ml_manual, 
+                          log_ht_adj_tkv, ht_adj_tkv_manual) ~ 'continuous', 
+                        group~'categorical'),
+    statistic=list(all_continuous() ~ '{mean} ({sd})'),
+    digits=everything()~c(2,2),
+    missing_text='Missing') %>% 
+  add_p(test = all_continuous() ~ 'oneway.test',
+        pvalue_fun=~style_pvalue(.x, digits=3)) %>% 
+  modify_header(label='**Measurement**')
+```
+
+## PANTHER: TKV by Tanner Stage
+
+The below table reports the mean and standard deviation (SD) of the TKV outcomes of interest by Tanner Stage across all subjects in the PANTHER dataset. A One-Way ANOVA with equal variances assumed was used to evaluate whether there was a significant difference in means between the stages.
+
+<!-- tanner stage for boys measured as tan_tveq -->
+<!-- tanner stage for girls measured as tan_fgd -->
+
+```{r tkv by tanner stage in PANTHER subjects assumptions, include=FALSE}
+# assumptions check
+outcome_vars <- c('total_kidney_volume_ml', 'ht_adj_tkv')
+
+for (v in outcome_vars) {
+  form = as.formula(paste0(v,'~ tan_tveq'))
+  mod <- aov(form, data = panther_dat)
+
+  qqnorm(mod$residuals)
+  qqline(mod$residuals)
+
+  bartlett_result <- bartlett.test(form, data = panther_dat)
+  print(bartlett_result)
+}
+# normality OK for both outcomes with tan_tveq
+# variance assumption OK for both outcomes
+
+for (v in outcome_vars) {
+  form = as.formula(paste0(v,'~ tan_fgd'))
+  mod <- aov(form, data = panther_dat)
+
+  qqnorm(mod$residuals)
+  qqline(mod$residuals)
+
+  bartlett_result <- bartlett.test(form, data = panther_dat)
+  print(bartlett_result)
+}
+# normality OK for both outcomes with tan_fgd
+# variance assumption OK for both outcomes
+```
+
+
+```{r tkv by tanner stage in PANTHER subjects analysis, echo=FALSE, message=FALSE}
+# summary table with p-values based on one-way ANOVA
+
+# males
+panther_dat %>%
+  select(record_id, total_kidney_volume_ml, ht_adj_tkv, tan_tveq) %>% 
+  tbl_summary(by=tan_tveq, include=-record_id,
+              type=list(c(total_kidney_volume_ml, ht_adj_tkv) ~ 'continuous', 
+                        tan_tveq~'categorical'),
+    statistic=list(all_continuous() ~ '{mean} ({sd})'),
+    digits=everything()~c(2,2),
+    missing_text='Missing') %>% 
+  add_p(test = all_continuous() ~ 'oneway.test',
+        test.args = all_continuous('oneway.test') ~ list(var.equal = TRUE),
+        pvalue_fun=~style_pvalue(.x, digits=3)) %>% 
+  modify_header(label='**Measurement**') %>% 
+  modify_spanning_header(stat_1:stat_5 ~ "**Tanner Stage**") %>% 
+  modify_caption("**Male Tanner Stage Summary**")
+
+# females
+panther_dat %>%
+  select(record_id, total_kidney_volume_ml, ht_adj_tkv, tan_fgd) %>% 
+  tbl_summary(by=tan_fgd, include=-record_id,
+              type=list(c(total_kidney_volume_ml, ht_adj_tkv) ~ 'continuous', 
+                        tan_fgd~'categorical'),
+    statistic=list(all_continuous() ~ '{mean} ({sd})'),
+    digits=everything()~c(2,2),
+    missing_text='Missing') %>% 
+  add_p(test = all_continuous() ~ 'oneway.test',
+        test.args = all_continuous('oneway.test') ~ list(var.equal = TRUE),
+        pvalue_fun=~style_pvalue(.x, digits=3)) %>% 
+  modify_header(label='**Measurement**') %>% 
+  modify_spanning_header(stat_1:stat_5 ~ "**Tanner Stage**") %>% 
+  modify_caption("**Female Tanner Stage Summary**")
+```
+
+## PANTHER: TKV by IGF-1 Concentrations
+
+This section includes model output testing the association between the TKV and height adjusted TKV outcomes of interest and IGF-1 concentrations for subjects in the PANTHER dataset. Diagnostic plots for checking linear regression assumptions are also included.
+
+```{r tkv by IGF-1 in PANTHER subjects, echo=FALSE}
+outcome_vars <- c('total_kidney_volume_ml', 'ht_adj_tkv')
+
+for (v in outcome_vars) {
+  form = as.formula(paste0(v,'~ igf_1'))
+  mod <- lm(form, data = panther_dat)
+  print(noquote(c("Association between", noquote(v), "and IGF-1")))
+  print(summary(mod))
+  plot(x=clean_dat$igf_1, y=clean_dat[[v]], xlab='IGF-1', ylab=noquote(v), main='Y-X Scatterplot'); abline(mod, col='gray', lty=2)
+  plot(mod, which=1)
+  plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), xlab='Observed Cumulative Probability', ylab='Expected Cumulative
+       Probability', main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
+  hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
+  cat('\n\n')
+}
+```
