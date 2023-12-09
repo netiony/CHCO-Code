@@ -29,6 +29,7 @@ library(lme4)
 library(emmeans)
 library(sjPlot)
 library(knitr)
+library(car)
 ```
 
 ```{r data import}
@@ -38,6 +39,8 @@ data <- remove_labels(data)
 
 # remove screen fails
 data <- data %>% filter(!study_group == 3)
+data$study_group.factor <- droplevels(data$study_group.factor)
+data$study_group.factor <- factor(data$study_group.factor, levels=c("Diet", "GLP-1"))
 
 # wide dataset with needed variables
 keep_wide <- data %>% select(subject_id, study_group.factor, age, bmi_cat.factor, tanner,
@@ -105,6 +108,9 @@ keep_wide$week8_perwtchange <- (keep_wide$week8_abswtchange / keep_wide$baseline
 keep_wide$week16_perwtchange <- (keep_wide$week16_abswtchange / keep_wide$baseline_weight) * 100
 keep_wide$baseline_perwtchange <- 0
 
+# calculate change in percent liver fat
+keep_wide$week16_liverfatpercchange <- keep_wide$week16_liverfatperc - keep_wide$baseline_liverfatperc
+
 # create long dataset for mixed models
 keep_long <- keep_wide %>% pivot_longer(cols = !c("subject_id", "study_group.factor", "age", "bmi_cat.factor", "tanner"),
                                         names_to = c("visit", ".value"), names_sep = "_", values_drop_na = T)
@@ -120,6 +126,14 @@ keep_long$weeks <- ifelse(keep_long$visit == "screen", -4,
 
 # create df without screening and baseline
 keep_long_nobase <- keep_long %>% filter(visit == "week8" | visit == "week16")
+
+# create df week 16 only for plotting
+keep_long_week16 <- keep_long %>% filter(weeks == 16)
+keep_long_week16$perwtchange_group <- ifelse(is.na(keep_long_week16$perwtchange), NA,
+                                             ifelse(keep_long_week16$perwtchange>0, "Gain",
+                                                    ifelse((keep_long_week16$perwtchange<0 & keep_long_week16$perwtchange>-5), "0 - <5% loss",
+                                                           ifelse((keep_long_week16$perwtchange<5 & keep_long_week16$perwtchange>-10), "5 - <10% loss", ">= 10% loss"))))
+keep_long_week16$perwtchange_group <- factor(keep_long_week16$perwtchange_group, levels=c("Gain", "0 - <5% loss", "5 - <10% loss", ">= 10% loss"))
 ```
 
 ```{r functions}
@@ -217,11 +231,17 @@ model_and_plot_adjust <- function(outcome_name, covar, df, pois = FALSE) {
 
 # Methods
 
+Linear mixed-effects models were used to compare changes in weight and BMI in the two groups. Several versions of the models were considered: unadjusted using all time points, unadjusted models excluding screening, and models adjusted for baseline.
+
+A linear model with an interaction between group and weight loss was used to test whether the relationship between weight loss and change in liver fat differed by group.
+
 # Results
 
 ## Weight
 
 ### Unadjusted model, all timepoints
+
+The p-value for "as.factor(weeks):study_group.factor" tests whether the weight trajectories differed in the two groups.
 
 ```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
 # unadjusted model - include screen
@@ -230,6 +250,8 @@ model_and_plot(outcome_name = "weight", df = keep_long)
 
 ### Unadjusted model, exclude screen
 
+The p-value for "as.factor(weeks):study_group.factor" tests whether the weight trajectories differed in the two groups.
+
 ```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
 # unadjusted model - exclude screen
 model_and_plot_no_screen(outcome_name = "weight", df = keep_long)
@@ -237,12 +259,16 @@ model_and_plot_no_screen(outcome_name = "weight", df = keep_long)
 
 ### Model adjusted for baseline
 
+The p-value for "as.factor(weeks):study_group.factor" tests whether the weight trajectories differed in the two groups.
+
 ```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
 # unadjusted model - exclude screen
 model_and_plot_adjust(outcome_name = "weight", df = keep_long_nobase, covar = "baseline_weight")
 ```
 
 ## Percent weight change
+
+The p-value for "as.factor(weeks):study_group.factor" tests whether the weight trajectories differed in the two groups.
 
 ### Unadjusted model, no screen
 
@@ -255,12 +281,16 @@ model_and_plot_no_screen(outcome_name = "perwtchange", df = keep_long)
 
 ### Unadjusted model, all timepoints
 
+The p-value for "as.factor(weeks):study_group.factor" tests whether the weight trajectories differed in the two groups.
+
 ```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
 # unadjusted model - include screen
 model_and_plot(outcome_name = "bmi", df = keep_long)
 ```
 
 ### Unadjusted model, exclude screen
+
+The p-value for "as.factor(weeks):study_group.factor" tests whether the weight trajectories differed in the two groups.
 
 ```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
 # unadjusted model - exclude screen
@@ -269,8 +299,66 @@ model_and_plot_no_screen(outcome_name = "bmi", df = keep_long)
 
 ### Model adjusted for baseline
 
+The p-value for "as.factor(weeks):study_group.factor" tests whether the weight trajectories differed in the two groups.
+
 ```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
 # unadjusted model - exclude screen
 model_and_plot_adjust(outcome_name = "bmi", df = keep_long_nobase, covar = "baseline_bmi")
 ```
 
+## Does relationship between weight loss and outcome differ by group?
+
+The p-value for "week16_abswtchange:study_group.factor" tests whether the relationship between weight loss and change in liver fat differed in the two groups.
+
+### Absolute weight loss
+
+```{r message=FALSE,warning=FALSE,include=FALSE}
+mod <- lm(week16_liverfatpercchange ~ week16_abswtchange*study_group.factor, data=keep_wide)
+anova_table <- car::Anova(mod)
+```
+
+```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
+print(kable(anova_table))
+```
+
+### Percent weight loss
+
+The p-value for "week16_perwtchange:study_group.factor" tests whether the relationship between weight loss and change in liver fat differed in the two groups.
+
+```{r message=FALSE,warning=FALSE,include=FALSE}
+mod <- lm(week16_liverfatpercchange ~ week16_perwtchange*study_group.factor, data=keep_wide)
+anova_table <- car::Anova(mod)
+```
+
+```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
+print(kable(anova_table))
+```
+
+## Bar chart of percent weight change by group
+
+```{r message=FALSE,warning=FALSE,include=FALSE}
+table <- as.data.frame(table(keep_long_week16$study_group.factor, keep_long_week16$perwtchange_group))
+colnames(table) <- c("study_group.factor", "perwtchange_group", "freq")
+p <- ggplot(table, aes(fill=study_group.factor, y=freq, x=perwtchange_group)) + 
+        geom_bar(position="dodge", stat="identity") + labs(x="", y="Count of participants") + labs(fill="")
+```
+
+```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
+p
+```
+
+## Waterfall plot of percent weight change for GLP-1
+
+```{r message=FALSE,warning=FALSE,include=FALSE}
+w_glp1 <- keep_long_week16 %>% filter(study_group.factor == "GLP-1") %>% select(perwtchange) %>% arrange(perwtchange)
+x <- (1:nrow(w_glp1))
+w_glp1 <- cbind(x, w_glp1)
+
+p <- ggplot(w_glp1, aes(x=x, y=perwtchange)) + 
+        geom_bar(position="dodge", stat="identity") + labs(x="", y="Percent change in weight from baseline") + labs(fill="")
+
+```
+
+```{r message=FALSE,warning=FALSE,dpi=1200,results='asis'}
+p
+```
