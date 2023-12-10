@@ -1,0 +1,148 @@
+---
+title: "KNIGHT Proteomics"
+author: "Laura Pyle"
+date: "today"
+date-format: long
+format:
+  revealjs:
+    self-contained: true
+editor: source
+---
+
+```{r libraries}
+#| include: false
+library(limma)
+library(clusterProfiler)
+library(ReactomePA)
+library(enrichplot)
+library(Hmisc)
+library(knitr)
+library(tidyverse)
+library(gtsummary)
+library(ggpubr)
+library(lmerTest)
+library(parallel)
+library(emmeans)
+library(RColorBrewer)
+library(VennDiagram)
+library(broom.mixed)
+library(readxl)
+library(dplyr)
+```
+
+```{r clean data}
+# read processed SomaScan data
+load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Somalogic data/knight_soma.RData")
+load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Somalogic data/analytes.RData")
+
+# read in linkage file for Natalie's studies
+link <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Somalogic data/BCF-23-091 Linker File 10.05.2023.csv")
+link$Study.ID <- link$Sequence.Number
+redcap <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Somalogic data/200572DataKNIGHT_DATA_LABELS_2023-12-10_1551.csv")
+redcap <- redcap %>% filter(Event.Name == "Screening")
+redcap <- redcap %>% select(Study.ID, Sex.assigned.at.birth)
+link <- merge(link, redcap, by="Study.ID", all.x = T, all.y = F)
+```
+
+```{r}
+#| label: tbl-characteristics
+#| tbl-cap: Participant characteristics
+df %>%
+  dplyr::select(
+    SEX, age, ETHN, RACE, SURG, diab, diab_resolved, sbp, dbp, hrate, bfat, bmi,
+    weight, height, UACRATIO, albuminuria, CYSC, visit
+  ) %>%
+  tbl_summary(by = visit, missing_text = "Missing") %>%
+  modify_header(label = "**Visit**") %>%
+  bold_labels() %>%
+  as_kable_extra()
+```
+
+# Univariable analyses 
+
+## Intercept only model with $\Delta$ as the outcome
+
+```{r intercept}
+#| message: false
+# Calculate difference from month 1 to year 1, make variable for diabetes status
+# at baseline
+df_diff <- df %>%
+  arrange(ID, visit) %>%
+  filter(visit %in% c("Month 1", "Year 1")) %>%
+  group_by(ID) %>%
+  reframe(across(contains("seq"), ~ diff(as.numeric(.x))))
+# Limma setup
+# Y needs "genes" in rows
+y <- df_diff %>%
+  dplyr::select(contains("seq")) %>%
+  t()
+# Design matrix
+design_mat <- model.matrix(~1, data = df_diff)
+# Fit
+fit <- lmFit(y, design_mat)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$Target <- analyte_info$Target[match(rownames(res), analyte_info$AptName)]
+res$TargetFullName <- analyte_info$TargetFullName[match(rownames(res), analyte_info$AptName)]
+res <- res[res$adj.P.Val <= 0.05, ]
+# Write results for online enrichment
+res_for_enrichment <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res_for_enrichment <- res_for_enrichment[order(res_for_enrichment$logFC, decreasing = T), ]
+res_for_enrichment$UniProt <- analyte_info$UniProt[match(rownames(res_for_enrichment), analyte_info$AptName)]
+res_for_enrichment <- res_for_enrichment[, c("UniProt", "AveExpr")]
+write.csv(res_for_enrichment, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/limma_intercept_only_results.csv", row.names = F)
+# Table
+kable(res[1:10, ], digits = 3, row.names = F)
+```
+
+There were `r nrow(res)` proteins significantly different after p value adjustment. Of these, `r sum(res$logFC>0)` were higher on average at year 1 compared to month 1, and `r sum(res$logFC<0)` were lower.
+
+# Gene set enrichment analysis (GSEA) with Reactome
+
+## Dotplot
+
+```{r}
+#| message: false
+res$EntrezGeneID <- analyte_info$EntrezGeneID[match(rownames(res), analyte_info$AptName)]
+de <- res$logFC
+names(de) <- res$EntrezGeneID
+de <- de[names(de) != ""]
+de <- de[!duplicated(names(de))]
+de <- sort(de, decreasing = T)
+all_prots_gse <- gsePathway(de,
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  verbose = FALSE
+)
+dotplot(all_prots_gse)
+```
+
+## Ridge plot
+
+```{r}
+#| message: false
+ridgeplot(all_prots_gse)
+```
+
+## Network plot
+
+```{r}
+#| message: false
+#| fig-width: 12
+#| fig-height: 9
+all_prots_gse_net <- setReadable(all_prots_gse, "org.Hs.eg.db", "ENTREZID")
+cnetplot(all_prots_gse_net, foldChange = de, circular = T, colorEdge = T)
+```
+
+## GSEA scores
+
+```{r}
+#| message: false
+#| fig-width: 12
+#| fig-height: 9
+gseaplot2(all_prots_gse, geneSetID = 1:7, subplots = 1:2)
+```
+
+
+
+

@@ -81,5 +81,5 @@ save(pen_soma,file = "./PENGUIN/Somalogic data/penguin_soma.Rdata")
 save(analytes,file = "./PENGUIN/Somalogic data/analytes.Rdata")
 
 # save KNIGHT
-save(pen_soma,file = "./KNIGHT/Somalogic data/knight_soma.Rdata")
+save(knight_soma,file = "./KNIGHT/Somalogic data/knight_soma.Rdata")
 save(analytes,file = "./KNIGHT/Somalogic data/analytes.Rdata")
