@@ -75,12 +75,12 @@ def clean_panther():
     # Screening labs
     # --------------------------------------------------------------------------
 
-    var = ["record_id", "screen_creat_s", "screen_a1c"]
-    screen = pd.DataFrame(proj.export_records(fields=var))
+    var = ["record_id", "screen_creat_s", "screen_a1c", "consent_date"]
+    screen = pd.DataFrame(proj.export_records(fields=var, events=["screening_arm_1"]))
     # Replace missing values
     screen.replace(rep, np.nan, inplace=True)
     screen.columns = screen.columns.str.replace(
-        r"screen_|_of_screen", "", regex=True)
+        r"screen_|_of_screen|consent_", "", regex=True)
     screen.rename({"creat_s": "creatinine_s", "a1c": "hba1c"},
                   axis=1, inplace=True)
     screen["procedure"] = "screening"
@@ -91,12 +91,12 @@ def clean_panther():
     # --------------------------------------------------------------------------
 
     var = ["record_id", "dkd_meds_dose", "t2d_meds_dose", "htn_med", "hx_cv_medlist"]
-    med = pd.DataFrame(proj.export_records(fields=var))
+    med = pd.DataFrame(proj.export_records(fields=var, events=["screening_arm_1"]))
     # Replace missing values
     med.replace(rep, np.nan, inplace=True)
     # Visit ID
     med["redcap_event_name"].replace(
-        {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1"}, 
+        {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1", "year_2_arm_1": "year_2"}, 
         inplace=True)
     med = med.rename(columns={"redcap_event_name": "visit"})
     # Meds by regex
@@ -110,6 +110,7 @@ def clean_panther():
     # SGLT2i, RAASi, Metformin
     med = med[["record_id", "visit", "sglt2i_timepoint", "raasi_timepoint", "metformin_timepoint", "insulin_med_timepoint"]].copy()
     med["procedure"] = "medications"
+    med["date"] = screen["date"]
 
     # --------------------------------------------------------------------------
     # Physical exam
@@ -118,9 +119,10 @@ def clean_panther():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                                == "physical_exam", "field_name"]]
     phys = pd.DataFrame(proj.export_records(
-        fields=var, events=["screening_arm_1"]))
+        fields=var))
     phys["redcap_event_name"].replace(
-        {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1"}, inplace=True)
+        {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1", "year_2_arm_1": "year_2"}, 
+        inplace=True)
     phys = phys.rename(columns={"redcap_event_name": "visit"})
     # Replace missing values
     phys.replace(rep, np.nan, inplace=True)
@@ -137,9 +139,10 @@ def clean_panther():
     # --------------------------------------------------------------------------
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"].str.startswith("ivgtt"), "field_name"]]
-    ivgtt = pd.DataFrame(proj.export_records(fields=var, events=["baseline_arm_1","year_1_arm_1"]))
+    ivgtt = pd.DataFrame(proj.export_records(fields=var))
     ivgtt["redcap_event_name"].replace(
-        {"baseline_arm_1": "baseline", "year_1_arm_1": "year_1"}, inplace=True)
+        {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1", "year_2_arm_1": "year_2"}, 
+        inplace=True)
     ivgtt = ivgtt.rename(columns={"redcap_event_name": "visit"})    
     ivgtt.replace(rep, np.nan, inplace=True)  # Replace missing values
     ivgtt.drop({"bl_lipid", "visit_upt", "visit_uptresult", "visit_npo", "visit_bgl_250",
@@ -201,9 +204,10 @@ def clean_panther():
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                                == "study_visit_dxa_scan", "field_name"]]
-    dxa = pd.DataFrame(proj.export_records(fields=var, events=["baseline_arm_1","year_1_arm_1"]))
+    dxa = pd.DataFrame(proj.export_records(fields=var))
     dxa["redcap_event_name"].replace(
-        {"baseline_arm_1": "baseline", "year_1_arm_1": "year_1"}, inplace=True)
+        {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1", "year_2_arm_1": "year_2"}, 
+        inplace=True)
     dxa = dxa.rename(columns={"redcap_event_name": "visit"})       
     # Replace missing values
     dxa.replace(rep, np.nan, inplace=True)
@@ -231,7 +235,8 @@ def clean_panther():
     rct["group"] = rct.groupby(["record_id"])["group"].ffill()
     rct = rct.loc[rct["redcap_event_name"] != "screening_arm_1"].copy()
     rct["redcap_event_name"].replace(
-        {"baseline_arm_1": "baseline", "year_1_arm_1": "year_1"}, inplace=True)
+        {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1", "year_2_arm_1": "year_2"}, 
+        inplace=True)
     rct = rct.rename(columns={"redcap_event_name": "visit"})       
     rct["procedure"] = "renal_clearance_testing"
     rename = {"gfr_raw": "gfr_raw_plasma_urine", "gfr_bsa": "gfr_bsa_plasma_urine",
@@ -278,6 +283,7 @@ def clean_panther():
     rct.rename(rename, axis=1, inplace=True)
     rct.drop(["rbf_seconds", "erpf_raw_plasma_seconds", "group", "rc_labs", "map", "kfg", 
               "gfr_raw_plasma_seconds"], axis=1, inplace=True)
+    rct["date"] = ivgtt["date"]
 
     # --------------------------------------------------------------------------
     # CGM
@@ -285,13 +291,15 @@ def clean_panther():
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                                == "cgm_data", "field_name"]]
-    cgm = pd.DataFrame(proj.export_records(fields=var, events=["baseline_arm_1","year_1_arm_1"]))
+    cgm = pd.DataFrame(proj.export_records(fields=var))
     cgm["redcap_event_name"].replace(
-        {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1"}, inplace=True)
+        {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1", "year_2_arm_1": "year_2"}, 
+        inplace=True)
     cgm = cgm.rename(columns={"redcap_event_name": "visit"})   
     cgm.replace(rep, np.nan, inplace=True)  # Replace missing values
     cgm["cgm_yn"].replace({"1":"Yes", "0":"No"}, inplace=True)
     cgm["procedure"] = "cgm"
+    cgm["date"] = phys["date"]
 
     # --------------------------------------------------------------------------
     # Outcomes
@@ -299,9 +307,10 @@ def clean_panther():
 
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                 == "study_visit_boldasl_mri", "field_name"]]
-    out = pd.DataFrame(proj.export_records(fields=var, events=["baseline_arm_1", "year_1_arm_1"]))
+    out = pd.DataFrame(proj.export_records(fields=var))
     out["redcap_event_name"].replace(
-        {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1"}, inplace=True)
+        {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1", "year_2_arm_1": "year_2"}, 
+        inplace=True)
     out = out.rename(columns={"redcap_event_name": "visit"})       
     # Replace missing values
     out.replace(rep, np.nan, inplace=True)
@@ -318,6 +327,7 @@ def clean_panther():
     bold_mri.drop(["mri_bold_data"], axis=1, inplace=True)
     out["procedure"] = "clamp"
     bold_mri["procedure"] = "bold_mri"
+    bold_mri["date"] = out["date"]
 
     # --------------------------------------------------------------------------
     # Pc MRI 2d
@@ -332,6 +342,7 @@ def clean_panther():
     pc_mri.replace(rep, np.nan, inplace=True)  # Replace missing values
     pc_mri.rename({"hr_mri": "hr_mri_ra"}, axis=1, inplace=True)
     pc_mri["procedure"] = "pc_mri_2d"
+    pc_mri["date"] = out["date"]
 
     # --------------------------------------------------------------------------
     # Missingness

@@ -66,7 +66,8 @@ def harmonize_data():
     harmonized["visit"] = \
         pd.Categorical(harmonized["visit"],
                        categories=['screening', 'baseline', 'pre_surgery',
-                                   '3_months_post_surgery', '12_months_post_surgery'],
+                                   '3_months_post_surgery', '12_months_post_surgery',
+                                   'year_1', 'year_2'],
                        ordered=True)
     harmonized["race"].replace(
         ["American Indian or Alaskan Native & White",
@@ -176,7 +177,7 @@ def harmonize_data():
             alb.append("A3")
         else:
             alb.append(np.nan)
-            
+
     harmonized["albuminuria_cat"] = alb
     harmonized["elevated_albuminuria"] = pd.cut(
         harmonized["acr_u"], [-float("inf"), 30, float("inf")], right=False, labels=["No", "Yes"])
