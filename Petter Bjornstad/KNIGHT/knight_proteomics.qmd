@@ -3,10 +3,13 @@ title: "KNIGHT Proteomics"
 author: "Laura Pyle"
 date: "today"
 date-format: long
-format:
-  revealjs:
-    self-contained: true
-editor: source
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
 ---
 
 ```{r libraries}
@@ -28,9 +31,10 @@ library(VennDiagram)
 library(broom.mixed)
 library(readxl)
 library(dplyr)
+library(stringr)
 ```
 
-```{r clean data}
+```{r, include=F}
 # read processed SomaScan data
 load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Somalogic data/knight_soma.RData")
 load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Somalogic data/analytes.RData")
@@ -42,68 +46,100 @@ redcap <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjorn
 redcap <- redcap %>% filter(Event.Name == "Screening")
 redcap <- redcap %>% select(Study.ID, Sex.assigned.at.birth)
 link <- merge(link, redcap, by="Study.ID", all.x = T, all.y = F)
+link$SampleDescription <- link$Barcode
+link <- link %>% select(SampleDescription, Study.ID, Timepoint.Label, Sex.assigned.at.birth)
+knight_soma <- full_join(knight_soma, link, by="SampleDescription")
+
+# read in linkage file for Netherlands samples
+# actually, not sure I need these...there is a field called TimePoint
+#nethlink <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Somalogic data/sample ID and visit labels SOMAscan WUS-23-004.csv")
+#nethlink <- nethlink %>% filter(str_detect(SampleId, "KGHT"))
+#nethlink <- nethlink %>% select(GTAC_ID, TimePoint)
+#knight_soma$GTAC_ID <- str_sub(knight_soma$SampleId, 1, 10)
+#knight_soma <- merge(knight_soma, nethlink, by="GTAC_ID", all.x = T, all.y = T)
+
+# create new variable for harmonized time point
+knight_soma$time <-  
+  case_when(
+  knight_soma$TimePoint == "V1" ~ 1,
+  knight_soma$TimePoint == "V2" ~ 2,
+  knight_soma$Timepoint.Label == "Baseline" ~ 1,
+  knight_soma$Timepoint.Label == "M3" ~ 2,
+  .default = NA
+)
+
+knight_soma$group <-  
+  case_when(
+  str_sub(knight_soma$SampleDescription, 1, 2) == "MV" ~ "MTF",
+  str_sub(knight_soma$SampleDescription, 1, 2) == "VM" ~ "FTM",
+  knight_soma$Sex.assigned.at.birth == "Male" ~ "MTF",
+  knight_soma$Sex.assigned.at.birth == "Female" ~ "FTM",
+  .default = NA
+)
+
+knight_soma$Study.ID <- ifelse(is.na(knight_soma$Study.ID), knight_soma$SampleDescription, knight_soma$Study.ID)
+
 ```
 
-```{r}
+```{r, include=FALSE}
 #| label: tbl-characteristics
 #| tbl-cap: Participant characteristics
-df %>%
-  dplyr::select(
-    SEX, age, ETHN, RACE, SURG, diab, diab_resolved, sbp, dbp, hrate, bfat, bmi,
-    weight, height, UACRATIO, albuminuria, CYSC, visit
-  ) %>%
-  tbl_summary(by = visit, missing_text = "Missing") %>%
-  modify_header(label = "**Visit**") %>%
-  bold_labels() %>%
-  as_kable_extra()
+#df %>%
+#  dplyr::select(
+#    SEX, age, ETHN, RACE, SURG, diab, diab_resolved, sbp, dbp, hrate, bfat, bmi,
+#    weight, height, UACRATIO, albuminuria, CYSC, visit
+#  ) %>%
+#  tbl_summary(by = visit, missing_text = "Missing") %>%
+#  modify_header(label = "**Visit**") %>%
+#  bold_labels() %>%
+#  as_kable_extra()
 ```
 
 # Univariable analyses 
 
-## Intercept only model with $\Delta$ as the outcome
+## Male to Female
 
-```{r intercept}
-#| message: false
-# Calculate difference from month 1 to year 1, make variable for diabetes status
-# at baseline
-df_diff <- df %>%
-  arrange(ID, visit) %>%
-  filter(visit %in% c("Month 1", "Year 1")) %>%
-  group_by(ID) %>%
+```{r, include=FALSE}
+# Calculate change in each protein
+df_diff <- knight_soma %>%
+  arrange(Study.ID, time) %>%
+  group_by(Study.ID, group) %>%
   reframe(across(contains("seq"), ~ diff(as.numeric(.x))))
+
+# First MTF
 # Limma setup
 # Y needs "genes" in rows
 y <- df_diff %>%
+  filter(group == "MTF") %>%
   dplyr::select(contains("seq")) %>%
   t()
 # Design matrix
-design_mat <- model.matrix(~1, data = df_diff)
+design_mat <- model.matrix(~1, data = df_diff[df_diff$group == "MTF",])
 # Fit
 fit <- lmFit(y, design_mat)
 fit <- eBayes(fit)
 res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
-res$Target <- analyte_info$Target[match(rownames(res), analyte_info$AptName)]
-res$TargetFullName <- analyte_info$TargetFullName[match(rownames(res), analyte_info$AptName)]
-res <- res[res$adj.P.Val <= 0.05, ]
+res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+write.csv(res, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Results/limma_MTF_results.csv", row.names = F)
 # Write results for online enrichment
 res_for_enrichment <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
 res_for_enrichment <- res_for_enrichment[order(res_for_enrichment$logFC, decreasing = T), ]
-res_for_enrichment$UniProt <- analyte_info$UniProt[match(rownames(res_for_enrichment), analyte_info$AptName)]
+res_for_enrichment$UniProt <- analytes$UniProt[match(rownames(res_for_enrichment), analytes$AptName)]
 res_for_enrichment <- res_for_enrichment[, c("UniProt", "AveExpr")]
-write.csv(res_for_enrichment, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/limma_intercept_only_results.csv", row.names = F)
+#write.csv(res_for_enrichment, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/limma_intercept_only_results.csv", row.names = F)
 # Table
-kable(res[1:10, ], digits = 3, row.names = F)
+#kable(res[1:10, ], digits = 3, row.names = F)
 ```
 
-There were `r nrow(res)` proteins significantly different after p value adjustment. Of these, `r sum(res$logFC>0)` were higher on average at year 1 compared to month 1, and `r sum(res$logFC<0)` were lower.
+There were `r nrow(res[res$adj.P.Val < 0.05,])` proteins significantly different after p value adjustment. Of these, `r sum(res[res$adj.P.Val < 0.05,]$logFC>0)` were higher on average at year 1 compared to month 1, and `r sum(res[res$adj.P.Val < 0.05,]$logFC<0)` were lower. See separate output file for univariate results.
 
 # Gene set enrichment analysis (GSEA) with Reactome
 
 ## Dotplot
 
-```{r}
-#| message: false
-res$EntrezGeneID <- analyte_info$EntrezGeneID[match(rownames(res), analyte_info$AptName)]
+```{r, include=FALSE}
+res$EntrezGeneID <- analytes$EntrezGeneID[match(rownames(res), analytes$AptName)]
 de <- res$logFC
 names(de) <- res$EntrezGeneID
 de <- de[names(de) != ""]
@@ -114,32 +150,31 @@ all_prots_gse <- gsePathway(de,
   pAdjustMethod = "BH",
   verbose = FALSE
 )
+```
+
+```{r, echo=FALSE, warning=FALSE}
 dotplot(all_prots_gse)
 ```
 
 ## Ridge plot
 
-```{r}
-#| message: false
+```{r, echo=FALSE, warning=FALSE}
 ridgeplot(all_prots_gse)
 ```
 
 ## Network plot
 
-```{r}
-#| message: false
-#| fig-width: 12
-#| fig-height: 9
+```{r, include=FALSE}
 all_prots_gse_net <- setReadable(all_prots_gse, "org.Hs.eg.db", "ENTREZID")
+```
+
+```{r, echo=FALSE, warning=FALSE}
 cnetplot(all_prots_gse_net, foldChange = de, circular = T, colorEdge = T)
 ```
 
 ## GSEA scores
 
-```{r}
-#| message: false
-#| fig-width: 12
-#| fig-height: 9
+```{r, echo=FALSE, warning=FALSE}
 gseaplot2(all_prots_gse, geneSetID = 1:7, subplots = 1:2)
 ```
 
