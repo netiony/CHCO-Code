@@ -10,7 +10,7 @@ if(Sys.info()["sysname"] == "Windows"){
 setwd(home_dir)
 
 # read in data - we want to use the fully processed, normalized file ending in "anmlSMP.adat"
-soma <- read_adat("./Somalogic data raw/WUS-22-001_Somalogic_normalized/WUS-22-001_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
+soma <- read_adat("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Somalogic data raw/WUS-22-001_Somalogic_normalized/WUS-22-001_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
 analytes <- getAnalyteInfo(soma)
 
 # read in the files that will link repository ID (column A) to Somalogic ID (column C)
