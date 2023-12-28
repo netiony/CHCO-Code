@@ -19,6 +19,13 @@ soma <- soma %>% filter(!is.na(SampleDescription))
 analytes <- getAnalyteInfo(soma)
 analytes <- analytes %>% select(AptName,SeqId,SeqIdVersion,SomaId,TargetFullName,Target,UniProt,EntrezGeneID,EntrezGeneSymbol,Organism,Units,Type)
 
+# remove fc mouse and no protein
+drop <- analytes %>% filter(Target == "Fc_MOUSE" | Target == "No Protein")
+apt_drop <- drop$AptName
+soma <- soma %>% select(!all_of(apt_drop))
+analytes <- analytes %>% filter(!Target == "Fc_MOUSE")
+analytes <- analytes %>% filter(!Target == "No Protein")
+
 # read in 2nd dataset
 soma2 <- read_adat("./Local cohort Somalogic data/WUS-23-004/WUS_23_004_2023-11-15/WUS_23_004_v4.1_EDTAPlasma.hybNorm_medNormInt_plateScale_calibrate_anmlQC_qcCheck_anmlSMP.adat")
 soma2 <- soma2 %>% filter(!is.na(SampleDescription))
@@ -28,6 +35,8 @@ soma2$SampleDescription <- str_remove(soma2$SampleDescription, " ")
 soma2$SampleDescription <- str_remove_all(soma2$SampleDescription, "\\(\\S+")
 # there is one duplicate sample - delete the second result
 soma2 <- soma2 %>% filter(!SampleDescription=="RH-14-O")
+# remove FC_Mouse and no protein
+soma2 <- soma2 %>% select(!all_of(apt_drop))
 analytes2 <- getAnalyteInfo(soma2)
 # 2nd analytes file is esssentially the same as the first except for some batch specific information we don't need
 # will keep the first file
