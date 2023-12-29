@@ -14,11 +14,11 @@ soma <- read_adat("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjorns
 analytes <- getAnalyteInfo(soma)
 
 # remove fc mouse and no protein
-drop <- analytes %>% filter(Target == "Fc_MOUSE" | Target == "No Protein")
-apt_drop <- drop$AptName
-soma <- soma %>% select(!all_of(apt_drop))
-analytes <- analytes %>% filter(!Target == "Fc_MOUSE")
-analytes <- analytes %>% filter(!Target == "No Protein")
+#drop <- analytes %>% filter(Target == "Fc_MOUSE" | Target == "No Protein")
+#apt_drop <- drop$AptName
+#soma <- soma %>% select(!all_of(apt_drop))
+#analytes <- analytes %>% filter(!Target == "Fc_MOUSE")
+#analytes <- analytes %>% filter(!Target == "No Protein")
 
 # read in the files that will link repository ID (column A) to Somalogic ID (column C)
 ids1 <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Somalogic repository link/Omics-Petter Ancillary Samples at Colorado LEAD Center - Wash U.csv")
