@@ -1,3 +1,4 @@
+library(dplyr)
 ivgtt_dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/fsIVGTT/PANTHER_DATA_2023-10-23_1044_fsIVGTT_labs_filled.csv")
 ivgtt_time <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/fsIVGTT/PANTHER_IVGTT_time_discrepency.csv")
 
@@ -5,8 +6,8 @@ ivgtt_time <- ivgtt_time %>% filter(time!=150)
 
 ivgtt_missing <- ivgtt_dat %>%
   rowwise() %>%
-  mutate(glucose_missing = case_when(sum(c_across(starts_with("gluc")), na.rm = T) == 0 ~ "Missing", T ~ "Complete"),
-         insulin_missing = case_when(sum(c_across(starts_with("ins")), na.rm = T) == 0 ~ "Missing", T ~ "Complete")) %>%
+  dplyr::mutate(glucose_missing = dplyr::case_when(sum(c_across(starts_with("gluc")), na.rm = T) == 0 ~ "Missing", T ~ "Complete"),
+         insulin_missing = dplyr::case_when(sum(c_across(starts_with("ins")), na.rm = T) == 0 ~ "Missing", T ~ "Complete")) %>%
   dplyr::select(record_id, glucose_missing, insulin_missing)
 
 # write.csv(ivgtt_missing, "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/fsIVGTT/ivgtt_missing.csv", row.names = F)
@@ -15,7 +16,7 @@ ivgtt_dat <- ivgtt_dat %>% dplyr::select(-redcap_event_name, -ivgtt_labs_complet
 ivgtt_dat <- ivgtt_dat %>%
   filter(if_any(-record_id, Negate(is.na)))
 
-time_column <- c(0, 2, 3, 4, 5, 6, 8, 10, 12, 14, 16, 19, 22, 23, 24, 25, 27, 30, 35, 40, 50, 60, 70, 80, 90, 100, 120, 140, 160, 180) + 1.5
+time_column <- c(0, 2, 3, 4, 5, 6, 8, 10, 12, 14, 16, 19, 22, 23, 24, 25, 27, 30, 35, 40, 50, 60, 70, 80, 90, 100, 120, 140, 160, 180) 
 
 ivgtt_list <- list()
 subject_list <- ivgtt_dat$record_id
