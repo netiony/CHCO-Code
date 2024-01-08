@@ -10,6 +10,7 @@ library(purrr)
 library(RColorBrewer)
 library(labelled)
 library(corrplot)
+library(gtools)
 
 correlation_table_minimal <- function(data, relevant_vars, n_cols, cor_method = "pearson", dict = NULL, save_path = NULL) {
   # Filter relevant variables for the correlation matrix
@@ -47,7 +48,7 @@ correlation_table_minimal <- function(data, relevant_vars, n_cols, cor_method = 
     Hmisc::label(M_table_p) = dict_corr[match(names(M_table_p), names(dict_corr))]
     row.names(M_table_p) <- dict[match(row.names(M_table_p), names(dict))]
   }
-  
+
   # Set column labels to the labels of the column variables
   colnames(M_table_p) <- base::sapply(M_table_p, function(x) Hmisc::label(x))
   
@@ -179,7 +180,7 @@ correlation_p_value_matrix <- function(data, relevant_vars, n_cols, cor_method =
   return(as.matrix(corr_pval))
 }
 
-corr_plot_modified <- function(data, X, Y, cor_method = "pearson", adj_var = NULL, dict = dict,
+corr_plot_modified <- function(data, X, Y, cor_method = "pearson", adj_var = NA, dict = dict,
                              method = "color", insig = "pch", coef_col = NULL,
                              pch = 4, pch.col = "black", pch.cex = 0) {
   n_cols = length(Y)
