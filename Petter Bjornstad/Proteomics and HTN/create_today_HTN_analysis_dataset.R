@@ -133,7 +133,6 @@ soma <- soma %>%
 # Import and clean harmonized data
 df <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = c(" ", "", "-9999",-9999))
 coenroll_id <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Renal HERITAGE/Data_Cleaned/coenrolled_ids.csv") %>%
-  filter(rh2_id!="") %>%
   pivot_longer(cols = 'improve_id':'rh2_id',
                values_to = "record_id") %>% 
   dplyr::select(merged_id, record_id) %>%
@@ -184,15 +183,15 @@ df <- merge(df, soma, by = c("record_id", "visit"), all.x = T, all.y = T)
 df <- df %>% filter(visit == "baseline")
 
 coenroll <- df %>% filter(!is.na(co_enroll_id))
-coenroll$merged_id <- str_replace(coenroll$merged_id, "IT2D", "IT_")
-coenroll <- coenroll %>% 
-  mutate(
-    merged_id = case_when(
-      (is.na(merged_id) & str_starts("IT", record_id)) ~ paste0(record_id, "-", co_enroll_id),
-      (is.na(merged_id) & !str_starts("IT", record_id)) ~ paste0(co_enroll_id, "-", record_id),
-      !is.na(merged_id) ~ merged_id
-    )
-  )
+#coenroll$merged_id <- str_replace(coenroll$merged_id, "IT2D", "IT_")
+#coenroll <- coenroll %>% 
+#  mutate(
+#    merged_id = case_when(
+#      (is.na(merged_id) & str_starts("IT", record_id)) ~ paste0(record_id, "-", co_enroll_id),
+#      (is.na(merged_id) & !str_starts("IT", record_id)) ~ paste0(co_enroll_id, "-", record_id),
+#      !is.na(merged_id) ~ merged_id
+#    )
+#  )
 temp <- coenroll %>% group_by(merged_id) %>% arrange(date) %>% filter(row_number()==1)
 out <- temp$co_enroll_id
 df <- df %>% filter(!co_enroll_id %in% out)
