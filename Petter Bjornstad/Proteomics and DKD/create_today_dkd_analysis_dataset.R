@@ -226,8 +226,8 @@ df <- df %>% filter(record_id %in% ids)
 # Save
 save(df, plasma, urine, analytes, olink_map,
   top_mac, top_mic, top_mic.or.mac, top_hyp, top_rapid, top_htn, top_htn_sbp, top_htn_uacr, top_htn_egfr, 
-  top_mac_df, top_mic_df, top_hyp_df, top_rapid_df, top_htn_df, top_htn_sbp_df,
-  de_genes_mac, de_genes_mic, de_genes_hyp, de_genes_rapid, de_genes_htn, de_genes_htn_sbp,
+  top_mac_df, top_mic_df, top_mic.or.mac_df, top_hyp_df, top_rapid_df, top_htn_df, top_htn_sbp_df, top_htn_uacr_df, top_htn_egfr_df,
+  de_genes_mac, de_genes_mic, de_genes_mic.or.mac, de_genes_hyp, de_genes_rapid, de_genes_htn, de_genes_htn_sbp, de_genes_htn_uacr, de_genes_htn_egfr,
   de_genes_mac_10, de_genes_mic_10, de_genes_hyp_10, de_genes_rapid_10, de_genes_htn_10, de_genes_htn_sbp_10,
   file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Data_Cleaned/analysis_dataset.RData"
 )
