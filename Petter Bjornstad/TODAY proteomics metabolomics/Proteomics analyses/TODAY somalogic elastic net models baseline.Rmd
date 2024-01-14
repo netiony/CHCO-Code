@@ -63,10 +63,10 @@ base <- soma %>% arrange(releaseid,Date.Drawn) %>% group_by(releaseid) %>% filte
 base <- base %>% filter(!releaseid %in% c("65-85903","65-47984","65-25901"))
 
 # merge in complication data
-base <- merge(base, comorb, by="releaseid",all.x=T, all.y=F)
+base <- left_join(base, comorb, by="releaseid")
 
 # merge in baseline risk factors
-base <- merge(base, baserisk, by="releaseid",all.x=T, all.y=F)
+base <- left_join(base, baserisk, by="releaseid")
 
 # identify columns corresponding to proteins
 #is_seq <- function(.x) grepl("^seq\\.[0-9]{4}", .x) # regex for analytes
@@ -87,7 +87,7 @@ base_log <- base %>% modify_if(is_seq(names(.)), log)
 base_log_scale <- base_log
 predictors <- colnames(base_log[seq])
 for (i in 1:length(predictors)) {
-  base_log_scale[predictors[i]] <- base_log_scale[predictors[i]]/sd(base_log[,paste0(predictors[i])])
+  base_log_scale[,paste0(predictors[i])] <- base_log_scale[,paste0(predictors[i])]/sd(unlist(base_log[,paste0(predictors[i])]))
 }
 
 # filter to top 100 proteins by effect size
@@ -107,6 +107,13 @@ mic_drop <- mic_keep[101:nrow(mic_keep),"AptName"]
 rownames(mic_drop) <- mic_drop$AptName
 mic_drop <- as.data.frame(t(mic_drop))
 mic <- base_log_scale %>% select(-colnames(mic_drop))
+# MIC.OR.MIC
+mic.or.mac_keep = read_excel(f,sheet = "MIC.OR.MAC CPH")
+mic.or.mac_keep <- arrange(mic.or.mac_keep,adj.p.value)
+mic.or.mac_drop <- mic.or.mac_keep[101:nrow(mic.or.mac_keep),"AptName"]
+rownames(mic.or.mac_drop) <- mic.or.mac_drop$AptName
+mic.or.mac_drop <- as.data.frame(t(mic.or.mac_drop))
+mic.or.mac <- base_log_scale %>% select(-colnames(mic.or.mac_drop))
 # HYPERFILTRATION
 hyp_keep = read_excel(f,sheet = "HYP CPH")
 hyp_keep <- arrange(hyp_keep,adj.p.value)
@@ -128,6 +135,13 @@ htn_drop <- htn_keep[101:nrow(htn_keep),"AptName"]
 rownames(htn_drop) <- htn_drop$AptName
 htn_drop <- as.data.frame(t(htn_drop))
 htn <- base_log_scale %>% select(-colnames(htn_drop))
+# HYPERTENSION WITH SBP
+htn.with.sbp_keep = read_excel(f,sheet = "HTN with SBP CPH")
+htn.with.sbp_keep <- arrange(htn.with.sbp_keep,adj.p.value)
+htn.with.sbp_drop <- htn.with.sbp_keep[101:nrow(htn.with.sbp_keep),"AptName"]
+rownames(htn.with.sbp_drop) <- htn.with.sbp_drop$AptName
+htn.with.sbp_drop <- as.data.frame(t(htn.with.sbp_drop))
+htn.with.sbp <- base_log_scale %>% select(-colnames(htn.with.sbp_drop))
 
 set.seed(3654)
 source("~/Documents/Github/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/easy_elasticnet.R")
@@ -242,7 +256,7 @@ moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 
 moddf$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
 moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
 colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
-concordance_df_temp[] <- as.data.frame(cbind("Moderate albuminuria","Proteins",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_temp <- as.data.frame(cbind("Moderate albuminuria","Proteins",mod$concordance[[6]], mod$concordance[[7]]))
 concordance_df <- rbind(concordance_df, concordance_df_temp)
 ```
 
@@ -467,21 +481,21 @@ kable(moddf, row.names=F)
 kable(round(mod$concordance,digits=3))
 ```
 
-# Hypertension
+# Hypertension with SBP
 
 ## Elastic net with 10-fold cross-validation
 
 ```{r, include=FALSE, comment=""}
-htn_nozero <- htn[!htn$DAYSTOHTN == 0,]
-seq <- is_seq(names(htn))
+htn.with.sbp_nozero <- htn.with.sbp[!htn.with.sbp$DAYSTOHTN == 0,]
+seq <- is_seq(names(htn.with.sbp))
 
-htn_select = easy_elasticnet(data = htn_nozero,outcome = "HTN",
-                           predictors = htn_nozero[,seq], out = "min.error",
+htn.with.sbp_select = easy_elasticnet(data = htn.with.sbp_nozero,outcome = "HTN",
+                           predictors = htn.with.sbp_nozero[,seq], out = "min.error",
                            model_type = "cox",time = "DAYSTOHTN", cv_method="kfold", folds = 10)
-retained_vars = analytes[analytes$AptName %in% htn_select, c("Target","TargetFullName")]
+retained_vars = analytes[analytes$AptName %in% htn.with.sbp_select, c("Target","TargetFullName")]
 
-form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn_select,collapse = "+")))
-mod = coxph(formula = form,data = htn_nozero)
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn.with.sbp_select,collapse = "+")))
+mod = coxph(formula = form,data = htn.with.sbp_nozero)
 kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
 
 # make a summary table
@@ -503,8 +517,8 @@ kable(round(mod$concordance,digits=3))
 ## Model with proteins selected by elastic net and covariates
 
 ```{r, include=FALSE, comment=""}
-form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn_select,collapse = "+"),paste0("+HbA1c+log_trig+sbp+si_1_ins0")))
-mod = coxph(formula = form,data = htn_nozero)
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn.with.sbp_select,collapse = "+"),paste0("+HbA1c+log_trig+sbp+si_1_ins0")))
+mod = coxph(formula = form,data = htn.with.sbp_nozero)
 kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
 
 # make a summary table
@@ -512,8 +526,8 @@ moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 
 moddf[1:(nrow(moddf)-4),]$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
 moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
 colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
-concordance_df_temp_htn <- as.data.frame(cbind("Hypertension","Proteins + covariates",mod$concordance[[6]], mod$concordance[[7]]))
-concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp_htn)
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Proteins + covariates (including SBP)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
 ```
 
 ```{r, include=TRUE, comment=""}
@@ -528,15 +542,15 @@ kable(round(mod$concordance,digits=3))
 
 ```{r, include=FALSE, comment=""}
 form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~HbA1c+log_trig+sbp+si_1_ins0"))
-mod = coxph(formula = form,data = htn_nozero)
+mod = coxph(formula = form,data = htn.with.sbp_nozero)
 kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
 
 # make a summary table
 moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
 moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
 colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
-concordance_df_temp_htn <- as.data.frame(cbind("Hypertension","Covariates",mod$concordance[[6]], mod$concordance[[7]]))
-concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp_htn)
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Covariates (including SBP)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
 ```
 
 ```{r, include=TRUE, comment=""}
@@ -546,6 +560,94 @@ kable(moddf, row.names=F)
 ```{r, include=TRUE, comment=""}
 kable(round(mod$concordance,digits=3))
 ```
+
+# HTN without SBP
+
+## Elastic net with 10-fold cross-validation
+
+```{r, include=FALSE, comment=""}
+htn_nozero <- htn[!htn$DAYSTOHTN == 0,]
+seq <- is_seq(names(htn))
+
+htn_select = easy_elasticnet(data = htn_nozero,outcome = "HTN",
+                           predictors = htn_nozero[,seq], out = "min.error",
+                           model_type = "cox",time = "DAYSTOHTN", cv_method="kfold", folds = 10)
+retained_vars = analytes[analytes$AptName %in% htn_select, c("Target","TargetFullName")]
+
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn_select,collapse = "+")))
+mod = coxph(formula = form,data = htn_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+#concordance_df_temp <- as.data.frame(cbind("Hypertension","Proteins",mod$concordance[[6]], mod$concordance[[7]]))
+#concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Model with proteins selected by elastic net and covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn_select,collapse = "+"),paste0("+HbA1c+log_trig+si_1_ins0")))
+mod = coxph(formula = form,data = htn_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf[1:(nrow(moddf)-3),]$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Proteins + covariates (no SBP)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Model with only covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~HbA1c+log_trig+si_1_ins0"))
+mod = coxph(formula = form,data = htn_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Covariates (no SBP)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+# Summary tables and plots
+
+## THIS HAS NOT BEEN UPDATED TO REFLECT HTN W/ and W/O SBP
+## MIC OR MAC
+## HTN WITH UACR and EGFR
+## NEED TO MAKE SURE I AM PULLING OFF THE CORRECT ROWS
 
 ```{r, include=FALSE, comment=""}
 colnames(concordance_df) <- c("Outcome","Model","Concordance","SE")
@@ -567,7 +669,8 @@ concordance_df_htn$ci_low <- concordance_df_htn$Concordance - (1.96*concordance_
 concordance_df_htn$ci_high <- concordance_df_htn$Concordance + (1.96*concordance_df_htn$SE)
 concordance_df_htn[,c("Concordance","SE","ci_low", "ci_high")] <- round(concordance_df_htn[,c("Concordance","SE","ci_low", "ci_high")],2)
 colnames(concordance_df_htn) <- c("Outcome","Model","Concordance","SE","Lower bound 95% CI","Upper bound 95% CI")
-concordance_df_htn <- rbind(concordance_df_htn[3,],concordance_df_htn[1,],concordance_df_htn[2,])
+concordance_df_htn <- rbind(concordance_df_htn[5,],concordance_df_htn[3,],concordance_df_htn[1,],concordance_df_htn[4,],
+                            concordance_df_htn[2,])
 
 ```
 
