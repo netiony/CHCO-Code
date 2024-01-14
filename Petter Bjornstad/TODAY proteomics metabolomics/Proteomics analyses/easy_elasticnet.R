@@ -26,6 +26,7 @@ easy_elasticnet = function(data,outcome,predictors,
   if(model_type == "cox"){
     # Outcome matrix
     Y = cbind(time = df[,time], status = df[,outcome])
+    colnames(Y) <- c("time","status")
     # Complete cases
     idx = intersect(which(complete.cases(Y)),which(complete.cases(X)))
     X = data.matrix(X[idx,])
