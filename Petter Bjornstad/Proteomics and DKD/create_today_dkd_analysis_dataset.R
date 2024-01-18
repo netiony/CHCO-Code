@@ -49,8 +49,10 @@ top_htn_df <- read_excel("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter
 de_genes_htn <- top_htn_df[top_htn_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_htn <- setNames(de_genes_htn$estimate, de_genes_htn$EntrezGeneID)
 top_htn <- top_htn_df %>%
-  filter(adj.p.value <= 0.05) %>%
-  slice_max(abs(log(estimate)), n = 5) %>%
+  filter(Target %in% c("WFKN2","SEZ6L","SCG3","PSA","LSAMP","H6ST3","T132B","Nr-CAM","PEDF","IGLO5",
+                       "PSB3","Myosin light chain 1","PCD10:ECD","UNC5H4","TLR5","SLIK1","PSPC1",
+                       "STA10","Secretoglobin family 3A member 1","sICAM-5")) %>%
+  slice_max(abs(log(estimate)), n = 20) %>%
   pull(AptName)
 top_htn_uacr_df <- read_excel("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "HTN with UACR CPH")
 de_genes_htn_uacr <- top_htn_uacr_df[top_htn_uacr_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
