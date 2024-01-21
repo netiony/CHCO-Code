@@ -20,11 +20,13 @@ analytes <- getAnalyteInfo(soma)
 analytes <- analytes %>% select(AptName,SeqId,SeqIdVersion,SomaId,TargetFullName,Target,UniProt,EntrezGeneID,EntrezGeneSymbol,Organism,Units,Type)
 
 # remove fc mouse and no protein
-drop <- analytes %>% filter(Target == "Fc_MOUSE" | Target == "No Protein")
+drop <- analytes %>% filter(Target == "Fc_MOUSE" | Target == "No Protein" | !(Organism == "Human") | !(Type == "Protein"))
 apt_drop <- drop$AptName
 soma <- soma %>% select(!all_of(apt_drop))
 analytes <- analytes %>% filter(!Target == "Fc_MOUSE")
 analytes <- analytes %>% filter(!Target == "No Protein")
+analytes <- analytes %>% filter(Organism == "Human")
+analytes <- analytes %>% filter(Type == "Protein")
 
 # read in 2nd dataset
 soma2 <- read_adat("./Local cohort Somalogic data/WUS-23-004/WUS_23_004_2023-11-15/WUS_23_004_v4.1_EDTAPlasma.hybNorm_medNormInt_plateScale_calibrate_anmlQC_qcCheck_anmlSMP.adat")
