@@ -1,8 +1,3 @@
-# Getting an error when joining df and soma, because there are duplicate records for RH-14-O baseline visit
-# need to carefully check number of observations by study and group
-# starting with individual study soma files, through combined df in this file, to analysis code for correlations
-# I don't think I'm getting as many participants in the correlations as I should
-
 library(tidyverse)
 library(readxl)
 library(Seurat)

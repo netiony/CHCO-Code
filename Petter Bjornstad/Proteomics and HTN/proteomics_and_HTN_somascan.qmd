@@ -26,6 +26,8 @@ library(pander)
 library(dplyr)
 library(tableone)
 library(knitr)
+library(gtools)
+library(ggpubr)
 # Print all pander tables
 panderOptions("knitr.auto.asis", FALSE)
 ```
@@ -34,11 +36,12 @@ panderOptions("knitr.auto.asis", FALSE)
 #| include: false
 # source("~/GitHub/CHCO-Code/Petter Bjornstad/Proteomics and DKD/create_today_dkd_analysis_dataset.R")
 load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and HTN/Data_Cleaned/analysis_dataset.RData")
+df$htn <- droplevels(df$htn)
 top_htn <- top_htn_df %>%
   filter(Target %in% c("SEZ6L","SCG3","LSAMP","T132B","Nr-CAM","IGLO5",
                        "PCD10:ECD","UNC5H4","SLIK1",
                        "Secretoglobin family 3A member 1","sICAM-5")) %>%
-  slice_max(abs(log(estimate)), n = 11) %>%
+  slice_max(abs(log(estimate)), n = 12) %>%
   pull(AptName)
 df_t2d <- df %>% filter(group=="Type 2 Diabetes")
 df_lc <- df %>% filter(group=="Lean Control")
@@ -82,16 +85,17 @@ cor_and_plot_soma <- function(data, vars) {
 
 
 ```{r, include=FALSE}
-corr_plot_modified_nodict <- function(data, X, Y, cor_method = "pearson", adj_var = NULL, 
+corr_plot_modified_nodict <- function(data, X, Y, cor_method = "spearman", adj_var = NULL, 
                                method = "color", insig = "pch", coef_col = NULL,
-                               pch = 4, pch.col = "black", pch.cex = 0) {
+                               pch = 4, pch.col = "black", pch.cex = 0, colnames_M, rownames_M) {
   
   n_cols = length(Y)
-  M <- cor(y = subset(data, select = Y),
-           x = subset(data, select = X),
+  M <- cor(y = Y,
+           x = X,
            use = "pairwise.complete.obs",
            method = cor_method)
-  
+  colnames(M) <- colnames_M
+  rownames(M) <- rownames_M
   if (!is.na(adj_var)){
     x_vars <- rep(X, times = length(Y))
     x_coord <- rep(seq(1,length(Y)), each = length(X))
@@ -124,7 +128,7 @@ corr_plot_modified_nodict <- function(data, X, Y, cor_method = "pearson", adj_va
     }
   }
   
-  correlation_p_value <- correlation_p_value_matrix(data, relevant_vars = c(Y, X), n_cols = n_cols, cor_method = cor_method)
+  correlation_p_value <- correlation_p_value_matrix(data, relevant_vars = c(colnames(Y),colnames(X)), n_cols = n_cols, cor_method = cor_method)
   
   corrplot(M,
            p.mat = correlation_p_value,
@@ -191,23 +195,19 @@ The proteins with the largest absolute effect size and adjusted p value $\leq 0.
 ```{r results='asis', dpi=1200}
 cor_and_plot_soma(data = df_t2d, vars = top_htn)
 
-# below needs to be modified
-png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/today_echo_corr1.png", res = 170)
-corr_plot_modified_nodict(data=today_echo_corr, 
-                   Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
-                 X=c("2D ascending aorta dimensions","2D aortic root end diastolic dimension", "2D aortic root end systolic dimension",
-                                                      "2D four chamber LA area" ,
-                                                      "2D four chamber LV end diastolic volume" ,
-                                                      "MMODE LV end diastolic volume" ,
-                                                      "MMODE LV end systolic volume" ,
-                                                      "MMODE LV internal dimension diastole" ,
-                                                      "MMODE LV internal dimension systole" ,
-                                                      "MMODE LV mass" ,
-                                                      "MMODE LV stroke volume" ,
-                                                      "LV mass indexed to height" ,
-                                                      "LV size indexed to body surface area" 
-                                                      ),
-                 cor_method="spearman", adj_var = NA)
+prot_heatmap <- top_htn_df %>%
+  filter(Target %in% c("SEZ6L","WFKN2","SCG3","H6ST3","Nr-CAM")) %>%
+  pull(AptName)
+colnames_M <- top_htn_df %>%
+  filter(AptName %in% prot_heatmap) %>%
+  pull(Target)
+png(height = 3000, width = 2500, file = "/Users/pylell/Dropbox/TODAY HTN and DKD output/local_T2D_BP_heatmap.png", res = 170)
+corr_plot_modified_nodict(data=df_t2d, 
+                   Y=df_t2d[,prot_heatmap], 
+                 X=df_t2d[,c("sbp","dbp")],
+                 cor_method="spearman", adj_var = NA,
+                 colnames_M=colnames_M,
+                 rownames_M=c("SBP","DBP"))
 dev.off()
 ```
 
@@ -216,6 +216,169 @@ dev.off()
 ```{r include=FALSE}
 t <- CreateTableOne(data=df_t2d, vars=top_htn, strata="htn")
 t <- print(t)
+
+# need to make each boxplot independently, then combine
+# then save
+comparison_groups = list(c("HTN-", "HTN+"))
+# seq.19563.3
+prot <- top_htn_df %>%
+  filter(AptName %in% c("seq.19563.3")) %>%
+  pull(Target)
+p1 <- ggplot(df_t2d,
+       mapping = aes(x = htn,
+                     y = seq.19563.3,
+                     fill = htn))  +
+  geom_boxplot() +  
+  labs(x = NULL,
+       y = noquote(prot),
+       fill = "htn") + 
+  theme(axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 10,
+                                   angle = -45), 
+        legend.text = element_text(size = 14),
+        panel.background = element_rect(fill = "#f2e9e4",
+                                        color = "grey")) + 
+  scale_fill_manual(values = c("#c2dfe3", "#fff9ec",
+                                "#fcb1a6", "#fb6376")) +
+  geom_jitter() +
+  stat_compare_means(comparisons = comparison_groups,
+                     method = "wilcox.test",
+                     label = "p.signif")
+# seq.13408.23
+prot <- top_htn_df %>%
+  filter(AptName %in% c("seq.13408.23")) %>%
+  pull(Target)
+p2 <- ggplot(df_t2d,
+       mapping = aes(x = htn,
+                     y = seq.13408.23,
+                     fill = htn))  +
+  geom_boxplot() +  
+  labs(x = NULL,
+       y = noquote(prot),
+       fill = "htn") + 
+  theme(axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 10,
+                                   angle = -45), 
+        legend.text = element_text(size = 14),
+        panel.background = element_rect(fill = "#f2e9e4",
+                                        color = "grey")) + 
+  scale_fill_manual(values = c("#c2dfe3", "#fff9ec",
+                                "#fcb1a6", "#fb6376")) +
+  geom_jitter() +
+  stat_compare_means(comparisons = comparison_groups,
+                     method = "wilcox.test",
+                     label = "p.signif")
+# seq.7957.2
+prot <- top_htn_df %>%
+  filter(AptName %in% c("seq.7957.2")) %>%
+  pull(Target)
+p3 <- ggplot(df_t2d,
+       mapping = aes(x = htn,
+                     y = seq.7957.2,
+                     fill = htn))  +
+  geom_boxplot() +  
+  labs(x = NULL,
+       y = noquote(prot),
+       fill = "htn") + 
+  theme(axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 10,
+                                   angle = -45), 
+        legend.text = element_text(size = 14),
+        panel.background = element_rect(fill = "#f2e9e4",
+                                        color = "grey")) + 
+  scale_fill_manual(values = c("#c2dfe3", "#fff9ec",
+                                "#fcb1a6", "#fb6376")) +
+  geom_jitter() +
+  stat_compare_means(comparisons = comparison_groups,
+                     method = "wilcox.test",
+                     label = "p.signif")
+# seq.18896.23
+prot <- top_htn_df %>%
+  filter(AptName %in% c("seq.18896.23")) %>%
+  pull(Target)
+p4 <- ggplot(df_t2d,
+       mapping = aes(x = htn,
+                     y = seq.18896.23,
+                     fill = htn))  +
+  geom_boxplot() +  
+  labs(x = NULL,
+       y = noquote(prot),
+       fill = "htn") + 
+  theme(axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 10,
+                                   angle = -45), 
+        legend.text = element_text(size = 14),
+        panel.background = element_rect(fill = "#f2e9e4",
+                                        color = "grey")) + 
+  scale_fill_manual(values = c("#c2dfe3", "#fff9ec",
+                                "#fcb1a6", "#fb6376")) +
+  geom_jitter() +
+  stat_compare_means(comparisons = comparison_groups,
+                     method = "wilcox.test",
+                     label = "p.signif")
+# seq.3235.50
+prot <- top_htn_df %>%
+  filter(AptName %in% c("seq.3235.50")) %>%
+  pull(Target)
+p5 <- ggplot(df_t2d,
+       mapping = aes(x = htn,
+                     y = seq.3235.50,
+                     fill = htn))  +
+  geom_boxplot() +  
+  labs(x = NULL,
+       y = noquote(prot),
+       fill = "htn") + 
+  theme(axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 10,
+                                   angle = -45), 
+        legend.text = element_text(size = 14),
+        panel.background = element_rect(fill = "#f2e9e4",
+                                        color = "grey")) + 
+  scale_fill_manual(values = c("#c2dfe3", "#fff9ec",
+                                "#fcb1a6", "#fb6376")) +
+  geom_jitter() +
+  stat_compare_means(comparisons = comparison_groups,
+                     method = "wilcox.test",
+                     label = "p.signif")
+# seq.5109.24
+prot <- top_htn_df %>%
+  filter(AptName %in% c("seq.5109.24")) %>%
+  pull(Target)
+p6 <- ggplot(df_t2d,
+       mapping = aes(x = htn,
+                     y = seq.5109.24,
+                     fill = htn))  +
+  geom_boxplot() +  
+  labs(x = NULL,
+       y = noquote(prot),
+       fill = "htn") + 
+  theme(axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 10,
+                                   angle = -45), 
+        legend.text = element_text(size = 14),
+        panel.background = element_rect(fill = "#f2e9e4",
+                                        color = "grey")) + 
+  scale_fill_manual(values = c("#c2dfe3", "#fff9ec",
+                                "#fcb1a6", "#fb6376")) +
+  geom_jitter() +
+  stat_compare_means(comparisons = comparison_groups,
+                     method = "wilcox.test",
+                     label = "p.signif")
+# arrange
+grpbox <- ggarrange(p1, p2,
+                    p3, p4,
+                    p5, p6,
+                    nrow = 2, ncol = 3,
+                    common.legend = T)
+png(height = 3000, width = 2500, file = "/Users/pylell/Dropbox/TODAY HTN and DKD output/local_T2D_HTN_boxplot.png", res = 170)
+grpbox
+dev.off()
 ```
 
 ```{r results='as is'}
@@ -260,7 +423,7 @@ t <- print(t)
 kable(t)
 ```
 
-```{r, include=TRUE}
+```{r}
 file.copy("/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/Proteomics and HTN/proteomics_and_HTN_somascan.html",
           "/Users/pylell/Dropbox/TODAY HTN and DKD output/proteomics_and_HTN_somascan.html",overwrite = TRUE)
 ```
