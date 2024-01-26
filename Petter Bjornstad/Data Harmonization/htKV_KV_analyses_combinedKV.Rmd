@@ -71,7 +71,13 @@ clean_dat <- left_join(raw_dat, coenroll_id, by = 'record_id') %>%
                                       is.na(left_kidney_volume_ml) & !is.na(volume_left_manual) ~ 'Manual'),
          merged_rkv_metric_type = case_when(!is.na(right_kidney_volume_ml) ~ 'Non-Manual',
                                       is.na(right_kidney_volume_ml) & !is.na(volume_right_manual) ~ 'Manual'),
-          height_meters = height*0.01) %>% 
+         height_meters = height*0.01) %>% 
+  # mutate(ht_adj_merged_left_kv = merged_left_kv/height_meters,
+  #        ht_adj_merged_right_kv = merged_right_kv/height_meters) %>% 
+  # mutate(log_merged_left_kv = log(merged_left_kv),
+  #        log_merged_right_kv = log(merged_right_kv),
+  #        log_ht_adj_merged_left_kv = log(ht_adj_merged_left_kv),
+  #        log_ht_adj_merged_right_kv = log(ht_adj_merged_right_kv)) %>%
   select(-c(igf_1, igf1_z_score, tan_fgd, tan_tveq)) # no data for these vars with procedure = bold_mri/clamp; manually added it in later
 
 
@@ -117,7 +123,8 @@ PAN_igf1_dat <- left_join(raw_dat, coenroll_id, by = 'record_id') %>%
   filter(group != 'PKD') %>% 
   select(record_id, merged_id, study, visit, date, igf_1, igf1_z_score) %>% 
   rename('igf1_date' = 'date') %>% 
-  mutate(PAN_risk_status = ifelse(str_detect(record_id, 'C'), 'Low', 'High')) %>% 
+  mutate(PAN_risk_status = ifelse(str_detect(record_id, 'C'), 'Low', 'High')) %>%
+  mutate(PAN_risk_status = factor(PAN_risk_status, levels = c('Low', 'High'))) %>% 
   select(-record_id)
 
 left_combined_clean <- left_join(left_combined_clean, PAN_igf1_dat, by = c('merged_id', 'study', 'visit')) %>% 
@@ -156,63 +163,65 @@ right_combined_clean <- left_join(right_combined_clean, PAN_tan_dat, by = c('mer
   ungroup()
 right_combined_clean <- as.data.frame(right_combined_clean)
 
-# add in missing height data for PANTHER subjects, calculate ht. adj. kv
-PAN_height_dat <- left_join(raw_dat, coenroll_id, by = 'record_id') %>% 
+# add in missing height data, calculate ht. adj. kv
+# note: some PANDA subjects missing merged ID, but none are subjects with kv data so did not account for this
+additional_height_dat <- left_join(raw_dat, coenroll_id, by = 'record_id') %>% 
   relocate(merged_id, .after = co_enroll_id) %>%
-  filter(study == 'PANTHER') %>% 
+  filter(study == 'PANTHER' | study == 'CROCODILE' | study == 'PANDA' | study == 'RENAL-HEIRitage') %>% 
   filter(participation_status != 'Removed'|is.na(participation_status)) %>%
-  filter(!is.na(height)) %>% 
+  filter(!is.na(height)) %>%
   select(merged_id, study, visit, procedure, date, height) %>% 
   group_by(merged_id, visit, date) %>% 
-  mutate(PAN_height_meters = 0.01*mean(height)) %>% # take mean height if dates are exact same
+  mutate(additional_height_meters = 0.01*mean(height)) %>% # take mean height if dates are exact same
   slice(1) %>% 
   ungroup() %>% 
   as.data.frame() %>% 
   select(-c(procedure, height)) %>% 
-  rename('PAN_height_date' = 'date')
+  rename('additional_height_date' = 'date')
 
 
-lkv_PAN_heights <- left_join(left_combined_clean, PAN_height_dat, by = c('merged_id', 'study', 'visit')) %>% 
-  mutate(lkv_PANheight_date_diff = as.numeric(difftime(as.Date(lkv_date), as.Date(PAN_height_date), units = 'days'))) %>% 
-  select(merged_id, study, visit, PAN_height_date, lkv_PANheight_date_diff, PAN_height_meters) %>%
-  filter(study == 'PANTHER') %>% 
-  filter(lkv_PANheight_date_diff >= 0) %>%  # only use heights taken on or before date of kv measurement
+lkv_additional_heights <- left_join(left_combined_clean, additional_height_dat, by = c('merged_id', 'study', 'visit')) %>% 
+  mutate(lkv_add_height_date_diff = as.numeric(difftime(as.Date(lkv_date), as.Date(additional_height_date), units = 'days'))) %>% 
+  select(merged_id, study, visit, additional_height_date, lkv_add_height_date_diff, additional_height_meters) %>%
+  filter(study == 'PANTHER' | study == 'CROCODILE' | study == 'PANDA' | study == 'RENAL-HEIRitage') %>% 
+  filter(lkv_add_height_date_diff >= 0) %>%  # only use heights taken on or before date of kv measurement
   group_by(merged_id) %>%
-  slice_min(lkv_PANheight_date_diff, n = 1) %>%  
+  slice_min(lkv_add_height_date_diff, n = 1) %>%  
   ungroup()
 
-left_combined_clean <- left_join(left_combined_clean, lkv_PAN_heights, by = c('merged_id', 'study', 'visit')) %>% 
-  mutate(height_meters = 
-           case_when(!is.na(height_meters) | !is.na(PAN_height_meters) ~ rowSums(select(., height_meters, PAN_height_meters),
+left_combined_clean <- left_join(left_combined_clean, lkv_additional_heights, by = c('merged_id', 'study', 'visit')) %>% 
+  mutate(height_meters =
+           case_when(!is.na(height_meters) | !is.na(additional_height_meters) ~ rowSums(select(., height_meters, additional_height_meters),
                                                                                              na.rm = TRUE))) %>%
-  mutate(ht_adj_merged_left_kv = merged_left_kv/height_meters)
+  mutate(ht_adj_merged_left_kv = merged_left_kv/height_meters) %>% 
+  select(-additional_height_meters)
 
-
-rkv_PAN_heights <- left_join(right_combined_clean, PAN_height_dat, by = c('merged_id', 'study', 'visit')) %>% 
-  mutate(rkv_PANheight_date_diff = as.numeric(difftime(as.Date(rkv_date), as.Date(PAN_height_date), units = 'days'))) %>% 
-  select(merged_id, study, visit, PAN_height_date, rkv_PANheight_date_diff, PAN_height_meters) %>%
-  filter(study == 'PANTHER') %>% 
-  filter(rkv_PANheight_date_diff >= 0) %>%  # only use heights taken on or before date of kv measurement
+rkv_additional_heights <- left_join(right_combined_clean, additional_height_dat, by = c('merged_id', 'study', 'visit')) %>% 
+  mutate(rkv_add_height_date_diff = as.numeric(difftime(as.Date(rkv_date), as.Date(additional_height_date), units = 'days'))) %>% 
+  select(merged_id, study, visit, additional_height_date, rkv_add_height_date_diff, additional_height_meters) %>%
+  filter(study == 'PANTHER' | study == 'CROCODILE' | study == 'PANDA' | study == 'RENAL-HEIRitage') %>% 
+  filter(rkv_add_height_date_diff >= 0) %>%  # only use heights taken on or before date of kv measurement
   group_by(merged_id) %>%
-  slice_min(rkv_PANheight_date_diff, n = 1) %>%  
+  slice_min(rkv_add_height_date_diff, n = 1) %>%  
   ungroup()
 
-right_combined_clean <- left_join(right_combined_clean, rkv_PAN_heights, by = c('merged_id', 'study', 'visit')) %>% 
-  mutate(height_meters = 
-           case_when(!is.na(height_meters) | !is.na(PAN_height_meters) ~ rowSums(select(., height_meters, PAN_height_meters),
+right_combined_clean <- left_join(right_combined_clean, rkv_additional_heights, by = c('merged_id', 'study', 'visit')) %>% 
+  mutate(height_meters =
+           case_when(!is.na(height_meters) | !is.na(additional_height_meters) ~ rowSums(select(., height_meters, additional_height_meters),
                                                                                              na.rm = TRUE))) %>%
-  mutate(ht_adj_merged_right_kv = merged_right_kv/height_meters)
+  mutate(ht_adj_merged_right_kv = merged_right_kv/height_meters) %>% 
+  select(-additional_height_meters)
 
-rm(rkv_PAN_heights, lkv_PAN_heights)
+rm(rkv_additional_heights, lkv_additional_heights)
 
 ## check - everything working as intended
 og_left_combined_clean <- og_left_combined_clean %>% select(-height_meters)
 check_left_combined <- left_combined_clean %>% select(-height_meters)
-identical(og_left_combined_clean, check_left_combined[, -c(1009:1021)])
+identical(og_left_combined_clean, check_left_combined[, -c(1013:1024)])
 
 og_right_combined_clean <- og_right_combined_clean %>% select(-height_meters)
 check_right_combined <- right_combined_clean %>% select(-height_meters)
-identical(og_right_combined_clean, check_right_combined[, -c(1009:1021)])
+identical(og_right_combined_clean, check_right_combined[, -c(1013:1024)])
 
 rm(og_left_combined_clean, check_left_combined, og_right_combined_clean, check_right_combined)
 
@@ -249,8 +258,8 @@ label(left_combined_clean$lkv_tan_date_diff) <- "Days Between LKV and Tanner Sta
 label(right_combined_clean$rkv_tan_date_diff) <- "Days Between RKV and Tanner Stage Measures"
 label(left_combined_clean$ht_adj_merged_left_kv) <- "Height Adjusted Left Kidney Volume (mL/m)"
 label(right_combined_clean$ht_adj_merged_right_kv) <- "Height Adjusted Right Kidney Volume (mL/m)"
-label(left_combined_clean$lkv_PANheight_date_diff) <- "Days Between LKV and PANTHER Height Measures"
-label(right_combined_clean$rkv_PANheight_date_diff) <- "Days Between RKV and PANTHER Height Measures"
+label(left_combined_clean$lkv_add_height_date_diff) <- "Days Between LKV and Height Measures for PANTHER/CROCODILE/PANDA/RH2 Subjects "
+label(right_combined_clean$rkv_add_height_date_diff) <- "Days Between RKV and Height Measures for PANTHER/CROCODILE/PANDA/RH2 Subjects"
 
 rm(right_clean_dat, left_clean_dat)
 
@@ -259,7 +268,7 @@ PAN_left_combined_clean <- left_combined_clean %>% filter(study == 'PANTHER')
 PAN_right_combined_clean <- right_combined_clean %>% filter(study == 'PANTHER')
 
 ## workspace cleanup
-rm(PAN_height_dat, PAN_tan_dat, PAN_igf1_dat)
+rm(additional_height_dat, PAN_tan_dat, PAN_igf1_dat)
 ```
 
 
@@ -273,11 +282,13 @@ The primary outcome of interest for this report was left or right kidney volume 
 
 **All Studies (CROCODILE, PANDA, RENAL-HEIR, PANTHER, RENAL-HEIRitage):**
 
-Merged and height-adjusted merged KV were modeled using simple linear regression for describing associations with age and Kruskal-Wallis testing for describing differences by disease type. All analyses were stratified by left and right kidney; separate descriptive statistics were reported for left versus right analyses to account for subjects with only one kidney.
+Merged and height-adjusted merged KV were modeled using simple linear regression for describing associations with age and Kruskal-Wallis testing for describing KV differences by disease type. All analyses were stratified by left and right kidney; separate descriptive statistics were reported for left versus right analyses to account for subjects with only one kidney. 
 
 **PANTHER:**
 
-Kruskal-Wallis testing was used for modeling differences in merged and height-adjusted merged KV by Tanner stage; results were reported separately for males and females. Tanner stage by testicular volume was used for male analyses and Tanner stage by breast development was used for female analyses. Associations between merged or height-adjusted merged KV and IGF-1 concentrations were modeled using simple linear regression; associations between these two KV outcomes and IGF-1 Z-scores were modeled in the same manner. All analyses were stratified by low versus high risk status, where subjects in the control group were considered to be at low risk and those with T2D or obesity were at high risk.
+Associations between merged or height-adjusted merged KV and Tanner stage were modeled using linear regression with models adjusted for risk status, where subjects in the control group were considered to be at low risk and those with T2D or obesity were at high risk. Results for the Tanner stage models were reported separately for males and females; Tanner stage by testicular volume was used for male analyses and Tanner stage by breast development was used for female analyses. IGF-1 concentrations and IGF-1 Z-scores were also modeled with linear regression and adjusted for risk status.
+
+R v 4.2.3 was used for all analyses.
 
 # Left Kidney Analyses
 
@@ -286,9 +297,11 @@ Kruskal-Wallis testing was used for modeling differences in merged and height-ad
 ### Descriptive Statistics
 ```{r lkv tab1, echo=FALSE}
 table1::table1(~ sex + age + group + diabetes_duration + height_meters + merged_left_kv + ht_adj_merged_left_kv + 
-                 merged_lkv_metric_type, 
+                 merged_lkv_metric_type + lkv_add_height_date_diff, 
                data = left_combined_clean, caption = 'Descriptive Statistics of all Participants for Left Kidney Analyses')
 ```
+
+Note: Height data from the same visit KV measures were collected was not available for subjects on PANTHER, CROCODILE, PANDA, or RENAL-HEIRitage so height measurements that were closest in time to the KV measures were instead used. Only heights taken on or before the KV measurement date were used. "Days Between LKV and Height Measures for PANTHER/CROCODILE/PANDA/RH2 Subjects" summarizes the distance in days between the KV measures and height measures. 
 
 ### LKV by Age
 
@@ -354,114 +367,62 @@ left_combined_clean %>%
 ### Descriptive Statistics
 ```{r PANTHER lkv tab1, echo=FALSE}
 table1::table1(~ sex + age + group + PAN_risk_status + diabetes_duration + height_meters + merged_left_kv + 
-                 ht_adj_merged_left_kv + merged_lkv_metric_type + igf_1 + igf1_z_score + lkv_igf1_date_diff + lkv_tan_date_diff +
-                 lkv_PANheight_date_diff, 
+                 ht_adj_merged_left_kv + merged_lkv_metric_type + igf_1 + igf1_z_score, #+ lkv_igf1_date_diff + lkv_tan_date_diff, 
                data = PAN_left_combined_clean, caption = 'Descriptive Statistics of Participants for Left Kidney PANTHER Analyses')
 ```
 
 ### LKV by Tanner Stage
 
-The below tables report the mean and standard deviation (SD) of left KV by Tanner Stage for PANTHER subjects. Results are reported separately for males and females and stratified by risk status (High = T2D or obese; Low = control).
+This section reports the association between left KV and Tanner Stage for PANTHER subjects, adjusting for risk status (High = T2D or obese; Low = control). Diagnostic plots for checking linear regression assumptions are also included. `merged_left_kv` is the new combined variable of non-manual and manual KV measurements, as described in the Methods section. `ht_adj_merged_left_kv` is the height-adjusted version of `merged_left_kv`. Results are reported separately for males and females; `tan_tveq` denotes testicular volume and `tan_fgd` denotes breast development.
+
 <!-- tanner stage for boys measured as tan_tveq -->
 <!-- tanner stage for girls measured as tan_fgd -->
 
-```{r PANTHER lkv tanner assumptions, eval=FALSE, include=FALSE}
-## assumptions check
-outcome_vars <- c('merged_left_kv','ht_adj_merged_left_kv')
-
-for (v in outcome_vars) {
-  form = as.formula(paste0(v,'~ tan_tveq'))
-  mod <- aov(form, data = PAN_left_combined_clean)
-
-  qqnorm(mod$residuals)
-  qqline(mod$residuals)
-
-  bartlett_result <- bartlett.test(form, data = PAN_left_combined_clean)
-  print(bartlett_result)
-}
-
-for (v in outcome_vars) {
-  form = as.formula(paste0(v,'~ tan_fgd'))
-  mod <- aov(form, data = PAN_left_combined_clean)
-
-  qqnorm(mod$residuals)
-  qqline(mod$residuals)
-
-  bartlett_result <- bartlett.test(form, data = PAN_left_combined_clean)
-  print(bartlett_result)
-}
-
-check1 <- PAN_left_combined_clean %>% 
-  filter(!is.na(tan_tveq)) %>% 
-  mutate(kv_data_indicator = ifelse(!is.na(merged_left_kv), 'Y', 'N')) %>% 
-  select(merged_id, study, group, tan_tveq, merged_left_kv, ht_adj_merged_left_kv, kv_data_indicator)
-
-table(check1$tan_tveq) # I:3, II:8, III:4, IV:9, V:0
-table(check1$tan_tveq, check1$kv_data_indicator) # less than 5 kv obs for stage I, III, V
-
-check2 <- PAN_left_combined_clean %>% 
-  filter(!is.na(tan_fgd)) %>%
-  mutate(kv_data_indicator = ifelse(!is.na(merged_left_kv), 'Y', 'N')) %>% 
-  select(merged_id, study, group, tan_fgd, merged_left_kv, ht_adj_merged_left_kv, kv_data_indicator)
-
-table(check2$tan_fgd) # I:7, II:10, III:11, IV:7, V:1
-table(check2$tan_fgd, check2$kv_data_indicator) # less than 5 kv obs for stage V 
-```
-
-
 ```{r PANTHER lkv by tanner stage, echo=FALSE, message=FALSE, warning=FALSE}
-## summary table with Kruskal-Wallis for testing
+outcome_vars <- c('merged_left_kv','ht_adj_merged_left_kv')
 
 # males
-PAN_left_combined_clean %>% 
-  select(merged_id, merged_left_kv, ht_adj_merged_left_kv, PAN_risk_status, tan_tveq) %>%
-  tbl_strata(strata = PAN_risk_status, ~ .x %>% 
-  tbl_summary(by = tan_tveq, include = -merged_id,
-              type = list(c(merged_left_kv, ht_adj_merged_left_kv) ~ 'continuous', 
-                        tan_tveq~'categorical'),
-    statistic = list(all_continuous() ~ '{mean} ({sd})'),
-    digits = everything()~c(2,2),
-    missing_text = 'N Missing') %>% 
-  add_p(test = all_continuous() ~ 'kruskal.test',
-        pvalue_fun = ~style_pvalue(.x, digits=3)) %>% 
-  modify_header(label = '**Measurement**') %>% 
-  modify_caption("**Male Tanner Stage Summary by Risk Status**"))
+for (v in outcome_vars) {
+  form = as.formula(paste0(v,'~ tan_tveq + PAN_risk_status'))
+  mod <- lm(form, data = PAN_left_combined_clean)
+  print(noquote(c("Association between", noquote(v), "and Male Tanner Stage (Testicular Volume)")))
+  print(summary(mod))
+  plot(x = predict(mod), y = rstudent(mod), xlab = 'Predicted Value', ylab = 'Jackknife Residual', 
+       main = 'Scatterplot of Residuals'); abline(h = 0, lty = 2)
+  plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), xlab='Observed Cumulative Probability', ylab='Expected Cumulative
+       Probability', main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
+  hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
+  cat('\n\n')
+}
 
 # females
-PAN_left_combined_clean %>% 
-  select(merged_id, merged_left_kv, ht_adj_merged_left_kv, PAN_risk_status, tan_fgd) %>%
-  tbl_strata(strata = PAN_risk_status, ~ .x %>% 
-  tbl_summary(by = tan_fgd, include = -merged_id,
-              type = list(c(merged_left_kv, ht_adj_merged_left_kv) ~ 'continuous', 
-                        tan_fgd~'categorical'),
-    statistic = list(all_continuous() ~ '{mean} ({sd})'),
-    digits = everything()~c(2,2),
-    missing_text = 'N Missing') %>% 
-  add_p(test = all_continuous() ~ 'kruskal.test',
-        pvalue_fun = ~style_pvalue(.x, digits=3)) %>% 
-  modify_header(label = '**Measurement**') %>% 
-  modify_caption("**Female Tanner Stage Summary by Risk Status**"))
+for (v in outcome_vars) {
+  form = as.formula(paste0(v,'~ tan_fgd + PAN_risk_status'))
+  mod <- lm(form, data = PAN_left_combined_clean)
+  print(noquote(c("Association between", noquote(v), "and Female Tanner Stage (Breast Development)")))
+  print(summary(mod))
+  plot(x = predict(mod), y = rstudent(mod), xlab = 'Predicted Value', ylab = 'Jackknife Residual', 
+       main = 'Scatterplot of Residuals'); abline(h = 0, lty = 2)
+  hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
+  cat('\n\n')
+}
 ```
 
-
+ 
 ### LKV by IGF-1 Concentrations
 
-The below results describe the association between left KV and IGF-1 concentration for PANTHER subjects. Analyses are stratified by risk status (High = T2D or obese; Low = control). Diagnostic plots for checking linear regression assumptions are also included. `merged_left_kv` is the new combined variable of non-manual and manual KV measurements, as described in the Methods section. `ht_adj_merged_left_kv` is the height-adjusted version of `merged_left_kv`.
+The below results describe the association between left KV and IGF-1 concentration for PANTHER subjects, adjusting for risk status (High = T2D or obese; Low = control). Diagnostic plots for checking linear regression assumptions are also included. `merged_left_kv` is the new combined variable of non-manual and manual KV measurements, as described in the Methods section. `ht_adj_merged_left_kv` is the height-adjusted version of `merged_left_kv`. 
 
-**High Risk:**
-```{r PANTHER lkv by IGF-1 concentrations high risk, echo=FALSE}
-HR_left_panther_dat <- PAN_left_combined_clean %>%
-  filter(PAN_risk_status == 'High')
-
+```{r PANTHER lkv by IGF-1 concentrations, echo=FALSE}
 outcome_vars <- c('merged_left_kv','ht_adj_merged_left_kv')
 
 for (v in outcome_vars) {
-  form = as.formula(paste0(v,'~ igf_1'))
-  mod <- lm(form, data = HR_left_panther_dat)
+  form = as.formula(paste0(v,'~ igf_1 + PAN_risk_status'))
+  mod <- lm(form, data = PAN_left_combined_clean)
   print(noquote(c("Association between", noquote(v), "and IGF-1 Concentration")))
   print(summary(mod))
-  plot(x=HR_left_panther_dat$igf_1, y=HR_left_panther_dat[[v]], xlab='IGF-1 Concentration', ylab=noquote(v), main='Y-X Scatterplot'); abline(mod, col='gray', lty=2)
-  plot(mod, which=1)
+  plot(x = predict(mod), y = rstudent(mod), xlab = 'Predicted Value', ylab = 'Jackknife Residual', 
+       main = 'Scatterplot of Residuals'); abline(h = 0, lty = 2)
   plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), xlab='Observed Cumulative Probability', ylab='Expected Cumulative
        Probability', main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
   hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
@@ -469,62 +430,21 @@ for (v in outcome_vars) {
 }
 ```
 
-$$\\[0.4in]$$
-
-**Low Risk:**
-```{r PANTHER lkv by IGF-1 concentrations low risk, echo=FALSE}
-LR_left_panther_dat <- PAN_left_combined_clean %>%
-  filter(PAN_risk_status == 'Low')
-
-outcome_vars <- c('merged_left_kv','ht_adj_merged_left_kv')
-
-for (v in outcome_vars) {
-  form = as.formula(paste0(v,'~ igf_1'))
-  mod <- lm(form, data = LR_left_panther_dat)
-  print(noquote(c("Association between", noquote(v), "and IGF-1 Concentration")))
-  print(summary(mod))
-  plot(x=LR_left_panther_dat$igf_1, y=LR_left_panther_dat[[v]], xlab='IGF-1 Concentration', ylab=noquote(v), main='Y-X Scatterplot'); abline(mod, col='gray', lty=2)
-  plot(mod, which=1)
-  plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), xlab='Observed Cumulative Probability', ylab='Expected Cumulative
-       Probability', main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
-  hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
-  cat('\n\n')
-}
-```
 
 ### LKV by IGF-1 Z-Scores
 
-This section reports the association between left KV and IGF-1 Z-scores for PANTHER subjects. Analyses are stratified by risk status (High = T2D or obese; Low = control). Diagnostic plots for checking linear regression assumptions are also included.
+This section reports the association between left KV and IGF-1 Z-scores for PANTHER subjects, adjusting for risk status (High = T2D or obese; Low = control). Diagnostic plots for checking linear regression assumptions are also included.
 
-**High Risk:**
-```{r PANTHER lkv by IGF-1 Z-scores high risk, echo=FALSE}
+```{r PANTHER lkv by IGF-1 z-scores, echo=FALSE}
 outcome_vars <- c('merged_left_kv','ht_adj_merged_left_kv')
 
 for (v in outcome_vars) {
-  form = as.formula(paste0(v,'~ igf1_z_score'))
-  mod <- lm(form, data = HR_left_panther_dat)
-  print(noquote(c("Association between", noquote(v), "and IGF-1 Z-score")))
+  form = as.formula(paste0(v,'~ igf1_z_score + PAN_risk_status'))
+  mod <- lm(form, data = PAN_left_combined_clean)
+  print(noquote(c("Association between", noquote(v), "and IGF-1 Z-Scores")))
   print(summary(mod))
-  plot(x=HR_left_panther_dat$igf1_z_score, y=HR_left_panther_dat[[v]], xlab='IGF-1 Z-score', ylab=noquote(v), main='Y-X Scatterplot'); abline(mod, col='gray', lty=2)
-  plot(mod, which=1)
-  plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), xlab='Observed Cumulative Probability', ylab='Expected Cumulative
-       Probability', main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
-  hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
-  cat('\n\n')
-}
-```
-$$\\[0.4in]$$
-**Low Risk:**
-```{r PANTHER lkv by IGF-1 Z-scores low risk, echo=FALSE}
-outcome_vars <- c('merged_left_kv','ht_adj_merged_left_kv')
-
-for (v in outcome_vars) {
-  form = as.formula(paste0(v,'~ igf1_z_score'))
-  mod <- lm(form, data = LR_left_panther_dat)
-  print(noquote(c("Association between", noquote(v), "and IGF-1 Z-score")))
-  print(summary(mod))
-  plot(x=LR_left_panther_dat$igf1_z_score, y=LR_left_panther_dat[[v]], xlab='IGF-1 Z-score', ylab=noquote(v), main='Y-X Scatterplot'); abline(mod, col='gray', lty=2)
-  plot(mod, which=1)
+  plot(x = predict(mod), y = rstudent(mod), xlab = 'Predicted Value', ylab = 'Jackknife Residual', 
+       main = 'Scatterplot of Residuals'); abline(h = 0, lty = 2)
   plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), xlab='Observed Cumulative Probability', ylab='Expected Cumulative
        Probability', main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
   hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
@@ -540,9 +460,11 @@ for (v in outcome_vars) {
 ### Descriptive Statistics
 ```{r rkv tab1, echo=FALSE}
 table1::table1(~ sex + age + group + diabetes_duration + height_meters + merged_right_kv + 
-                 ht_adj_merged_right_kv + merged_rkv_metric_type, 
+                 ht_adj_merged_right_kv + merged_rkv_metric_type + rkv_add_height_date_diff, 
                data = right_combined_clean, caption = 'Descriptive Statistics of all Participants for Right Kidney Analyses')
 ```
+
+Note: Height data from the same visit KV measures were collected was not available for subjects on PANTHER, CROCODILE, PANDA, or RENAL-HEIRitage so height measurements that were closest in time to the KV measures were instead used. Only heights taken on or before the KV measurement date were used. "Days Between RKV and Height Measures for PANTHER/CROCODILE/PANDA/RH2 Subjects" summarizes the distance in days between the KV measures and height measures.
 
 ### RKV by Age
 
@@ -606,111 +528,58 @@ right_combined_clean %>%
 ### Descriptive Statistics
 ```{r PANTHER rkv tab1, echo=FALSE}
 table1::table1(~ sex + age + group + PAN_risk_status + diabetes_duration + height_meters + merged_right_kv + 
-                 ht_adj_merged_right_kv + merged_rkv_metric_type + igf_1 + igf1_z_score + rkv_igf1_date_diff + rkv_tan_date_diff +
-                 rkv_PANheight_date_diff, 
+                 ht_adj_merged_right_kv + merged_rkv_metric_type + igf_1 + igf1_z_score, #+ rkv_igf1_date_diff + rkv_tan_date_diff, 
                data = PAN_right_combined_clean, caption = 'Descriptive Statistics of Participants for Right Kidney PANTHER Analyses')
 ```
 
 ### RKV by Tanner Stage
 
-The below tables report the mean and standard deviation (SD) of right KV by Tanner Stage for PANTHER subjects. Results are reported separately for males and females and stratified by risk status (High = T2D or obese; Low = control).
+This section reports the association between right KV and Tanner Stage for PANTHER subjects, adjusting for risk status (High = T2D or obese; Low = control). Diagnostic plots for checking linear regression assumptions are also included. `merged_right_kv` is the new combined variable of non-manual and manual KV measurements, as described in the Methods section. `ht_adj_merged_right_kv` is the height-adjusted version of `merged_right_kv`. Results are reported separately for males and females; `tan_tveq` denotes testicular volume and `tan_fgd` denotes breast development.
 
-```{r rkv tanner assumptions, eval=FALSE, include=FALSE}
-## assumptions check
+```{r PANTHER rkv by tanner stage, echo=FALSE, message=FALSE, warning=FALSE}
 outcome_vars <- c('merged_right_kv','ht_adj_merged_right_kv')
 
-for (v in outcome_vars) {
-  form = as.formula(paste0(v,'~ tan_tveq'))
-  mod <- aov(form, data = PAN_right_combined_clean)
-
-  qqnorm(mod$residuals)
-  qqline(mod$residuals)
-
-  bartlett_result <- bartlett.test(form, data = PAN_right_combined_clean)
-  print(bartlett_result)
-}
-
-for (v in outcome_vars) {
-  form = as.formula(paste0(v,'~ tan_fgd'))
-  mod <- aov(form, data = PAN_right_combined_clean)
-
-  qqnorm(mod$residuals)
-  qqline(mod$residuals)
-
-  bartlett_result <- bartlett.test(form, data = PAN_right_combined_clean)
-  print(bartlett_result)
-}
-
-check1 <- PAN_right_combined_clean %>%
-  filter(!is.na(tan_tveq)) %>%
-  mutate(kv_data_indicator = ifelse(!is.na(merged_right_kv), 'Y', 'N')) %>%
-  select(record_id, study, group, tan_tveq, merged_right_kv, ht_adj_merged_right_kv, kv_data_indicator)
-
-table(check1$tan_tveq) # I:3, II:8, III:4, IV:9, V:0
-table(check1$tan_tveq, check1$kv_data_indicator) # less than 5 kv obs for stage I, III, V
-
-check2 <- PAN_right_combined_clean %>%
-  filter(!is.na(tan_fgd)) %>%
-  mutate(kv_data_indicator = ifelse(!is.na(merged_right_kv), 'Y', 'N')) %>%
-  select(record_id, study, group, tan_fgd, merged_right_kv, ht_adj_merged_right_kv, kv_data_indicator)
-
-table(check2$tan_fgd) # I:6, II:10, III:11, IV:7, V:1
-table(check2$tan_fgd, check2$kv_data_indicator) # less than 5 kv obs for stage V
-```
-
-
-```{r rkv by tanner stage, echo=FALSE, message=FALSE, warning=FALSE}
-## summary table with Kruskal-Wallis for testing
-
 # males
-PAN_right_combined_clean %>%
-  select(record_id, merged_right_kv, ht_adj_merged_right_kv, PAN_risk_status, tan_tveq) %>%
-  tbl_strata(strata = PAN_risk_status, ~ .x %>%
-  tbl_summary(by = tan_tveq, include = -record_id,
-              type = list(c(merged_right_kv, ht_adj_merged_right_kv) ~ 'continuous',
-                        tan_tveq~'categorical'),
-    statistic = list(all_continuous() ~ '{mean} ({sd})'),
-    digits = everything()~c(2,2),
-    missing_text = 'N Missing') %>%
-  add_p(test = all_continuous() ~ 'kruskal.test',
-        pvalue_fun = ~style_pvalue(.x, digits=3)) %>%
-  modify_header(label = '**Measurement**') %>%
-  modify_caption("**Male Tanner Stage Summary by Risk Status**"))
+for (v in outcome_vars) {
+  form = as.formula(paste0(v,'~ tan_tveq + PAN_risk_status'))
+  mod <- lm(form, data = PAN_right_combined_clean)
+  print(noquote(c("Association between", noquote(v), "and Male Tanner Stage (Testicular Volume)")))
+  print(summary(mod))
+  plot(x = predict(mod), y = rstudent(mod), xlab = 'Predicted Value', ylab = 'Jackknife Residual', 
+       main = 'Scatterplot of Residuals'); abline(h = 0, lty = 2)
+  plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), xlab='Observed Cumulative Probability', ylab='Expected Cumulative
+       Probability', main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
+  hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
+  cat('\n\n')
+}
 
 # females
-PAN_right_combined_clean %>%
-  select(record_id, merged_right_kv, ht_adj_merged_right_kv, PAN_risk_status, tan_fgd) %>%
-  tbl_strata(strata = PAN_risk_status, ~ .x %>%
-  tbl_summary(by = tan_fgd, include = -record_id,
-              type = list(c(merged_right_kv, ht_adj_merged_right_kv) ~ 'continuous',
-                        tan_fgd~'categorical'),
-    statistic = list(all_continuous() ~ '{mean} ({sd})'),
-    digits = everything()~c(2,2),
-    missing_text = 'N Missing') %>%
-  add_p(test = all_continuous() ~ 'kruskal.test',
-        pvalue_fun = ~style_pvalue(.x, digits=3)) %>%
-  modify_header(label = '**Measurement**') %>%
-  modify_caption("**Female Tanner Stage Summary by Risk Status**"))
+for (v in outcome_vars) {
+  form = as.formula(paste0(v,'~ tan_fgd + PAN_risk_status'))
+  mod <- lm(form, data = PAN_right_combined_clean)
+  print(noquote(c("Association between", noquote(v), "and Female Tanner Stage (Breast Development)")))
+  print(summary(mod))
+  plot(x = predict(mod), y = rstudent(mod), xlab = 'Predicted Value', ylab = 'Jackknife Residual', 
+       main = 'Scatterplot of Residuals'); abline(h = 0, lty = 2)
+  hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
+  cat('\n\n')
+}
 ```
 
 ### RKV by IGF-1 Concentrations
 
-The below results describe the association between right KV and IGF-1 concentration for PANTHER subjects. Analyses are stratified by risk status (High = T2D or obese; Low = control). Diagnostic plots for checking linear regression assumptions are also included. `merged_right_kv` is the new combined variable of non-manual and manual KV measurements, as described in the Methods section. `ht_adj_merged_right_kv` is the height-adjusted version of `merged_right_kv`.
+The below results describe the association between right KV and IGF-1 concentration for PANTHER subjects, adjusting for risk status (High = T2D or obese; Low = control). Diagnostic plots for checking linear regression assumptions are also included. `merged_right_kv` is the new combined variable of non-manual and manual KV measurements, as described in the Methods section. `ht_adj_merged_right_kv` is the height-adjusted version of `merged_right_kv`.
 
-**High Risk:**
-```{r PANTHER rkv by IGF-1 concentrations high risk, echo=FALSE}
-HR_right_panther_dat <- PAN_right_combined_clean %>%
-  filter(PAN_risk_status == 'High')
-
+```{r PANTHER rkv by IGF-1 concentrations, echo=FALSE}
 outcome_vars <- c('merged_right_kv','ht_adj_merged_right_kv')
 
 for (v in outcome_vars) {
-  form = as.formula(paste0(v,'~ igf_1'))
-  mod <- lm(form, data = HR_right_panther_dat)
+  form = as.formula(paste0(v,'~ igf_1 + PAN_risk_status'))
+  mod <- lm(form, data = PAN_right_combined_clean)
   print(noquote(c("Association between", noquote(v), "and IGF-1 Concentration")))
   print(summary(mod))
-  plot(x=HR_right_panther_dat$igf_1, y=HR_right_panther_dat[[v]], xlab='IGF-1 Concentration', ylab=noquote(v), main='Y-X Scatterplot'); abline(mod, col='gray', lty=2)
-  plot(mod, which=1)
+  plot(x = predict(mod), y = rstudent(mod), xlab = 'Predicted Value', ylab = 'Jackknife Residual', 
+       main = 'Scatterplot of Residuals'); abline(h = 0, lty = 2)
   plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), xlab='Observed Cumulative Probability', ylab='Expected Cumulative
        Probability', main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
   hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
@@ -718,66 +587,24 @@ for (v in outcome_vars) {
 }
 ```
 
-$$\\[0.4in]$$
-**Low Risk:**
-```{r PANTHER rkv by IGF-1 concentrations low risk, echo=FALSE}
-LR_right_panther_dat <- PAN_right_combined_clean %>%
-  filter(PAN_risk_status == 'Low')
-
-outcome_vars <- c('merged_right_kv','ht_adj_merged_right_kv')
-
-for (v in outcome_vars) {
-  form = as.formula(paste0(v,'~ igf_1'))
-  mod <- lm(form, data = LR_right_panther_dat)
-  print(noquote(c("Association between", noquote(v), "and IGF-1 Concentration")))
-  print(summary(mod))
-  plot(x=LR_right_panther_dat$igf_1, y=LR_right_panther_dat[[v]], xlab='IGF-1 Concentration', ylab=noquote(v), main='Y-X Scatterplot'); abline(mod, col='gray', lty=2)
-  plot(mod, which=1)
-  plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), xlab='Observed Cumulative Probability', ylab='Expected Cumulative
-       Probability', main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
-  hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
-  cat('\n\n')
-}
-```
 
 ### RKV by IGF-1 Z-Scores
 
-This section reports the association between right KV and IGF-1 Z-scores for PANTHER subjects. Analyses are stratified by risk status (High = T2D or obese; Low = control). Diagnostic plots for checking linear regression assumptions are also included.
+This section reports the association between right KV and IGF-1 Z-scores for PANTHER subjects, adjusting for risk status (High = T2D or obese; Low = control). Diagnostic plots for checking linear regression assumptions are also included.
 
-**High Risk:**
-```{r PANTHER rkv by IGF-1 Z-scores high risk, echo=FALSE}
+```{r PANTHER rkv by IGF-1 z-scores, echo=FALSE}
 outcome_vars <- c('merged_right_kv','ht_adj_merged_right_kv')
 
 for (v in outcome_vars) {
-  form = as.formula(paste0(v,'~ igf1_z_score'))
-  mod <- lm(form, data = HR_right_panther_dat)
-  print(noquote(c("Association between", noquote(v), "and IGF-1 Z-score")))
+  form = as.formula(paste0(v,'~ igf1_z_score + PAN_risk_status'))
+  mod <- lm(form, data = PAN_right_combined_clean)
+  print(noquote(c("Association between", noquote(v), "and IGF-1 Z-Scores")))
   print(summary(mod))
-  plot(x=HR_right_panther_dat$igf1_z_score, y=HR_right_panther_dat[[v]], xlab='IGF-1 Z-score', ylab=noquote(v), main='Y-X Scatterplot'); abline(mod, col='gray', lty=2)
-  plot(mod, which=1)
+  plot(x = predict(mod), y = rstudent(mod), xlab = 'Predicted Value', ylab = 'Jackknife Residual', 
+       main = 'Scatterplot of Residuals'); abline(h = 0, lty = 2)
   plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), xlab='Observed Cumulative Probability', ylab='Expected Cumulative
        Probability', main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
   hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
   cat('\n\n')
 }
 ```
-$$\\[0.4in]$$
-
-**Low Risk:**
-```{r PANTHER rkv by IGF-1 Z-scores low risk, echo=FALSE}
-outcome_vars <- c('merged_right_kv','ht_adj_merged_right_kv')
-
-for (v in outcome_vars) {
-  form = as.formula(paste0(v,'~ igf1_z_score'))
-  mod <- lm(form, data = LR_right_panther_dat)
-  print(noquote(c("Association between", noquote(v), "and IGF-1 Z-score")))
-  print(summary(mod))
-  plot(x=LR_right_panther_dat$igf1_z_score, y=LR_right_panther_dat[[v]], xlab='IGF-1 Z-score', ylab=noquote(v), main='Y-X Scatterplot'); abline(mod, col='gray', lty=2)
-  plot(mod, which=1)
-  plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), xlab='Observed Cumulative Probability', ylab='Expected Cumulative
-       Probability', main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
-  hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
-  cat('\n\n')
-}
-```
-
