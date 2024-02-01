@@ -1,0 +1,202 @@
+---
+title: "REE response to reviewers"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(stringr)
+library(dplyr)
+library(arsenal)
+library(zscorer)
+library(tableone)
+library(car)
+```
+
+```{r data, include=FALSE}
+# read CGM data
+dat <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Melanie Green/PCOS REE/REEMultiCenterStudy_DATA_2024-01-31_1133.csv")
+
+#################################################
+# Start of CS data processing code              #
+#################################################
+
+# separate clinical visits and demographic data instruments
+demo <- dat[dat$redcap_repeat_instrument != "clinical_visit",]
+demo <- demo[ , colSums(is.na(demo)) < nrow(demo)]
+
+clinical <- dat[dat$redcap_repeat_instrument == "clinical_visit",]
+clinical <- clinical[ , colSums(is.na(clinical)) < nrow(clinical)]
+
+dat <- merge(demo,clinical, by = "record_number")
+
+dat$race[dat$race___1 == 1] <- "Caucasian"
+dat$race[dat$race___2 == 1] <- "African American"
+dat$race[dat$race___3 == 1] <- "Asian"
+dat$race[dat$race___4 == 1] <- "Pacific Islander"
+dat$race[dat$race___5 == 1] <- "American Indian or Alaska Native"
+dat$race[dat$race___333 == 1] <- "Other"
+dat$race[dat$race___555 == 1] <- "NA"
+dat$race[is.na(dat$race)] <- "NA"
+dat$race <- factor(dat$race, levels = c("Caucasian","African American","Asian","Pacific Islander","American Indian or Alaska Native","Other","NA"))
+
+names(dat)[20] <- "pmh_overweight_obesity"
+
+names(dat)[106] <- "surghx_none"
+
+
+dat$ethnicity[dat$ethnicity == "1"] <- "Hispanic"
+dat$ethnicity[dat$ethnicity == "0"] <- "Non-Hispanic"
+dat$ethnicity[dat$ethnicity == "333"] <- "NA"
+dat$ethnicity[is.na(dat$ethnicity)] <- "NA"
+
+dat$ethnicity <- factor(dat$ethnicity, levels = c("Non-Hispanic","Hispanic","NA"))
+
+dat$site[dat$site == "1"] <- "Denver"
+dat$site[dat$site == "2"] <- "UMN"
+dat$site[dat$site == "3"] <- "Vanderbilt"
+dat$site[dat$site == "4"] <- "NIH"
+
+dat$sex[dat$sex == "1"] <- "Male"
+dat$sex[dat$sex == "2"] <- "Female"
+dat$sex <- factor(dat$sex, levels = c("Female","Male"))
+
+dat$pcos_status[dat$pcos_status == "0"] <- "Yes"
+dat$pcos_status[dat$pcos_status == "1"] <- "No"
+dat$pcos_status[dat$pcos_status == "2"] <- "NA"
+dat$pcos_status[is.na(dat$pcos_status)] <- "NA"
+dat$pcos_status <- factor(dat$pcos_status, levels = c("No","Yes","NA"))
+
+dat$tanner_stage[dat$tanner_stage == "333"] <- NA
+
+dat$t2d_status[dat$t2d_status == 0] <- "Yes"
+dat$t2d_status[dat$t2d_status == 1] <- "No"
+dat$t2d_status[is.na(dat$t2d_status)] <- "NA"
+dat$t2d_status <- factor(dat$t2d_status, levels = c("No","Yes","NA"))
+
+dat <- dat %>% filter(age_y > 12 & age_y < 21)
+
+dat$tanner_stage[dat$sex == "Female" & dat$age_y < 13 & is.na(dat$tanner_stage)] <- 4
+dat$tanner_stage[dat$sex == "Female" & dat$age_y >= 13 & is.na(dat$tanner_stage)] <- 5
+
+dat$tanner_stage[dat$sex == "Male" & dat$age_y < 13 & is.na(dat$tanner_stage)] <- 3
+dat$tanner_stage[dat$sex == "Male" & dat$age_y >= 13 & dat$age < 15 & is.na(dat$tanner_stage)] <- 4
+dat$tanner_stage[dat$sex == "Male" & dat$age_y >= 15 & is.na(dat$tanner_stage)] <- 5
+
+dat <- dat %>% filter(tanner_stage >= 3 & tanner_stage <= 5)
+
+dups <- dat[duplicated(dat$record_number),]
+
+dat <- dat[-duplicated(dat$record_number),]
+
+unduped <- NULL
+
+for (record in unique(dups$record_number)){
+  record_df <- dups[dups$record_number == record,]
+  record_df <- arrange(record_df, date_cv.y)
+  unduped <- rbind(unduped,record_df[1,])
+}
+
+dat <- rbind(dat, unduped)
+
+
+dat$tanner_stage <- as.factor(dat$tanner_stage)
+
+dat$ree_test_prep_cv[dat$ree_test_prep_cv == "1"] <- "Inpatient"
+dat$ree_test_prep_cv[dat$ree_test_prep_cv == "0"] <- "Outpatient"
+
+dat$age_y[dat$age_y %% 1 == 0] <- dat$age_y[dat$age_y %% 1 == 0] + 0.5
+
+dat$age_mo[is.na(dat$age_mo)] <- dat$age_y[is.na(dat$age_mo)]*12
+dat$age_y[dat$age_mo < 12] <- dat$age_y[dat$age_mo < 12] + dat$age_mo[dat$age_mo < 12]/12
+dat$age_mo[dat$age_mo < 12] <- dat$age_y[dat$age_mo < 12]*12
+dat$age_mo[dat$age_mo < 144] <- dat$age_y[dat$age_mo < 144]*12
+
+dat$age_days <- dat$age_y*365.25
+
+
+
+dat$sex_number <- ifelse(dat$sex == "Male", 1, 2)
+dat <- addWGSR(data = dat, sex = "sex_number", firstPart = "weight_cv", secondPart = "height_cv", thirdPart = "age_days", index = "bfa")
+
+
+dat$dxa_ffm_cv[dat$dxa_ffm_cv == 999] <- NA
+dat$dxa_fm_cv[dat$dxa_fm_cv > 500] <- NA
+dat$dxa_lm_cv[dat$dxa_lm_cv > 500] <- NA
+dat$wst_circum_cv[dat$wst_circum_cv > 500] <- NA
+
+dat <- dat %>% filter(bfaz > 1.04)
+
+
+labels(dat$measured_ree_cv) <- "REE"
+labels(dat$sex) <- "Sex"
+labels(dat$race) <- "Race"
+labels(dat$ethnicity) <- "Ethnicity"
+labels(dat$pcos_status) <- "PCOS Status"
+labels(dat$t2d_status) <- "T2D Status"
+labels(dat$bfaz) <- "BMI z-score for age"
+labels(dat$age_y) <- "Age (years)"
+labels(dat$weight_cv) <- "Weight (kg)"
+labels(dat$height_cv) <- "Height (cm)"
+labels(dat$wst_circum_cv) <- "Waist Circumfrence"
+labels(dat$hip_circum_cv) <- "Hip Circumfrence"
+labels(dat$wh_ratio_cv) <- "Waist:Hip Ratio"
+labels(dat$tanner_stage) <- "Tanner Stage"
+labels(dat$ffa_cv) <- "FFA"
+labels(dat$dxa_fm_cv) <- "FM"
+labels(dat$dxa_ffm_cv) <- "FFM"
+labels(dat$dxa_lm_cv) <- "LM"
+labels(dat$ree_test_prep_cv) <- "Inpatient/Outpatient"
+
+#################################################
+# End of CS data processing code              #
+#################################################
+
+
+
+```
+
+# Results
+
+## How much data were imputed?
+
+```{r}
+sum(is.na(dat$sex_number))/nrow(dat)
+sum(is.na(dat$race))/nrow(dat)
+sum(is.na(dat$ethnicity))/nrow(dat)
+sum(is.na(dat$height_cv))/nrow(dat)
+sum(is.na(dat$bmi_percent_cv))/nrow(dat)
+sum(is.na(dat$bmi))/nrow(dat)
+sum(is.na(dat$wst_circum_cv))/nrow(dat)
+sum(is.na(dat$hip_circum_cv))/nrow(dat)
+sum(is.na(dat$wh_ratio_cv))/nrow(dat)
+sum(is.na(dat$age_y))/nrow(dat)
+sum(is.na(dat$dxa_lm_cv))/nrow(dat)
+sum(is.na(dat$dxa_ffm_cv))/nrow(dat)
+sum(is.na(dat$dxa_fm_cv))/nrow(dat)
+```
+
+## Sex and Tanner stage
+
+### Distribution of sex and Tanner stage
+
+```{r}
+t <- CreateTableOne(data = dat, vars = "sex", strata = "tanner_stage")
+t <- print(t)
+```
+
+### Is there an interaction between sex and Tanner stage on REE?
+
+```{r}
+mod <- lm(data = dat, formula = measured_ree_cv ~ sex*tanner_stage)
+summary(mod)
+anova(mod)
+```
