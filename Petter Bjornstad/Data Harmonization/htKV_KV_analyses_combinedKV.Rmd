@@ -72,6 +72,12 @@ clean_dat <- left_join(raw_dat, coenroll_id, by = 'record_id') %>%
          merged_rkv_metric_type = case_when(!is.na(right_kidney_volume_ml) ~ 'Non-Manual',
                                       is.na(right_kidney_volume_ml) & !is.na(volume_right_manual) ~ 'Manual'),
          height_meters = height*0.01) %>% 
+  # mutate(ht_adj_merged_left_kv = merged_left_kv/height_meters,
+  #        ht_adj_merged_right_kv = merged_right_kv/height_meters) %>% 
+  # mutate(log_merged_left_kv = log(merged_left_kv),
+  #        log_merged_right_kv = log(merged_right_kv),
+  #        log_ht_adj_merged_left_kv = log(ht_adj_merged_left_kv),
+  #        log_ht_adj_merged_right_kv = log(ht_adj_merged_right_kv)) %>%
   select(-c(igf_1, igf1_z_score, tan_fgd, tan_tveq)) # no data for these vars with procedure = bold_mri/clamp; manually added it in later
 
 
@@ -208,14 +214,60 @@ right_combined_clean <- left_join(right_combined_clean, rkv_additional_heights, 
 
 rm(rkv_additional_heights, lkv_additional_heights)
 
-## check - everything working as intended
-og_left_combined_clean <- og_left_combined_clean %>% select(-height_meters)
-check_left_combined <- left_combined_clean %>% select(-height_meters)
-identical(og_left_combined_clean, check_left_combined[, -c(1013:1024)])
+# add in missing uacr data 
+additional_acru_dat <- left_join(raw_dat, coenroll_id, by = 'record_id') %>% 
+  relocate(merged_id, .after = co_enroll_id) %>% 
+  filter(participation_status != 'Removed'|is.na(participation_status)) %>% 
+  filter(group != 'PKD') %>%
+  filter(!is.na(acr_u)) %>% 
+  select(merged_id, record_id, study, visit, date, acr_u) %>%
+  mutate(merged_id = ifelse(!is.na(merged_id), merged_id, record_id)) %>% 
+  group_by(merged_id, visit, date) %>%
+  mutate(additional_acr_u = mean(acr_u)) %>% # take mean uacr if dates are exact same
+  slice(1) %>% 
+  ungroup() %>% 
+  as.data.frame() %>% 
+  rename('additional_acru_date' = 'date') %>% 
+  select(-acr_u)
 
-og_right_combined_clean <- og_right_combined_clean %>% select(-height_meters)
-check_right_combined <- right_combined_clean %>% select(-height_meters)
-identical(og_right_combined_clean, check_right_combined[, -c(1013:1024)])
+lkv_additional_acru <- left_join(left_combined_clean, additional_acru_dat, by = c('merged_id', 'study', 'visit')) %>% 
+  mutate(lkv_add_acru_date_diff = as.numeric(difftime(as.Date(lkv_date), as.Date(additional_acru_date), units = 'days'))) %>% 
+  select(merged_id, study, visit, additional_acru_date, lkv_add_acru_date_diff, additional_acr_u) %>%  
+  filter(lkv_add_acru_date_diff >= 0) %>%  # only use uacr taken on or before date of kv measurement
+  group_by(merged_id) %>%
+  slice_min(lkv_add_acru_date_diff, n = 1) %>%  
+  ungroup()
+
+left_combined_clean <- left_join(left_combined_clean, lkv_additional_acru, by = c('merged_id', 'study', 'visit')) %>% 
+  mutate(acr_u = case_when(!is.na(acr_u) ~ acr_u,
+                                is.na(acr_u) & !is.na(additional_acr_u) ~ additional_acr_u,
+                                !is.na(acr_u) & !is.na(additional_acr_u) ~ acr_u)) %>% 
+  select(-additional_acr_u)
+
+rkv_additional_acru <- left_join(right_combined_clean, additional_acru_dat, by = c('merged_id', 'study', 'visit')) %>% 
+  mutate(rkv_add_acru_date_diff = as.numeric(difftime(as.Date(rkv_date), as.Date(additional_acru_date), units = 'days'))) %>% 
+  select(merged_id, study, visit, additional_acru_date, rkv_add_acru_date_diff, additional_acr_u) %>%  
+  filter(rkv_add_acru_date_diff >= 0) %>%  # only use uacr taken on or before date of kv measurement
+  group_by(merged_id) %>%
+  slice_min(rkv_add_acru_date_diff, n = 1) %>%  
+  ungroup()
+
+right_combined_clean <- left_join(right_combined_clean, rkv_additional_acru, by = c('merged_id', 'study', 'visit')) %>% 
+  mutate(acr_u = case_when(!is.na(acr_u) ~ acr_u,
+                                is.na(acr_u) & !is.na(additional_acr_u) ~ additional_acr_u,
+                                !is.na(acr_u) & !is.na(additional_acr_u) ~ acr_u)) %>% 
+  select(-additional_acr_u)
+
+rm(rkv_additional_acru, lkv_additional_acru)
+
+## check - everything working as intended
+og_left_combined_clean <- og_left_combined_clean %>% select(-c(height_meters, acr_u))
+check_left_combined <- left_combined_clean %>% select(-c(height_meters, acr_u))
+identical(og_left_combined_clean, check_left_combined[, -c(1012:1025)])
+
+og_right_combined_clean <- og_right_combined_clean %>% select(-c(height_meters, acr_u))
+check_right_combined <- right_combined_clean %>% select(-c(height_meters, acr_u))
+identical(og_right_combined_clean, check_right_combined[, -c(1012:1025)])
 
 rm(og_left_combined_clean, check_left_combined, og_right_combined_clean, check_right_combined)
 
@@ -254,6 +306,8 @@ label(left_combined_clean$ht_adj_merged_left_kv) <- "Height Adjusted Left Kidney
 label(right_combined_clean$ht_adj_merged_right_kv) <- "Height Adjusted Right Kidney Volume (mL/m)"
 label(left_combined_clean$lkv_add_height_date_diff) <- "Days Between LKV and Height Measures for PANTHER/CROCODILE/PANDA/RH2 Subjects "
 label(right_combined_clean$rkv_add_height_date_diff) <- "Days Between RKV and Height Measures for PANTHER/CROCODILE/PANDA/RH2 Subjects"
+label(left_combined_clean$lkv_add_acru_date_diff) <- "Days Between LKV and UACR Measures for PANTHER/CROCODILE/PANDA/RH Subjects "
+label(right_combined_clean$rkv_add_acru_date_diff) <- "Days Between RKV and UACR Measures for PANTHER/CROCODILE/PANDA/RH Subjects"
 
 rm(right_clean_dat, left_clean_dat)
 
@@ -262,7 +316,7 @@ PAN_left_combined_clean <- left_combined_clean %>% filter(study == 'PANTHER')
 PAN_right_combined_clean <- right_combined_clean %>% filter(study == 'PANTHER')
 
 ## workspace cleanup
-rm(additional_height_dat, PAN_tan_dat, PAN_igf1_dat)
+rm(additional_height_dat, PAN_tan_dat, PAN_igf1_dat, additional_acru_dat)
 ```
 
 
@@ -290,12 +344,12 @@ R v 4.2.3 was used for all analyses.
 
 ### Descriptive Statistics
 ```{r lkv tab1, echo=FALSE}
-table1::table1(~ sex + age + group + diabetes_duration + height_meters + merged_left_kv + ht_adj_merged_left_kv + 
-                 merged_lkv_metric_type + lkv_add_height_date_diff, 
+table1::table1(~ sex + age + group + diabetes_duration + height_meters + acr_u + merged_left_kv + ht_adj_merged_left_kv + 
+                 merged_lkv_metric_type + lkv_add_height_date_diff + lkv_add_acru_date_diff, 
                data = left_combined_clean, caption = 'Descriptive Statistics of all Participants for Left Kidney Analyses')
 ```
 
-Note: Height data from the same visit KV measures were collected was not available for subjects on PANTHER, CROCODILE, PANDA, or RENAL-HEIRitage so height measurements that were closest in time to the KV measures were instead used. Only heights taken on or before the KV measurement date were used. "Days Between LKV and Height Measures for PANTHER/CROCODILE/PANDA/RH2 Subjects" summarizes the distance in days between the KV measures and height measures. 
+Note: Height data from the same visit KV measures were collected was not available for subjects on PANTHER, CROCODILE, PANDA, or RENAL-HEIRitage so height measurements that were closest in time to the KV measures were instead used. Only heights taken on or before the KV measurement date were used. "Days Between LKV and Height Measures for PANTHER/CROCODILE/PANDA/RH2 Subjects" summarizes the distance in days between the KV measures and height measures. The same approach was used for the UACR data, which was not available for subjects on PANTHER, CROCODILE, PANDA, or RENAL-HEIR.
 
 ### LKV by Age
 
@@ -355,12 +409,25 @@ left_combined_clean %>%
   modify_header(label='**Measurement**')
 ```
 
+## LKV UACR Correlation
+```{r lkv uacr correlation, echo=FALSE}
+## UACR and lkv correlation calculations
+
+lkv_uacr_corr <- cor.test(x = left_combined_clean$merged_left_kv, 
+                               y = left_combined_clean$acr_u, method = 'pearson')$estimate
+ht_adj_lkv_uacr_corr <- cor.test(x = left_combined_clean$ht_adj_merged_left_kv,
+                                     y = left_combined_clean$acr_u, method = 'pearson')$estimate
+```
+Pearson correlation for UACR and lkv (all studies): `r lkv_uacr_corr`
+
+Pearson correlation for UACR and height-adjusted lkv (all studies): `r ht_adj_lkv_uacr_corr`
+
 
 ## Results: PANTHER
 
 ### Descriptive Statistics
 ```{r PANTHER lkv tab1, echo=FALSE}
-table1::table1(~ sex + age + group + PAN_risk_status + diabetes_duration + height_meters + merged_left_kv + 
+table1::table1(~ sex + age + group + PAN_risk_status + diabetes_duration + height_meters + acr_u + merged_left_kv + 
                  ht_adj_merged_left_kv + merged_lkv_metric_type + igf_1 + igf1_z_score, #+ lkv_igf1_date_diff + lkv_tan_date_diff, 
                data = PAN_left_combined_clean, caption = 'Descriptive Statistics of Participants for Left Kidney PANTHER Analyses')
 ```
@@ -371,6 +438,8 @@ This section reports the association between left KV and Tanner Stage for PANTHE
 
 <!-- tanner stage for boys measured as tan_tveq -->
 <!-- tanner stage for girls measured as tan_fgd -->
+
+<!-- https://www.reddit.com/r/statistics/comments/2md67n/is_there_sample_size_requirement_for_the/?rdt=42138 -->
 
 ```{r PANTHER lkv by tanner stage, echo=FALSE, message=FALSE, warning=FALSE}
 outcome_vars <- c('merged_left_kv','ht_adj_merged_left_kv')
@@ -447,18 +516,31 @@ for (v in outcome_vars) {
 ```
 
 
+### LKV UACR Correlation
+```{r PANTHER lkv uacr correlation, echo=FALSE}
+## UACR and lkv correlation calculations
+
+PAN_lkv_uacr_corr <- cor.test(x = PAN_left_combined_clean$merged_left_kv, 
+                               y = PAN_left_combined_clean$acr_u, method = 'pearson')$estimate
+PAN_ht_adj_lkv_uacr_corr <- cor.test(x = PAN_left_combined_clean$ht_adj_merged_left_kv,
+                                     y = PAN_left_combined_clean$acr_u, method = 'pearson')$estimate
+```
+Pearson correlation for PANTHER UACR and lkv: `r PAN_lkv_uacr_corr`
+
+Pearson correlation for PANTHER UACR and height-adjusted lkv: `r PAN_ht_adj_lkv_uacr_corr`
+
 # Right Kidney Analyses
 
 ## Results: All Studies
 
 ### Descriptive Statistics
 ```{r rkv tab1, echo=FALSE}
-table1::table1(~ sex + age + group + diabetes_duration + height_meters + merged_right_kv + 
-                 ht_adj_merged_right_kv + merged_rkv_metric_type + rkv_add_height_date_diff, 
+table1::table1(~ sex + age + group + diabetes_duration + height_meters + acr_u + merged_right_kv + 
+                 ht_adj_merged_right_kv + merged_rkv_metric_type + rkv_add_height_date_diff + rkv_add_acru_date_diff, 
                data = right_combined_clean, caption = 'Descriptive Statistics of all Participants for Right Kidney Analyses')
 ```
 
-Note: Height data from the same visit KV measures were collected was not available for subjects on PANTHER, CROCODILE, PANDA, or RENAL-HEIRitage so height measurements that were closest in time to the KV measures were instead used. Only heights taken on or before the KV measurement date were used. "Days Between RKV and Height Measures for PANTHER/CROCODILE/PANDA/RH2 Subjects" summarizes the distance in days between the KV measures and height measures.
+Note: Height data from the same visit KV measures were collected was not available for subjects on PANTHER, CROCODILE, PANDA, or RENAL-HEIRitage so height measurements that were closest in time to the KV measures were instead used. Only heights taken on or before the KV measurement date were used. "Days Between RKV and Height Measures for PANTHER/CROCODILE/PANDA/RH2 Subjects" summarizes the distance in days between the KV measures and height measures.The same approach was used for the UACR data, which was not available for subjects on PANTHER, CROCODILE, PANDA, or RENAL-HEIR.
 
 ### RKV by Age
 
@@ -517,11 +599,25 @@ right_combined_clean %>%
   modify_header(label='**Measurement**')
 ```
 
+## RKV UACR Correlation
+```{r rkv uacr correlation, echo=FALSE}
+## UACR and rkv correlation calculations
+
+rkv_uacr_corr <- cor.test(x = right_combined_clean$merged_right_kv, 
+                               y = right_combined_clean$acr_u, method = 'pearson')$estimate
+ht_adj_rkv_uacr_corr <- cor.test(x = right_combined_clean$ht_adj_merged_right_kv,
+                                     y = right_combined_clean$acr_u, method = 'pearson')$estimate
+```
+Pearson correlation for UACR and rkv (all studies): `r rkv_uacr_corr`
+
+Pearson correlation for UACR and height-adjusted rkv (all studies): `r ht_adj_rkv_uacr_corr`
+
+
 ## Results: PANTHER
 
 ### Descriptive Statistics
 ```{r PANTHER rkv tab1, echo=FALSE}
-table1::table1(~ sex + age + group + PAN_risk_status + diabetes_duration + height_meters + merged_right_kv + 
+table1::table1(~ sex + age + group + PAN_risk_status + diabetes_duration + height_meters + acr_u + merged_right_kv + 
                  ht_adj_merged_right_kv + merged_rkv_metric_type + igf_1 + igf1_z_score, #+ rkv_igf1_date_diff + rkv_tan_date_diff, 
                data = PAN_right_combined_clean, caption = 'Descriptive Statistics of Participants for Right Kidney PANTHER Analyses')
 ```
@@ -582,6 +678,7 @@ for (v in outcome_vars) {
 ```
 
 
+
 ### RKV by IGF-1 Z-Scores
 
 This section reports the association between right KV and IGF-1 Z-scores for PANTHER subjects, adjusting for risk status (High = T2D or obese; Low = control). Diagnostic plots for checking linear regression assumptions are also included.
@@ -602,3 +699,16 @@ for (v in outcome_vars) {
   cat('\n\n')
 }
 ```
+
+### RKV UACR Correlation
+```{r PANTHER rkv uacr correlation, echo=FALSE}
+## UACR and rkv correlation calculations
+
+PAN_rkv_uacr_corr <- cor.test(x = PAN_right_combined_clean$merged_right_kv, 
+                               y = PAN_right_combined_clean$acr_u, method = 'pearson')$estimate
+PAN_ht_adj_rkv_uacr_corr <- cor.test(x = PAN_right_combined_clean$ht_adj_merged_right_kv,
+                                     y = PAN_right_combined_clean$acr_u, method = 'pearson')$estimate
+```
+Pearson correlation for PANTHER UACR and rkv: `r PAN_rkv_uacr_corr`
+
+Pearson correlation for PANTHER UACR and height-adjusted rkv: `r PAN_ht_adj_rkv_uacr_corr`

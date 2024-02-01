@@ -1,0 +1,344 @@
+---
+title: "Harmonized Data Mean Kidney Volume Analyses (T1D and T2D Only)"
+author: "Callie Rountree-Jablin"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    toc_loc: left
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(kableExtra)
+library(Hmisc)
+library(gtsummary)
+library(magrittr)
+pacman::p_load(naniar)
+
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "B:/Petter Bjornstad"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  home_dir = "/Volumes/Peds Endo/Petter Bjornstad/"
+} 
+knitr::opts_knit$set(echo=FALSE, root.dir = home_dir)
+```
+# Overview
+
+The aim of this report is to:
+
+ 1. Describe non-manual or manual average kidney volume across all studies by age and disease type, using the harmonized dataset. 
+ 
+```{r read, include=FALSE}
+## read raw data and data dictionary
+raw_dat <- read.csv("./Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = c(" ", "", "-9999",-9999))
+dict <- read.csv("./Data Harmonization/data_dictionary_master.csv", na.strings = c(" ", "", "-9999",-9999)) %>% 
+  select(variable_name, label)
+
+## import co-enrolled IDs for IMPROVE, RH, and RH2; transpose to long format
+coenroll_id <- read.csv("./Renal HERITAGE/Data_Cleaned/coenrolled_ids.csv") %>%
+  pivot_longer(cols = 'improve_id':'crc_id',
+               values_to = "record_id") %>% 
+  select(merged_id, record_id) %>%
+  filter(record_id != "")
+```
+
+
+```{r combined analysis data cleaning, include=FALSE}
+### data cleaning for combined/merged non-manual and manual analyses
+
+## clean main df
+# add in merged IDs to data, filter down to studies and procedures where kv data was collected
+# exclude PKD subjects, merge non-manual and manual variables and take mean, define height in m for later calculation of ht. adj. vars
+clean_dat <- left_join(raw_dat, coenroll_id, by = 'record_id') %>% 
+  relocate(merged_id, .after = co_enroll_id) %>%
+  filter(((study == 'CROCODILE'| study == 'PANDA') & procedure == 'bold_mri') | 
+           ((study == 'PANTHER'| study == 'RENAL-HEIR'| study =='RENAL-HEIRitage') & procedure == 'clamp') | 
+           (study == 'PENGUIN' & procedure == 'mri')) %>% 
+  filter(participation_status != 'Removed'|is.na(participation_status)) %>% 
+  filter(group != 'PKD') %>% 
+  mutate(date = as.Date(date, format = '%Y-%m-%d'), # formatted date to use arrange function later on
+         merged_left_kv = ifelse(!is.na(left_kidney_volume_ml), left_kidney_volume_ml, volume_left_manual),
+         merged_right_kv = ifelse(!is.na(right_kidney_volume_ml), right_kidney_volume_ml, volume_right_manual),
+         merged_lkv_metric_type = case_when(!is.na(left_kidney_volume_ml) ~ 'Non-Manual',
+                                      is.na(left_kidney_volume_ml) & !is.na(volume_left_manual) ~ 'Manual'),
+         merged_rkv_metric_type = case_when(!is.na(right_kidney_volume_ml) ~ 'Non-Manual',
+                                      is.na(right_kidney_volume_ml) & !is.na(volume_right_manual) ~ 'Manual'),
+         height_meters = height*0.01) %>%
+  mutate(mean_kv = case_when(!is.na(merged_left_kv) & !is.na(merged_right_kv) ~ 
+                               rowMeans(select(., merged_left_kv, merged_right_kv), na.rm = FALSE),
+                             !is.na(merged_left_kv) & is.na(merged_right_kv) ~ merged_left_kv,
+                             is.na(merged_left_kv) & !is.na(merged_right_kv) ~ merged_right_kv)) %>% 
+  select(-c(igf_1, igf1_z_score, tan_fgd, tan_tveq)) # no data for these vars with procedure = bold_mri/clamp; manually added it in later
+
+clean_dat <- unite(clean_dat, col = 'mean_kv_metric_type', c('merged_lkv_metric_type', 'merged_rkv_metric_type'), sep = ' and ',
+              na.rm = TRUE, remove = FALSE) %>%
+  mutate(mean_kv_metric_type = recode(mean_kv_metric_type, 'Non-Manual and Non-Manual' = 'Non-Manual', 'Manual and Manual' = 'Manual'))
+
+## define function for collapsing subjects who are represented more than once to 1 row
+# function cleans RH, RH2, CROCODILE, and PANDA co-enrolled subjects as well as PANTHER subjects w/multiple visits by
+# first dropping rows with no kv data at all, then keeping subject's earliest measurements for all variables 
+coenroll_multivisit_cleaning <- function(dat, merged_kv_varname){
+  dat %>%
+    filter(study == 'RENAL-HEIRitage' | study == 'RENAL-HEIR' | study == 'CROCODILE' | study == 'PANDA' | study == 'PANTHER') %>%
+    filter(!is.na({{merged_kv_varname}})) %>% 
+    arrange(merged_id, visit, date) %>%
+    mutate(date = as.character(date)) %>% 
+    summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, first(na.omit(.x)))),
+              across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, first(na.omit(.x)))), .by = c(merged_id)) %>% 
+    mutate(date = as.Date(date, format = '%Y-%m-%d'))
+}
+
+# collapse to one row per subject (no need to merge back into main left/right dfs since PENGUIN subjects are dropped with PKD exclusion)
+collapsed_clean <- coenroll_multivisit_cleaning(dat = clean_dat, merged_kv_varname = mean_kv)
+rm(clean_dat)
+
+# save a copy for later check
+og_clean_dat <- collapsed_clean %>% 
+  rename('kv_date' = 'date')
+
+# add in igf1 data for PANTHER analyses (note: no other studies have igf1 data); add in risk status
+PAN_igf1_dat <- left_join(raw_dat, coenroll_id, by = 'record_id') %>% 
+  relocate(merged_id, .after = co_enroll_id) %>%
+  filter(study == 'PANTHER' & procedure == 'ivgtt') %>% 
+  filter(participation_status != 'Removed'|is.na(participation_status)) %>% 
+  filter(group != 'PKD') %>% 
+  select(record_id, merged_id, study, visit, date, igf_1, igf1_z_score) %>% 
+  rename('igf1_date' = 'date') %>% 
+  mutate(PAN_risk_status = ifelse(str_detect(record_id, 'C'), 'Low', 'High')) %>%
+  mutate(PAN_risk_status = factor(PAN_risk_status, levels = c('Low', 'High'))) %>% 
+  select(-record_id)
+
+collapsed_clean <- left_join(collapsed_clean, PAN_igf1_dat, by = c('merged_id', 'study', 'visit')) %>% 
+  mutate(kv_igf1_date_diff = as.numeric(difftime(as.Date(date), as.Date(igf1_date), units = 'days'))) %>% 
+  rename('kv_date' = 'date')
+
+# add in tanner stage data for PANTHER analyses
+PAN_tan_dat <- left_join(raw_dat, coenroll_id, by = 'record_id') %>% 
+  relocate(merged_id, .after = co_enroll_id) %>%
+  filter(study == 'PANTHER' & procedure == 'physical_exam') %>% 
+  filter(participation_status != 'Removed'|is.na(participation_status)) %>% 
+  filter(group != 'PKD') %>%
+  filter(!is.na(tan_fgd) | !is.na(tan_tveq)) %>% 
+  select(merged_id, study, visit, date, tan_fgd, tan_tveq) %>% 
+  mutate(tan_fgd = factor(tan_fgd, levels=c(1,2,3,4,5), labels=c('I', 'II', 'III', 'IV', 'V')),
+         tan_tveq = factor(tan_tveq, levels=c(1,2,3,4,5), labels=c('I', 'II', 'III', 'IV', 'V'))) %>% 
+  rename('tan_stage_date' = 'date') %>% 
+  distinct()
+
+collapsed_clean <- left_join(collapsed_clean, PAN_tan_dat, by = c('merged_id', 'study', 'visit')) %>% 
+  mutate(kv_tan_date_diff = as.numeric(difftime(as.Date(kv_date), as.Date(tan_stage_date), units = 'days'))) %>% 
+  group_by(merged_id) %>%
+  # for subjects with multiple tanner stage entries for a visit, take the stage that's closest in time to the kv measurement
+  slice_min(kv_tan_date_diff, n = 1) %>%  
+  ungroup()
+collapsed_clean <- as.data.frame(collapsed_clean)
+
+# add in missing height data, calculate ht. adj. kv
+# note: some PANDA subjects missing merged ID, but none are subjects with kv data so did not account for this
+additional_height_dat <- left_join(raw_dat, coenroll_id, by = 'record_id') %>% 
+  relocate(merged_id, .after = co_enroll_id) %>%
+  filter(study == 'PANTHER' | study == 'CROCODILE' | study == 'PANDA' | study == 'RENAL-HEIRitage') %>% 
+  filter(participation_status != 'Removed'|is.na(participation_status)) %>%
+  filter(!is.na(height)) %>%
+  select(merged_id, study, visit, procedure, date, height) %>% 
+  group_by(merged_id, visit, date) %>% 
+  mutate(additional_height_meters = 0.01*mean(height)) %>% # take mean height if dates are exact same
+  slice(1) %>% 
+  ungroup() %>% 
+  as.data.frame() %>% 
+  select(-c(procedure, height)) %>% 
+  rename('additional_height_date' = 'date')
+
+
+kv_additional_heights <- left_join(collapsed_clean, additional_height_dat, by = c('merged_id', 'study', 'visit')) %>% 
+  mutate(kv_add_height_date_diff = as.numeric(difftime(as.Date(kv_date), as.Date(additional_height_date), units = 'days'))) %>% 
+  select(merged_id, study, visit, additional_height_date, kv_add_height_date_diff, additional_height_meters) %>%
+  filter(study == 'PANTHER' | study == 'CROCODILE' | study == 'PANDA' | study == 'RENAL-HEIRitage') %>% 
+  filter(kv_add_height_date_diff >= 0) %>%  # only use heights taken on or before date of kv measurement
+  group_by(merged_id) %>%
+  slice_min(kv_add_height_date_diff, n = 1) %>%  
+  ungroup()
+
+collapsed_clean <- left_join(collapsed_clean, kv_additional_heights, by = c('merged_id', 'study', 'visit')) %>% 
+  mutate(height_meters =
+           case_when(!is.na(height_meters) | !is.na(additional_height_meters) ~ rowSums(select(., height_meters, additional_height_meters),
+                                                                                             na.rm = TRUE))) %>%
+  mutate(ht_adj_mean_kv = mean_kv/height_meters) %>% 
+  select(-additional_height_meters)
+
+rm(kv_additional_heights)
+
+# add in missing uacr data 
+additional_acru_dat <- left_join(raw_dat, coenroll_id, by = 'record_id') %>% 
+  relocate(merged_id, .after = co_enroll_id) %>% 
+  filter(participation_status != 'Removed'|is.na(participation_status)) %>% 
+  filter(group != 'PKD') %>%
+  filter(!is.na(acr_u)) %>% 
+  select(merged_id, record_id, study, visit, date, acr_u) %>%
+  mutate(merged_id = ifelse(!is.na(merged_id), merged_id, record_id)) %>% 
+  group_by(merged_id, visit, date) %>%
+  mutate(additional_acr_u = mean(acr_u)) %>% # take mean uacr if dates are exact same
+  slice(1) %>% 
+  ungroup() %>% 
+  as.data.frame() %>% 
+  rename('additional_acru_date' = 'date') %>% 
+  select(-acr_u)
+
+kv_additional_acru <- left_join(collapsed_clean, additional_acru_dat, by = c('merged_id', 'study', 'visit')) %>% 
+  mutate(kv_add_acru_date_diff = as.numeric(difftime(as.Date(kv_date), as.Date(additional_acru_date), units = 'days'))) %>% 
+  select(merged_id, study, visit, additional_acru_date, kv_add_acru_date_diff, additional_acr_u) %>%  
+  filter(kv_add_acru_date_diff >= 0) %>%  # only use uacr taken on or before date of kv measurement
+  group_by(merged_id) %>%
+  slice_min(kv_add_acru_date_diff, n = 1) %>%  
+  ungroup()
+
+collapsed_clean <- left_join(collapsed_clean, kv_additional_acru, by = c('merged_id', 'study', 'visit')) %>% 
+  mutate(acr_u = case_when(!is.na(acr_u) ~ acr_u,
+                                is.na(acr_u) & !is.na(additional_acr_u) ~ additional_acr_u,
+                                !is.na(acr_u) & !is.na(additional_acr_u) ~ acr_u)) %>% 
+  select(-additional_acr_u)
+
+rm(kv_additional_acru)
+
+## check - everything working as intended
+og_clean_dat <- og_clean_dat %>% select(-c(height_meters, acr_u))
+check_collapsed <- collapsed_clean %>% select(-c(height_meters, acr_u))
+identical(og_clean_dat, check_collapsed[, -c(1012:1025)])
+
+rm(og_clean_dat, check_collapsed)
+
+## labels
+rownames(dict) <- dict$variable_name
+dict %<>% select("label")
+dict <- t(dict) %>% as.data.frame(dict)
+rownames(dict) <- "label"
+
+data_labeling <- function(dat, dictionary){
+  dictionary <- dictionary[intersect(names(dat), names(dictionary))]
+  dictionary[setdiff(names(dat), names(dictionary))] <- " "
+  label(dat) = as.list(dictionary[match(names(dat), names(dictionary))])
+  label(dat$merged_left_kv) <- "Left Kidney Volume (mL)"
+  label(dat$merged_right_kv) <- "Right Kidney Volume (mL)"
+  label(dat$mean_kv) <- "Mean Kidney Volume (mL)"
+  label(dat$mean_kv_metric_type) <- "Mean Kidney Volume Measure Type"
+  label(dat$merged_lkv_metric_type) <- "Left Kidney Volume Measure Type"
+  label(dat$merged_rkv_metric_type) <- "Right Kidney Volume Measure Type"
+  label(dat$height_meters) <- "Height (m)"
+  label(dat$tan_tveq) <- "Tanner Stage by Testicular Volume"
+  label(dat$tan_fgd) <- "Tanner Stage by Breast Development"
+  label(dat$igf_1) <- "IGF-1 Concentration"
+  label(dat$igf1_z_score) <- "IGF-1 Z-score"
+  label(dat$PAN_risk_status) <- "Risk Status"
+
+  return(dat)
+}
+
+collapsed_clean <- data_labeling(dat = collapsed_clean, dictionary = dict)
+
+label(collapsed_clean$kv_igf1_date_diff) <- "Days Between Mean KV and IGF-1 Measures"
+label(collapsed_clean$kv_tan_date_diff) <- "Days Between Mean KV and Tanner Stage Measures"
+label(collapsed_clean$ht_adj_mean_kv) <- "Height Adjusted Mean Kidney Volume (mL/m)"
+label(collapsed_clean$kv_add_height_date_diff) <- "Days Between Mean KV and Height Measures for PANTHER/CROCODILE/PANDA/RH2 Subjects "
+label(collapsed_clean$kv_add_acru_date_diff) <- "Days Between Mean KV and UACR Measures for PANTHER/CROCODILE/PANDA/RH Subjects "
+
+## filter for T1D and T2D only
+collapsed_clean <- collapsed_clean %>% filter(group == 'Type 1 Diabetes' | group == 'Type 2 Diabetes')
+
+## create PANTHER subsets for PANTHER-only analyses
+# PAN_collapsed_clean <- collapsed_clean %>% filter(study == 'PANTHER')
+
+## workspace cleanup
+rm(additional_height_dat, PAN_tan_dat, PAN_igf1_dat, additional_acru_dat)
+```
+
+
+# Mean Kidney Analyses
+
+## Results: All Studies
+
+### Descriptive Statistics
+```{r kv tab1, echo=FALSE}
+table1::table1(~ sex + age + group + diabetes_duration + height_meters + acr_u + mean_kv + ht_adj_mean_kv + mean_kv_metric_type, 
+               data = collapsed_clean, caption = 'Descriptive Statistics of all Participants for Mean Kidney Analyses')
+```
+
+
+### KV by Age
+
+The below results describe the association between mean KV and age for subjects across all studies. Diagnostic plots for checking linear regression assumptions are also included. `mean_kv` is the average of either the non-manual or manual KV measurements. `ht_adj_mean_kv` is the height-adjusted version of `mean_kv`.
+
+```{r kv by age, echo=FALSE}
+outcome_vars <- c('mean_kv','ht_adj_mean_kv')
+
+for (v in outcome_vars) {
+  form = as.formula(paste0(v,'~ age'))
+  mod <- lm(form, data = collapsed_clean)
+  print(noquote(c("Association between age and", noquote(v))))
+  print(summary(mod))
+  plot(x=collapsed_clean$age, y=collapsed_clean[[v]], 
+       xlab='age', ylab=noquote(v), main='Y-X Scatterplot'); abline(mod, col='gray', lty=2)
+  plot(mod, which=1)
+  plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), xlab='Observed Cumulative Probability', ylab='Expected Cumulative Probability',
+       main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
+  hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
+  cat('\n\n')
+}
+```
+
+### KV by Disease Type
+
+The below table reports the mean and standard deviation (SD) of the averaged KV outcomes of interest by disease type across all subjects in the harmonized dataset. A Welch two sample t-test was used to evaluate whether the difference in means between groups was significant.
+
+```{r kv disease type assumptions, eval=FALSE, include=FALSE}
+## assumptions check
+clean_T1D <- collapsed_clean %>% filter(group == 'Type 1 Diabetes')
+clean_T2D <- collapsed_clean %>% filter(group == 'Type 2 Diabetes')
+
+hist(clean_T1D$mean_kv)
+hist(clean_T1D$ht_adj_mean_kv)
+
+hist(clean_T2D$mean_kv)
+hist(clean_T2D$ht_adj_mean_kv)
+```
+
+
+```{r kv by disease type, echo=FALSE}
+## summary table with Kruskal-Wallis for testing
+collapsed_clean %>% 
+  select(merged_id, group, mean_kv, ht_adj_mean_kv) %>% 
+   tbl_summary(by = group, include = -merged_id,
+              type = list(c(mean_kv, ht_adj_mean_kv) ~ 'continuous', 
+                        group ~ 'categorical'),
+    statistic=list(all_continuous() ~ '{mean} ({sd})'),
+    digits=everything()~c(2,2),
+    missing_text='N Missing') %>% 
+  add_p(test = all_continuous() ~ 't.test',
+        pvalue_fun=~style_pvalue(.x, digits=3)) %>% 
+  modify_header(label='**Measurement**')
+```
+
+### KV UACR Correlation
+
+```{r kv uacr correlation, echo=FALSE}
+## UACR and kv correlation calculations
+mean_kv_uacr_corr <- cor.test(x = collapsed_clean$mean_kv, y = collapsed_clean$acr_u, method = 'pearson')$estimate
+ht_adj_mean_kv_uacr_corr <- cor.test(collapsed_clean$ht_adj_mean_kv, collapsed_clean$acr_u, method = 'pearson')$estimate 
+```
+Pearson correlation for UACR and mean kv: `r mean_kv_uacr_corr`
+
+Pearson correlation for UACR and height-adjusted mean kv: `r ht_adj_mean_kv_uacr_corr`
+
+Summary of UACR:
+```{r uacr plot, echo=FALSE}
+summary(collapsed_clean$acr_u)
+hist(collapsed_clean$acr_u, main = 'Distribution of UACR', xlab = 'Urine Albumin-Creatinine Ratio')
+```
+
+
