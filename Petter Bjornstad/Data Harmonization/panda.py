@@ -86,7 +86,8 @@ def clean_panda():
                 "pump_basal_rate": "pump_basal_rate", 
                 "cgm_yn": "cgm_yn"}
     og_names = list(med_list.keys())
-    med = med[["record_id"] + og_names]
+    hx_list = [col for col in med.columns if col.startswith('hx_')]
+    med = med[["record_id"] + og_names + hx_list]
     med.rename(med_list, axis=1, inplace=True)
     # RAASi
     med = med.assign(raasi_timepoint=np.maximum(pd.to_numeric(
@@ -235,9 +236,7 @@ def clean_panda():
     biopsy.replace(rep, np.nan, inplace=True)
     biopsy.drop([col for col in biopsy.columns if '_yn' in col] +
                 [col for col in biopsy.columns if 'procedure_' in col] +
-                [col for col in biopsy.columns if 'phys_' in col] +
-                ["core_diagnostic", "core_hypo_cryo", "core_oct", "core_rna", 
-                "bx_number"],
+                [col for col in biopsy.columns if 'phys_' in col],
                 axis=1, inplace=True)
     biopsy.columns = biopsy.columns.str.replace(r"bx_", "", regex=True)
     biopsy.columns = biopsy.columns.str.replace(r"labs_", "", regex=True)

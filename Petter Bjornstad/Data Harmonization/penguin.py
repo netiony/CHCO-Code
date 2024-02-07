@@ -303,7 +303,7 @@ def clean_penguin():
     mri = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
     mri.replace(rep, np.nan, inplace=True)
-    mri["procedure"] = "fmri"
+    mri["procedure"] = "mri"
     mri["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
