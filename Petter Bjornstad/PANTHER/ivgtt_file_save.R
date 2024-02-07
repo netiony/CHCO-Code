@@ -1,5 +1,5 @@
 library(dplyr)
-ivgtt_dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/fsIVGTT/PANTHER_DATA_2023-10-23_1044_fsIVGTT_labs_filled.csv")
+ivgtt_dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/fsIVGTT/PANTHER_DATA_2024-01-10_1750.csv")
 ivgtt_time <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/fsIVGTT/PANTHER_IVGTT_time_discrepency.csv")
 
 ivgtt_time <- ivgtt_time %>% filter(time!=150)
