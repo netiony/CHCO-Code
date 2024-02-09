@@ -61,7 +61,6 @@ soma <- soma %>%  mutate(
 # df named "soma" has all studies including KNIGHT, but some don't need to be merged w/ harmonized data
 # make another df with only local studies to be merged w/ harmonized data
 soma_harmonized <- soma %>% filter(!str_detect(SampleDescription,"KGHT") & !str_detect(SampleDescription,"SHB"))
-save(soma_harmonized, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Harmonized SomaScan/soma_harmonized.RData")
 
 # read in harmonized dataset to get group information
 df <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", 
@@ -98,11 +97,8 @@ soma_harmonized <- soma_harmonized %>%  mutate(
 soma_harmonized <- left_join(soma_harmonized, df, by = c("record_id", "visit"))
 
 # write copy of the entire local SomaScan dataframe to the data harmonization folder
-
-
-# double check that the code below is pulling the correct IDs for each study
-
-
+save(soma_harmonized, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Harmonized SomaScan/soma_harmonized.RData")
+save(analytes, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Harmonized SomaScan/analytes.RData")
 
 # read in Olink data
 olink_plasma = read.csv("./Olink Data/Data_Clean/plasma_cleaned.csv")
