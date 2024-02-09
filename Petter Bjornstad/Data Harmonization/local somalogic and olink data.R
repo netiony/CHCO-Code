@@ -95,6 +95,10 @@ soma_harmonized <- soma_harmonized %>%  mutate(
   )
 )
 soma_harmonized <- left_join(soma_harmonized, df, by = c("record_id", "visit"))
+check <- soma_harmonized %>% select(record_id, merged_id, visit, group, study)
+check <- check %>% filter(visit == "baseline")
+check <- check %>% filter(study %in% c("IMPROVE", "RENAL-HEIR", "RENAL-HEIRitage"))
+write.csv(check, "/Users/pylell/Documents/Temp/check_local_somalogic.csv", row.names = F)
 
 # write copy of the entire local SomaScan dataframe to the data harmonization folder
 save(soma_harmonized, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Harmonized SomaScan/soma_harmonized.RData")

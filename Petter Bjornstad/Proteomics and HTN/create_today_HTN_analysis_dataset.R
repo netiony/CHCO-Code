@@ -175,23 +175,23 @@ df$hyp <- factor(df$eGFR_fas_cr >= 135, levels = c(F, T), labels = c("eGFR < 135
 # UACR
 df$elevated_uacr <- factor(df$acr_u >= 30, labels = c("UACR < 30", "UACR >= 30"))
 # Merge
-df <- merge(df, soma, by = c("record_id", "visit"), all.x = T, all.y = T)
+df <- merge(df, soma, by = c("record_id", "visit"), all.x = F, all.y = T)
 # Baseline visit only for IMPROVE
 df <- df %>% filter(visit == "baseline")
 
-coenroll <- df %>% filter(!is.na(co_enroll_id))
-#coenroll$merged_id <- str_replace(coenroll$merged_id, "IT2D", "IT_")
-#coenroll <- coenroll %>% 
-#  mutate(
-#    merged_id = case_when(
-#      (is.na(merged_id) & str_starts("IT", record_id)) ~ paste0(record_id, "-", co_enroll_id),
-#      (is.na(merged_id) & !str_starts("IT", record_id)) ~ paste0(co_enroll_id, "-", record_id),
-#      !is.na(merged_id) ~ merged_id
-#    )
-#  )
-temp <- coenroll %>% group_by(merged_id) %>% arrange(date) %>% filter(row_number()==1)
-out <- temp$co_enroll_id
-df <- df %>% filter(!co_enroll_id %in% out)
+# coenroll <- df %>% filter(!is.na(co_enroll_id))
+# coenroll$merged_id <- str_replace(coenroll$merged_id, "IT2D", "IT_")
+# coenroll <- coenroll %>% 
+#   mutate(
+#     merged_id = case_when(
+#       (is.na(merged_id) & str_starts("IT", record_id)) ~ paste0(record_id, "-", co_enroll_id),
+#       (is.na(merged_id) & !str_starts("IT", record_id)) ~ paste0(co_enroll_id, "-", record_id),
+#       !is.na(merged_id) ~ merged_id
+#     )
+#   )
+# temp <- coenroll %>% group_by(merged_id) %>% arrange(date) %>% filter(row_number()==1)
+# out <- temp$co_enroll_id
+# df <- df %>% filter(!co_enroll_id %in% out)
 
 # Import Olink data and combine
 olink_map <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Olink Data/Data_Clean/olink_id_map.csv")
