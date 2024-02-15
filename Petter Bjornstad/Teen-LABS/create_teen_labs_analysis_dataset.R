@@ -3,10 +3,12 @@ library(sas7bdat)
 library(readxl)
 library(SomaDataIO)
 library(Hmisc)
+library(sas7bdat)
+library(dplyr)
 # Clinical Data
-clinical <- read.sas7bdat("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Petter Bjornstad/Teen Labs/Data_Cleaned/bjornstad_03_15_2023.sas7bdat")
+clinical <- read.sas7bdat("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/bjornstad_03_15_2023.sas7bdat")
 # Proteomics data
-soma <- read_adat("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Petter Bjornstad/Teen Labs/Data_Raw/WUS_22_007_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
+soma <- read_adat("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Raw/WUS_22_007_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
 soma <- soma %>%
   # Remove flagged rows, QC samples, and excluded samples
   filter(
@@ -17,6 +19,18 @@ soma <- soma %>%
   select(SampleDescription, contains("seq."))
 # Log transform
 soma[,grep("seq",colnames(soma))] = lapply(soma[,grep("seq",colnames(soma))],log)
+# analytes
+analytes <- getAnalyteInfo(soma)
+analytes <- analytes %>% select(AptName,SeqId,SeqIdVersion,SomaId,TargetFullName,Target,UniProt,EntrezGeneID,EntrezGeneSymbol,Organism,Units,Type)
+# remove fc mouse and no protein
+drop <- analytes %>% filter(Target == "Fc_MOUSE" | Target == "No Protein" | !(Organism == "Human") | !(Type == "Protein"))
+apt_drop <- drop$AptName
+soma <- soma %>% select(!all_of(apt_drop))
+analytes <- analytes %>% filter(!Target == "Fc_MOUSE")
+analytes <- analytes %>% filter(!Target == "No Protein")
+analytes <- analytes %>% filter(Organism == "Human")
+analytes <- analytes %>% filter(Type == "Protein")
+
 # Merge
 df <- left_join(clinical, soma, by = c("SAMPLE_ID" = "SampleDescription"))
 # Create new variables
@@ -90,7 +104,7 @@ df$diab_resolved <- factor(df$diab_resolved,
   labels = c("No", "Yes", "Non-diabetic")
 )
 # Labels
-dict <- read_excel("/Users/timvigers/Library/CloudStorage/Dropbox/Work/Petter Bjornstad/Teen Labs/Data_Cleaned/DataDictionary.xlsx")
+dict <- read_excel("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/DataDictionary.xlsx")
 analytes <- getAnalytes(soma)
 analyte_info <- getAnalyteInfo(soma)
 labels <- dict$Description[match(names(df), dict$Name)]
@@ -105,4 +119,4 @@ label(df$diab_baseline) = "Diabetes at Baseline"
 # As regular dataframe
 df <- as.data.frame(df)
 # Save
-save(df,analyte_info, file = "/Users/timvigers/Library/CloudStorage/Dropbox/Work/Petter Bjornstad/Teen Labs/Data_Cleaned/analysis_dataset.RData")
+save(df,analyte_info, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/analysis_dataset.RData")
