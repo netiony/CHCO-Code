@@ -1,7 +1,10 @@
 library(SomaDataIO)
 library(stringr)
-library(dplyr)
 library(arsenal)
+library(Hmisc)
+library(dplyr)
+library(tidyr)
+library(purrr)
 
 if(Sys.info()["sysname"] == "Windows"){
   home_dir = "E:/Petter Bjornstad"
@@ -107,6 +110,10 @@ save(analytes, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bj
 # read in Olink data
 olink_plasma = read.csv("./Olink Data/Data_Clean/plasma_cleaned.csv")
 olink_urine = read.csv("./Olink Data/Data_Clean/urine_cleaned.csv")
+
+labels <- paste0("log(",analytes$EntrezGeneSymbol[match(colnames(soma), analytes$AptName)],")")
+labels[labels == "log(NA)"] <- ""
+label(soma) <- as.list(labels)
 
 # create dataframes for each study
 croc_soma <- soma %>% filter(str_detect(SampleDescription,"CRC"))
