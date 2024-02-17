@@ -1,0 +1,143 @@
+---
+title: "CROCODILE proteomics - sexual dimorphism"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(SomaDataIO)
+library(limma)
+library(dplyr)
+library(caret)
+library(purrr)
+library(multtest)
+library(openxlsx)
+library(tableone)
+library(EnhancedVolcano)
+library(knitr)
+
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+
+```
+
+```{r, include=FALSE}
+# load somalogic data, with QC samples already excluded
+load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Somalogic data/croc_soma.Rdata")
+load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Somalogic data/analytes.Rdata")
+load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/croc_data.Rdata")
+
+# identify columns corresponding to proteins
+#is_seq <- function(.x) grepl("^seq\\.[0-9]{4}", .x) # regex for analytes
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(croc_soma))
+
+# convert to numeric
+croc_soma[,seq] <- apply(croc_soma[,seq],2,as.numeric)
+
+# are there proteins with low variability?
+#no_var = caret::nearZeroVar(croc_soma[,seq])
+# none
+
+# log transform
+croc_soma <- croc_soma %>% modify_if(is_seq(names(.)), log)
+
+# merge in sex and diabetes status
+dat_keep <- dat %>% select(record_id, sex, group)
+croc_soma$record_id <- unclass(croc_soma$SampleDescription)
+croc_soma <- left_join(croc_soma, dat_keep, by = "record_id")
+
+# df by diabetes status
+croc_soma_control <- croc_soma %>% filter(group == "Lean Control")
+croc_soma_t1d <- croc_soma %>% filter(group == "Type 1 Diabetes")
+```
+
+```{r, include=FALSE}
+# First controls
+# Females as reference category since there are slightly more
+sex_contrast_control <- ifelse(croc_soma_control$sex == "Female", 0, 1)
+sex_contrast_control <- cbind(rep(1,nrow(croc_soma_control)),sex_contrast_control)
+# moderated t-tests with and without FDR adjustment
+ymat <- t(croc_soma_control[,seq])
+fit <- lmFit(ymat,sex_contrast_control)
+fit <- eBayes(fit)
+results_control <- topTable(fit,coef = 2,number = nrow(ymat))
+results_control$AptName <- row.names(results_control)
+results_control <- merge(results_control,analytes,by="AptName",all.x = T, all.y = F)
+results_control <- results_control[order(results_control$P.Value),] 
+ymat <- NULL
+fit <- NULL
+
+# Then T1D
+# Females as reference category since there are slightly more
+sex_contrast_t1d <- ifelse(croc_soma_t1d$sex == "Female", 0, 1)
+sex_contrast_t1d <- cbind(rep(1,nrow(croc_soma_t1d)),sex_contrast_t1d)
+# moderated t-tests with and without FDR adjustment
+ymat <- t(croc_soma_t1d[,seq])
+fit <- lmFit(ymat,sex_contrast_t1d)
+fit <- eBayes(fit)
+results_t1d <- topTable(fit,coef = 2,number = nrow(ymat))
+results_t1d$AptName <- row.names(results_t1d)
+results_t1d <- merge(results_t1d,analytes,by="AptName",all.x = T, all.y = F)
+results_t1d <- results_t1d[order(results_t1d$P.Value),] 
+ymat <- NULL
+fit <- NULL
+
+# write all results to file
+wb <- createWorkbook()
+
+addWorksheet(wb,"sex_contrast_F_ref_controls")
+writeData(wb,"sex_contrast_F_ref_controls",results_control,rowNames = F)
+
+addWorksheet(wb,"sex_contrast_F_ref_t1d")
+writeData(wb,"sex_contrast_F_ref_t1d",results_t1d,rowNames = F)
+
+saveWorkbook(wb,"/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Results/CROC proteomics by sex.xlsx",overwrite = TRUE)
+
+```
+
+## Volcano plots
+
+### Controls
+
+```{r echo=FALSE, include=TRUE}
+# Volcano plot
+res <- results_control[,c("TargetFullName","logFC","adj.P.Val","P.Value")]
+p <- EnhancedVolcano(res, 
+                lab="",
+                x="logFC",
+                y="P.Value",
+                title="Males vs. Females",
+                pCutoff = 0.05,
+                FCcutoff=0.5,
+                xlim = c(-0.6,0.6),
+                ylim = c(0,(-log10(min(res$P.Value))+1)),
+                legendLabels=c('NS','Log(2) FC','p-value','p-value & log(2) FC'),
+                ylab=bquote(~-Log[10] ~ italic(p)))
+p
+```
+
+### T1D
+
+```{r echo=FALSE, include=TRUE}
+# Volcano plot
+res <- results_t1d[,c("TargetFullName","logFC","adj.P.Val","P.Value")]
+p <- EnhancedVolcano(res, 
+                lab="",
+                x="logFC",
+                y="P.Value",
+                title="Males vs. females",
+                pCutoff = 0.05,
+                FCcutoff=0.5,
+                xlim = c(-0.6,0.6),
+                ylim = c(0,(-log10(min(res$P.Value))+1)),
+                legendLabels=c('NS','Log(2) FC','p-value','p-value & log(2) FC'),
+                ylab=bquote(~-Log[10] ~ italic(p)))
+p
+```
