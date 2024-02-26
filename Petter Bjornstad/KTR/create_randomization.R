@@ -1,46 +1,17 @@
+# Goal is to recruit a total of 40 per group (dapagliflozin and placebo)
+# Stratified by sex and moderate or severe albuminuria
+# To account for possible extra randomizations, will create a sequence of 80 randomizations for each of the 4 strata
+# with permuted random blocks, don't get exactly the same N per stratum but each stratum is balanced by treatment
 
-######################################
-#1) Set data frame based on REDCap   #
-######################################
+library(blockrand)
 
-#data frame based on variables used in randomization
-temp<-data.frame(var1=, var2=)
+set.seed(3654)
+male_moderate <- blockrand(n=80, id.prefix='MM', block.prefix='MM',stratum='Male_moderate_albuminuria', block.sizes = 1:4)
+male_severe <- blockrand(n=80, id.prefix='MS', block.prefix='MS',stratum='Male_severe_albuminuria', block.sizes = 1:4)
+female_moderate <- blockrand(n=80, id.prefix='FM', block.prefix='FM',stratum='Female_moderate_albuminuria', block.sizes = 1:4)
+female_severe <- blockrand(n=80, id.prefix='FS', block.prefix='FS',stratum='Female_severe_albuminuria', block.sizes = 1:4)
 
-#temp<-data.frame(var1=rep(1:3,each=60))
+rand <- rbind(male_severe, male_moderate, female_severe, female_moderate)
+rand$treatment_char <- ifelse(rand$treatment == "A", "Placebo", "Dapagliflozin")
 
-#######################
-#2) Input parameters  #
-#######################
-
-set.seed() #change from development/ testing to production
-
-n_groups<-3 #number of study groups
-block_size<-6  #must be a multiple of the sum of ratio of group allocation, i.e. 1:1 needs multiple of 2, 
-                #also needs to be multiple of # stratification groups, i.e. 2 sex levels x 2 age groups
-n_tot<-180  #must be a multiple of the block size, inflate needed sample size to allow for additional randomizations
-
-#############################
-#3) Generate randomization  #
-#############################
-x<-NULL #randomization variable
-
-z<-seq(1,n_tot,block_size) #set break points for each block 
-
-#group assignment for each block
-for(i in z){
-  x[i:(i+(block_size-1))]<-c(sample(c(rep(1:n_groups,each=block_size/n_groups))))
-  x
-}
-
-##########################################
-#4) Create randomization allocation table#
-##########################################
-
-#add randomization to dataset created earlier
-dat<-cbind(group=x, temp)
-
-#check
-#table(dat$group,dat$var1)
-
-#export
-#write.csv(dat,'.csv',row.names=FALSE)
+write.csv(rand, "/Volumes/pylell/Kendrick Bjornstad KTR trial/KTR trial 23-1360 randomization.csv", row.names = F)
