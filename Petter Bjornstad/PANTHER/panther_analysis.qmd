@@ -1,0 +1,165 @@
+---
+title: "PANTHER Analysis"
+author: "Ye Ji Choi"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    embed-resources: true
+editor: visual
+---
+
+```{r include = F}
+library(SomaDataIO)
+library(dplyr)
+library(arsenal)
+library(ggplot2)
+library(tidyr)
+library(DEqMS)
+library(fgsea)
+library(ggrepel)
+```
+
+```{r include = F}
+# Load SOMAScan data
+load("/Volumes/Peds Endo/Petter Bjornstad/SOMAScan/PANTHER/panther_bl_soma.Rdata")
+load("/Volumes/Peds Endo/Petter Bjornstad/SOMAScan/PANTHER/panther_bl_analytes.Rdata")
+```
+
+```{r}
+# Load clinical data
+dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = "")
+
+# PAN-44-O entered as PAN_44-O in soma
+soma$record_id <- gsub("_", "-", soma$SampleDescription)
+# PAN-103-O entered as PAN-103-0 in soma
+soma$record_id <- gsub("-0$", "-O", soma$record_id)
+# PAN-98-O (remove from soma for now)
+soma <- soma %>% filter(SampleDescription != "PAN-98-O") 
+
+# subset soma baseline
+soma <- soma %>% filter(SampleGroup == "Year 1")
+
+panther <- dat %>% filter(study == "PANTHER" & visit == "baseline") %>%
+  filter(record_id %in% soma$record_id) %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+                   .by = c(record_id, visit)) %>%
+  # filter(participation_status!="Removed"|is.na(participation_status)) %>%
+  mutate(race_ethnicity_condensed = case_when(race == "White" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino White",
+                                              race == "Black or African American" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino Black",
+                                              ethnicity == "Hispanic or Latino" ~ "Hispanic or Latino",
+                                              T ~ "Not Hispanic or Latino Other"),
+           tanner_stage_comp = coalesce(tan_fgd, tan_fph, tan_tveq, tan_mgd, tan_mph),
+         tanner_stage_cat = case_when(tanner_stage_comp <3 ~ "I_II",
+                                      tanner_stage_comp >=3 ~ "III_V")) %>%
+  arrange(record_id)
+panther$tanner_stage_comp <- as.factor(panther$tanner_stage_comp)
+
+# missing from redcap, available for soma - check with Emily
+anti_id <- anti_join(soma, panther)$record_id
+anti_id
+```
+
+```{r}
+# Descriptive tables
+summary(tableby(group_risk ~ age + sex + tanner_stage_comp + group + weight + height + bmi + hba1c + total_kidney_volume_ml + ht_adj_tkv, data = panther, total = F, test = F))
+summary(tableby(tanner_stage_comp ~ age + sex + group + group_risk + weight + height + bmi + hba1c + total_kidney_volume_ml + ht_adj_tkv, data = panther, total = F, test = F))
+```
+
+# Normalized dataset
+
+## Differential expression
+
+### Low vs. high risk
+```{r}
+# Look at differential expressed proteins (DEPs) between low and high risk in PANTHER
+# filter soma scan data to baseline data only and log transform
+soma_risk <- soma %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "SampleDescription") %>%
+  dplyr::select(starts_with("seq"))
+y <- t(soma_risk)
+y <- log2(y)
+
+# Design matrix
+cond = as.factor(panther$group_risk)
+design_mat <- model.matrix(~0 + group_risk, data = panther)
+colnames(design_mat) = gsub("group_risk","",colnames(design_mat))
+# Fit
+contrast = makeContrasts(contrasts = c("High-Low"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+```
+
+```{r}
+# volcano plot
+res$log.P.Value = -log10(res$P.Value)
+ggplot(res, aes(x = logFC, y =log.P.Value )) + 
+    geom_point(size=0.5 )+
+    theme_bw(base_size = 16) + # change theme
+    xlab(expression("log2(high/low)")) + # x-axis label
+    ylab(expression(" -log10(P-value)")) + # y-axis label
+    geom_vline(xintercept = c(-0.5,0.5), colour = "red") + # Add fold change cutoffs
+    geom_hline(yintercept = 3, colour = "red") + # Add significance cutoffs
+    geom_vline(xintercept = 0, colour = "black") + # Add 0 lines
+    scale_colour_gradient(low = "black", high = "black", guide = FALSE) +
+    geom_text_repel(data=subset(res, abs(logFC)>.5&log.P.Value > 3),
+                    aes(logFC, log.P.Value, label=Target)) # add gene label
+```
+
+```{r}
+# Look at effect of puberty on proteomics in PANTHER
+# filter soma scan data to baseline data only and log transform & only keep record_ids with tanner stages
+soma_tanner <- soma %>% 
+  arrange(record_id) %>%
+  filter(record_id %in% subset(panther, !is.na(tanner_stage_cat))$record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "SampleDescription") %>%
+  dplyr::select(starts_with("seq"))
+y <- t(soma_tanner)
+y <- log2(y)
+# Design matrix
+cond = as.factor(panther$tanner_stage_cat)
+design_mat <- model.matrix(~0 + tanner_stage_cat, data = panther)
+colnames(design_mat) = gsub("tanner_stage_cat","",colnames(design_mat))
+# Fit
+contrast = makeContrasts(contrasts = c("III_V-I_II"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+```
+
+```{r}
+# volcano plot
+res$log.P.Value = -log10(res$P.Value)
+ggplot(res, aes(x = logFC, y =log.P.Value )) + 
+    geom_point(size=0.5 )+
+    theme_bw(base_size = 16) + # change theme
+    xlab(expression("log2(TS>=3/TS<3)")) + # x-axis label
+    ylab(expression(" -log10(P-value)")) + # y-axis label
+    geom_vline(xintercept = c(-0.5,0.5), colour = "red") + # Add fold change cutoffs
+    geom_hline(yintercept = 3, colour = "red") + # Add significance cutoffs
+    geom_vline(xintercept = 0, colour = "black") + # Add 0 lines
+    scale_colour_gradient(low = "black", high = "black", guide = FALSE) +
+    geom_text_repel(data=subset(res, abs(logFC)>.5&log.P.Value > 3),
+                    aes(logFC, log.P.Value, label=Target)) # add gene label
+```
+
+```
+
+```{r}
+# Associate minmod results and TKV data with proteomics in an effort to find multi-protein signatures that associate with insulin sensitivity and secretion as well as total kidney volume in PANTHER (if underpowered for the insulin sensitivity - we might pull in data from other cohorts with proteomic data)
+
+```
