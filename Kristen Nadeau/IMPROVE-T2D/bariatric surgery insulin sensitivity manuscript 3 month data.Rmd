@@ -1,0 +1,1013 @@
+---
+title: "IMPROVE-T2D 3 month analysis"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(arsenal)
+library(dplyr)
+library(knitr)
+library(ggpubr)
+library(nlme)
+library(emmeans)
+
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+
+options(scipen=999)
+```
+
+```{r functions, include=FALSE}
+mixed <- function(data, outcome){
+  data <- as.data.frame(data)
+  form = as.formula(paste0(outcome,"~ visit"))
+  mod <- lme(as.formula(form),random=~1|subject_id,data = data,na.action = na.omit)
+  anova <- anova.lme(mod, type="marginal")
+  m <- emmeans(mod,"visit")
+  plot_dat <- data$outcome
+  #p <- interaction.plot(x.factor = as.factor(data$time), trace.factor = data$study_visit_mttt, response = eval(quote(data[,outcome])))
+  #p <- plot_model(mod,data = insulin_long, type="int", terms=c("time","study_visit_mttt", ci.lvl=0.95))
+  # p = ggplot(data,aes_string(x = "time", y = outcome, group = "study_visit_mttt")) +
+  #  geom_line(alpha=0.1) +
+  #  geom_line(data=mod[[2]],aes(x="time",y=as.numeric(emmean),group=1),
+  #          size = 1,inherit.aes = F) +
+  #  theme_bw() +xlab("Timepoint") + ylab(ylab) 
+  #e <- effect("study_visit_mttt*time", mod)
+  #plot(e)
+  return(list(anova,m))
+}
+
+mixed_adj <- function(data, outcome){
+  data <- as.data.frame(data)
+  form = as.formula(paste0(outcome,"~ visit + wtloss"))
+  mod <- lme(as.formula(form),random=~1|subject_id,data = data,na.action = na.omit)
+  anova <- anova.lme(mod, type="marginal")
+  m <- emmeans(mod,"visit")
+  plot_dat <- data$outcome
+  #p <- interaction.plot(x.factor = as.factor(data$time), trace.factor = data$study_visit_mttt, response = eval(quote(data[,outcome])))
+  #p <- plot_model(mod,data = insulin_long, type="int", terms=c("time","study_visit_mttt", ci.lvl=0.95))
+  # p = ggplot(data,aes_string(x = "time", y = outcome, group = "study_visit_mttt")) +
+  #  geom_line(alpha=0.1) +
+  #  geom_line(data=mod[[2]],aes(x="time",y=as.numeric(emmean),group=1),
+  #          size = 1,inherit.aes = F) +
+  #  theme_bw() +xlab("Timepoint") + ylab(ylab) 
+  #e <- effect("study_visit_mttt*time", mod)
+  #plot(e)
+  return(list(anova,m))
+}
+```
+
+```{r data, include=FALSE}
+# read in screening data
+source("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Nadeau/IMPROVE-T2D/Data raw/IMPROVET2D-ScreeningData_R_2024-02-27_1322.r")
+screen <- data
+data <- NULL
+# select the participants
+# IT2D-2,3,5,6,8,11-16, 18-20
+screen <- screen %>% filter(subject_id %in% c("IT_02","IT_03","IT_05","IT_06","IT_08","IT_11","IT_12","IT_13","IT_14","IT_15","IT_16","IT_18","IT_19","IT_20"))
+
+# read in repeating visit data
+source("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Nadeau/IMPROVE-T2D/Data raw/IMPROVET2D-VisitData_R_2024-02-27_1323.r")
+visit <- data
+data <- NULL
+# select the participants
+# IT2D-2,3,5,6,8,11-16, 18-20
+visit <- visit %>% filter(subject_id %in% c("IT_02","IT_03","IT_05","IT_06","IT_08","IT_11","IT_12","IT_13","IT_14","IT_15","IT_16","IT_18","IT_19","IT_20"))
+# FOR THIS ANALYSIS, USE ONLY BASELINE AND MONTH 3 DATA
+visit <- visit %>% filter(redcap_repeat_instance %in% c(1,2))
+visit$visit <- as.factor(visit$redcap_repeat_instance)
+
+# calculate glucose AUC
+source("/Users/pylell/Documents/GitHub/General-code/iauc.r")
+visit$auc_glucose <- iAUC_insulin(data=visit,thresh=0,type="linear",times=c(0,10,20,30,45,60,90,120,150,180,210,240),
+                          cols=c("mmtt_bg_0","mmtt_bg_10","mmtt_bg_20","mmtt_bg_30","mmtt_bg_45","mmtt_bg_60",
+                                 "mmtt_bg_90","mmtt_bg_120","mmtt_bg_150","mmtt_bg_180","mmtt_bg_210",
+                                 "mmtt_bg_240"))
+
+# calculate insulin AUC
+for (i in 1:nrow(visit)){
+  visit$auc_insulin[i] <- ifelse (!is.na(visit[i, "mmtt_insulin_0"]), 
+                                   iAUC_insulin(data = visit[i,], thresh=0,type="linear",times=c(0,10,20,30,45,60,90,120,150,180,210,240),
+                                    cols=c("mmtt_insulin_0","mmtt_insulin_10","mmtt_insulin_20","mmtt_insulin_30","mmtt_insulin_45","mmtt_insulin_60",
+                                    "mmtt_insulin_90","mmtt_insulin_120","mmtt_insulin_150","mmtt_insulin_180","mmtt_insulin_210",
+                                    "mmtt_insulin_240")), 
+                                   NA) 
+}
+
+# calculate HOMA-IR
+visit$homa_ir <- (visit$mmtt_bg_0*visit$mmtt_insulin_0)/405
+
+# calculate HOMA-%B
+visit$homa_b <- (360*visit$mmtt_insulin_0) / (visit$mmtt_bg_0 - 63)
+
+# calculate Matsuda Index
+visit$matsuda <- 10000/(sqrt(visit$mmtt_bg_0*visit$mmtt_insulin_0*
+                  (((15*visit$mmtt_insulin_0)+(30*visit$mmtt_insulin_30)+(30*visit$mmtt_insulin_60)+(30*visit$mmtt_insulin_90)+(15*visit$mmtt_insulin_120))/120)*
+                  (((15*visit$mmtt_bg_0)+(30*visit$mmtt_bg_30)+(30*visit$mmtt_bg_60)+(30*visit$mmtt_bg_90)+(15*visit$mmtt_bg_120))/120)))
+
+# calculate Disposition Index
+visit$isi <- (visit$mmtt_insulin_30 - visit$mmtt_insulin_0) / (visit$mmtt_bg_30-visit$mmtt_bg_0)
+visit$odi <- (1/visit$mmtt_insulin_0) * visit$isi
+
+# calculate BMI
+visit$mmtt_bmi <- visit$mmtt_wt / ((visit$mmtt_ht/100)^2)
+
+# calculate 60 - 0 min RQ
+visit$rmr_rq_60_minus_0 <- visit$srmr_rq - visit$brmr_rq
+
+# calculate mean kidney volume
+visit$volume_mean <- rowMeans(visit[,c("volume_right","volume_left")])
+
+# calculate mean ACR during clamp
+visit$clamp_acr_mean <- rowMeans(visit[,c("clamp_acr_baseline","clamp_acr_250")])
+
+# calculate weight loss
+wtloss <- visit %>% select(subject_id, visit, mmtt_wt)
+wtloss_wide <- reshape(wtloss, direction = "wide", idvar = "subject_id", timevar = "visit")
+wtloss_wide$wtloss <- wtloss_wide$mmtt_wt.1 - wtloss_wide$mmtt_wt.2
+wtloss_wide <- wtloss_wide %>% select(subject_id, wtloss)
+visit <- left_join(visit, wtloss_wide, by="subject_id")
+```
+
+# Results
+
+## Descriptive statistics
+
+```{r create_t1, include=FALSE}
+#t1 <- tableby( ~ age_current +  gender.factor + race + ethnicity.factor, data = screen)
+```
+
+```{r t1, results='asis'}
+#summary(t1)
+```
+
+## Unadjusted models
+
+### Weight
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_wt")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### BMI
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_bmi")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Waist circumference
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_waist")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Hip circumference
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_hip")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Pulse
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_hr")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### SBP
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_sys_bp")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### DBP
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_dia_bp")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### MAP
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_map")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### ALT
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_gptalt_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### AST
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_gotast_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### BUN
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_bun_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Creatinine
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_creat_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Total cholesterol
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_chol_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### HDL
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_hdl_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### LDL
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_ldl_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Triglycerides
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_tri_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### HbA1c
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "mmtt_hba1c_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 0 minute VO2 (ml/kg.min)
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "brmr_vo2_ml")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 0 minute VO2 (L/min)
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "brmr_vo2_l")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 0 minute VCO2 (L/min)
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "brmr_vco2")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 0 minute RQ
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "brmr_rq")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 0 minute REE
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "brmr_ree")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 0 minute Fat oxidation
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "brmr_fo")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 0 minute Carb oxidation
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "brmr_co")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 60 minute VO2 (ml/kg.min)
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "srmr_vo2_ml")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 60 minute VO2 (L/min)
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "srmr_vo2_l")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 60 minute VCO2 (L/min)
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "srmr_co2")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 60 minute RQ
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "srmr_rq")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 60 minute REE
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "srmr_ree")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 60 minute Fat oxidation
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "srmr_fo")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 60 minute Carb oxidation
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "srmr_co")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Time 60-0 RQ
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "rmr_rq_60_minus_0")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Percent body fat
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "dxa_body_fat")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Percent lean mass
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "dxa_lean_mass")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Fat mass
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "dxa_fat_kg")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Lean mass
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "dxa_lean_kg")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### HOMA-IR
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "homa_ir")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### HOMA-%B
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "homa_b")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Matsuda Index
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "matsuda")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Disposition Index
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = visit, outcome = "odi")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+## Models adjusted for weight loss
+
+### Waist circumference
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "mmtt_waist")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Hip circumference
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "mmtt_hip")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Pulse
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "mmtt_hr")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### SBP
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "mmtt_sys_bp")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### DBP
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "mmtt_dia_bp")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### MAP
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "mmtt_map")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### ALT
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "mmtt_gptalt_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### AST
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "mmtt_gotast_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### BUN
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "mmtt_bun_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Creatinine
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "mmtt_creat_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Total cholesterol
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "mmtt_chol_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### HDL
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "mmtt_hdl_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### LDL
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "mmtt_ldl_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Triglycerides
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "mmtt_tri_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### HbA1c
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "mmtt_hba1c_base")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 0 minute VO2 (ml/kg.min)
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "brmr_vo2_ml")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 0 minute VO2 (L/min)
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "brmr_vo2_l")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 0 minute VCO2 (L/min)
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "brmr_vco2")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 0 minute RQ
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "brmr_rq")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 0 minute REE
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "brmr_ree")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 0 minute Fat oxidation
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "brmr_fo")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 0 minute Carb oxidation
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "brmr_co")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 60 minute VO2 (ml/kg.min)
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "srmr_vo2_ml")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 60 minute VO2 (L/min)
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "srmr_vo2_l")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 60 minute VCO2 (L/min)
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "srmr_co2")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 60 minute RQ
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "srmr_rq")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 60 minute REE
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "srmr_ree")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 60 minute Fat oxidation
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "srmr_fo")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### 60 minute Carb oxidation
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "srmr_co")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Time 60-0 RQ
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "rmr_rq_60_minus_0")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Percent body fat
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "dxa_body_fat")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Percent lean mass
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "dxa_lean_mass")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Fat mass
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "dxa_fat_kg")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Lean mass
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "dxa_lean_kg")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### HOMA-IR
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "homa_ir")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### HOMA-%B
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "homa_b")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Matsuda Index
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "matsuda")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+### Disposition Index
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed_adj(data = visit, outcome = "odi")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+```
+
+## Readmissions
