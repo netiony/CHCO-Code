@@ -3,9 +3,16 @@ title: "Harmonized Colorado and RED Data Cleaning/Merge"
 author: "Callie Rountree-Jablin"
 date: "`r format(Sys.time(), '%d %B %Y')`"
 output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    toc_loc: left
 ---
 
-This file includes all code used for cleaning and merging the Colorado harmonized dataset with the RED Netherlands data.
+This file includes all code used for cleaning and merging the RED Netherlands data with the Colorado harmonized dataset.
 
 ```{r setup, include=FALSE}
 library(tidyverse)
@@ -25,11 +32,18 @@ knitr::opts_knit$set(echo=FALSE, root.dir = home_dir)
 
 
 ```{r read, include=FALSE}
-## Read Raw Data
-
 # Colorado data
-CO_raw <- read.csv("./Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = c(" ", "", "-99"))
-CO_vars <- read.csv("./Data Harmonization/data_dictionary_master.csv", na.strings = c(" ", "", "-99"))
+CO_raw <- read.csv("./Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = c(" ", "", "-9999",-9999))
+
+# Colorado data dictionary
+dict <- read.csv("./Data Harmonization/data_dictionary_master.csv", na.strings = c(" ", "", "-9999",-9999))
+
+# co-enrolled IDs for Colorado data
+coenroll_id <- read.csv("./Renal HERITAGE/Data_Cleaned/coenrolled_ids.csv") %>%
+  pivot_longer(cols = 'improve_id':'crc_id',
+               values_to = "record_id") %>% 
+  select(merged_id, record_id) %>%
+  filter(record_id != "")
 
 # Netherlands data
 Neth_main <- haven::read_sav('./IHD/Raw Data/RED - Renal Hemodynamics and Clamp data + NEFA data.sav')
@@ -42,46 +56,63 @@ Neth_clamp_additional <- haven::read_sav('./IHD/Raw Data/Insulin, glucose and in
 
 
 ```{r Colorado data cleaning, include=FALSE}
-## Colorado Data Cleaning
+CO_clean <- left_join(CO_raw, coenroll_id, by = 'record_id') %>% 
+  relocate(merged_id, .after = co_enroll_id) %>% 
+  filter(participation_status != 'Removed'|is.na(participation_status)) %>%
+  filter(group == 'Type 2 Diabetes') %>%
+  mutate(merged_id = ifelse(!is.na(merged_id), merged_id, record_id)) %>% # fill in missing merged_id with record_id
+  mutate(RH2_only_indicator = case_when(str_detect(record_id, "RH2-") & record_id == merged_id ~ 'Yes',
+                                   TRUE ~ 'No')) %>% 
+  filter(RH2_only_indicator != 'Yes') %>% # exclude subjects who are only on RH2 per Petter
+  
+  # collapse multiple entries for subjects to one row, where the earliest measurements are retained
+  # note that visit, date, demographics, etc. are only reflective of earliest available data after collapsing
+  mutate(date = as.Date(date, format = '%Y-%m-%d')) %>%
+  arrange(merged_id, visit, date) %>%
+  mutate(date = as.character(date)) %>% 
+  summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, first(na.omit(.x)))),
+            across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, first(na.omit(.x)))), .by = c(merged_id)) %>%
+  mutate(date = as.Date(date, format = '%Y-%m-%d'))
 
-CO_clean <- CO_raw %>%
-  mutate(across('co_enroll_id', str_replace, 'IT2D-', 'IT_')) %>%
-  mutate(record_id = case_when(!is.na(co_enroll_id) ~ 
-                                 paste0(pmin(record_id, co_enroll_id), pmax(record_id, co_enroll_id)), T ~ record_id)) %>% 
-  group_by(record_id, visit) %>%
-  fill(names(CO_raw)) %>%
-  summarise_all(last) %>%
-  ungroup() %>%
+# variable cleaning, AER calculations
+CO_clean <- CO_clean %>%
+  select(-c(record_id)) %>% # drop raw record ID var, rename merged ID as record ID for ease of combining dfs later on
+  rename('record_id' = 'merged_id') %>%
   mutate(sex = as.factor(sex),
-         record_id = as.character(record_id),
          raasi_timepoint = factor(raasi_timepoint, levels = c('No','Yes')),
          statin = factor(statin, levels = c('No','Yes')),
-         # AER calculation based on https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2893069/
-         AER_sex_adjusted = case_when(sex == 'Female' ~ (1.38*acr_u),
-                                      sex == 'Male' ~ (2.09*acr_u))) %>%
-  filter(participation_status != "Removed") %>%
-  filter(visit == "baseline") %>% 
-  filter(group == "Type 2 Diabetes")
+         # calculate gender-adjusted estimate of AER based on https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2893069/
+         AER_sex_adjusted = case_when(sex == 'Female' ~ (1.38*acr_u), sex == 'Male' ~ (2.09*acr_u)),
+         # calculate covariate-adjusted estimate of AER based on same article
+         ACE_or_ARB_indicator = case_when(ace_inhibitor == 'Yes'| angiotensin_receptor_blocker == 'Yes' ~ 'Yes', TRUE ~ 'No')) %>%
+  mutate(ACR_alpha = case_when(sex == 'Female' & ACE_or_ARB_indicator == 'Yes' ~ 
+                                 exp(-0.4 - (0.012*age) + (0.31*bsa) - (0.25*log(acr_u)) + (0.34*creatinine_s) + (0.0072*sbp) + 0.13),
+                               sex == 'Female' & ACE_or_ARB_indicator == 'No' ~ 
+                                 exp(-0.4 - (0.012*age) + (0.31*bsa) - (0.25*log(acr_u)) + (0.34*creatinine_s) + (0.0072*sbp)),
+                               sex == 'Male' & ACE_or_ARB_indicator == 'Yes' ~ 
+                                 exp(-0.13 - (0.012*age) + (0.31*bsa) - (0.25*log(acr_u)) + (0.34*creatinine_s) + (0.0072*sbp) + 0.13),
+                               sex == 'Male' & ACE_or_ARB_indicator == 'No' ~ 
+                                 exp(-0.13 - (0.012*age) + (0.31*bsa) - (0.25*log(acr_u)) + (0.34*creatinine_s) + (0.0072*sbp)))) %>% 
+  mutate(AER_covariate_adjusted = ACR_alpha * acr_u)
 
-# add data source variable for differentiating between the two datasets
+# add data source variable for differentiating between CO and Neth dfs
 CO_clean <- cbind(data_source='Colorado', CO_clean)
 ```
 
 
 ```{r Netherlands data cleaning, include=FALSE}
-## Netherlands Data Cleaning
-
-# merge all Netherlands datasets - merged one at a time to check everything working as intended with each merge
+# merge all Netherlands datasets
 Neth_clean <- left_join(Neth_main, Neth_anthropometrics, by=c('record_id','Randomization'), suffix=c('.m','.a'))
 Neth_clean <- left_join(Neth_clean, Neth_baseline_char, by=c('record_id','Randomization'), suffix=c('.c','.b'))
 Neth_clean <- left_join(Neth_clean, Neth_clamp_additional, by=c('record_id','Randomization'), suffix=c('.c','.ca'))
 Neth_clean <- left_join(Neth_clean, Neth_labs, by=c('record_id','Randomization'), suffix=c('.c','.l'))
 Neth_clean <- left_join(Neth_clean, Neth_urine, by=c('record_id'), suffix=c('.c','.u'))
 Neth_clean <- cbind(data_source='Netherlands', Neth_clean)
+Neth_clean <- cbind(study='RED', Neth_clean)
 
 # subset to only include variables of interest
 Neth_clean <- Neth_clean %>% 
-  select(data_source, record_id, INUorIOH, G_V2_Age.c, G_Sex.c, Anthro_Length.c, Anthro_V2_BMI.a, Lab_2_1_Blood_LDL.c,
+  select(data_source, study, record_id, INUorIOH, G_V2_Age.c, G_Sex.c, Anthro_Length.c, Anthro_V2_BMI.a, Lab_2_1_Blood_LDL.c,
          Lab_2_1_Blood_HbA1c_percent.c, Renal_mGFR_V2_Hyper, Renal_ERPF_V2_Hyper, Renal_FF_V2_Hyper, Renal_ERVR_V2_Hyper,
          Renal_Pglo_V2_Hyper, Renal_Ra_V2_Hyper, Renal_Re_V2_Hyper, CV_RR_V2_Fasting_SBP, CV_RR_V2_Fasting_DBP,
          CV_RR_V2_Fasting_MAP, L_2_AVG_6_7_Blood_Insulin.c, NEFA_V2.1_Fasting, NEFA_V2.7_Eu, NEFA_delta,
@@ -99,31 +130,31 @@ Neth_clean <- Neth_clean %>%
          'weight'='Anthro_V2_bodyweight', 'waistcm'='Anthro_V2_waist', 'dexa_body_fat'='Anthro_BIA_V2_fasting_fatpercentage',
          'cholesterol'='Lab_2_1_Blood_Cholesterol', 'raasi_timepoint'='Med_RASi', 'statin'='Med_statin',
          'steady_state_insulin'='L_2_AVG_6_7_Blood_Insulin.c', 'eGFR_fas_cr_cysc'='Lab_2_1_Blood_eGFR',
-         'gir_190'='Euclamp_V2_Mvalue_corr_minusglycosuria', 'di'='DI_V2_secondphase', 'rvr'='Renal_ERVR_V2_Hyper',
-         'diabetes_duration'='G_history_DM_duration', 'bsa' = 'Anthro_V2_BSA')
+         'gir'='Euclamp_V2_Mvalue_corr_minusglycosuria', 'di'='DI_V2_secondphase', 'rvr'='Renal_ERVR_V2_Hyper',
+         'diabetes_duration'='G_history_DM_duration', 'bsa'='Anthro_V2_BSA')
   
 # clean Netherlands variables as needed to match Colorado variables and units
 Neth_clean <- Neth_clean %>% 
-  mutate(sex=factor(sex, levels=c(1,0), labels=c('Female', 'Male')),
-         Med_betablocker=factor(Med_betablocker, levels=c('0','1'), labels=c('No','Yes')),
-         Med_calciumantagonist=factor(Med_calciumantagonist, levels=c('0','1'), labels=c('No','Yes')),
-         metformin_timepoint=case_when(Med_metformindose>0~'Yes', .default='No'),
-         raasi_timepoint=factor(raasi_timepoint, levels=c('0','1'), labels=c('No','Yes')),
-         statin=factor(statin, levels=c('0','1'), labels=c('No','Yes')),
-         Med_anticoagulant=factor(Med_anticoagulant, levels=c('0','1'), labels=c('No','Yes')),
-         creatinine_s=Lab_2_1_Blood_creat.c/88.4, # umol/l to mg/dL
-         ldl=Lab_2_1_Blood_LDL.c*38.67, # mmol/L to mg/dL https://www.ncbi.nlm.nih.gov/books/NBK83505/
-         hdl=Lab_2_1_Blood_HDL*38.67, # mmol/L to mg/dL
-         cholesterol=cholesterol*38.67, # mmol/L to mg/dL
-         ffa_suppression=(NEFA_delta/NEFA_V2.1_Fasting)*100,
-         gfr_bsa_plasma=(gfr_raw_plasma/bsa)*1.73,
-         erpf_bsa_plasma=(erpf_raw_plasma/bsa)*1.73,
+  mutate(sex = factor(sex, levels = c(1, 0), labels = c('Female', 'Male')), 
+         Med_betablocker = factor(Med_betablocker, levels = c(0, 1), labels=c('No','Yes')),
+         Med_calciumantagonist = factor(Med_calciumantagonist, levels=c(0, 1), labels=c('No','Yes')),
+         metformin_timepoint = case_when(Med_metformindose > 0 ~ 'Yes', .default='No'),
+         raasi_timepoint = factor(raasi_timepoint, levels = c(0, 1), labels = c('No','Yes')),
+         statin = factor(statin, levels = c(0, 1), labels = c('No','Yes')),
+         Med_anticoagulant = factor(Med_anticoagulant, levels=c(0, 1), labels=c('No','Yes')),
+         creatinine_s = Lab_2_1_Blood_creat.c/88.4, # umol/l to mg/dL
+         ldl = Lab_2_1_Blood_LDL.c*38.67, # mmol/L to mg/dL https://www.ncbi.nlm.nih.gov/books/NBK83505/
+         hdl = Lab_2_1_Blood_HDL*38.67, # mmol/L to mg/dL
+         cholesterol = cholesterol*38.67, # mmol/L to mg/dL
+         ffa_suppression = (NEFA_delta/NEFA_V2.1_Fasting)*100,
+         gfr_bsa_plasma = (gfr_raw_plasma/bsa)*1.73,
+         erpf_bsa_plasma = (erpf_raw_plasma/bsa)*1.73,
          ff = ff/100) %>% 
   select(-c(Med_metformindose, Lab_2_1_Blood_creat.c, Lab_2_1_Blood_LDL.c, Lab_2_1_Blood_HDL))
-         
+
 # calculate AER (24 hr microalbuminuria quantity/(24*60)
 Neth_clean <- Neth_clean %>% 
-  mutate(AER=L_2_0_24u_urine_mircoalb_quant.u/1440) %>% 
+  mutate(AER = L_2_0_24u_urine_mircoalb_quant.u/1440) %>% 
   select(-c(L_2_0_24u_urine_mircoalb_quant.u))
 ```
 
@@ -133,43 +164,64 @@ rm(Neth_main, Neth_anthropometrics, Neth_baseline_char, Neth_clamp_additional, N
 ```
 
 
-```{r df merge, include=FALSE}
+```{r Colorado and Netherlands merge, include=FALSE}
+# create two copies of Netherlands AER var: one to merge w/CO sex adj. AER and the other w/CO covariate adj. AER
+# also create two copies of Netherlands gir var: one to merge w/gir_190 and the other w/gir_200
+Neth_clean <- Neth_clean %>%
+  rename(c('AER_sex_adjusted' = 'AER', 'gir_190' = 'gir')) %>% 
+  mutate(AER_covariate_adjusted = AER_sex_adjusted,
+         gir_200 = gir_190)
+
 # check for matching IDs across datasets (none noted)
 intersect(unique(CO_clean$record_id), unique(Neth_clean$record_id))
 
 # merge datasets
-combined_dat <- full_join(CO_clean, Neth_clean, by=c('record_id', 'data_source', 'age', 'sex', 'height', 'bmi',
-         'hba1c', 'gfr_raw_plasma', 'erpf_raw_plasma', 'ff', 'glomerular_pressure', 'ra', 're',
-         'sbp', 'dbp', 'map', 'weight', 'waistcm', 'dexa_body_fat', 'cholesterol', 'raasi_timepoint', 'statin',
-         'steady_state_insulin', 'eGFR_fas_cr_cysc', 'gir_190', 'di', 'rvr', 'diabetes_duration', 'bsa', 'metformin_timepoint',
-         'creatinine_s', 'ldl', 'hdl', 'ffa_suppression', 'gfr_bsa_plasma', 'erpf_bsa_plasma'))
+combined_dat <- full_join(CO_clean, Neth_clean, by=c('record_id', 'data_source', 'study', 'age', 'sex', 'height', 'bmi',
+         'hba1c', 'gfr_raw_plasma', 'erpf_raw_plasma', 'ff', 'AER_sex_adjusted', 'AER_covariate_adjusted', 
+         'glomerular_pressure', 'ra', 're', 'sbp', 'dbp', 'map', 'weight', 'waistcm', 'dexa_body_fat', 'cholesterol', 
+         'raasi_timepoint', 'statin', 'steady_state_insulin', 'eGFR_fas_cr_cysc', 'gir_190', 'gir_200', 'di', 'rvr', 'diabetes_duration', 
+         'bsa', 'metformin_timepoint', 'creatinine_s', 'ldl', 'hdl', 'ffa_suppression', 'gfr_bsa_plasma', 'erpf_bsa_plasma'))
 ```
 
 
-```{r combined data cleaning, eval=FALSE, include=FALSE}
-# subset to variables of interest, rename dexa variable (CO is dexa, Neth is not)
+```{r combined data cleaning, include=FALSE}
+# subset to variables of interest
 combined_dat <- combined_dat %>% 
-  select(c('record_id', 'data_source', 'group', 'age', 'sex', 'ethnicity', 'height', 'weight', 'waistcm', 'dexa_body_fat',
-           'bmi', 'hba1c', 'gfr_raw_plasma', 'gfr_bsa_plasma', 'erpf_raw_plasma', 'erpf_bsa_plasma', 'ff', 'rvr', 'ra', 're',
-           'glomerular_pressure', 'sbp', 'dbp', 'map', , ,'creatinine_s', 'cholesterol', 'hdl', 'ldl', 'metformin_timepoint',
-           'raasi_timepoint','statin', 'Med_betablocker', 'Med_calciumantagonist', 'Med_anticoagulant', 'Medication', 'acprg', 
-           'acr_u', 'AER_sex_adjusted', 'AER', 'airg', 'di', 'gir_190', 'steady_state_cpeptide', 'steady_state_ffa', 'ffa_suppression',
-           'steady_state_insulin', 'NEFA_V2.1_Fasting', 'NEFA_V2.7_Eu', 'NEFA_delta')) %>% 
-  rename('Body Fat Percentage'='dexa_body_fat')
+  select(c('record_id', 'data_source', 'study', 'group', 'age', 'diabetes_duration', 'sex', 'ethnicity', 'height', 
+           'weight', 'waistcm', 'dexa_body_fat', 'bsa', 'bmi', 'hba1c', 'gfr_raw_plasma', 'gfr_bsa_plasma', 'eGFR_fas_cr_cysc',
+           'erpf_raw_plasma', 'erpf_bsa_plasma', 'ff', 'rvr', 'ra', 're', 'glomerular_pressure', 'sbp', 'dbp', 'map', 
+           'creatinine_s', 'cholesterol', 'hdl', 'ldl',  'acprg', 'acr_u', 'AER_sex_adjusted', 'AER_covariate_adjusted', 
+           'airg', 'di', 'gir_190', 'gir_200', 'steady_state_cpeptide', 'steady_state_ffa', 'ffa_suppression', 'steady_state_insulin',
+           'NEFA_V2.1_Fasting', 'NEFA_V2.7_Eu', 'NEFA_delta', 'INUorIOH', 'metformin_timepoint', 'raasi_timepoint','statin',
+           'Med_betablocker', 'Med_calciumantagonist', 'Med_anticoagulant', 'Medication')) %>% 
+  rename('Body_Fat_Percentage'='dexa_body_fat') # dexa variable renamed to be more accurate (Netherlands not dexa)
 
 # labels
-rownames(CO_vars) <- CO_vars$variable_name
-CO_vars %<>% select("label")
-CO_vars <- t(CO_vars) %>% as.data.frame(CO_vars)
-rownames(CO_vars) <- "label"
-CO_vars <- CO_vars[intersect(names(combined_dat), names(CO_vars))]
-CO_vars[setdiff(names(combined_dat), names(CO_vars))] <- " " 
-label(combined_dat) = as.list(CO_vars[match(names(combined_dat), names(CO_vars))])
+rownames(dict) <- dict$variable_name
+dict %<>% select("label")
+dict <- t(dict) %>% as.data.frame(dict)
+rownames(dict) <- "label"
+dict <- dict[intersect(names(combined_dat), names(dict))]
+dict[setdiff(names(combined_dat), names(dict))] <- " "
+label(combined_dat) = as.list(dict[match(names(combined_dat), names(dict))])
+
+label(combined_dat$data_source) <- "Site"
+label(combined_dat$`Body_Fat_Percentage`) <- "Body Fat Percentage"
+label(combined_dat$cholesterol) <- "Cholesterol (mg/dL)"
+label(combined_dat$AER_sex_adjusted) <- "Sex-Adjusted Estimate of AER"
+label(combined_dat$AER_covariate_adjusted) <- "Covariate-Adjusted Estimate of AER"
+label(combined_dat$NEFA_V2.1_Fasting) <- "Fasting NEFA level 100 minutes after iohexol/PAH"
+label(combined_dat$NEFA_V2.7_Eu) <- "NEFA level 180 minutes after initiation of euglycemic clamp"
+label(combined_dat$NEFA_delta) <- "Difference in NEFA level (fasting NEFA – NEFA during euglycemic clamp)"
+label(combined_dat$INUorIOH) <- "Inulin/Iohexol Indicator for GFR Measurement"
+label(combined_dat$Med_betablocker) <- "Betablocker use"
+label(combined_dat$Med_calciumantagonist) <- "Calcium channel blocker use"
+label(combined_dat$Med_anticoagulant) <- "Anticoagulant use"
+label(combined_dat$Medication) <- "Current medication use and dose"
 ```
 
 
-```{r save, eval=FALSE, include=FALSE}
+```{r save, include=FALSE}
 # save cleaned data
-readr::write_csv(Neth_clean, file='./IHD/Clean Data/RED_clean.csv')
 readr::write_csv(combined_dat, file='./IHD/Clean Data/combined_CO_RED_clean.csv')
 ```
