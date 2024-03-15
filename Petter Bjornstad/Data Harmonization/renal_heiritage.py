@@ -38,7 +38,7 @@ def clean_renal_heiritage():
     # --------------------------------------------------------------------------
 
     dem_cols = ["record_id", "dob", "group_rh2", "sex", "race", "ethnicity", "sglt2i", 
-                "participation_status", "rh_id", "diabetes_dx_date"]
+                "participation_status", "rh_id", "diabetes_dx_date", "mrn"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
     demo = demo.loc[demo["redcap_event_name"].str.startswith('screen', na=False)].copy()

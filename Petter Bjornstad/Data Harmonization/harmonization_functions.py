@@ -95,3 +95,9 @@ def calc_egfr(df, age="age", serum_creatinine="creatinine_s",
     data = pd.concat([data, egfr], axis=1)
     # Return
     return data
+  
+def add_id_column(df, study_name):
+    mrns = df.loc[df['study'] == study_name, ['mrn', 'record_id']].drop_duplicates('mrn')
+    id_map = dict(zip(mrns['mrn'], mrns['record_id']))
+    df[f'{study_name.lower().replace("-", "")}_id'] = df['mrn'].map(id_map)   
+  

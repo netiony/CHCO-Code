@@ -39,17 +39,18 @@ def clean_casper():
     # Demographics
     # --------------------------------------------------------------------------
 
-    dem_cols = ["subject_id", "dob", "diagnosis",
-                "gender", "race", "ethnicity", "participation_status"]
+    dem_cols = ["subject_id", "dob", "diagnosis", 
+                "gender", "race", "ethnicity", "participation_status","mr_number"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
     # Replace missing values
     demo.replace(rep, np.nan, inplace=True)
     demo["co_enroll_id"] = ""
-    demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date"},
+    demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date", "mr_number": "mrn"},
                 inplace=True, axis=1)
     dem_cols[2] = "diabetes_dx_date"
     dem_cols[3] = "sex"
+    dem_cols[7] = "mrn"
     # Race columns combined into one
     demo = combine_checkboxes(demo, base_name="race", levels=[
         "American Indian or Alaskan Native",

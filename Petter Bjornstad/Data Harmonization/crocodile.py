@@ -38,7 +38,7 @@ def clean_crocodile():
     # --------------------------------------------------------------------------
 
     dem_cols = ["record_id", "dob", "diabetes_dx_date",
-                "group", "sex", "race", "ethnicity", "participation_status"]
+                "group", "sex", "race", "ethnicity", "participation_status",  "mrn"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
     # Replace missing values

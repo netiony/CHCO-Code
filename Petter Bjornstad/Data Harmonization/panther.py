@@ -38,8 +38,8 @@ def clean_panther():
     # Demographics
     # --------------------------------------------------------------------------
 
-    dem_cols = ["record_id", "group", "dob", "t2d_date",
-                "sex", "race", "ethnicity", "sglt2i", "participation_status"]
+    dem_cols = ["record_id", "group", "dob", "t2d_date", 
+                "sex", "race", "ethnicity", "sglt2i", "participation_status","mrn"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols,
                                             events=["screening_arm_1"]))
@@ -138,7 +138,7 @@ def clean_panther():
     # IVGTT
     # --------------------------------------------------------------------------
 
-    var = ["record_id"] + [v for v in meta.loc[meta["form_name"].str.startswith("ivgtt"), "field_name"]]
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"].str.startswith("ivgtt"), "field_name"]] + [v for v in meta.loc[meta["form_name"].str.startswith("minmod"), "field_name"]]
     ivgtt = pd.DataFrame(proj.export_records(fields=var))
     ivgtt["redcap_event_name"].replace(
         {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1", "year_2_arm_1": "year_2"}, 

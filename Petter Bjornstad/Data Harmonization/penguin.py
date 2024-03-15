@@ -37,7 +37,7 @@ def clean_penguin():
     # Demographics
     # --------------------------------------------------------------------------
 
-    dem_cols = ["record_id", "dob", "group", "sex", "race", "ethnicity", "participation_status"]
+    dem_cols = ["record_id", "dob", "group", "sex", "race", "ethnicity", "participation_status", "mrn"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
     # Replace missing values

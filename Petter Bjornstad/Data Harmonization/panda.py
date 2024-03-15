@@ -38,7 +38,7 @@ def clean_panda():
     # Demographics
     # --------------------------------------------------------------------------
 
-    dem_cols = ["record_id", "crc_substudy", "dob", "diabetes_dx_date", "sex", "race", "ethnicity", "participation_status"]
+    dem_cols = ["record_id", "crc_substudy", "dob", "diabetes_dx_date", "sex", "race", "ethnicity", "participation_status","mrn"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols, events=["screening_arm_1", "screening__annual_arm_2"]))
     # Replace missing values
@@ -68,6 +68,7 @@ def clean_panda():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "medical_history", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
+    med = med[med['redcap_event_name'].str.contains('screen', na=False)]
     # Replace missing values
     med.replace(rep, np.nan, inplace=True)
     med_list = {'diabetes_tx___1': "insulin_pump_timepoint",
@@ -124,7 +125,8 @@ def clean_panda():
     # Screening labs
     # --------------------------------------------------------------------------
 
-    screen = pd.DataFrame(proj.export_records(forms=["screening_labs", "annual_labs"], events=["screening_arm_1", "annual_visit_1_arm_1", "screening__annual_arm_2"]))
+    screen = pd.DataFrame(proj.export_records(forms=["screening_labs", "annual_labs"]))
+    screen = screen[screen['redcap_event_name'].str.contains('screen', na=False)]
     # Replace missing values
     screen.replace(rep, np.nan, inplace=True)
     screen.rename({"screen_a1c": "hba1c"}, axis=1, inplace=True)
@@ -147,7 +149,7 @@ def clean_panda():
     screen["visit"] = "baseline"
     screen["procedure"] = "screening"
     # Assume medication review done at screening
-    med["date"] = screen["date"]
+    med = pd.merge(med, screen[['record_id', 'date']], on='record_id', how='left')
 
     # --------------------------------------------------------------------------
     # Labs
