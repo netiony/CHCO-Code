@@ -1,0 +1,199 @@
+---
+title: "PENGUIN Proteomics Analysis"
+author: "Ye Ji Choi"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    embed-resources: true
+editor: visual
+---
+
+```{r libraries, echo=F, include = F}
+library(SomaDataIO)
+library(SomaPlotr)
+library(purrr)
+library(tidyverse)
+library(dplyr)
+library(arsenal)
+library(ggplot2)
+library(tidyr)
+library(DEqMS)
+library(fgsea)
+library(ggrepel)
+library(labelled)
+library(glmnet)
+library(broom)
+library(knitr)
+library(ensr)
+library(kableExtra)
+library(gt)
+library(psych)
+library(growthcleanr)
+library(behaviorchange)
+library(ppcor)
+library(correlation)
+library(grid)
+library(forestploter)
+```
+
+```{r load-data, echo = F, include = F}
+# Load SOMAScan data
+load("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Combined SomaScan/analytes.Rdata")
+
+# Load elastic net function
+source("/Users/choiyej/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/easy_elasticnet.R")
+
+# Load correlation function
+source("/Users/choiyej/GitHub/YC_CHCO/R Functions/correlation_function.R")
+
+# Load dictionary function and file
+source("/Users/choiyej/GitHub/YC_CHCO/R Functions/label_harmonized_function.R")
+```
+
+```{r prep-data, echo = F, include = F}
+# Load clinical data
+harm_dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/soma_harmonized_dataset.csv", na.strings = "")
+
+dat <- harm_dat %>% filter((study == "PENGUIN" | study == "CROCODILE") & group != "Type 1 Diabetes" & group != "Type 2 Diabetes") %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+                   .by = c(record_id, visit)) %>%
+  # filter(participation_status!="Removed"|is.na(participation_status)) %>%
+  dplyr::mutate(race_ethnicity_condensed = case_when(race == "White" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino White",
+                                              race == "Black or African American" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino Black",
+                                              ethnicity == "Hispanic or Latino" ~ "Hispanic or Latino",
+                                              T ~ "Not Hispanic or Latino Other"),
+         combined_tkv = coalesce(total_kidney_volume_ml, total_kidney_volume_ml_manual),
+         combined_ht_tkv = coalesce(ht_adj_tkv, ht_adj_tkv_manual),
+         group = case_when(group == "PKD" ~ "ADPKD", 
+                           group == "Lean Control" ~ "HC")) %>%
+  arrange(record_id) %>%
+  filter(!is.na(seq.10000.28))
+
+analytes <- analytes %>% dplyr::mutate(Target_nodup = paste0(Target, " (", AptName, ")"))
+
+# Load and modify dictionary file
+dict <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv") %>%
+  dplyr::select(variable_name, label)
+
+dict <- label_harmonized_dict(dat, dict) %>%
+  dplyr::mutate(total_kidney_volume_ml_manual = "Total Kidney Volume (mL; manual)",
+                ht_adj_tkv_manual = "Height Adjusted Total Kidney Volume (mL/m; manual)",
+                combined_tkv = "Collapsed Total Kidney Volume (mL)", 
+                combined_ht_tkv = "Collapsed Height Adjusted Total Kidney Volume (mL/m)") %>%
+  dplyr::select(-starts_with("seq."))
+
+analytes_dict <- analytes %>%
+  dplyr::mutate(target_mod = Target_nodup) %>%
+  column_to_rownames("AptName") %>%
+  dplyr::select(target_mod) %>%
+  t()
+
+dict <- cbind(dict, analytes_dict)
+
+# Label data
+penguin <- label_harmonized(dat, dict)
+```
+
+```{r volcano-plot-function-mod, include=F}
+plotVolcano_mod <- function (data, FC, p.value, labels, identify = FALSE, fc.cutoff = 1, 
+  pt.size = 2, text.size = 3, cutoff = 0.05/nrow(data), sig_fc_lab = "Significant & Fold-Change",
+  sig_lab = "Significant", fc_lab = "Fold-Change", ns_lab = "Non-Significant", 
+  sig_fc_lab_col = "#f28482", sig_lab_col = "#f6bd60",
+  fc_lab_col = "#84a59d", ns_lab_col = "#dad7cd",
+  main = NULL, x.lab = NULL, ...) 
+{
+  .fc <- enquo(FC)
+  .p <- enquo(p.value)
+  if (all(pull(data, !!.fc) >= 0)) {
+    warning("It appears you are not passing log2-transformed ", 
+      "fold-change values. Please check.", call. = FALSE)
+  }
+  if (is.null(main)) {
+    main <- "Volcano Plot of Significant Fold Changes"
+  }
+  if (is.null(x.lab)) {
+    x.lab <- bquote(italic(log)[2] ~ (Fold ~ Change))
+  }
+  y.lab <- bquote(-italic(log)[10] ~ (p - value))
+  plot_df <- dplyr::mutate(data, group = case_when((-log10(!!.p) >= 
+    -log10(cutoff)) & (abs(!!.fc) >= fc.cutoff) ~ sig_fc_lab, 
+    -log10(!!.p) >= -log10(cutoff) ~ sig_lab, abs(!!.fc) >= 
+      fc.cutoff ~ fc_lab, TRUE ~ ns_lab), 
+    type = grepl(paste0("^", sig_lab, "|^", sig_fc_lab, "|^Significant"), group))
+
+  create_col_vector <- function(label_values, colors) {
+    cols <- setNames(colors, label_values)
+    return(cols)
+  }
+  
+  label_values = c(ns_lab, fc_lab, sig_lab, sig_fc_lab)
+  label_colors = c(ns_lab_col, fc_lab_col, sig_lab_col, sig_fc_lab_col)
+  cols <- create_col_vector(label_values, label_colors)
+
+  p <- ggplot(plot_df, aes(x = !!.fc, y = -log10(!!.p), color = group)) + 
+    geom_point(alpha = 0.5, size = pt.size, ...) + scale_color_manual(values = cols, 
+    name = "") + labs(x = x.lab, y = y.lab, title = main) + 
+    geom_vline(xintercept = c(-1, 1) * fc.cutoff, color = "grey", 
+      linetype = "longdash", alpha = 0.75) + geom_vline(xintercept = 0, 
+    color = "grey50", linetype = "solid") + theme_soma() + 
+    NULL
+  if (identify) {
+    p <- p + geom_text(data = dplyr::filter(plot_df, type), 
+      aes(label = !!enquo(labels)), hjust = 0, nudge_x = 0.05, 
+      size = text.size, color = "black", check_overlap = TRUE)
+  }
+  p
+}
+
+```
+
+# Differential expression
+
+#### ADPKD vs. HC
+
+```{r de, echo = F}
+# Look at differential expressed proteins (DEPs) between ADPKD vs. HC
+# filter soma scan data to baseline data only and log transform
+soma_group <- penguin %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id") %>%
+  dplyr::select(starts_with("seq"))
+y <- t(soma_group)
+y <- log2(y)
+
+# Design matrix
+cond = as.factor(penguin$group)
+design_mat <- model.matrix(~0 + group, data = penguin)
+colnames(design_mat) = gsub("group","",colnames(design_mat))
+# Fit
+contrast = makeContrasts(contrasts = c("ADPKD-HC"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+```
+
+```{r de-volcano-plot, warning = F, echo = F}
+# volcano plot
+plotVolcano_mod(res, 
+            FC = logFC, 
+            p.value = P.Value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 1,
+            cutoff = 0.05,
+            x.lab = "logFC(ADPKD/HC)",
+            pt.size = 2) 
+```
