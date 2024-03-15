@@ -1,5 +1,5 @@
 ---
-title: "PANTHER Analysis"
+title: "PANTHER Analysis (w/ RH, RH2, IMPROVE subset)"
 author: "Ye Ji Choi"
 date: "`r lubridate::today()`"
 format: 
@@ -12,8 +12,13 @@ format:
 editor: visual
 ---
 
-```{r include = F}
+* For paper, add RH/RH2/IMPROVE participants with SOMA, TKV, GFR, RPF
+
+```{r libraries, echo=F, include = F}
 library(SomaDataIO)
+library(SomaPlotr)
+library(purrr)
+library(tidyverse)
 library(dplyr)
 library(arsenal)
 library(ggplot2)
@@ -21,68 +26,213 @@ library(tidyr)
 library(DEqMS)
 library(fgsea)
 library(ggrepel)
+library(labelled)
+library(glmnet)
+library(broom)
+library(knitr)
+library(ensr)
+library(kableExtra)
+library(gt)
+library(psych)
+library(growthcleanr)
+library(behaviorchange)
+library(ppcor)
+library(correlation)
+library(grid)
+library(forestploter)
 ```
 
-```{r include = F}
+```{r load-data, echo = F, include = F}
 # Load SOMAScan data
-load("/Volumes/Peds Endo/Petter Bjornstad/SOMAScan/PANTHER/panther_bl_soma.Rdata")
-load("/Volumes/Peds Endo/Petter Bjornstad/SOMAScan/PANTHER/panther_bl_analytes.Rdata")
+load("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Combined SomaScan/analytes.Rdata")
+
+# Load elastic net function
+source("/Users/choiyej/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/easy_elasticnet.R")
+
+# Load correlation function
+source("/Users/choiyej/GitHub/YC_CHCO/R Functions/correlation_function.R")
+
+# Load dictionary function and file
+source("/Users/choiyej/GitHub/YC_CHCO/R Functions/label_harmonized_function.R")
 ```
 
-```{r}
+```{r prep-data, echo = F, include = F}
 # Load clinical data
-dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = "")
+harm_dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/soma_harmonized_dataset.csv", na.strings = "")
 
-# PAN-44-O entered as PAN_44-O in soma
-soma$record_id <- gsub("_", "-", soma$SampleDescription)
-# PAN-103-O entered as PAN-103-0 in soma
-soma$record_id <- gsub("-0$", "-O", soma$record_id)
-# PAN-98-O (remove from soma for now)
-soma <- soma %>% filter(SampleDescription != "PAN-98-O") 
-
-# subset soma baseline
-soma <- soma %>% filter(SampleGroup == "Year 1")
-
-panther <- dat %>% filter(study == "PANTHER" & visit == "baseline") %>%
-  filter(record_id %in% soma$record_id) %>%
+dat <- harm_dat %>% filter((study == "PANTHER" & visit == "baseline")|study == "RENAL-HEIR") %>%
   dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
                    across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
                    .by = c(record_id, visit)) %>%
   # filter(participation_status!="Removed"|is.na(participation_status)) %>%
-  mutate(race_ethnicity_condensed = case_when(race == "White" & 
+  dplyr::mutate(race_ethnicity_condensed = case_when(race == "White" & 
                                                 ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino White",
                                               race == "Black or African American" & 
                                                 ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino Black",
                                               ethnicity == "Hispanic or Latino" ~ "Hispanic or Latino",
                                               T ~ "Not Hispanic or Latino Other"),
-           tanner_stage_comp = coalesce(tan_fgd, tan_fph, tan_tveq, tan_mgd, tan_mph),
+         tanner_stage_comp = coalesce(tan_fgd, tan_fph, tan_tveq, tan_mgd, tan_mph, breast_tanner, ceiling(testicular_volume)),
+         tanner_stage_comp_panther = case_when(tanner_stage_comp > 3 ~ 4, T~ tanner_stage_comp),
          tanner_stage_cat = case_when(tanner_stage_comp <3 ~ "I_II",
-                                      tanner_stage_comp >=3 ~ "III_V")) %>%
-  arrange(record_id)
-panther$tanner_stage_comp <- as.factor(panther$tanner_stage_comp)
+                                      tanner_stage_comp >=3 ~ "III_V"),
+         tanner_stage_cat_2 = case_when(tanner_stage_comp == 1 ~ "I",
+                                        tanner_stage_comp <4 ~ "II_III",
+                                        tanner_stage_comp >=4 ~ "IV_V"),
+         tanner_stage_cat_3 = case_when(tanner_stage_comp < 2 ~ "I_II",
+                                        tanner_stage_comp == 3 ~ "III",
+                                        tanner_stage_comp >= 4 ~ "IV_V"),
+         age_mo = (age * 12),
+         sex = case_when(sex == "Male" ~ "male",
+                         sex == "Female" ~ "female"),
+         combined_tkv = coalesce(total_kidney_volume_ml, total_kidney_volume_ml_manual),
+         combined_ht_tkv = coalesce(ht_adj_tkv, ht_adj_tkv_manual)) %>%
+  arrange(record_id) %>%
+  filter(!is.na(seq.10000.28) & !is.na(tanner_stage_comp))
+dat$tanner_stage_comp <- as.factor(dat$tanner_stage_comp)
 
-# missing from redcap, available for soma - check with Emily
-anti_id <- anti_join(soma, panther)$record_id
-anti_id
+bmi_percentile = ext_bmiz(data = subset(dat, 
+                                        select = c("record_id", "sex", "age_mo", "weight", "height", "bmi")), 
+                          age = "age_mo", 
+                          wt = "weight", 
+                          ht = "height", 
+                          bmi = "bmi", 
+                          adjust.integer.age = F) %>% 
+  dplyr:: select(record_id, bmip)
+dat <- left_join(dat, bmi_percentile, by = "record_id")
+
+panther <- dat %>% filter(study == "PANTHER")
+sens_dat <- dat
+
+# Prepare SOMA data
+# center/scale
+cs <- function(.x) {    # .x = numeric vector
+  out <- .x - mean(.x)  # center
+  out / sd(out)         # scale
+}
+
+# prepare data set for analysis
+cleanData_sens <- dat |>
+  modify_at(getAnalytes(dat), log) |>
+  modify_at(getAnalytes(dat), cs)  
+
+cleanData_panther <- cleanData_sens %>%
+  filter(study == "PANTHER") %>%
+  dplyr::mutate(tanner_stage_comp_panther_cat = 
+                  case_when(tanner_stage_comp_panther == 4 ~ "4 & 5",
+                            T ~ as.character(tanner_stage_comp_panther)))
+
+analytes <- analytes %>% dplyr::mutate(Target_nodup = paste0(Target, " (", AptName, ")"))
+
+# Load and modify dictionary file
+dict <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv") %>%
+  dplyr::select(variable_name, label)
+
+dict <- label_harmonized_dict(dat, dict) %>%
+  dplyr::mutate(tanner_stage_comp = "Tanner stage",
+         tanner_stage_comp_ord = "Tanner stage",
+         tanner_stage_cat = "Tanner stage categorized (1/2, 3/4/5)",
+         tanner_stage_cat2 = "Tanner stage categorized (1, 2/3, 4/5)",
+         mm_airg = "AIRg",
+         mm_bcell = "Beta cell function",
+         mm_di = "DI",
+         mm_ir = "Insulin resistance",
+         mm_si = "Insulin sensitivity",
+         bmip = "BMI percentile",
+         total_kidney_volume_ml_manual = "Total Kidney Volume (mL; manual)",
+         ht_adj_tkv_manual = "Height Adjusted Total Kidney Volume (mL/m; manual)",
+         combined_tkv = "Collapsed Total Kidney Volume (mL)", 
+         combined_ht_tkv = "Collapsed Height Adjusted Total Kidney Volume (mL/m)") %>%
+  dplyr::select(-starts_with("seq."))
+
+analytes_dict <- analytes %>%
+  dplyr::mutate(target_mod = Target_nodup) %>%
+  column_to_rownames("AptName") %>%
+  dplyr::select(target_mod) %>%
+  t()
+
+dict <- cbind(dict, analytes_dict)
+
+# Label data
+panther <- label_harmonized(panther, dict)
+sens_dat <- label_harmonized(sens_dat, dict)
 ```
 
-```{r}
+```{r volcano-plot-function-mod, include=F}
+plotVolcano_mod <- function (data, FC, p.value, labels, identify = FALSE, fc.cutoff = 1, 
+  pt.size = 2.5, text.size = 3, cutoff = 0.05/nrow(data), sig_fc_lab = "Significant & Fold-Change",
+  sig_lab = "Significant", fc_lab = "Fold-Change", ns_lab = "Non-Significant", 
+  sig_fc_lab_col = "#f28482", sig_lab_col = "#f6bd60",
+  fc_lab_col = "#84a59d", ns_lab_col = "#dad7cd",
+  main = NULL, x.lab = NULL, ...) 
+{
+  .fc <- enquo(FC)
+  .p <- enquo(p.value)
+  if (all(pull(data, !!.fc) >= 0)) {
+    warning("It appears you are not passing log2-transformed ", 
+      "fold-change values. Please check.", call. = FALSE)
+  }
+  if (is.null(main)) {
+    main <- "Volcano Plot of Significant Fold Changes"
+  }
+  if (is.null(x.lab)) {
+    x.lab <- bquote(italic(log)[2] ~ (Fold ~ Change))
+  }
+  y.lab <- bquote(-italic(log)[10] ~ (p - value))
+  plot_df <- dplyr::mutate(data, group = case_when((-log10(!!.p) >= 
+    -log10(cutoff)) & (abs(!!.fc) >= fc.cutoff) ~ sig_fc_lab, 
+    -log10(!!.p) >= -log10(cutoff) ~ sig_lab, abs(!!.fc) >= 
+      fc.cutoff ~ fc_lab, TRUE ~ ns_lab), 
+    type = grepl(paste0("^", sig_lab, "|", sig_fc_lab, "|Significant"), group))
+
+  create_col_vector <- function(label_values, colors) {
+    cols <- setNames(colors, label_values)
+    return(cols)
+  }
+  
+  label_values = c(ns_lab, fc_lab, sig_lab, sig_fc_lab)
+  label_colors = c(ns_lab_col, fc_lab_col, sig_lab_col, sig_fc_lab_col)
+  cols <- create_col_vector(label_values, label_colors)
+
+  p <- ggplot(plot_df, aes(x = !!.fc, y = -log10(!!.p), color = group)) + 
+    geom_point(alpha = 0.5, size = pt.size, ...) + scale_color_manual(values = cols, 
+    name = "") + labs(x = x.lab, y = y.lab, title = main) + 
+    geom_vline(xintercept = c(-1, 1) * fc.cutoff, color = "grey", 
+      linetype = "longdash", alpha = 0.75) + geom_vline(xintercept = 0, 
+    color = "grey50", linetype = "solid") + theme_soma() + 
+    NULL
+  if (identify) {
+    p <- p + geom_text(data = dplyr::filter(plot_df, type), 
+      aes(label = !!enquo(labels)), hjust = 0, nudge_x = 0.05, 
+      size = text.size, color = "black", check_overlap = TRUE)
+  }
+  p
+}
+
+```
+
+# Descriptive table
+```{r desc, results = 'asis', echo = F}
 # Descriptive tables
-summary(tableby(group_risk ~ age + sex + tanner_stage_comp + group + weight + height + bmi + hba1c + total_kidney_volume_ml + ht_adj_tkv, data = panther, total = F, test = F))
-summary(tableby(tanner_stage_comp ~ age + sex + group + group_risk + weight + height + bmi + hba1c + total_kidney_volume_ml + ht_adj_tkv, data = panther, total = F, test = F))
+summary(tableby(group_risk ~ age + sex + tanner_stage_comp + group + weight + height + bmi + bmip + hba1c + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + total_kidney_volume_ml + ht_adj_tkv + mm_airg + mm_bcell + mm_di + mm_ir + mm_si, data = panther, total = F, test = F))
+summary(tableby(tanner_stage_comp ~ age + sex + group + group_risk + weight + height + bmi + bmip + hba1c + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + total_kidney_volume_ml + ht_adj_tkv + mm_airg + mm_bcell + mm_di + mm_ir + mm_si, data = panther, total = F, test = F))
+```
+## Including RH
+```{r desc-sens, results = 'asis', echo = F}
+# Descriptive tables
+summary(tableby(group_risk ~ age + sex + tanner_stage_comp + group + weight + height + bmi + bmip + hba1c + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + total_kidney_volume_ml + total_kidney_volume_ml_manual + combined_tkv + ht_adj_tkv + ht_adj_tkv_manual + combined_ht_tkv, data = sens_dat, total = F, test = F))
+summary(tableby(tanner_stage_comp ~ age + sex + group + group_risk + weight + height + bmi + bmip + hba1c + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + total_kidney_volume_ml + total_kidney_volume_ml_manual + combined_tkv + ht_adj_tkv + ht_adj_tkv_manual + combined_ht_tkv, data = sens_dat, total = F, test = F))
 ```
 
-# Normalized dataset
+# Differential expression
 
-## Differential expression
+#### Low vs. high risk
 
-### Low vs. high risk
-```{r}
+```{r de, echo = F}
 # Look at differential expressed proteins (DEPs) between low and high risk in PANTHER
 # filter soma scan data to baseline data only and log transform
-soma_risk <- soma %>% 
+soma_risk <- panther %>% 
   arrange(record_id) %>%
-  remove_rownames() %>% column_to_rownames(var = "SampleDescription") %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id") %>%
   dplyr::select(starts_with("seq"))
 y <- t(soma_risk)
 y <- log2(y)
@@ -99,9 +249,19 @@ fit <- eBayes(fit)
 res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
 res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
 res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+res_save <- res %>%
+  rownames_to_column("AptName") %>%
+  dplyr::select(-c(Target, TargetFullName)) %>%
+  left_join(analytes, by = "AptName")
+
+write.csv(res_save, "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/low_high_risk_de.csv", row.names = T)
+
 ```
 
-```{r}
+```{r de-volcano-plot, warning = F, echo = F}
 # volcano plot
 res$log.P.Value = -log10(res$P.Value)
 ggplot(res, aes(x = logFC, y =log.P.Value )) + 
@@ -115,15 +275,26 @@ ggplot(res, aes(x = logFC, y =log.P.Value )) +
     scale_colour_gradient(low = "black", high = "black", guide = FALSE) +
     geom_text_repel(data=subset(res, abs(logFC)>.5&log.P.Value > 3),
                     aes(logFC, log.P.Value, label=Target)) # add gene label
+
+plotVolcano(res, 
+            FC = logFC, 
+            p.value = P.Value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0.5,
+            cutoff = 0.05,
+            x.lab = "log2(high/low)") 
 ```
 
-```{r}
+#### Tanner stage 1-2 vs. 3-5
+
+```{r de2, echo = F}
 # Look at effect of puberty on proteomics in PANTHER
 # filter soma scan data to baseline data only and log transform & only keep record_ids with tanner stages
-soma_tanner <- soma %>% 
+soma_tanner <- panther %>% 
   arrange(record_id) %>%
-  filter(record_id %in% subset(panther, !is.na(tanner_stage_cat))$record_id) %>%
-  remove_rownames() %>% column_to_rownames(var = "SampleDescription") %>%
+  filter(!is.na(tanner_stage_cat)) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id") %>%
   dplyr::select(starts_with("seq"))
 y <- t(soma_tanner)
 y <- log2(y)
@@ -139,9 +310,20 @@ fit <- eBayes(fit)
 res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
 res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
 res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+
+res_save <- res %>%
+  rownames_to_column("AptName") %>%
+  dplyr::select(-c(Target, TargetFullName)) %>%
+  left_join(analytes, by = "AptName")
+
+write.csv(res_save,"/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/tanner_stage_12_345_de.csv", row.names = T)
+
 ```
 
-```{r}
+```{r de-volcano-plot2, warning=F, echo = F}
 # volcano plot
 res$log.P.Value = -log10(res$P.Value)
 ggplot(res, aes(x = logFC, y =log.P.Value )) + 
@@ -155,11 +337,2154 @@ ggplot(res, aes(x = logFC, y =log.P.Value )) +
     scale_colour_gradient(low = "black", high = "black", guide = FALSE) +
     geom_text_repel(data=subset(res, abs(logFC)>.5&log.P.Value > 3),
                     aes(logFC, log.P.Value, label=Target)) # add gene label
+
+plotVolcano(res, 
+            FC = logFC, 
+            p.value = P.Value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0.5,
+            cutoff = 0.05,
+            x.lab = "log2(TS>=3/TS<3)") 
 ```
 
+#### 3 group DE (Tanner stage 1 vs. 2/3 vs. 4/5)
+```{r de-anova, echo = F}
+aov_tbl <- analytes |>
+  dplyr::select(AptName, SeqId, Target, EntrezGeneSymbol, UniProt)
+
+## Compare Three Groups (TS '1'/'2&3'/'4&5')
+
+### Calculate ANOVAs
+aov_tbl <- aov_tbl |>
+  dplyr::mutate(
+    formula   = purrr::map(AptName, ~ as.formula(paste(.x, "~ tanner_stage_cat_2"))), # create formula
+    aov_model = purrr::map(formula, ~ stats::aov(.x, data = cleanData_panther)),  # fit ANOVA-models
+    aov_smry  = purrr::map(aov_model, summary) |> map(1L),      # summary() method
+    F.stat    = purrr::map(aov_smry, "F value") |> map_dbl(1L), # pull out F-statistic
+    p.value   = purrr::map(aov_smry, "Pr(>F)") |> map_dbl(1L),  # pull out p-values
+    fdr       = p.adjust(p.value, method = "BH")         # FDR multiple testing
+  ) |>
+  arrange(p.value) |>            # re-order by `p-value`
+  dplyr::mutate(rank = row_number())    # add numeric ranks
+
+kbl(head(subset(aov_tbl, select = c("Target", "F.stat", "p.value", "fdr")), 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+
+### Visualize with `ggplot2()`
+target_map <- head(aov_tbl, 14L) |>     # mapping table
+  dplyr::select(AptName, Target)               # SeqId -> Target
+
+plot_tbl <- cleanData_panther |>
+  dplyr::select(tanner_stage_cat_2, target_map$AptName) |>    # top 12 analytes
+  pivot_longer(cols = -tanner_stage_cat_2, names_to = "AptName", values_to = "RFU") |>
+  left_join(target_map, by = "AptName") |>
+  # order factor levels by 'aov_tbl' rank to order plots below
+  dplyr::mutate(tanner_stage_cat_2 = factor(tanner_stage_cat_2, levels = c("I", "II_III", "IV_V")))
 ```
 
-```{r}
-# Associate minmod results and TKV data with proteomics in an effort to find multi-protein signatures that associate with insulin sensitivity and secretion as well as total kidney volume in PANTHER (if underpowered for the insulin sensitivity - we might pull in data from other cohorts with proteomic data)
+```{r ggplot-pdfs1, fig.width = 10, fig.height = 7, fig.align = "center", echo = F}
+plot_tbl |>
+  ggplot(aes(x = RFU, fill = tanner_stage_cat_2)) +
+  geom_density(linetype = 0, alpha = 0.25) +
+  scale_fill_manual(values = c("#24135F", "#00A499", "#006BA6")) +
+  facet_wrap(~ Target, ncol = 3) +
+  ggtitle("Probability Density of Top Analytes by ANOVA") +
+  labs(y = "Density", x = "ln(RFU)") +
+  theme(plot.title = element_text(size = 21, face = "bold"),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        legend.position = "top"
+  ) +
+  theme_bw()
+```
 
+# Kendall's rank sum correlations (5 Tanner stage groups)
+
+```{r kendall-corr, warning=F, echo=F, message = F}
+# Find significant ANOVA results between 5 groups of tanner stages (treat tanner stage as categorical)
+aov_tbl <- analytes |>
+  dplyr::select(AptName, SeqId, Target_nodup, EntrezGeneSymbol, UniProt)
+
+aov_tbl_ordinal <- aov_tbl |>
+  dplyr::mutate(
+    formula   = purrr::map(AptName, ~ as.formula(paste(.x, "~ tanner_stage_comp_panther"))), # create formula
+    aov_model = purrr::map(formula, ~ stats::aov(.x, data = cleanData_panther)),  # fit ANOVA-models
+    aov_smry  = purrr::map(aov_model, summary) |> map(1L),      # summary() method
+    F.stat    = purrr::map(aov_smry, "F value") |> map_dbl(1L), # pull out F-statistic
+    p.value   = purrr::map(aov_smry, "Pr(>F)") |> map_dbl(1L),  # pull out p-values
+    fdr       = p.adjust(p.value, method = "BH")         # FDR multiple testing
+  ) |>
+  arrange(p.value) |>            # re-order by `p-value`
+  dplyr::mutate(rank = row_number())    # add numeric ranks
+
+# Select only p < 0.05 for correlation
+aov_tbl_ordinal_top <-subset(aov_tbl_ordinal, p.value < 0.05)$AptName %>% unique()
+
+# Kendall's rank correlations (treat tanner stage as ordinal)
+cleanData_panther$tanner_stage_comp_ord <- as.numeric(cleanData_panther$tanner_stage_comp_panther)
+
+kendall_ts <- corr.test(x = cleanData_panther$tanner_stage_comp_ord, 
+          y = cleanData_panther[aov_tbl_ordinal_top], 
+          method="kendall", 
+          adjust="none", alpha=.05)
+kendall_ts_r <- data.frame(tanner_stage_comp_ord = (kendall_ts$r %>% t() ))
+kendall_ts_p <- data.frame(p.value = (kendall_ts$p %>% t() ))
+kendall_ts_mat <- cbind(kendall_ts_r, kendall_ts_p)
+
+kendall_ts_mat_save <- corr.test(x = cleanData_panther$tanner_stage_comp_ord, 
+          y = cleanData_panther[analytes$AptName], 
+          method="kendall", 
+          adjust="none", alpha=.05)
+kendall_ts_mat_save_r <- data.frame(tanner_stage_comp_ord = (kendall_ts_mat_save$r %>% t() ))
+kendall_ts_mat_save_p <- data.frame(p.value = (kendall_ts_mat_save$p %>% t() ))
+kendall_ts_mat_save <- cbind(kendall_ts_mat_save_r, kendall_ts_mat_save_p)
+
+kendall_ts_mat_save <- kendall_ts_mat_save %>%
+  rownames_to_column(var = "AptName") %>%
+  left_join(analytes, by = "AptName")
+
+write.csv(kendall_ts_mat_save, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/kendall_correlation.csv", 
+          row.names = T)
+
+kendall_ts_mat <- kendall_ts_mat %>%
+  rownames_to_column(var = "AptName") %>%
+  left_join(analytes, by = "AptName") %>%
+  column_to_rownames("Target_nodup") %>%
+  dplyr::select(tanner_stage_comp_ord, p.value, Target)
+
+# Heatmap tables (combined)
+ts_tbl <- function(x){
+  gt(x)  %>%
+    data_color(columns = tanner_stage_comp_ord,
+               method = "numeric",
+               palette = c("#023e8a","#ade8f4",
+                           "#ffffff", 
+                           "#ffe5ec","#d62828"),
+               domain = c(-0.8, -0.2, 
+                          0, 
+                          0.2, 0.8)) %>%
+    tab_options(column_labels.hidden = T) %>% 
+    as_raw_html()
+}
+
+kendall_ts_mat %>% 
+  dplyr::mutate(direction = ifelse(tanner_stage_comp_ord < 0, "Negative", "Positive"), 
+         Target_nodup = row.names(.))  %>% 
+  filter(p.value < 0.05) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  group_by(relevel(factor(direction), "Negative")) %>% 
+  slice_head(n=75) %>% 
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  group_map(~ ts_tbl(.x)) %>%
+  data.frame(.) %>%
+  setNames(., c("Negative\n correlation coefficient", "Positive\n correlation coefficient")) %>%
+  gt() %>%
+  fmt_markdown(columns = TRUE) 
+```
+
+Total number of correlations with p<0.05: `r nrow(subset(kendall_ts_mat, p.value < 0.05))`
+
+Total number of negative correlations with p<0.05: `r nrow(subset(kendall_ts_mat, p.value < 0.05 & tanner_stage_comp_ord <0))`
+
+Total number of positive correlations with p<0.05: `r nrow(subset(kendall_ts_mat, p.value < 0.05 & tanner_stage_comp_ord >0))`
+
+#### Volcano plot of correlation
+
+```{r kendall-volcano, echo = F}
+plotVolcano_mod(kendall_ts_mat, 
+            FC = tanner_stage_comp_ord, 
+            p.value = p.value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0,
+            cutoff = 0.05,
+            x.lab = "Correlation",
+            main = "Kendall's rank sum correlations",
+            pt.size = 1,
+            fc_lab = "p > 0.05",
+            fc_lab_col = "#dad7cd",
+            sig_fc_lab = "p < 0.05") 
+```
+
+#### Positive correlations
+
+```{r kendall-corr-pos, warning=F, echo=F, message = F}
+kendall_ts_mat_positive <- subset(kendall_ts_mat, tanner_stage_comp_ord > 0 & p.value < 0.05) %>% 
+  rownames_to_column("Target_nodup") %>%
+  arrange(p.value)
+
+kendall_ts_mat_positive_analytes <- 
+  kendall_ts_mat_positive %>%
+  left_join(analytes)
+
+# Positive correlation table
+kendall_ts_mat_positive %>%
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  dplyr::mutate(row = (row_number() - 1) %% 29) |>
+  dplyr::mutate(id = row_number(), .by = row) |> 
+  pivot_wider(
+    names_from = id, values_from = -c(id, row),
+    names_vary = "slowest"
+  )  %>%
+  dplyr::select(-row)  %>%
+  gt() %>%
+  tab_header(title = "Positive correlations")  %>%
+  cols_label_with(fn = ~gsub("_\\d+$", "", .x)) %>%
+  cols_label_with(fn = ~gsub("tanner_stage_comp_ord" , "Correlation coefficient", .x)) %>%
+  cols_label_with(fn = ~gsub("Target" , "Protein", .x)) %>%
+  data_color(method = "numeric",
+             palette = c("#eae2b7", "#d62828"),
+             domain = c(0,0.6))
+
+# Box plots
+cleanData_panther %>% 
+  dplyr::select(record_id, tanner_stage_comp_panther_cat, starts_with("seq."))  %>%
+  pivot_longer(cols = starts_with("seq.")) %>%
+  dplyr::rename("AptName" = name) %>%
+  right_join(head(kendall_ts_mat_positive_analytes,20)) %>%
+  ggplot(aes(x=Target, y=value, fill=tanner_stage_comp_panther_cat)) + 
+  geom_boxplot() +
+  facet_wrap(~Target, scale="free") +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.background = element_rect(fill = "white",
+                                        color = "grey"),
+        strip.background = element_rect(fill = "white")) +
+  scale_fill_manual(values = c("#fbc4ab", "#f8ad9d", "#f4978e", "#f08080")) +
+  labs(fill = "Tanner Stage",
+       y = "ln(RFU)",
+       x = NULL)
+```
+
+#### Negative correlations
+
+```{r kendall-corr-neg, warning=F, echo=F, message = F}
+kendall_ts_mat_negative <- subset(kendall_ts_mat, tanner_stage_comp_ord < 0 & p.value < 0.05) %>% 
+  rownames_to_column("Target_nodup") %>%
+  arrange(p.value)
+
+kendall_ts_mat_negative_analytes <- 
+  kendall_ts_mat_negative %>%
+  left_join(analytes)
+
+# Negative correlation table
+kendall_ts_mat_negative %>%
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  dplyr::mutate(row = (row_number() - 1) %% 17) |>
+  dplyr::mutate(id = row_number(), .by = row) |> 
+  pivot_wider(
+    names_from = id, values_from = -c(id, row),
+    names_vary = "slowest"
+  )  %>%
+  dplyr::select(-row)  %>%
+  gt() %>%
+  tab_header(title = "Negative correlations")  %>%
+  cols_label_with(fn = ~gsub("_\\d+$", "", .x)) %>%
+  cols_label_with(fn = ~gsub("tanner_stage_comp_ord" , "Correlation coefficient", .x)) %>%
+  cols_label_with(fn = ~gsub("Target_nodup" , "Protein", .x)) %>%
+  #cols_label(tanner_stage_comp_ord = "correlation coefficient") %>%
+  data_color(method = "numeric",
+             palette = c("#023e8a", "#ade8f4"),
+             domain = c(-1,0))
+
+# Box plots
+cleanData_panther %>% 
+  dplyr::select(record_id, tanner_stage_comp_panther_cat, starts_with("seq.")) %>%
+  pivot_longer(cols = starts_with("seq.")) %>%
+  dplyr::rename("AptName" = name) %>%
+  right_join(head(kendall_ts_mat_negative_analytes,20)) %>%
+  ggplot(aes(x=Target, y=value, fill=tanner_stage_comp_panther_cat)) + 
+    geom_boxplot() +
+    facet_wrap(~Target, scale="free") +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.background = element_rect(fill = "white",
+                                        color = "grey"),
+        strip.background = element_rect(fill = "white")) +
+  scale_fill_manual(values = c("#90e0ef", "#00b4d8", "#0077b6", "#03045e")) +
+  labs(fill = "Tanner Stage",
+       y = "ln(RFU)",
+       x = NULL)
+```
+
+## Partial Kendall's rank sum correlations (5 Tanner stage groups) adjusting for risk
+
+```{r kendall-corr-multilevel, warning=F, echo=F, message = F}
+# Create an empty dataframe to store results
+kendall_partial_ts_df <- data.frame()
+
+# Loop through each element of aov_tbl_ordinal_top
+for (i in seq_along(aov_tbl_ordinal_top)) {
+  
+  # Calculate partial Kendall correlation
+  kendall_partial_ts <- correlation(data = cleanData_panther,
+                                    select = c("tanner_stage_comp_ord", "group_risk"),
+                                    select2 = aov_tbl_ordinal_top[i],
+                                    method = "kendall", 
+                                    partial = TRUE, 
+                                    multilevel = TRUE)
+  
+  # Append the result to the main dataframe
+  kendall_partial_ts_df <- rbind(kendall_partial_ts_df, kendall_partial_ts)
+}
+kendall_partial_ts_df<- as.data.frame(kendall_partial_ts_df)
+colnames(kendall_partial_ts_df) <- c('param1','AptName','tau', "conf.level","lower", "upper","z", "p.value", "method", "n_obs")
+kendall_partial_ts_df <- left_join(kendall_partial_ts_df,analytes)
+
+# Heatmap tables (combined)
+ts_tbl_partial <- function(x){
+  gt(x)  %>%
+    data_color(columns = tau,
+               method = "numeric",
+               palette = c("#023e8a","#ade8f4",
+                           "#ffffff", 
+                           "#ffe5ec","#d62828"),
+               domain = c(-0.8, -0.2, 
+                          0, 
+                          0.2, 0.8)) %>%
+    tab_options(column_labels.hidden = T) %>% 
+    as_raw_html()
+}
+
+kendall_partial_ts_df %>% 
+  dplyr::mutate(direction = ifelse(tau < 0, "Negative", "Positive"))  %>% 
+  filter(p.value < 0.05) %>%
+  arrange(desc(abs(tau))) %>% 
+  group_by(relevel(factor(direction), "Negative")) %>% 
+  slice_head(n=75) %>% 
+  dplyr::select(Target, tau) %>%
+  group_map(~ ts_tbl_partial(.x)) %>%
+  data.frame(.) %>%
+  setNames(., c("Negative\n correlation coefficient", "Positive\n correlation coefficient")) %>%
+  gt() %>%
+  fmt_markdown(columns = TRUE) 
+```
+
+Total number of correlations with p<0.05: `r nrow(subset(kendall_partial_ts_df, p.value < 0.05))`
+
+Total number of negative correlations with p<0.05: `r nrow(subset(kendall_partial_ts_df, p.value < 0.05 & tau <0))`
+
+Total number of positive correlations with p<0.05: `r nrow(subset(kendall_partial_ts_df, p.value < 0.05 & tau >0))`
+
+#### Volcano plot of correlation
+
+```{r kendall-multilevel-volcano, echo = F}
+plotVolcano_mod(kendall_partial_ts_df, 
+            FC = tau, 
+            p.value = p.value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0,
+            cutoff = 0.05,
+            x.lab = "Correlation",
+            main = "Kendall's rank sum multi-level correlations (adjusting for risk)",
+            pt.size = 1,
+            fc_lab = "p > 0.05",
+            fc_lab_col = "#dad7cd",
+            sig_fc_lab = "p < 0.05") 
+```
+
+# Spearman correlations (5 Tanner stage groups)
+
+```{r spearman-corr, warning=F, echo=F, message = F}
+# Spearman correlations (treat tanner stage as ordinal)
+spearman_ts <- correlation_table_minimal(data = label_harmonized(cleanData_panther, dict),
+                                         relevant_vars = c("tanner_stage_comp_ord", aov_tbl_ordinal_top),
+                                         cor_method = "spearman",
+                                         n_cols = 1,
+                                         dict = dict,
+                                         raw = T) %>%
+  dplyr::rename(tanner_stage_comp_ord = `Tanner stage`,
+                p.value = `p-value`) %>%
+  mutate(tanner_stage_comp_ord = as.numeric(tanner_stage_comp_ord))
+
+spearman_ts_save <- correlation_table_minimal(data = label_harmonized(cleanData_panther, dict),
+                                              relevant_vars = c("tanner_stage_comp_ord", analytes$AptName),
+                                              cor_method = "spearman",
+                                              n_cols = 1,
+                                              dict = dict,
+                                              raw = T) %>%
+  dplyr::rename(tanner_stage_comp_ord = `Tanner stage`,
+                p.value = `p-value`) %>%
+  mutate(tanner_stage_comp_ord = as.numeric(tanner_stage_comp_ord))
+
+spearman_ts_save <- spearman_ts_save %>%
+  rownames_to_column(var = "Target_nodup") %>%
+  left_join(analytes, by = "Target_nodup")
+
+write.csv(spearman_ts_save, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/spearman_correlation.csv", 
+          row.names = T)
+
+# Heatmap tables (combined)
+spearman_ts %>% 
+  dplyr::mutate(direction = ifelse(tanner_stage_comp_ord < 0, "Negative", "Positive"), 
+         Target_nodup = row.names(.))  %>% 
+  left_join(analytes, by = "Target_nodup") %>% 
+  filter(p.value < 0.05) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  group_by(relevel(factor(direction), "Negative")) %>% 
+  slice_head(n=75) %>% 
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  group_map(~ ts_tbl(.x)) %>%
+  data.frame(.) %>%
+  setNames(., c("Negative\n correlation coefficient", "Positive\n correlation coefficient")) %>%
+  gt() %>%
+  fmt_markdown(columns = TRUE) 
+```
+Total number of correlations with p<0.05: `r nrow(subset(spearman_ts, p.value < 0.05))`
+
+Total number of negative correlations with p<0.05: `r nrow(subset(spearman_ts, p.value < 0.05 & tanner_stage_comp_ord <0))`
+
+Total number of positive correlations with p<0.05: `r nrow(subset(spearman_ts, p.value < 0.05 & tanner_stage_comp_ord >0))`
+
+#### Volcano plot of correlation
+
+```{r spearman-volcano, echo = F}
+plotVolcano_mod((spearman_ts %>%
+                  rownames_to_column(var = "Target_nodup") %>%
+                  left_join(analytes, by = "Target_nodup")), 
+            FC = tanner_stage_comp_ord, 
+            p.value = p.value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0,
+            cutoff = 0.05,
+            x.lab = "Correlation",
+            main = "Spearman correlations",
+            pt.size = 1,
+            fc_lab = "p > 0.05",
+            fc_lab_col = "#dad7cd",
+            sig_fc_lab = "p < 0.05") 
+```
+
+#### Positive correlations
+
+```{r spearman-corr-pos, warning=F, echo=F, message = F}
+spearman_ts_positive <- subset(spearman_ts, tanner_stage_comp_ord > 0 & p.value < 0.05) %>% 
+  rownames_to_column("Target_nodup") %>%
+  arrange(p.value)
+
+spearman_ts_positive_analytes <- 
+  spearman_ts_positive %>%
+  left_join(analytes)
+
+# Positive correlation table
+spearman_ts_positive %>%
+  left_join(analytes, by = "Target_nodup") %>% 
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  dplyr::mutate(row = (row_number() - 1) %% 29) |>
+  dplyr::mutate(id = row_number(), .by = row) |> 
+  pivot_wider(
+    names_from = id, values_from = -c(id, row),
+    names_vary = "slowest"
+  )  %>%
+  dplyr::select(-row)  %>%
+  gt() %>%
+  tab_header(title = "Positive correlations")  %>%
+  cols_label_with(fn = ~gsub("_\\d+$", "", .x)) %>%
+  cols_label_with(fn = ~gsub("tanner_stage_comp_ord" , "Correlation coefficient", .x)) %>%
+  cols_label_with(fn = ~gsub("Target" , "Protein", .x)) %>%
+  data_color(method = "numeric",
+             palette = c("#eae2b7", "#d62828"),
+             domain = c(0,0.7))
+
+# Box plots
+cleanData_panther %>% 
+  dplyr::select(record_id, tanner_stage_comp_panther_cat, starts_with("seq."))  %>%
+  pivot_longer(cols = starts_with("seq.")) %>%
+  dplyr::rename("AptName" = name) %>%
+  right_join(head(spearman_ts_positive_analytes,20)) %>%
+  ggplot(aes(x=Target, y=value, fill=tanner_stage_comp_panther_cat)) + 
+  geom_boxplot() +
+  facet_wrap(~Target, scale="free") +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.background = element_rect(fill = "white",
+                                        color = "grey"),
+        strip.background = element_rect(fill = "white")) +
+  scale_fill_manual(values = c("#fbc4ab", "#f8ad9d", "#f4978e", "#f08080")) +
+  labs(fill = "Tanner Stage",
+       y = "ln(RFU)",
+       x = NULL)
+```
+
+#### Negative correlations
+
+```{r spearman-corr-neg, warning=F, echo=F, message = F}
+spearman_ts_negative <- subset(spearman_ts, tanner_stage_comp_ord < 0 & p.value < 0.05) %>% 
+  rownames_to_column("Target_nodup") %>%
+  arrange(p.value)
+
+spearman_ts_negative_analytes <- 
+  spearman_ts_negative %>%
+  left_join(analytes)
+
+# Negative correlation table
+spearman_ts_negative %>%
+  left_join(analytes, by = "Target_nodup") %>% 
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  dplyr::mutate(row = (row_number() - 1) %% 17) |>
+  dplyr::mutate(id = row_number(), .by = row) |> 
+  pivot_wider(
+    names_from = id, values_from = -c(id, row),
+    names_vary = "slowest"
+  )  %>%
+  dplyr::select(-row)  %>%
+  gt() %>%
+  tab_header(title = "Negative correlations")  %>%
+  cols_label_with(fn = ~gsub("_\\d+$", "", .x)) %>%
+  cols_label_with(fn = ~gsub("tanner_stage_comp_ord" , "Correlation coefficient", .x)) %>%
+  cols_label_with(fn = ~gsub("Target" , "Protein", .x)) %>%
+  #cols_label(tanner_stage_comp_ord = "correlation coefficient") %>%
+  data_color(method = "numeric",
+             palette = c("#023e8a", "#ade8f4"),
+             domain = c(-1,0))
+
+# Box plots
+cleanData_panther %>% 
+  dplyr::select(record_id, tanner_stage_comp_panther_cat, starts_with("seq.")) %>%
+  pivot_longer(cols = starts_with("seq.")) %>%
+  dplyr::rename("AptName" = name) %>%
+  right_join(head(spearman_ts_negative_analytes,20)) %>%
+  ggplot(aes(x=Target, y=value, fill=tanner_stage_comp_panther_cat)) + 
+    geom_boxplot() +
+    facet_wrap(~Target, scale="free") +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.background = element_rect(fill = "white",
+                                        color = "grey"),
+        strip.background = element_rect(fill = "white")) +
+  scale_fill_manual(values = c("#90e0ef", "#00b4d8", "#0077b6", "#03045e")) +
+  labs(fill = "Tanner Stage",
+       y = "ln(RFU)",
+       x = NULL)
+```
+
+## Partial Spearman's correlations (5 Tanner stage groups) adjusting for risk
+
+```{r spearman-corr-multilevel, warning=F, echo=F, message = F}
+# Create an empty dataframe to store results
+spearman_partial_ts_df <- data.frame()
+
+# Loop through each element of aov_tbl_ordinal_top
+for (i in seq_along(aov_tbl_ordinal_top)) {
+  
+  # Calculate partial spearman correlation
+  spearman_partial_ts <- correlation(data = cleanData_panther,
+                                    select = c("tanner_stage_comp_ord", "group_risk"),
+                                    select2 = aov_tbl_ordinal_top[i],
+                                    method = "spearman", 
+                                    partial = TRUE, 
+                                    multilevel = TRUE)
+  
+  # Append the result to the main dataframe
+  spearman_partial_ts_df <- rbind(spearman_partial_ts_df, spearman_partial_ts)
+}
+spearman_partial_ts_df<- as.data.frame(spearman_partial_ts_df)
+colnames(spearman_partial_ts_df) <- c('param1','AptName','tau', "conf.level","lower", "upper","z", "p.value", "method", "n_obs")
+spearman_partial_ts_df <- left_join(spearman_partial_ts_df,analytes)
+
+# Heatmap tables (combined)
+ts_tbl_partial <- function(x){
+  gt(x)  %>%
+    data_color(columns = tau,
+               method = "numeric",
+               palette = c("#023e8a","#ade8f4",
+                           "#ffffff", 
+                           "#ffe5ec","#d62828"),
+               domain = c(-0.8, -0.2, 
+                          0, 
+                          0.2, 0.8)) %>%
+    tab_options(column_labels.hidden = T) %>% 
+    as_raw_html()
+}
+
+spearman_partial_ts_df %>% 
+  dplyr::mutate(direction = ifelse(tau < 0, "Negative", "Positive"))  %>% 
+  filter(p.value < 0.05) %>%
+  arrange(desc(abs(tau))) %>% 
+  group_by(relevel(factor(direction), "Negative")) %>% 
+  slice_head(n=75) %>% 
+  dplyr::select(Target, tau) %>%
+  group_map(~ ts_tbl_partial(.x)) %>%
+  data.frame(.) %>%
+  setNames(., c("Negative\n correlation coefficient", "Positive\n correlation coefficient")) %>%
+  gt() %>%
+  fmt_markdown(columns = TRUE) 
+```
+
+Total number of correlations with p<0.05: `r nrow(subset(spearman_partial_ts_df, p.value < 0.05))`
+
+Total number of negative correlations with p<0.05: `r nrow(subset(spearman_partial_ts_df, p.value < 0.05 & tau <0))`
+
+Total number of positive correlations with p<0.05: `r nrow(subset(spearman_partial_ts_df, p.value < 0.05 & tau >0))`
+
+#### Volcano plot of correlation
+
+```{r spearman-multilevel-volcano, echo = F}
+plotVolcano_mod(spearman_partial_ts_df, 
+            FC = tau, 
+            p.value = p.value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0,
+            cutoff = 0.05,
+            x.lab = "Correlation",
+            main = "Spearman's multi-level correlations (adjusting for risk)",
+            pt.size = 1,
+            fc_lab = "p > 0.05",
+            fc_lab_col = "#dad7cd",
+            sig_fc_lab = "p < 0.05") 
+```
+
+# Differential expression (Sensitivity analysis including RH)
+
+#### Low vs. high risk
+
+```{r de-sens, echo = F}
+# Look at differential expressed proteins (DEPs) between low and high risk in PANTHER
+# filter soma scan data to baseline data only and log transform
+soma_risk <- sens_dat %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id") %>%
+  dplyr::select(starts_with("seq"))
+y <- t(soma_risk)
+y <- log2(y)
+
+# Design matrix
+cond = as.factor(sens_dat$group_risk)
+design_mat <- model.matrix(~0 + group_risk, data = sens_dat)
+colnames(design_mat) = gsub("group_risk","",colnames(design_mat))
+# Fit
+contrast = makeContrasts(contrasts = c("High-Low"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+res_save <- res %>%
+  rownames_to_column("AptName") %>%
+  dplyr::select(-c(Target, TargetFullName)) %>%
+  left_join(analytes, by = "AptName")
+
+write.csv(res_save, "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/low_high_risk_rh_de.csv", row.names = T)
+
+```
+
+```{r de-volcano-plot-sens, warning = F, echo = F}
+# volcano plot
+res$log.P.Value = -log10(res$P.Value)
+ggplot(res, aes(x = logFC, y =log.P.Value )) + 
+    geom_point(size=0.5 )+
+    theme_bw(base_size = 16) + # change theme
+    xlab(expression("log2(high/low)")) + # x-axis label
+    ylab(expression("-log10(P-value)")) + # y-axis label
+    geom_vline(xintercept = c(-0.5,0.5), colour = "red") + # Add fold change cutoffs
+    geom_hline(yintercept = 3, colour = "red") + # Add significance cutoffs
+    geom_vline(xintercept = 0, colour = "black") + # Add 0 lines
+    scale_colour_gradient(low = "black", high = "black", guide = FALSE) +
+    geom_text_repel(data=subset(res, abs(logFC)>.5&log.P.Value > 3),
+                    aes(logFC, log.P.Value, label=Target)) # add gene label
+
+plotVolcano(res, 
+            FC = logFC, 
+            p.value = P.Value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0.5,
+            cutoff = 0.05,
+            x.lab = "log2(high/low)") 
+```
+
+#### Tanner stage 1-2 vs. 3-5
+
+```{r de-sens2, echo = F}
+# Look at effect of puberty on proteomics in sens_dat
+# filter soma scan data to baseline data only and log transform & only keep record_ids with tanner stages
+soma_tanner <- sens_dat %>% 
+  arrange(record_id) %>%
+  filter(!is.na(tanner_stage_cat)) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id") %>%
+  dplyr::select(starts_with("seq"))
+y <- t(soma_tanner)
+y <- log2(y)
+# Design matrix
+cond = as.factor(sens_dat$tanner_stage_cat)
+design_mat <- model.matrix(~0 + tanner_stage_cat, data = sens_dat)
+colnames(design_mat) = gsub("tanner_stage_cat","",colnames(design_mat))
+# Fit
+contrast = makeContrasts(contrasts = c("III_V-I_II"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+res_save <- res %>%
+  rownames_to_column("AptName") %>%
+  dplyr::select(-c(Target, TargetFullName)) %>%
+  left_join(analytes, by = "AptName")
+
+write.csv(res_save, "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/tanner_stage_12_345_rh_de.csv", row.names = T)
+
+```
+
+```{r de-volcano-plot-sens2, warning=F, echo = F}
+# volcano plot
+res$log.P.Value = -log10(res$P.Value)
+ggplot(res, aes(x = logFC, y =log.P.Value )) + 
+    geom_point(size=0.5 )+
+    theme_bw(base_size = 16) + # change theme
+    xlab(expression("log2(TS>=3/TS<3)")) + # x-axis label
+    ylab(expression(" -log10(P-value)")) + # y-axis label
+    geom_vline(xintercept = c(-0.5,0.5), colour = "red") + # Add fold change cutoffs
+    geom_hline(yintercept = 3, colour = "red") + # Add significance cutoffs
+    geom_vline(xintercept = 0, colour = "black") + # Add 0 lines
+    scale_colour_gradient(low = "black", high = "black", guide = FALSE) +
+    geom_text_repel(data=subset(res, abs(logFC)>.5&log.P.Value > 3),
+                    aes(logFC, log.P.Value, label=Target)) # add gene label
+
+plotVolcano(res, 
+            FC = logFC, 
+            p.value = P.Value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0.5,
+            cutoff = 0.05,
+            x.lab = "log2(TS>=3/TS<3)") 
+```
+
+#### 3 group DE (Tanner stage 1 vs. 2/3 vs. 4/5)
+```{r anova-de-sens, echo = F}
+aov_tbl <- analytes |>
+  dplyr::select(AptName, SeqId, Target, EntrezGeneSymbol, UniProt)
+
+## Compare Three Groups (TS '1'/'2&3'/'4&5')
+
+### Calculate ANOVAs
+aov_tbl <- aov_tbl |>
+  dplyr::mutate(
+    formula   = purrr::map(AptName, ~ as.formula(paste(.x, "~ tanner_stage_cat_2"))), # create formula
+    aov_model = purrr::map(formula, ~ stats::aov(.x, data = cleanData_sens)),  # fit ANOVA-models
+    aov_smry  = purrr::map(aov_model, summary) |> map(1L),      # summary() method
+    F.stat    = purrr::map(aov_smry, "F value") |> map_dbl(1L), # pull out F-statistic
+    p.value   = purrr::map(aov_smry, "Pr(>F)") |> map_dbl(1L),  # pull out p-values
+    fdr       = p.adjust(p.value, method = "BH")         # FDR multiple testing
+  ) |>
+  arrange(p.value) |>            # re-order by `p-value`
+  dplyr::mutate(rank = row_number())    # add numeric ranks
+
+kbl(head(subset(aov_tbl, select = c("Target", "F.stat", "p.value", "fdr")), 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+
+### Visualize with `ggplot2()`
+target_map <- head(aov_tbl, 12L) |>     # mapping table
+  dplyr::select(AptName, Target)               # SeqId -> Target
+
+plot_tbl <- cleanData_sens |>
+  dplyr::select(tanner_stage_cat_2, target_map$AptName) |>    # top 12 analytes
+  pivot_longer(cols = -tanner_stage_cat_2, names_to = "AptName", values_to = "RFU") |>
+  left_join(target_map, by = "AptName") |>
+  # order factor levels by 'aov_tbl' rank to order plots below
+  dplyr::mutate(tanner_stage_cat_2 = factor(tanner_stage_cat_2, levels = c("I", "II_III", "IV_V")))
+
+```
+
+```{r ggplot-pdfs2, fig.width = 10, fig.height = 7, fig.align = "center", echo = F}
+plot_tbl |>
+  ggplot(aes(x = RFU, fill = tanner_stage_cat_2)) +
+  geom_density(linetype = 0, alpha = 0.25) +
+  scale_fill_manual(values = c("#24135F", "#00A499", "#006BA6")) +
+  facet_wrap(~ Target, ncol = 3) +
+  ggtitle("Probability Density of Top Analytes by ANOVA") +
+  labs(y = "Density", x = "ln(RFU)") +
+  theme(plot.title = element_text(size = 21, face = "bold"),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        legend.position = "top"
+  ) +
+  theme_bw()
+```
+
+# Kendall's rank sum correlations (5 Tanner stage groups; including RH)
+
+```{r kendall-corr-sens, warning=F, echo=F, message = F}
+# Find significant ANOVA results between 5 groups of tanner stages (treat tanner stage as categorical)
+aov_tbl <- analytes |>
+  dplyr::select(AptName, SeqId, Target_nodup, EntrezGeneSymbol, UniProt)
+
+aov_tbl_ordinal <- aov_tbl |>
+  dplyr::mutate(
+    formula   = purrr::map(AptName, ~ as.formula(paste(.x, "~ tanner_stage_comp"))), # create formula
+    aov_model = purrr::map(formula, ~ stats::aov(.x, data = cleanData_sens)),  # fit ANOVA-models
+    aov_smry  = purrr::map(aov_model, summary) |> map(1L),      # summary() method
+    F.stat    = purrr::map(aov_smry, "F value") |> map_dbl(1L), # pull out F-statistic
+    p.value   = purrr::map(aov_smry, "Pr(>F)") |> map_dbl(1L),  # pull out p-values
+    fdr       = p.adjust(p.value, method = "BH")         # FDR multiple testing
+  ) |>
+  arrange(p.value) |>            # re-order by `p-value`
+  dplyr::mutate(rank = row_number())    # add numeric ranks
+
+# Select only p < 0.05 for correlation
+aov_tbl_ordinal_top <-subset(aov_tbl_ordinal, p.value < 0.05)$AptName %>% unique()
+
+# Kendall's rank correlations (treat tanner stage as ordinal)
+cleanData_sens$tanner_stage_comp_ord <- as.numeric(cleanData_sens$tanner_stage_comp_panther)
+
+kendall_ts <- corr.test(x = cleanData_sens$tanner_stage_comp_ord, 
+          y = cleanData_sens[aov_tbl_ordinal_top], 
+          method="kendall", 
+          adjust="none", alpha=.05)
+kendall_ts_r <- data.frame(tanner_stage_comp_ord = (kendall_ts$r %>% t() ))
+kendall_ts_p <- data.frame(p.value = (kendall_ts$p %>% t() ))
+kendall_ts_mat <- cbind(kendall_ts_r, kendall_ts_p)
+kendall_ts_mat <- kendall_ts_mat %>%
+  rownames_to_column("AptName") %>%
+  left_join(analytes) %>%
+  column_to_rownames("Target_nodup") %>%
+  dplyr::select(tanner_stage_comp_ord, p.value, Target)
+
+kendall_ts_mat_save <- corr.test(x = cleanData_sens$tanner_stage_comp_ord, 
+          y = cleanData_sens[analytes$AptName], 
+          method="kendall", 
+          adjust="none", alpha=.05)
+kendall_ts_mat_save_r <- data.frame(tanner_stage_comp_ord = (kendall_ts_mat_save$r %>% t() ))
+kendall_ts_mat_save_p <- data.frame(p.value = (kendall_ts_mat_save$p %>% t() ))
+kendall_ts_mat_save <- cbind(kendall_ts_mat_save_r, kendall_ts_mat_save_p)
+
+kendall_ts_mat_save <- kendall_ts_mat_save %>%
+  rownames_to_column(var = "AptName") %>%
+  left_join(analytes, by = "AptName")
+
+write.csv(kendall_ts_mat_save, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/kendall_correlation_rh.csv", 
+          row.names = T)
+
+# Spearman correlations (treat tanner stage as ordinal)
+# spearman_ts <- correlation_table_minimal(data = label_harmonized(cleanData_sens, dict), 
+#                    relevant_vars = c("tanner_stage_comp_ord", aov_tbl_ordinal_top),
+#                    cor_method = "kendall",
+#                    n_cols = 1, 
+#                    dict = dict,
+#                    raw = T) %>%
+#   dplyr::rename(tanner_stage_comp_ord = `Tanner stage`,
+#                 p.value = `p-value`) %>%
+#   mutate(tanner_stage_comp_ord = as.numeric(tanner_stage_comp_ord))
+
+# Heatmap tables (combined)
+ts_tbl <- function(x){
+  gt(x)  %>%
+    data_color(columns = tanner_stage_comp_ord,
+               method = "numeric",
+               palette = c("#023e8a","#ade8f4",
+                           "#ffffff", 
+                           "#eae2b7","#d62828"),
+               domain = c(-0.7, -0.2, 
+                          0, 
+                          0.2, 0.8)) %>%
+    tab_options(column_labels.hidden = T) %>% 
+    as_raw_html()
+}
+
+kendall_ts_mat %>% 
+  dplyr::mutate(direction = ifelse(tanner_stage_comp_ord < 0, "Negative", "Positive"), 
+         Target_nodup = row.names(.))  %>% 
+  filter(p.value < 0.05) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  group_by(relevel(factor(direction), "Negative")) %>% 
+  slice_head(n=100) %>% 
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  group_map(~ ts_tbl(.x)) %>%
+  data.frame(.) %>%
+  setNames(., c("Negative\n correlation coefficient", "Positive\n correlation coefficient")) %>%
+  gt() %>%
+  fmt_markdown(columns = TRUE) 
+```
+
+Total number of correlations with p<0.05: `r nrow(subset(kendall_ts_mat, p.value < 0.05))`
+
+Total number of negative correlations with p<0.05: `r nrow(subset(kendall_ts_mat, p.value < 0.05 & tanner_stage_comp_ord <0))`
+
+Total number of positive correlations with p<0.05: `r nrow(subset(kendall_ts_mat, p.value < 0.05 & tanner_stage_comp_ord >0))`
+
+#### Volcano plot of correlation
+
+```{r kendall-volcano2, echo = F}
+plotVolcano_mod(kendall_ts_mat, 
+            FC = tanner_stage_comp_ord, 
+            p.value = p.value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0,
+            cutoff = 0.05,
+            x.lab = "Correlation",
+            main = "Kendall's rank sum correlations",
+            pt.size = 1,
+            fc_lab = "p > 0.05",
+            fc_lab_col = "#dad7cd",
+            sig_fc_lab = "p < 0.05") 
+```
+
+#### Positive correlations
+
+```{r kendall-corr-pos-sens, warning=F, echo=F, message = F}
+kendall_ts_mat_positive <- subset(kendall_ts_mat, tanner_stage_comp_ord > 0 & p.value < 0.05) %>% 
+  rownames_to_column("Target_nodup") %>%
+  arrange(p.value)
+
+kendall_ts_mat_positive_analytes <- 
+  kendall_ts_mat_positive %>%
+  left_join(analytes)
+
+# Positive correlation table
+kendall_ts_mat_positive %>%
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  dplyr::mutate(row = (row_number() - 1) %% 29) |>
+  dplyr::mutate(id = row_number(), .by = row) |> 
+  pivot_wider(
+    names_from = id, values_from = -c(id, row),
+    names_vary = "slowest"
+  )  %>%
+  dplyr::select(-row)  %>%
+  gt() %>%
+  tab_header(title = "Positive correlations")  %>%
+  cols_label_with(fn = ~gsub("_\\d+$", "", .x)) %>%
+  cols_label_with(fn = ~gsub("tanner_stage_comp_ord" , "Correlation coefficient", .x)) %>%
+  cols_label_with(fn = ~gsub("Target" , "Protein", .x)) %>%
+  data_color(method = "numeric",
+             palette = c("#eae2b7", "#d62828"),
+             domain = c(0,1))
+
+# Box plots
+cleanData_sens %>% 
+  dplyr::select(record_id, tanner_stage_comp, starts_with("seq.")) %>%
+  pivot_longer(cols = starts_with("seq.")) %>%
+  dplyr::rename("AptName" = name) %>%
+  right_join(head(kendall_ts_mat_positive_analytes,20)) %>%
+  ggplot(aes(x=Target, y=value, fill=tanner_stage_comp)) + 
+    geom_boxplot() +
+    facet_wrap(~Target, scale="free") +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.background = element_rect(fill = "white",
+                                        color = "grey"),
+        strip.background = element_rect(fill = "white")) +
+  scale_fill_manual(values = c("#ffdab9", "#fbc4ab", "#f8ad9d", "#f4978e", "#f08080")) +
+  labs(fill = "Tanner Stage",
+       y = "ln(RFU)",
+       x = NULL)
+```
+
+#### Negative correlations
+
+```{r kendall-corr-neg-sens, warning=F, echo=F, message = F}
+kendall_ts_mat_negative <- subset(kendall_ts_mat, tanner_stage_comp_ord < 0 & p.value < 0.05) %>% 
+  rownames_to_column("Target_nodup") %>%
+  arrange(p.value)
+
+kendall_ts_mat_negative_analytes <- 
+  kendall_ts_mat_negative %>%
+  left_join(analytes)
+
+# Negative correlation table
+kendall_ts_mat_negative %>%
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  dplyr::mutate(row = (row_number() - 1) %% 17) |>
+  dplyr::mutate(id = row_number(), .by = row) |> 
+  pivot_wider(
+    names_from = id, values_from = -c(id, row),
+    names_vary = "slowest"
+  )  %>%
+  dplyr::select(-row)  %>%
+  gt() %>%
+  tab_header(title = "Negative correlations")  %>%
+  cols_label_with(fn = ~gsub("_\\d+$", "", .x)) %>%
+  cols_label_with(fn = ~gsub("tanner_stage_comp_ord" , "Correlation coefficient", .x)) %>%
+  cols_label_with(fn = ~gsub("Target" , "Protein", .x)) %>%
+  #cols_label(tanner_stage_comp_ord = "correlation coefficient") %>%
+  data_color(method = "numeric",
+             palette = c("#023e8a", "#ade8f4"),
+             domain = c(-1,0))
+
+# Box plots
+cleanData_sens %>% 
+  dplyr::select(record_id, tanner_stage_comp, starts_with("seq.")) %>%
+  pivot_longer(cols = starts_with("seq.")) %>%
+  dplyr::rename("AptName" = name) %>%
+  right_join(head(kendall_ts_mat_negative_analytes,20)) %>%
+  ggplot(aes(x=Target, y=value, fill=tanner_stage_comp)) + 
+    geom_boxplot() +
+    facet_wrap(~Target, scale="free") +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.background = element_rect(fill = "white",
+                                        color = "grey"),
+        strip.background = element_rect(fill = "white")) +
+  scale_fill_manual(values = c("#caf0f8", "#90e0ef", "#00b4d8", "#0077b6", "#03045e")) +
+  labs(fill = "Tanner Stage",
+       y = "ln(RFU)",
+       x = NULL)
+
+```
+
+## Partial Kendall's rank sum correlations (5 Tanner stage groups) adjusting for risk
+
+```{r kendall-corr-multilevel2, warning=F, echo=F, message = F}
+# Create an empty dataframe to store results
+kendall_partial_ts_df <- data.frame()
+
+# Loop through each element of aov_tbl_ordinal_top
+for (i in seq_along(aov_tbl_ordinal_top)) {
+  
+  # Calculate partial Kendall correlation
+  kendall_partial_ts <- correlation(data = cleanData_sens,
+                                    select = c("tanner_stage_comp_ord", "group_risk"),
+                                    select2 = aov_tbl_ordinal_top[i],
+                                    method = "kendall", 
+                                    partial = TRUE, 
+                                    multilevel = TRUE)
+  
+  # Append the result to the main dataframe
+  kendall_partial_ts_df <- rbind(kendall_partial_ts_df, kendall_partial_ts)
+}
+kendall_partial_ts_df<- as.data.frame(kendall_partial_ts_df)
+colnames(kendall_partial_ts_df) <- c('param1','AptName','tau', "conf.level","lower", "upper","z", "p.value", "method", "n_obs")
+kendall_partial_ts_df <- left_join(kendall_partial_ts_df,analytes)
+
+# Heatmap tables (combined)
+ts_tbl_partial <- function(x){
+  gt(x)  %>%
+    data_color(columns = tau,
+               method = "numeric",
+               palette = c("#023e8a","#ade8f4",
+                           "#ffffff", 
+                           "#ffe5ec","#d62828"),
+               domain = c(-0.7, -0.2, 
+                          0, 
+                          0.2, 0.8)) %>%
+    tab_options(column_labels.hidden = T) %>% 
+    as_raw_html()
+}
+
+kendall_partial_ts_df %>% 
+  dplyr::mutate(direction = ifelse(tau < 0, "Negative", "Positive"))  %>% 
+  filter(p.value < 0.05) %>%
+  arrange(desc(abs(tau))) %>% 
+  group_by(relevel(factor(direction), "Negative")) %>% 
+  slice_head(n=75) %>% 
+  dplyr::select(Target, tau) %>%
+  group_map(~ ts_tbl_partial(.x)) %>%
+  data.frame(.) %>%
+  setNames(., c("Negative\n correlation coefficient", "Positive\n correlation coefficient")) %>%
+  gt() %>%
+  fmt_markdown(columns = TRUE) 
+```
+
+Total number of correlations with p<0.05: `r nrow(subset(kendall_partial_ts_df, p.value < 0.05))`
+
+Total number of negative correlations with p<0.05: `r nrow(subset(kendall_partial_ts_df, p.value < 0.05 & tau <0))`
+
+Total number of positive correlations with p<0.05: `r nrow(subset(kendall_partial_ts_df, p.value < 0.05 & tau >0))`
+
+#### Volcano plot of correlation
+
+```{r kendall-multilevel-volcano2, echo = F}
+plotVolcano_mod(kendall_partial_ts_df, 
+            FC = tau, 
+            p.value = p.value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0,
+            cutoff = 0.05,
+            x.lab = "Correlation",
+            main = "Kendall's rank sum multi-level correlations (adjusting for risk)",
+            pt.size = 1,
+            fc_lab = "p > 0.05",
+            fc_lab_col = "#dad7cd",
+            sig_fc_lab = "p < 0.05") 
+```
+
+# Spearman correlations (5 Tanner stage groups; including RH)
+
+```{r spearman-corr2, warning=F, echo=F, message = F}
+# Spearman correlations (treat tanner stage as ordinal)
+spearman_ts <- correlation_table_minimal(data = label_harmonized(cleanData_sens, dict),
+                   relevant_vars = c("tanner_stage_comp_ord", aov_tbl_ordinal_top),
+                   cor_method = "spearman",
+                   n_cols = 1,
+                   dict = dict,
+                   raw = T) %>%
+  dplyr::rename(tanner_stage_comp_ord = `Tanner stage`,
+                p.value = `p-value`) %>%
+  mutate(tanner_stage_comp_ord = as.numeric(tanner_stage_comp_ord))
+
+spearman_ts_save <- correlation_table_minimal(data = label_harmonized(cleanData_sens, dict),
+                                              relevant_vars = c("tanner_stage_comp_ord", analytes$AptName),
+                                              cor_method = "spearman",
+                                              n_cols = 1,
+                                              dict = dict,
+                                              raw = T) %>%
+  dplyr::rename(tanner_stage_comp_ord = `Tanner stage`,
+                p.value = `p-value`) %>%
+  mutate(tanner_stage_comp_ord = as.numeric(tanner_stage_comp_ord))
+
+spearman_ts_save <- spearman_ts_save %>%
+  rownames_to_column(var = "Target_nodup") %>%
+  left_join(analytes, by = "Target_nodup")
+
+write.csv(spearman_ts_save, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/spearman_correlation_rh.csv", 
+          row.names = T)
+
+# Heatmap tables (combined)
+spearman_ts %>% 
+  dplyr::mutate(direction = ifelse(tanner_stage_comp_ord < 0, "Negative", "Positive"), 
+         Target_nodup = row.names(.))  %>% 
+  left_join(analytes, by = "Target_nodup") %>%
+  filter(p.value < 0.05) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  group_by(relevel(factor(direction), "Negative")) %>% 
+  slice_head(n=75) %>% 
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  group_map(~ ts_tbl(.x)) %>%
+  data.frame(.) %>%
+  setNames(., c("Negative\n correlation coefficient", "Positive\n correlation coefficient")) %>%
+  gt() %>%
+  fmt_markdown(columns = TRUE) 
+```
+
+Total number of correlations with p<0.05: `r nrow(subset(spearman_ts, p.value < 0.05))`
+
+Total number of negative correlations with p<0.05: `r nrow(subset(spearman_ts, p.value < 0.05 & tanner_stage_comp_ord <0))`
+
+Total number of positive correlations with p<0.05: `r nrow(subset(spearman_ts, p.value < 0.05 & tanner_stage_comp_ord >0))`
+
+#### Volcano plot of correlation
+
+```{r spearman-volcano2, echo = F}
+plotVolcano_mod((spearman_ts %>%
+                  rownames_to_column(var = "Target_nodup") %>%
+                  left_join(analytes, by = "Target_nodup")), 
+            FC = tanner_stage_comp_ord, 
+            p.value = p.value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0,
+            cutoff = 0.05,
+            x.lab = "Correlation",
+            main = "Spearman correlations",
+            pt.size = 1,
+            fc_lab = "p > 0.05",
+            fc_lab_col = "#dad7cd",
+            sig_fc_lab = "p < 0.05")
+```
+
+#### Positive correlations
+
+```{r spearman-corr-pos2, warning=F, echo=F, message = F}
+spearman_ts_positive <- subset(spearman_ts, tanner_stage_comp_ord > 0 & p.value < 0.05) %>% 
+  rownames_to_column("Target_nodup") %>%
+  arrange(p.value)
+
+spearman_ts_positive_analytes <- 
+  spearman_ts_positive %>%
+  left_join(analytes)
+
+# Positive correlation table
+spearman_ts_positive %>%
+  left_join(analytes, by = "Target_nodup") %>%
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  dplyr::mutate(row = (row_number() - 1) %% 29) |>
+  dplyr::mutate(id = row_number(), .by = row) |> 
+  pivot_wider(
+    names_from = id, values_from = -c(id, row),
+    names_vary = "slowest"
+  )  %>%
+  dplyr::select(-row)  %>%
+  gt() %>%
+  tab_header(title = "Positive correlations")  %>%
+  cols_label_with(fn = ~gsub("_\\d+$", "", .x)) %>%
+  cols_label_with(fn = ~gsub("tanner_stage_comp_ord" , "Correlation coefficient", .x)) %>%
+  cols_label_with(fn = ~gsub("Target" , "Protein", .x)) %>%
+  data_color(method = "numeric",
+             palette = c("#eae2b7", "#d62828"),
+             domain = c(0,0.8))
+
+# Box plots
+cleanData_sens %>% 
+  dplyr::select(record_id, tanner_stage_comp, starts_with("seq."))  %>%
+  pivot_longer(cols = starts_with("seq.")) %>%
+  dplyr::rename("AptName" = name) %>%
+  right_join(head(spearman_ts_positive_analytes,20)) %>%
+  ggplot(aes(x=Target, y=value, fill=tanner_stage_comp)) + 
+  geom_boxplot() +
+  facet_wrap(~Target, scale="free") +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.background = element_rect(fill = "white",
+                                        color = "grey"),
+        strip.background = element_rect(fill = "white")) +
+  scale_fill_manual(values = c("#ffdab9", "#fbc4ab", "#f8ad9d", "#f4978e", "#f08080")) +
+  labs(fill = "Tanner Stage",
+       y = "ln(RFU)",
+       x = NULL)
+```
+
+#### Negative correlations
+
+```{r spearman-corr-neg2, warning=F, echo=F, message = F}
+spearman_ts_negative <- subset(spearman_ts, tanner_stage_comp_ord < 0 & p.value < 0.05) %>% 
+  rownames_to_column("Target_nodup") %>%
+  arrange(p.value)
+
+spearman_ts_negative_analytes <- 
+  spearman_ts_negative %>%
+  left_join(analytes)
+
+# Negative correlation table
+spearman_ts_negative %>%
+  left_join(analytes, by = "Target_nodup") %>%
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  dplyr::mutate(row = (row_number() - 1) %% 17) |>
+  dplyr::mutate(id = row_number(), .by = row) |> 
+  pivot_wider(
+    names_from = id, values_from = -c(id, row),
+    names_vary = "slowest"
+  )  %>%
+  dplyr::select(-row)  %>%
+  gt() %>%
+  tab_header(title = "Negative correlations")  %>%
+  cols_label_with(fn = ~gsub("_\\d+$", "", .x)) %>%
+  cols_label_with(fn = ~gsub("tanner_stage_comp_ord" , "Correlation coefficient", .x)) %>%
+  cols_label_with(fn = ~gsub("Target" , "Protein", .x)) %>%
+  #cols_label(tanner_stage_comp_ord = "correlation coefficient") %>%
+  data_color(method = "numeric",
+             palette = c("#023e8a", "#ade8f4"),
+             domain = c(-1,0))
+
+# Box plots
+cleanData_sens %>% 
+  dplyr::select(record_id, tanner_stage_comp, starts_with("seq.")) %>%
+  pivot_longer(cols = starts_with("seq.")) %>%
+  dplyr::rename("AptName" = name) %>%
+  right_join(head(spearman_ts_negative_analytes,20)) %>%
+  ggplot(aes(x=Target, y=value, fill=tanner_stage_comp)) + 
+    geom_boxplot() +
+    facet_wrap(~Target, scale="free") +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.background = element_rect(fill = "white",
+                                        color = "grey"),
+        strip.background = element_rect(fill = "white")) +
+  scale_fill_manual(values = c("#caf0f8", "#90e0ef", "#00b4d8", "#0077b6", "#03045e")) +
+  labs(fill = "Tanner Stage",
+       y = "ln(RFU)",
+       x = NULL)
+```
+
+## Partial Spearman's correlations (5 Tanner stage groups) adjusting for risk
+
+```{r spearman-corr-multilevel2, warning=F, echo=F, message = F}
+# Create an empty dataframe to store results
+spearman_partial_ts_df <- data.frame()
+
+# Loop through each element of aov_tbl_ordinal_top
+for (i in seq_along(aov_tbl_ordinal_top)) {
+  
+  # Calculate partial spearman correlation
+  spearman_partial_ts <- correlation(data = cleanData_sens,
+                                    select = c("tanner_stage_comp_ord", "group_risk"),
+                                    select2 = aov_tbl_ordinal_top[i],
+                                    method = "spearman", 
+                                    partial = TRUE, 
+                                    multilevel = TRUE)
+  
+  # Append the result to the main dataframe
+  spearman_partial_ts_df <- rbind(spearman_partial_ts_df, spearman_partial_ts)
+}
+spearman_partial_ts_df<- as.data.frame(spearman_partial_ts_df)
+colnames(spearman_partial_ts_df) <- c('param1','AptName','tau', "conf.level","lower", "upper","z", "p.value", "method", "n_obs")
+spearman_partial_ts_df <- left_join(spearman_partial_ts_df,analytes)
+
+# Heatmap tables (combined)
+ts_tbl_partial <- function(x){
+  gt(x)  %>%
+    data_color(columns = tau,
+               method = "numeric",
+               palette = c("#023e8a","#ade8f4",
+                           "#ffffff", 
+                           "#ffe5ec","#d62828"),
+               domain = c(-0.8, -0.2, 
+                          0, 
+                          0.2, 0.8)) %>%
+    tab_options(column_labels.hidden = T) %>% 
+    as_raw_html()
+}
+
+spearman_partial_ts_df %>% 
+  dplyr::mutate(direction = ifelse(tau < 0, "Negative", "Positive"))  %>% 
+  filter(p.value < 0.05) %>%
+  arrange(desc(abs(tau))) %>% 
+  group_by(relevel(factor(direction), "Negative")) %>% 
+  slice_head(n=75) %>% 
+  dplyr::select(Target, tau) %>%
+  group_map(~ ts_tbl_partial(.x)) %>%
+  data.frame(.) %>%
+  setNames(., c("Negative\n correlation coefficient", "Positive\n correlation coefficient")) %>%
+  gt() %>%
+  fmt_markdown(columns = TRUE) 
+```
+
+Total number of correlations with p<0.05: `r nrow(subset(spearman_partial_ts_df, p.value < 0.05))`
+
+Total number of negative correlations with p<0.05: `r nrow(subset(spearman_partial_ts_df, p.value < 0.05 & tau <0))`
+
+Total number of positive correlations with p<0.05: `r nrow(subset(spearman_partial_ts_df, p.value < 0.05 & tau >0))`
+
+#### Volcano plot of correlation
+
+```{r spearman-multilevel-volcano2, echo = F}
+plotVolcano_mod(spearman_partial_ts_df, 
+            FC = tau, 
+            p.value = p.value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0,
+            cutoff = 0.05,
+            x.lab = "Correlation",
+            main = "Spearman's multi-level correlations (adjusting for risk)",
+            pt.size = 1,
+            fc_lab = "p > 0.05",
+            fc_lab_col = "#dad7cd",
+            sig_fc_lab = "p < 0.05") 
+```
+
+# Elastic Net Regression (with 10-fold cross-validation)
+Associate minmod results and TKV data with proteomics in an effort to find multi-protein signatures that associate with insulin sensitivity and secretion as well as total kidney volume in PANTHER (if underpowered for the insulin sensitivity - we might pull in data from other cohorts with proteomic data)
+
+### AIRg (Insulin secretion)
+```{r elastic-net-airg, echo = F, warning = F, message=F}
+# Limit to records with non-missing AIRg
+panther_mm_airg <- cleanData_panther %>% 
+  filter(!is.na(mm_airg) & mm_airg > 0 ) %>% 
+  dplyr::select(mm_airg, starts_with("seq")) 
+
+# Top 100 associations to AIRg
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(panther_mm_airg))
+predictors <- colnames(panther_mm_airg[seq])
+
+result_airg <- NULL
+for (i in 1:length(predictors)) {
+  form <- paste0("log(mm_airg) ~ ",predictors[i])
+  mod <- lm(data = panther_mm_airg, formula = as.formula(form))
+  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
+  tidymod <- tidymod[2,]
+  result_airg <- rbind(result_airg,tidymod)
+}
+
+result_airg$adj.p.value <- p.adjust(result_airg$p.value, "fdr")
+result_airg$AptName <- result_airg$term
+result_airg$term <- NULL
+result_airg <- merge(result_airg,analytes,by="AptName",all.x = T, all.y = F)
+result_airg <- result_airg[order(result_airg$p.value),] 
+result_airg_100 <- head(result_airg, 100)$AptName
+predictors_airg <- as.matrix(subset(panther_mm_airg, select = result_airg_100))
+
+# Elastic net regression
+en_airg <- easy_elasticnet(data = panther_mm_airg, 
+                        outcome = "mm_airg", out = "min.error",
+                        predictors = predictors_airg,
+                        cv_method="kfold", folds = 10)
+
+retained_vars_airg = analytes[analytes$AptName %in% en_airg, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+form_airg = as.formula(paste0("log(mm_airg) ~ ",paste0(en_airg,collapse = "+")))
+mod_airg = lm(formula = form_airg, data = panther_mm_airg)
+mod_df_airg = as.data.frame(tidy(mod_airg, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_airg) %>%
+  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
+         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
+  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
+
+kable(arrange(mod_df_airg,p.value), digits = 3)
+ggplot(mod_df_airg[-1,], 
+       aes(estimate, 
+           reorder(Target_nodup,desc(p.value)), 
+           xmin = conf.low, 
+           xmax = conf.high, 
+           height = 0)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 4) +
+  geom_errorbarh() +
+  labs(y = NULL)
+```
+
+Top `r length(result_airg_100)` proteins included in analysis.
+No. of proteins identified: `r length(en_airg)`.
+
+```{r echo = F, warning = F, message=F}
+kable(glance(mod_airg))
+plot(mod_airg)
+
+# Adjusted R-squared 95% CI
+conf.level = 0.95
+z <- qnorm(1 - (1 - conf.level)/2)
+
+rsq_airg <- summary(mod_airg)$adj.r.squared
+k_airg <- ncol(mod_airg$model) - 1
+n_airg <- mod_airg$df.residual + k_airg + 1
+rsq.se_airg <- sqrt((4 * rsq_airg * (1 - rsq_airg)^2 * (n_airg - k_airg - 1)^2)/((n_airg^2 - 1) * (3 + n_airg)))
+LL_airg <- rsq_airg - z*rsq.se_airg
+UL_airg <- rsq_airg + z*rsq.se_airg
+```
+
+### DI (disposition index: measure of how well the body compensates for insulin resistance)
+```{r elastic-net-di, echo = F, warning = F, message=F}
+# Limit to records with non-missing di
+panther_mm_di <- cleanData_panther %>% 
+  filter(!is.na(mm_di) & mm_di > 0) %>% 
+  dplyr::select(mm_di, starts_with("seq")) 
+
+# Top 100 associations to di
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(panther_mm_di))
+predictors <- colnames(panther_mm_di[seq])
+
+result_di <- NULL
+for (i in 1:length(predictors)) {
+  form <- paste0("log(mm_di) ~ ",predictors[i])
+  mod <- lm(data = panther_mm_di, formula = as.formula(form))
+  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
+  tidymod <- tidymod[2,]
+  result_di <- rbind(result_di,tidymod)
+}
+
+result_di$adj.p.value <- p.adjust(result_di$p.value, "fdr")
+result_di$AptName <- result_di$term
+result_di$term <- NULL
+result_di <- merge(result_di,analytes,by="AptName",all.x = T, all.y = F)
+result_di <- result_di[order(result_di$p.value),] 
+result_di_100 <- head(result_di, 150)$AptName
+predictors_di <- as.matrix(subset(panther_mm_di, select = result_di_100))
+# Elastic net regression
+en_di <- easy_elasticnet(data = panther_mm_di, 
+                        outcome = "mm_di", out = "min.error",
+                        predictors = predictors_di,
+                        cv_method="kfold", folds = 10)
+
+retained_vars_di = analytes[analytes$AptName %in% en_di, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+form_di = as.formula(paste0("log(mm_di) ~ ",paste0(en_di,collapse = "+")))
+mod_di = lm(formula = form_di, data = panther_mm_di)
+mod_df_di = as.data.frame(tidy(mod_di, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_di) %>%
+  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
+         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
+  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
+
+kable(arrange(mod_df_di,p.value), digits = 3)
+ggplot(mod_df_di[-1,], 
+       aes(estimate, 
+           reorder(Target_nodup,desc(p.value)), 
+           xmin = conf.low, 
+           xmax = conf.high, 
+           height = 0)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 4) +
+  geom_errorbarh() +
+  labs(y = NULL)
+```
+
+Top `r length(result_di_100)` proteins included in analysis.
+No. of proteins identified: `r length(en_di)`.
+
+```{r echo = F, warning = F, message=F}
+kable(glance(mod_di))
+plot(mod_di)
+
+# Adjusted R-squared 95% CI
+rsq_di <- summary(mod_di)$adj.r.squared
+k_di <- ncol(mod_di$model) - 1
+n_di <- mod_di$df.residual + k_di + 1
+rsq.se_di <- sqrt((4 * rsq_di * (1 - rsq_di)^2 * (n_di - k_di - 1)^2)/((n_di^2 - 1) * (3 + n_di)))
+LL_di <- rsq_di - z*rsq.se_di
+UL_di <- rsq_di + z*rsq.se_di
+```
+
+### SI (insulin sensitivity)
+```{r elastic-net-si, echo = F, warning = F, message=F}
+# Limit to records with non-missing si
+panther_mm_si <- cleanData_panther %>% 
+  filter(!is.na(mm_si) & mm_si > 0) %>% 
+  dplyr::select(mm_si, starts_with("seq"))
+
+# Top 100 associations to si
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(panther_mm_si))
+predictors <- colnames(panther_mm_si[seq])
+
+result_si <- NULL
+for (i in 1:length(predictors)) {
+  form <- paste0("log(mm_si) ~ ",predictors[i])
+  mod <- lm(data = panther_mm_si, formula = as.formula(form))
+  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
+  tidymod <- tidymod[2,]
+  result_si <- rbind(result_si,tidymod)
+}
+
+result_si$adj.p.value <- p.adjust(result_si$p.value, "fdr")
+result_si$AptName <- result_si$term
+result_si$term <- NULL
+result_si <- merge(result_si,analytes,by="AptName",all.x = T, all.y = F)
+result_si <- result_si[order(result_si$p.value),] 
+result_si_100 <- head(result_si, 100)$AptName
+predictors_si <- as.matrix(subset(panther_mm_si, select = result_si_100))
+
+# Elastic net regression
+en_si <- easy_elasticnet(data = panther_mm_si, 
+                        outcome = "mm_si", out = "min.error",
+                        predictors = predictors_si,
+                        cv_method="kfold", folds = 10)
+
+retained_vars_si = analytes[analytes$AptName %in% en_si, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+form_si = as.formula(paste0("log(mm_si) ~ ",paste0(en_si,collapse = "+")))
+mod_si = lm(formula = form_si, data = panther_mm_si)
+mod_df_si = as.data.frame(tidy(mod_si, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_si) %>%
+  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
+         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
+  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
+
+kable(arrange(mod_df_si,p.value), digits = 3)
+ggplot(mod_df_si[-1,], 
+       aes(estimate, 
+           reorder(Target_nodup,desc(p.value)), 
+           xmin = conf.low, 
+           xmax = conf.high, 
+           height = 0)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 4) +
+  geom_errorbarh() +
+  labs(y = NULL)
+```
+
+Top `r length(result_si_100)` proteins included in analysis.
+No. of proteins identified: `r length(en_si)`.
+
+```{r echo = F, warning = F, message=F}
+kable(glance(mod_si))
+plot(mod_si)
+
+# Adjusted R-squared 95% CI
+rsq_si <- summary(mod_si)$adj.r.squared
+k_si <- ncol(mod_si$model) - 1
+n_si <- mod_si$df.residual + k_si + 1
+rsq.se_si <- sqrt((4 * rsq_si * (1 - rsq_si)^2 * (n_si - k_si - 1)^2)/((n_si^2 - 1) * (3 + n_si)))
+LL_si <- rsq_si - z*rsq.se_si
+UL_si <- rsq_si + z*rsq.se_si
+```
+
+
+### Beta-cell function
+```{r elastic-net-betacell, echo = F, warning = F, message=F}
+# Limit to records with non-missing bcell
+panther_mm_bcell <- cleanData_panther %>% 
+  filter(!is.na(mm_bcell) & mm_bcell > 0) %>% 
+  dplyr::select(mm_bcell, starts_with("seq")) 
+
+# Top 100 associations to bcell
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(panther_mm_bcell))
+predictors <- colnames(panther_mm_bcell[seq])
+
+result_bcell <- NULL
+for (i in 1:length(predictors)) {
+  form <- paste0("log(mm_bcell) ~ ",predictors[i])
+  mod <- lm(data = panther_mm_bcell, formula = as.formula(form))
+  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
+  tidymod <- tidymod[2,]
+  result_bcell <- rbind(result_bcell,tidymod)
+}
+
+result_bcell$adj.p.value <- p.adjust(result_bcell$p.value, "fdr")
+result_bcell$AptName <- result_bcell$term
+result_bcell$term <- NULL
+result_bcell <- merge(result_bcell,analytes,by="AptName",all.x = T, all.y = F)
+result_bcell <- result_bcell[order(result_bcell$p.value),] 
+result_bcell_100 <- head(result_bcell, 100)$AptName
+predictors_bcell <- as.matrix(subset(panther_mm_bcell, select = result_bcell_100))
+# Elastic net regression
+en_bcell <- easy_elasticnet(data = panther_mm_bcell, 
+                        outcome = "mm_bcell", out = "min.error",
+                        predictors = predictors_bcell,
+                        cv_method="kfold", folds = 10)
+
+retained_vars_bcell = analytes[analytes$AptName %in% en_bcell, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+form_bcell = as.formula(paste0("log(mm_bcell) ~ ",paste0(en_bcell,collapse = "+")))
+mod_bcell = lm(formula = form_bcell, data = panther_mm_bcell)
+mod_df_bcell = as.data.frame(tidy(mod_bcell, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_bcell) %>%
+  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
+         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
+  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
+
+kable(arrange(mod_df_bcell,p.value), digits = 3)
+ggplot(mod_df_bcell[-1,], 
+       aes(estimate, 
+           reorder(Target_nodup,desc(p.value)), 
+           xmin = conf.low, 
+           xmax = conf.high, 
+           height = 0)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 4) +
+  geom_errorbarh() +
+  labs(y = NULL)
+```
+
+Top `r length(result_bcell_100)` proteins included in analysis.
+No. of proteins identified: `r length(en_bcell)`.
+
+```{r echo = F, warning = F, message=F}
+kable(glance(mod_bcell))
+plot(mod_bcell)
+
+# Adjusted R-squared 95% CI
+rsq_bcell <- summary(mod_bcell)$adj.r.squared
+k_bcell <- ncol(mod_bcell$model) - 1
+n_bcell <- mod_bcell$df.residual + k_bcell + 1
+rsq.se_bcell <- sqrt((4 * rsq_bcell * (1 - rsq_bcell)^2 * (n_bcell - k_bcell - 1)^2)/((n_bcell^2 - 1) * (3 + n_bcell)))
+LL_bcell <- rsq_bcell - z*rsq.se_bcell
+UL_bcell <- rsq_bcell + z*rsq.se_bcell
+```
+
+### Total Kidney Volume
+```{r elastic-net-tkv, echo = F, warning = F, message=F}
+hist(cleanData_panther$total_kidney_volume_ml)
+# Limit to records with non-missing tkv
+panther_total_kidney_volume_ml <- cleanData_panther %>% 
+  filter(!is.na(total_kidney_volume_ml)) %>% 
+  dplyr::select(total_kidney_volume_ml, starts_with("seq"))
+
+# Top 100 associations to tkv
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(panther_total_kidney_volume_ml))
+predictors <- colnames(panther_total_kidney_volume_ml[seq])
+
+result_tkv <- NULL
+for (i in 1:length(predictors)) {
+  form <- paste0("total_kidney_volume_ml ~ ",predictors[i])
+  mod <- lm(data = panther_total_kidney_volume_ml, formula = as.formula(form))
+  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
+  tidymod <- tidymod[2,]
+  result_tkv <- rbind(result_tkv,tidymod)
+}
+
+result_tkv$adj.p.value <- p.adjust(result_tkv$p.value, "fdr")
+result_tkv$AptName <- result_tkv$term
+result_tkv$term <- NULL
+result_tkv <- merge(result_tkv,analytes,by="AptName",all.x = T, all.y = F)
+result_tkv <- result_tkv[order(result_tkv$p.value),] 
+result_tkv_100 <- head(result_tkv, 60)$AptName
+predictors_tkv <- as.matrix(subset(panther_total_kidney_volume_ml, select = result_tkv_100))
+# Elastic net regression
+en_tkv <- easy_elasticnet(data = panther_total_kidney_volume_ml, 
+                        outcome = "total_kidney_volume_ml", out = "min.error",
+                        predictors = predictors_tkv,
+                        cv_method="kfold", folds = 10)
+
+retained_vars_tkv = analytes[analytes$AptName %in% en_tkv, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+form_tkv = as.formula(paste0("total_kidney_volume_ml ~ ",paste0(en_tkv,collapse = "+")))
+mod_tkv = lm(formula = form_tkv, data = panther_total_kidney_volume_ml)
+mod_df_tkv = as.data.frame(tidy(mod_tkv, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_tkv) %>%
+  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
+         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
+  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
+
+kable(arrange(mod_df_tkv,p.value), digits = 3)
+ggplot(mod_df_tkv[-1,], 
+       aes(estimate, 
+           reorder(Target_nodup,desc(p.value)), 
+           xmin = conf.low, 
+           xmax = conf.high, 
+           height = 0)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 4) +
+  geom_errorbarh() +
+  labs(y = NULL)
+```
+
+Top `r length(result_tkv_100)` proteins included in analysis.
+No. of proteins identified: `r length(en_tkv)`.
+
+```{r echo = F, warning = F, message=F}
+kable(glance(mod_tkv))
+plot(mod_tkv)
+
+# Adjusted R-squared 95% CI
+rsq_tkv <- summary(mod_tkv)$adj.r.squared
+k_tkv <- ncol(mod_tkv$model) - 1
+n_tkv <- mod_tkv$df.residual + k_tkv + 1
+rsq.se_tkv <- sqrt((4 * rsq_tkv * (1 - rsq_tkv)^2 * (n_tkv - k_tkv - 1)^2)/((n_tkv^2 - 1) * (3 + n_tkv)))
+LL_tkv <- rsq_tkv - z*rsq.se_tkv
+UL_tkv <- rsq_tkv + z*rsq.se_tkv
+```
+
+### Height adjusted TKV
+```{r elastic-net-httkv, echo = F, warning = F, message=F}
+hist(cleanData_panther$ht_adj_tkv)
+# Limit to records with non-missing ht_adj_tkv
+panther_ht_adj_tkv <- cleanData_panther %>% 
+  filter(!is.na(ht_adj_tkv)) %>% 
+  dplyr::select(ht_adj_tkv, starts_with("seq")) 
+
+# Top 100 associations to ht_adj_tkv
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(panther_ht_adj_tkv))
+predictors <- colnames(panther_ht_adj_tkv[seq])
+
+result_ht_adj_tkv <- NULL
+for (i in 1:length(predictors)) {
+  form <- paste0("ht_adj_tkv ~ ",predictors[i])
+  mod <- lm(data = panther_ht_adj_tkv, formula = as.formula(form))
+  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
+  tidymod <- tidymod[2,]
+  result_ht_adj_tkv <- rbind(result_ht_adj_tkv,tidymod)
+}
+
+result_ht_adj_tkv$adj.p.value <- p.adjust(result_ht_adj_tkv$p.value, "fdr")
+result_ht_adj_tkv$AptName <- result_ht_adj_tkv$term
+result_ht_adj_tkv$term <- NULL
+result_ht_adj_tkv <- merge(result_ht_adj_tkv,analytes,by="AptName",all.x = T, all.y = F)
+result_ht_adj_tkv <- result_ht_adj_tkv[order(result_ht_adj_tkv$p.value),] 
+result_ht_adj_tkv_100 <- head(result_ht_adj_tkv, 100)$AptName
+predictors_ht_adj_tkv <- as.matrix(subset(panther_ht_adj_tkv, select = result_ht_adj_tkv_100))
+# Elastic net regression
+en_ht_adj_tkv <- easy_elasticnet(data = panther_ht_adj_tkv, 
+                        outcome = "ht_adj_tkv", out = "min.error",
+                        predictors = predictors_ht_adj_tkv,
+                        cv_method="kfold", folds = 10)
+
+retained_vars_ht_adj_tkv = analytes[analytes$AptName %in% en_ht_adj_tkv, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+form_ht_adj_tkv = as.formula(paste0("ht_adj_tkv ~ ",paste0(en_ht_adj_tkv,collapse = "+")))
+mod_ht_adj_tkv = lm(formula = form_ht_adj_tkv, data = panther_ht_adj_tkv)
+mod_df_ht_adj_tkv = as.data.frame(tidy(mod_ht_adj_tkv, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_ht_adj_tkv) %>%
+  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
+         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
+  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
+
+kable(arrange(mod_df_ht_adj_tkv,p.value), digits = 3)
+
+ggplot(mod_df_ht_adj_tkv[-1,], 
+       aes(estimate, 
+           reorder(Target_nodup,desc(p.value)), 
+           xmin = conf.low, 
+           xmax = conf.high, 
+           height = 0)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 4) +
+  geom_errorbarh() +
+  labs(y = NULL)
+```
+
+Top `r length(result_ht_adj_tkv_100)` proteins included in analysis.
+No. of proteins identified: `r length(en_ht_adj_tkv)`.
+
+```{r echo = F, warning = F, message=F}
+kable(glance(mod_ht_adj_tkv))
+plot(mod_ht_adj_tkv)
+
+# Adjusted R-squared 95% CI
+rsq_ht_adj_tkv <- summary(mod_ht_adj_tkv)$adj.r.squared
+k_ht_adj_tkv <- ncol(mod_ht_adj_tkv$model) - 1
+n_ht_adj_tkv <- mod_ht_adj_tkv$df.residual + k_ht_adj_tkv + 1
+rsq.se_ht_adj_tkv <- sqrt((4 * rsq_ht_adj_tkv * (1 - rsq_ht_adj_tkv)^2 * (n_ht_adj_tkv - k_ht_adj_tkv - 1)^2)/((n_ht_adj_tkv^2 - 1) * (3 + n_ht_adj_tkv)))
+LL_ht_adj_tkv <- rsq_ht_adj_tkv - z*rsq.se_ht_adj_tkv
+UL_ht_adj_tkv <- rsq_ht_adj_tkv + z*rsq.se_ht_adj_tkv
+```
+
+### GFR (Raw plasma)
+```{r elastic-net-gfr, echo = F, warning = F, message=F}
+# Limit to records with non-missing gfr
+panther_gfr_raw_plasma <- cleanData_panther %>% 
+  filter(!is.na(gfr_raw_plasma) & gfr_raw_plasma > 0) %>% 
+  dplyr::select(gfr_raw_plasma, starts_with("seq")) 
+
+# Top 100 associations to gfr
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(panther_gfr_raw_plasma))
+predictors <- colnames(panther_gfr_raw_plasma[seq])
+
+result_gfr <- NULL
+for (i in 1:length(predictors)) {
+  form <- paste0("log(gfr_raw_plasma) ~ ",predictors[i])
+  mod <- lm(data = panther_gfr_raw_plasma, formula = as.formula(form))
+  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
+  tidymod <- tidymod[2,]
+  result_gfr <- rbind(result_gfr,tidymod)
+}
+
+result_gfr$adj.p.value <- p.adjust(result_gfr$p.value, "fdr")
+result_gfr$AptName <- result_gfr$term
+result_gfr$term <- NULL
+result_gfr <- merge(result_gfr,analytes,by="AptName",all.x = T, all.y = F)
+result_gfr <- result_gfr[order(result_gfr$p.value),] 
+result_gfr_100 <- head(result_gfr, 75)$AptName
+predictors_gfr <- as.matrix(subset(panther_gfr_raw_plasma, select = result_gfr_100))
+# Elastic net regression
+en_gfr <- easy_elasticnet(data = panther_gfr_raw_plasma, 
+                        outcome = "gfr_raw_plasma", out = "min.error",
+                        predictors = predictors_gfr,
+                        cv_method="kfold", folds = 10)
+
+retained_vars_gfr = analytes[analytes$AptName %in% en_gfr, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+form_gfr = as.formula(paste0("log(gfr_raw_plasma) ~ ",paste0(en_gfr,collapse = "+")))
+mod_gfr = lm(formula = form_gfr, data = panther_gfr_raw_plasma)
+mod_df_gfr = as.data.frame(tidy(mod_gfr, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_gfr) %>%
+  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
+         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
+  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
+
+kable(arrange(mod_df_gfr,p.value), digits = 3)
+ggplot(mod_df_gfr[-1,], 
+       aes(estimate, 
+           reorder(Target_nodup,desc(p.value)), 
+           xmin = conf.low, 
+           xmax = conf.high, 
+           height = 0)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 4) +
+  geom_errorbarh() +
+  labs(y = NULL)
+```
+
+Top `r length(result_gfr_100)` proteins included in analysis.
+No. of proteins identified: `r length(en_gfr)`.
+
+```{r echo = F, warning = F, message=F}
+kable(glance(mod_gfr))
+plot(mod_gfr)
+
+# Adjusted R-squared 95% CI
+rsq_gfr <- summary(mod_gfr)$adj.r.squared
+k_gfr <- ncol(mod_gfr$model) - 1
+n_gfr <- mod_gfr$df.residual + k_gfr + 1
+rsq.se_gfr <- sqrt((4 * rsq_gfr * (1 - rsq_gfr)^2 * (n_gfr - k_gfr - 1)^2)/((n_gfr^2 - 1) * (3 + n_gfr)))
+LL_gfr <- rsq_gfr - z*rsq.se_gfr
+UL_gfr <- rsq_gfr + z*rsq.se_gfr
+```
+### GFR (BSA plasma)
+```{r elastic-net-gfr-bsa, echo = F, warning = F, message=F}
+# Limit to records with non-missing gfr
+panther_gfr_bsa_plasma <- cleanData_panther %>% 
+  filter(!is.na(gfr_bsa_plasma) & gfr_bsa_plasma > 0) %>% 
+  dplyr::select(gfr_bsa_plasma, starts_with("seq")) 
+
+# Top 100 associations to gfr
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(panther_gfr_bsa_plasma))
+predictors <- colnames(panther_gfr_bsa_plasma[seq])
+
+result_gfr <- NULL
+for (i in 1:length(predictors)) {
+  form <- paste0("log(gfr_bsa_plasma) ~ ",predictors[i])
+  mod <- lm(data = panther_gfr_bsa_plasma, formula = as.formula(form))
+  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
+  tidymod <- tidymod[2,]
+  result_gfr <- rbind(result_gfr,tidymod)
+}
+
+result_gfr$adj.p.value <- p.adjust(result_gfr$p.value, "fdr")
+result_gfr$AptName <- result_gfr$term
+result_gfr$term <- NULL
+result_gfr <- merge(result_gfr,analytes,by="AptName",all.x = T, all.y = F)
+result_gfr <- result_gfr[order(result_gfr$p.value),] 
+result_gfr_100 <- head(result_gfr, 75)$AptName
+predictors_gfr <- as.matrix(subset(panther_gfr_bsa_plasma, select = result_gfr_100))
+# Elastic net regression
+en_gfr_bsa <- easy_elasticnet(data = panther_gfr_bsa_plasma, 
+                        outcome = "gfr_bsa_plasma", out = "min.error",
+                        predictors = predictors_gfr,
+                        cv_method="kfold", folds = 10)
+
+retained_vars_gfr = analytes[analytes$AptName %in% en_gfr_bsa, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+form_gfr = as.formula(paste0("log(gfr_bsa_plasma) ~ ",paste0(en_gfr_bsa,collapse = "+")))
+mod_gfr = lm(formula = form_gfr, data = panther_gfr_bsa_plasma)
+mod_df_gfr = as.data.frame(tidy(mod_gfr, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_gfr) %>%
+  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
+         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
+  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
+
+kable(arrange(mod_df_gfr,p.value), digits = 3)
+ggplot(mod_df_gfr[-1,], 
+       aes(estimate, 
+           reorder(Target_nodup,desc(p.value)), 
+           xmin = conf.low, 
+           xmax = conf.high, 
+           height = 0)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 4) +
+  geom_errorbarh() +
+  labs(y = NULL)
+```
+
+Top `r length(result_gfr_100)` proteins included in analysis.
+No. of proteins identified: `r length(en_gfr_bsa)`.
+
+```{r echo = F, warning = F, message=F}
+kable(glance(mod_gfr))
+plot(mod_gfr)
+
+# Adjusted R-squared 95% CI
+rsq_gfr_bsa <- summary(mod_gfr)$adj.r.squared
+k_gfr_bsa <- ncol(mod_gfr$model) - 1
+n_gfr_bsa <- mod_gfr$df.residual + k_gfr_bsa + 1
+rsq.se_gfr_bsa <- sqrt((4 * rsq_gfr_bsa * (1 - rsq_gfr_bsa)^2 * (n_gfr_bsa - k_gfr_bsa - 1)^2)/((n_gfr_bsa^2 - 1) * (3 + n_gfr_bsa)))
+LL_gfr_bsa <- rsq_gfr_bsa - z*rsq.se_gfr_bsa
+UL_gfr_bsa <- rsq_gfr_bsa + z*rsq.se_gfr_bsa
+```
+
+### RPF (Raw plasma)
+```{r elastic-net-rpf, echo = F, warning = F, message=F}
+# Limit to records with non-missing rpf
+panther_erpf_raw_plasma <- cleanData_panther %>% 
+  filter(!is.na(erpf_raw_plasma) & erpf_raw_plasma > 0) %>% 
+  dplyr::select(erpf_raw_plasma, starts_with("seq")) 
+
+# Top 100 associations to rpf
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(panther_erpf_raw_plasma))
+predictors <- colnames(panther_erpf_raw_plasma[seq])
+
+result_rpf <- NULL
+for (i in 1:length(predictors)) {
+  form <- paste0("log(erpf_raw_plasma) ~ ",predictors[i])
+  mod <- lm(data = panther_erpf_raw_plasma, formula = as.formula(form))
+  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
+  tidymod <- tidymod[2,]
+  result_rpf <- rbind(result_rpf,tidymod)
+}
+
+result_rpf$adj.p.value <- p.adjust(result_rpf$p.value, "fdr")
+result_rpf$AptName <- result_rpf$term
+result_rpf$term <- NULL
+result_rpf <- merge(result_rpf,analytes,by="AptName",all.x = T, all.y = F)
+result_rpf <- result_rpf[order(result_rpf$p.value),] 
+result_rpf_100 <- head(result_rpf, 100)$AptName
+predictors_rpf <- as.matrix(subset(panther_erpf_raw_plasma, select = result_rpf_100))
+# Elastic net regression
+en_rpf <- easy_elasticnet(data = panther_erpf_raw_plasma, 
+                        outcome = "erpf_raw_plasma", out = "min.error",
+                        predictors = predictors_rpf,
+                        cv_method="kfold", folds = 10)
+
+retained_vars_rpf = analytes[analytes$AptName %in% en_rpf, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+form_rpf = as.formula(paste0("log(erpf_raw_plasma) ~ ",paste0(en_rpf,collapse = "+")))
+mod_rpf = lm(formula = form_rpf, data = panther_erpf_raw_plasma)
+mod_df_rpf = as.data.frame(tidy(mod_rpf, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_rpf) %>%
+  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
+         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
+  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
+
+kable(arrange(mod_df_rpf,p.value), digits = 3)
+ggplot(mod_df_rpf[-1,], 
+       aes(estimate, 
+           reorder(Target_nodup,desc(p.value)), 
+           xmin = conf.low, 
+           xmax = conf.high, 
+           height = 0)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 4) +
+  geom_errorbarh() +
+  labs(y = NULL)
+```
+
+Top `r length(result_rpf_100)` proteins included in analysis.
+No. of proteins identified: `r length(en_rpf)`.
+
+```{r echo = F, warning = F, message=F}
+kable(glance(mod_rpf))
+plot(mod_rpf)
+
+# Adjusted R-squared 95% CI
+rsq_rpf <- summary(mod_rpf)$adj.r.squared
+k_rpf <- ncol(mod_rpf$model) - 1
+n_rpf <- mod_rpf$df.residual + k_rpf + 1
+rsq.se_rpf <- sqrt((4 * rsq_rpf * (1 - rsq_rpf)^2 * (n_rpf - k_rpf - 1)^2)/((n_rpf^2 - 1) * (3 + n_rpf)))
+LL_rpf <- rsq_rpf - z*rsq.se_rpf
+UL_rpf <- rsq_rpf + z*rsq.se_rpf
+```
+
+### RPF (BSA plasma)
+```{r elastic-net-rpf-bsa, echo = F, warning = F, message=F}
+# Limit to records with non-missing rpf
+panther_erpf_bsa_plasma <- cleanData_panther %>% 
+  filter(!is.na(erpf_bsa_plasma) & erpf_bsa_plasma > 0) %>% 
+  dplyr::select(erpf_bsa_plasma, starts_with("seq")) 
+
+# Top 100 associations to rpf
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(panther_erpf_bsa_plasma))
+predictors <- colnames(panther_erpf_bsa_plasma[seq])
+
+result_rpf <- NULL
+for (i in 1:length(predictors)) {
+  form <- paste0("log(erpf_bsa_plasma) ~ ",predictors[i])
+  mod <- lm(data = panther_erpf_bsa_plasma, formula = as.formula(form))
+  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
+  tidymod <- tidymod[2,]
+  result_rpf <- rbind(result_rpf,tidymod)
+}
+
+result_rpf$adj.p.value <- p.adjust(result_rpf$p.value, "fdr")
+result_rpf$AptName <- result_rpf$term
+result_rpf$term <- NULL
+result_rpf <- merge(result_rpf,analytes,by="AptName",all.x = T, all.y = F)
+result_rpf <- result_rpf[order(result_rpf$p.value),] 
+result_rpf_100 <- head(result_rpf, 100)$AptName
+predictors_rpf <- as.matrix(subset(panther_erpf_bsa_plasma, select = result_rpf_100))
+# Elastic net regression
+en_rpf_bsa <- easy_elasticnet(data = panther_erpf_bsa_plasma, 
+                        outcome = "erpf_bsa_plasma", out = "min.error",
+                        predictors = predictors_rpf,
+                        cv_method="kfold", folds = 10)
+
+retained_vars_rpf = analytes[analytes$AptName %in% en_rpf_bsa, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+form_rpf = as.formula(paste0("log(erpf_bsa_plasma) ~ ",paste0(en_rpf_bsa,collapse = "+")))
+mod_rpf = lm(formula = form_rpf, data = panther_erpf_bsa_plasma)
+mod_df_rpf = as.data.frame(tidy(mod_rpf, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_rpf) %>%
+  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
+         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
+  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
+
+kable(arrange(mod_df_rpf,p.value), digits = 3)
+ggplot(mod_df_rpf[-1,], 
+       aes(estimate, 
+           reorder(Target_nodup,desc(p.value)), 
+           xmin = conf.low, 
+           xmax = conf.high, 
+           height = 0)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 4) +
+  geom_errorbarh() +
+  labs(y = NULL)
+```
+
+Top `r length(result_rpf_100)` proteins included in analysis.
+No. of proteins identified: `r length(en_rpf_bsa)`.
+
+```{r echo = F, warning = F, message=F}
+kable(glance(mod_rpf))
+plot(mod_rpf)
+
+# Adjusted R-squared 95% CI
+rsq_rpf_bsa <- summary(mod_rpf)$adj.r.squared
+k_rpf_bsa <- ncol(mod_rpf$model) - 1
+n_rpf_bsa <- mod_rpf$df.residual + k_rpf_bsa + 1
+rsq.se_rpf_bsa <- sqrt((4 * rsq_rpf_bsa * (1 - rsq_rpf_bsa)^2 * (n_rpf_bsa - k_rpf_bsa - 1)^2)/((n_rpf_bsa^2 - 1) * (3 + n_rpf_bsa)))
+LL_rpf_bsa <- rsq_rpf_bsa - z*rsq.se_rpf_bsa
+UL_rpf_bsa <- rsq_rpf_bsa + z*rsq.se_rpf_bsa
+```
+
+## Elastic net models combined
+```{r elastic-net-combined1, echo=F}
+elasticnet_combined <- data.frame(r2 = c(rsq_airg, rsq_bcell, rsq_di, rsq_si, rsq_tkv, rsq_ht_adj_tkv, rsq_gfr, rsq_gfr_bsa, rsq_rpf, rsq_rpf_bsa),
+                                  lower = c(LL_airg, LL_bcell, LL_di, LL_si, LL_tkv, LL_ht_adj_tkv, LL_gfr, LL_gfr_bsa, LL_rpf, LL_rpf_bsa),
+                                  upper = c(UL_airg, UL_bcell, UL_di, UL_si, UL_tkv, UL_ht_adj_tkv, UL_gfr, UL_gfr_bsa, UL_rpf, UL_rpf_bsa),
+                                  Model = c("AIRg", "B-cell", "DI", "SI", "TKV", "Ht-adj TKV", "GFR - Raw", "GFR - BSA", "RPF - Raw", "RPF - BSA"),
+                                  No.proteins = c(length(en_airg), length(en_bcell), length(en_di), length(en_si), 
+                                        length(en_tkv), length(en_ht_adj_tkv), length(en_gfr),length(en_gfr_bsa),
+                                        length(en_rpf),length(en_rpf_bsa)))
+elasticnet_combined$` ` <- paste(rep(" ", 20), collapse = " ")
+
+# Create confidence interval column to display
+elasticnet_combined$`Adjusted R-squared (95% CI)` <- ifelse(is.na(elasticnet_combined$r2), "",
+                             sprintf("%.2f (%.2f to %.2f)",
+                                     elasticnet_combined$r2, elasticnet_combined$lower, elasticnet_combined$upper))
+
+forest(data = elasticnet_combined[,c(4:7)], 
+       est = elasticnet_combined$r2,
+       lower = elasticnet_combined$lower,
+       upper = elasticnet_combined$upper, ci_column = 3)
+```
+
+```{r elastic-net-combined2, echo=F}
+elasticnet_combined <- data.frame(r2 = c(rsq_airg, rsq_bcell, rsq_di, rsq_si, rsq_tkv, rsq_ht_adj_tkv),
+                                  lower = c(LL_airg, LL_bcell, LL_di, LL_si, LL_tkv, LL_ht_adj_tkv),
+                                  upper = c(UL_airg, UL_bcell, UL_di, UL_si, UL_tkv, UL_ht_adj_tkv),
+                                  Model = c("AIRg", "B-cell", "DI", "SI", "TKV", "Ht-adj TKV"),
+                                  No.proteins = c(length(en_airg), length(en_bcell), length(en_di), length(en_si), 
+                                        length(en_tkv), length(en_ht_adj_tkv)))
+elasticnet_combined$` ` <- paste(rep(" ", 20), collapse = " ")
+
+# Create confidence interval column to display
+elasticnet_combined$`Adjusted R-squared (95% CI)` <- ifelse(is.na(elasticnet_combined$r2), "",
+                             sprintf("%.2f (%.2f to %.2f)",
+                                     elasticnet_combined$r2, elasticnet_combined$lower, elasticnet_combined$upper))
+
+forest(data = elasticnet_combined[,c(4:7)], 
+       est = elasticnet_combined$r2,
+       lower = elasticnet_combined$lower,
+       upper = elasticnet_combined$upper, ci_column = 3)
+```
+
+```{r elastic-net-combined3, echo=F}
+elasticnet_combined <- data.frame(r2 = c(rsq_airg, rsq_bcell, rsq_di, rsq_si),
+                                  lower = c(LL_airg, LL_bcell, LL_di, LL_si),
+                                  upper = c(UL_airg, UL_bcell, UL_di, UL_si),
+                                  Model = c("AIRg", "B-cell", "DI", "SI"),
+                                  No.proteins = c(length(en_airg), length(en_bcell), length(en_di), length(en_si)))
+elasticnet_combined$` ` <- paste(rep(" ", 20), collapse = " ")
+
+# Create confidence interval column to display
+elasticnet_combined$`Adjusted R-squared (95% CI)` <- ifelse(is.na(elasticnet_combined$r2), "",
+                             sprintf("%.2f (%.2f to %.2f)",
+                                     elasticnet_combined$r2, elasticnet_combined$lower, elasticnet_combined$upper))
+
+forest(data = elasticnet_combined[,c(4:7)], 
+       est = elasticnet_combined$r2,
+       lower = elasticnet_combined$lower,
+       upper = elasticnet_combined$upper, ci_column = 3)
 ```

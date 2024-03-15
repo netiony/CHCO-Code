@@ -17,6 +17,10 @@ analytes <- analytes %>% filter(Type == "Protein")
 # samples without a SampleDescription are QC samples
 soma <- soma %>% filter(!is.na(SampleDescription))
 
-# Save
+# save
 save(soma,file = "/Volumes/Peds Endo/Petter Bjornstad/SOMAScan/PANTHER/panther_bl_soma.Rdata")
 save(analytes,file = "/Volumes/Peds Endo/Petter Bjornstad/SOMAScan/PANTHER/panther_bl_analytes.Rdata")
+
+
+# non standardized soma
+soma_ns <- read.delim("/Volumes/Peds Endo/Petter Bjornstad/SOMAScan/PANTHER/20240126_597_Bjornstad_SOMAscan7k_WUS-24-002_data_export/WUS-24-002_2024-01-26_GTAC_analyzed_files/customer.samples_log2RFU_WUS_24_002_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP_quantiled.txt")
