@@ -5,6 +5,7 @@ library(Hmisc)
 library(dplyr)
 library(tidyr)
 library(purrr)
+library(limma)
 
 if(Sys.info()["sysname"] == "Windows"){
   home_dir = "E:/Petter Bjornstad"
@@ -75,78 +76,180 @@ soma <- soma %>%  mutate(
 
 soma_combined <- soma 
 
-# read in harmonized dataset to get group information
-# df <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", 
-#                na.strings = c(" ", "", "-9999",-9999))
-# coenroll_id <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Renal HERITAGE/Data_Cleaned/coenrolled_ids.csv") %>%
-#   pivot_longer(cols = 'improve_id':'crc_id',
-#                values_to = "record_id") %>% 
-#   dplyr::select(merged_id, record_id) %>%
-#   filter(record_id != "")
-# df <- df %>%
-#   dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
-#                    across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
-#                    .by = c(record_id, visit)) %>%
-#   filter(participation_status!="Removed"|is.na(participation_status)) %>%
-#   left_join(coenroll_id)
-# df <- df %>% 
-#   dplyr::select(record_id, co_enroll_id, merged_id, study, visit, date, group)
-# # Merge
-# soma_harmonized$record_id <- soma_harmonized$SampleDescription
-# soma_harmonized <- soma_harmonized %>% mutate(
-#   record_id = case_when(
-#     str_detect(record_id, "IT2D") ~ str_replace(record_id, "IT2D-", "IT_"),
-#     !str_detect(record_id, "IT2D") ~ record_id
-#   )
-# )
-# soma_harmonized <- soma_harmonized %>%  mutate(
-#   visit = case_when(
-#     TimePoint == "BL" ~ "baseline",
-#     TimePoint == "Baseline" ~ "baseline",
-#     TimePoint == "3M" ~ "3_months_post_surgery",
-#     TimePoint == "12M" ~ "12_months_post_surgery"
-#   )
-# )
-# soma_harmonized <- left_join(soma_harmonized, df, by = c("record_id", "visit"))
+# pull out KNIGHT samples only
+soma_anml_keep <- soma_combined %>% filter(grepl("KGHT",SampleDescription) | grepl("SHB",SampleDescription))
 
-# some extra spaces in the sample IDs
-soma_combined$SampleDescription <- str_trim(soma_combined$SampleDescription)
-# add labels
-labels <- paste0("log(",analytes$EntrezGeneSymbol[match(colnames(soma_combined), analytes$AptName)],")")
-labels[labels == "log(NA)"] <- ""
-label(soma_combined) <- as.list(labels)
+# read in linkage file for Natalie's studies
+link <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Somalogic data/BCF-23-091 Linker File 10.05.2023.csv")
+link$Study.ID <- link$Sequence.Number
+redcap <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Somalogic data/200572DataKNIGHT_DATA_LABELS_2023-12-10_1551.csv")
+redcap <- redcap %>% filter(Event.Name == "Screening")
+redcap <- redcap %>% select(Study.ID, Sex.assigned.at.birth)
+link <- merge(link, redcap, by="Study.ID", all.x = T, all.y = F)
+link$SampleDescription <- link$Barcode
+link <- link %>% select(SampleDescription, Study.ID, Timepoint.Label, Sex.assigned.at.birth)
+soma_anml_keep <- full_join(soma_anml_keep, link, by="SampleDescription")
+soma_anml_keep$SampleDescription <- str_trim(soma_anml_keep$SampleDescription)
 
-# write copy of the entire local SomaScan dataframe to the data harmonization folder
-save(soma_combined, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Combined SomaScan/soma_combined_anml.RData")
-save(analytes, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Combined SomaScan/analytes.RData")
+# create new variable for harmonized time point
+soma_anml_keep$time <-  
+  case_when(
+    soma_anml_keep$TimePoint == "V1" ~ 1,
+    soma_anml_keep$TimePoint == "V2" ~ 2,
+    soma_anml_keep$Timepoint.Label == "Baseline" ~ 1,
+    soma_anml_keep$Timepoint.Label == "M3" ~ 2,
+    .default = NA
+  )
 
+soma_anml_keep$group <-  
+  case_when(
+    str_sub(soma_anml_keep$SampleDescription, 1, 2) == "MV" ~ "MTF",
+    str_sub(soma_anml_keep$SampleDescription, 1, 2) == "VM" ~ "FTM",
+    soma_anml_keep$Sex.assigned.at.birth == "Male" ~ "MTF",
+    soma_anml_keep$Sex.assigned.at.birth == "Female" ~ "FTM",
+    .default = NA
+  )
 
+# identify columns corresponding to proteins
+#is_seq <- function(.x) grepl("^seq\\.[0-9]{4}", .x) # regex for analytes
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(soma_anml_keep))
+# log transform
+soma_anml_keep <- soma_anml_keep %>% modify_if(is_seq(names(.)), log)
+
+# Calculate change in each protein
+df_diff <- soma_anml_keep %>%
+  arrange(Study.ID, time) %>%
+  group_by(Study.ID, group) %>%
+  reframe(across(contains("seq"), ~ diff(as.numeric(.x))))
+
+# First MTF
+# Limma setup
+# Y needs "genes" in rows
+y <- df_diff %>%
+  filter(group == "MTF") %>%
+  dplyr::select(contains("seq")) %>%
+  t()
+# Design matrix
+design_mat <- model.matrix(~1, data = df_diff[df_diff$group == "MTF",])
+# Fit
+fit <- lmFit(y, design_mat)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+res$UniProt <- analytes$UniProt[match(rownames(res), analytes$AptName)]
+write.csv(res, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Testing ANML vs median/limma_MTF_results_ANML.csv", row.names = F)
+
+# Then FTM
+# Limma setup
+# Y needs "genes" in rows
+y <- df_diff %>%
+  filter(group == "FTM") %>%
+  dplyr::select(contains("seq")) %>%
+  t()
+# Design matrix
+design_mat <- model.matrix(~1, data = df_diff[df_diff$group == "FTM",])
+# Fit
+fit <- lmFit(y, design_mat)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+res$UniProt <- analytes$UniProt[match(rownames(res), analytes$AptName)]
+write.csv(res, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Testing ANML vs median/limma_FTM_results_ANML.csv", row.names = F)
 
 ###########################
 # MEDIAN NORMALIZED FILES #
 ###########################
 
 # read in data
-soma_med1 <- read.delim("./Local cohort Somalogic data/WUS-22-002/linear.RFU_WUS-22-002_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP_quantile.txt")
+soma_med1 <- read.delim("./Local cohort Somalogic data/WUS-23-004/WUS_23_004_GTAC_analyzed/linear.RFU_WUS_23_004_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP_quantile.txt")
 # read in samplesheet
-samplesheet <- read.delim("./Local cohort Somalogic data/WUS-22-002/samplesheet_WUS-22-002.txt")
+samplesheet <- read.delim("./Local cohort Somalogic data/WUS-23-004/WUS_23_004_GTAC_analyzed/samplesheet_WUS_23_004.txt")
 samplesheet$ArrayId <- samplesheet$X
 
 # need to link samplesheet$X to soma_med1 column names
 soma_med1 <- soma_med1 %>% select(!(X))
-soma_med1 <- soma_med1 %>% select(!(EntrezGeneSymbol:Organism))
+soma_med1 <- soma_med1 %>% select(!(EntrezGeneSymbol:Dilution))
 rownames(soma_med1) <- soma_med1$AptName
 soma_med1 <- soma_med1 %>% select(!(AptName))
 soma_med1 <- as.data.frame(t(soma_med1))
 soma_med1$ArrayId <- rownames(soma_med1)
 soma_med1$ArrayId <- str_remove(soma_med1$ArrayId, "X")
 soma_med <- left_join(soma_med1, samplesheet, by="ArrayId")
+# pull out KNIGHT samples only
+soma_med_keep <- soma_med %>% filter(grepl("KGHT",SampleDescription) | grepl("SHB",SampleDescription))
+soma_med_keep$SampleDescription <- str_replace(soma_med_keep$SampleDescription , '(.*?)-(.*?)', '')
 
-# apply all the same processing steps as above
-# remove fc mouse and no protein
-soma_med <- soma_med %>% select(!all_of(apt_drop))
+# merge with link file
+soma_med_keep <- full_join(soma_med_keep, link, by="SampleDescription")
+soma_med_keep$SampleDescription <- str_trim(soma_med_keep$SampleDescription)
 
+# create new variable for harmonized time point
+soma_med_keep$time <-  
+  case_when(
+    soma_med_keep$TimePoint == "V1" ~ 1,
+    soma_med_keep$TimePoint == "V2" ~ 2,
+    soma_med_keep$Timepoint.Label == "Baseline" ~ 1,
+    soma_med_keep$Timepoint.Label == "M3" ~ 2,
+    .default = NA
+  )
 
-# will have to create an adat file?
-# then figure out which study to run a comparison on median vs ANML
-# probably KNIGHT since we won't have any harmonization issues
+soma_med_keep$group <-  
+  case_when(
+    str_sub(soma_med_keep$SampleDescription, 1, 2) == "MV" ~ "MTF",
+    str_sub(soma_med_keep$SampleDescription, 1, 2) == "VM" ~ "FTM",
+    soma_med_keep$Sex.assigned.at.birth == "Male" ~ "MTF",
+    soma_med_keep$Sex.assigned.at.birth == "Female" ~ "FTM",
+    .default = NA
+  )
+
+# identify columns corresponding to proteins
+#is_seq <- function(.x) grepl("^seq\\.[0-9]{4}", .x) # regex for analytes
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(soma_med_keep))
+# log transform
+soma_med_keep <- soma_med_keep %>% modify_if(is_seq(names(.)), log)
+
+# Calculate change in each protein
+df_diff <- soma_med_keep %>%
+  arrange(Study.ID, time) %>%
+  group_by(Study.ID, group) %>%
+  reframe(across(contains("seq"), ~ diff(as.numeric(.x))))
+
+# First MTF
+# Limma setup
+# Y needs "genes" in rows
+y <- df_diff %>%
+  filter(group == "MTF") %>%
+  dplyr::select(contains("seq")) %>%
+  t()
+# Design matrix
+design_mat <- model.matrix(~1, data = df_diff[df_diff$group == "MTF",])
+# Fit
+fit <- lmFit(y, design_mat)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+res$UniProt <- analytes$UniProt[match(rownames(res), analytes$AptName)]
+write.csv(res, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Testing ANML vs median/limma_MTF_results_median.csv", row.names = F)
+
+# Then FTM
+# Limma setup
+# Y needs "genes" in rows
+y <- df_diff %>%
+  filter(group == "FTM") %>%
+  dplyr::select(contains("seq")) %>%
+  t()
+# Design matrix
+design_mat <- model.matrix(~1, data = df_diff[df_diff$group == "FTM",])
+# Fit
+fit <- lmFit(y, design_mat)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+res$UniProt <- analytes$UniProt[match(rownames(res), analytes$AptName)]
+write.csv(res, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Testing ANML vs median/limma_FTM_results_median.csv", row.names = F)
