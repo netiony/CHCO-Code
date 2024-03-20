@@ -120,22 +120,3 @@ label(soma_combined) <- as.list(labels)
 save(soma_combined, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Combined SomaScan/soma_combined_anml.RData")
 save(analytes, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Combined SomaScan/analytes.RData")
 
-###########################
-# MEDIAN NORMALIZED FILES #
-###########################
-
-soma_med1 <- read.delim("./Local cohort Somalogic data/WUS-22-002/linear.RFU_WUS-22-002_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP_quantile.txt")
-soma_med1 <- soma_med1 %>% select(!(X))
-soma_med1 <- soma_med1 %>% select(!(EntrezGeneSymbol:Organism))
-rownames(soma_med1) <- soma_med1$AptName
-soma_med1 <- soma_med1 %>% select(!(AptName))
-soma_med1 <- as.data.frame(t(soma_med1))
-soma_med1$SlideId <- rownames(soma_med1)
-soma_med1$SlideId <- str_remove(soma_med1$SlideId, "X")
-soma_med1$SlideId <- str_sub(soma_med1$SlideId, 1, 12)
-soma_med1$SlideId <- as.numeric(soma_med1$SlideId)
-# get study IDs from the ANML file
-# slide ID is not unique, so not sure how to link the two files?
-full_ids <- soma_combined %>% select(SlideId, SampleDescription)
-label(soma_med1$SlideId) <- ""
-soma_med1 <- left_join(soma_med1, full_ids)
