@@ -1,0 +1,230 @@
+---
+title: "PANTHER + RH/RH2/IMPROVE Proteomics - DE"
+author: "Ye Ji Choi"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    embed-resources: true
+editor: visual
+---
+
+```{r libraries, echo=F, include = F}
+library(SomaDataIO)
+library(SomaPlotr)
+library(purrr)
+library(tidyverse)
+library(dplyr)
+library(arsenal)
+library(ggplot2)
+library(tidyr)
+library(DEqMS)
+library(fgsea)
+library(ggrepel)
+library(labelled)
+library(glmnet)
+library(broom)
+library(knitr)
+library(ensr)
+library(kableExtra)
+library(gt)
+library(psych)
+library(growthcleanr)
+library(behaviorchange)
+library(ppcor)
+library(correlation)
+library(grid)
+library(forestploter)
+```
+
+```{r load-data, echo = F, include = F}
+# Load SOMAScan analytes data (analytes)
+load("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Combined SomaScan/analytes.Rdata")
+
+# Panther + RH/RH2/IMP dat (sens_dat)
+load("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_rh_rh2_imp_data.RData")
+
+# Panther + RH/RH2/IMP scaled (cleanData_sens)
+load("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_data_rh_rh2_imp_std.RData")
+```
+
+# Differential expression (Sensitivity analysis including RH)
+
+#### Low vs. high risk
+
+```{r de-sens, echo = F}
+# Look at differential expressed proteins (DEPs) between low and high risk in PANTHER
+# filter soma scan data to baseline data only and log transform
+soma_risk <- sens_dat %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id") %>%
+  dplyr::select(starts_with("seq"))
+y <- t(soma_risk)
+y <- log2(y)
+
+# Design matrix
+cond = as.factor(sens_dat$group_risk)
+design_mat <- model.matrix(~0 + group_risk, data = sens_dat)
+colnames(design_mat) = gsub("group_risk","",colnames(design_mat))
+# Fit
+contrast = makeContrasts(contrasts = c("High-Low"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+res_save <- res %>%
+  rownames_to_column("AptName") %>%
+  dplyr::select(-c(Target, TargetFullName)) %>%
+  left_join(analytes, by = "AptName")
+
+write.csv(res_save, "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/low_high_risk_rh_de.csv", row.names = T)
+
+```
+
+```{r de-volcano-plot-sens, warning = F, echo = F}
+# volcano plot
+res$log.P.Value = -log10(res$P.Value)
+ggplot(res, aes(x = logFC, y =log.P.Value )) + 
+    geom_point(size=0.5 )+
+    theme_bw(base_size = 16) + # change theme
+    xlab(expression("log2(high/low)")) + # x-axis label
+    ylab(expression("-log10(P-value)")) + # y-axis label
+    geom_vline(xintercept = c(-0.5,0.5), colour = "red") + # Add fold change cutoffs
+    geom_hline(yintercept = 3, colour = "red") + # Add significance cutoffs
+    geom_vline(xintercept = 0, colour = "black") + # Add 0 lines
+    scale_colour_gradient(low = "black", high = "black", guide = FALSE) +
+    geom_text_repel(data=subset(res, abs(logFC)>.5&log.P.Value > 3),
+                    aes(logFC, log.P.Value, label=Target)) # add gene label
+
+plotVolcano(res, 
+            FC = logFC, 
+            p.value = P.Value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0.5,
+            cutoff = 0.05,
+            x.lab = "log2(high/low)") 
+```
+
+#### Tanner stage 1-2 vs. 3-5
+
+```{r de-sens2, echo = F}
+# Look at effect of puberty on proteomics in sens_dat
+# filter soma scan data to baseline data only and log transform & only keep record_ids with tanner stages
+soma_tanner <- sens_dat %>% 
+  arrange(record_id) %>%
+  filter(!is.na(tanner_stage_cat)) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id") %>%
+  dplyr::select(starts_with("seq"))
+y <- t(soma_tanner)
+y <- log2(y)
+# Design matrix
+cond = as.factor(sens_dat$tanner_stage_cat)
+design_mat <- model.matrix(~0 + tanner_stage_cat, data = sens_dat)
+colnames(design_mat) = gsub("tanner_stage_cat","",colnames(design_mat))
+# Fit
+contrast = makeContrasts(contrasts = c("III_V-I_II"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+res_save <- res %>%
+  rownames_to_column("AptName") %>%
+  dplyr::select(-c(Target, TargetFullName)) %>%
+  left_join(analytes, by = "AptName")
+
+write.csv(res_save, "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/tanner_stage_12_345_rh_de.csv", row.names = T)
+
+```
+
+```{r de-volcano-plot-sens2, warning=F, echo = F}
+# volcano plot
+res$log.P.Value = -log10(res$P.Value)
+ggplot(res, aes(x = logFC, y =log.P.Value )) + 
+    geom_point(size=0.5 )+
+    theme_bw(base_size = 16) + # change theme
+    xlab(expression("log2(TS>=3/TS<3)")) + # x-axis label
+    ylab(expression(" -log10(P-value)")) + # y-axis label
+    geom_vline(xintercept = c(-0.5,0.5), colour = "red") + # Add fold change cutoffs
+    geom_hline(yintercept = 3, colour = "red") + # Add significance cutoffs
+    geom_vline(xintercept = 0, colour = "black") + # Add 0 lines
+    scale_colour_gradient(low = "black", high = "black", guide = FALSE) +
+    geom_text_repel(data=subset(res, abs(logFC)>.5&log.P.Value > 3),
+                    aes(logFC, log.P.Value, label=Target)) # add gene label
+
+plotVolcano(res, 
+            FC = logFC, 
+            p.value = P.Value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0.5,
+            cutoff = 0.05,
+            x.lab = "log2(TS>=3/TS<3)") 
+```
+
+#### 3 group DE (Tanner stage 1 vs. 2/3 vs. 4/5)
+```{r anova-de-sens, echo = F}
+aov_tbl <- analytes |>
+  dplyr::select(AptName, SeqId, Target, EntrezGeneSymbol, UniProt)
+
+## Compare Three Groups (TS '1'/'2&3'/'4&5')
+
+### Calculate ANOVAs
+aov_tbl <- aov_tbl |>
+  dplyr::mutate(
+    formula   = purrr::map(AptName, ~ as.formula(paste(.x, "~ tanner_stage_cat_2"))), # create formula
+    aov_model = purrr::map(formula, ~ stats::aov(.x, data = cleanData_sens)),  # fit ANOVA-models
+    aov_smry  = purrr::map(aov_model, summary) |> map(1L),      # summary() method
+    F.stat    = purrr::map(aov_smry, "F value") |> map_dbl(1L), # pull out F-statistic
+    p.value   = purrr::map(aov_smry, "Pr(>F)") |> map_dbl(1L),  # pull out p-values
+    fdr       = p.adjust(p.value, method = "BH")         # FDR multiple testing
+  ) |>
+  arrange(p.value) |>            # re-order by `p-value`
+  dplyr::mutate(rank = row_number())    # add numeric ranks
+
+kbl(head(subset(aov_tbl, select = c("Target", "F.stat", "p.value", "fdr")), 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+
+### Visualize with `ggplot2()`
+target_map <- head(aov_tbl, 12L) |>     # mapping table
+  dplyr::select(AptName, Target)               # SeqId -> Target
+
+plot_tbl <- cleanData_sens |>
+  dplyr::select(tanner_stage_cat_2, target_map$AptName) |>    # top 12 analytes
+  pivot_longer(cols = -tanner_stage_cat_2, names_to = "AptName", values_to = "RFU") |>
+  left_join(target_map, by = "AptName") |>
+  # order factor levels by 'aov_tbl' rank to order plots below
+  dplyr::mutate(tanner_stage_cat_2 = factor(tanner_stage_cat_2, levels = c("I", "II_III", "IV_V")))
+
+```
+
+```{r ggplot-pdfs2, fig.width = 10, fig.height = 7, fig.align = "center", echo = F}
+plot_tbl |>
+  ggplot(aes(x = RFU, fill = tanner_stage_cat_2)) +
+  geom_density(linetype = 0, alpha = 0.25) +
+  scale_fill_manual(values = c("#24135F", "#00A499", "#006BA6")) +
+  facet_wrap(~ Target, ncol = 3) +
+  ggtitle("Probability Density of Top Analytes by ANOVA") +
+  labs(y = "Density", x = "ln(RFU)") +
+  theme(plot.title = element_text(size = 21, face = "bold"),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        legend.position = "top"
+  ) +
+  theme_bw()
+```
+

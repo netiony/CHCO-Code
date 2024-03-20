@@ -1,0 +1,661 @@
+---
+title: "PANTHER Proteomics - Correlations"
+author: "Ye Ji Choi"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    embed-resources: true
+editor: visual
+---
+
+```{r libraries, echo=F, include = F}
+library(SomaDataIO)
+library(SomaPlotr)
+library(purrr)
+library(tidyverse)
+library(dplyr)
+library(arsenal)
+library(ggplot2)
+library(tidyr)
+library(DEqMS)
+library(fgsea)
+library(ggrepel)
+library(labelled)
+library(glmnet)
+library(broom)
+library(knitr)
+library(ensr)
+library(kableExtra)
+library(gt)
+library(psych)
+library(behaviorchange)
+library(ppcor)
+library(correlation)
+library(grid)
+```
+
+```{r load-data, echo = F, include = F}
+# Load correlation function
+source("/Users/choiyej/GitHub/YC_CHCO/R Functions/correlation_function.R")
+
+# Load dictionary function and file
+source("/Users/choiyej/GitHub/YC_CHCO/R Functions/label_harmonized_function.R")
+
+# Load dictionary file (dict)
+load("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_dict.RData")
+
+# Load SOMAScan analytes data (analytes)
+load("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_analytes.RData")
+
+# Panther data (panther)
+load("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_data.RData")
+
+# Panther dat + SOMA scaled (cleanData_panther)
+load("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_data_soma_std.RData")
+```
+
+```{r volcano-plot-function-mod, include=F}
+plotVolcano_mod <- function (data, FC, p.value, labels, identify = FALSE, fc.cutoff = 1, 
+  pt.size = 2.5, text.size = 3, cutoff = 0.05/nrow(data), sig_fc_lab = "Significant & Fold-Change",
+  sig_lab = "Significant", fc_lab = "Fold-Change", ns_lab = "Non-Significant", 
+  sig_fc_lab_col = "#f28482", sig_lab_col = "#f6bd60",
+  fc_lab_col = "#84a59d", ns_lab_col = "#dad7cd",
+  main = NULL, x.lab = NULL, ...) 
+{
+  .fc <- enquo(FC)
+  .p <- enquo(p.value)
+  if (all(pull(data, !!.fc) >= 0)) {
+    warning("It appears you are not passing log2-transformed ", 
+      "fold-change values. Please check.", call. = FALSE)
+  }
+  if (is.null(main)) {
+    main <- "Volcano Plot of Significant Fold Changes"
+  }
+  if (is.null(x.lab)) {
+    x.lab <- bquote(italic(log)[2] ~ (Fold ~ Change))
+  }
+  y.lab <- bquote(-italic(log)[10] ~ (p - value))
+  plot_df <- dplyr::mutate(data, group = case_when((-log10(!!.p) >= 
+    -log10(cutoff)) & (abs(!!.fc) >= fc.cutoff) ~ sig_fc_lab, 
+    -log10(!!.p) >= -log10(cutoff) ~ sig_lab, abs(!!.fc) >= 
+      fc.cutoff ~ fc_lab, TRUE ~ ns_lab), 
+    type = grepl(paste0("^", sig_lab, "|", sig_fc_lab, "|Significant"), group))
+
+  create_col_vector <- function(label_values, colors) {
+    cols <- setNames(colors, label_values)
+    return(cols)
+  }
+  
+  label_values = c(ns_lab, fc_lab, sig_lab, sig_fc_lab)
+  label_colors = c(ns_lab_col, fc_lab_col, sig_lab_col, sig_fc_lab_col)
+  cols <- create_col_vector(label_values, label_colors)
+
+  p <- ggplot(plot_df, aes(x = !!.fc, y = -log10(!!.p), color = group)) + 
+    geom_point(alpha = 0.5, size = pt.size, ...) + scale_color_manual(values = cols, 
+    name = "") + labs(x = x.lab, y = y.lab, title = main) + 
+    geom_vline(xintercept = c(-1, 1) * fc.cutoff, color = "grey", 
+      linetype = "longdash", alpha = 0.75) + geom_vline(xintercept = 0, 
+    color = "grey50", linetype = "solid") + theme_soma() + 
+    NULL
+  if (identify) {
+    p <- p + geom_text(data = dplyr::filter(plot_df, type), 
+      aes(label = !!enquo(labels)), hjust = 0, nudge_x = 0.05, 
+      size = text.size, color = "black", check_overlap = TRUE)
+  }
+  p
+}
+
+```
+# Kendall's rank sum correlations (5 Tanner stage groups)
+
+```{r kendall-corr, warning=F, echo=F, message = F}
+# Find significant ANOVA results between 5 groups of tanner stages (treat tanner stage as categorical)
+aov_tbl <- analytes |>
+  dplyr::select(AptName, SeqId, Target_nodup, EntrezGeneSymbol, UniProt)
+
+aov_tbl_ordinal <- aov_tbl |>
+  dplyr::mutate(
+    formula   = purrr::map(AptName, ~ as.formula(paste(.x, "~ tanner_stage_comp_panther"))), # create formula
+    aov_model = purrr::map(formula, ~ stats::aov(.x, data = cleanData_panther)),  # fit ANOVA-models
+    aov_smry  = purrr::map(aov_model, summary) |> map(1L),      # summary() method
+    F.stat    = purrr::map(aov_smry, "F value") |> map_dbl(1L), # pull out F-statistic
+    p.value   = purrr::map(aov_smry, "Pr(>F)") |> map_dbl(1L),  # pull out p-values
+    fdr       = p.adjust(p.value, method = "BH")         # FDR multiple testing
+  ) |>
+  arrange(p.value) |>            # re-order by `p-value`
+  dplyr::mutate(rank = row_number())    # add numeric ranks
+
+# Select only p < 0.05 for correlation
+aov_tbl_ordinal_top <-subset(aov_tbl_ordinal, p.value < 0.05)$AptName %>% unique()
+
+# Kendall's rank correlations (treat tanner stage as ordinal)
+cleanData_panther$tanner_stage_comp_ord <- as.numeric(cleanData_panther$tanner_stage_comp_panther)
+
+kendall_ts <- corr.test(x = cleanData_panther$tanner_stage_comp_ord, 
+          y = cleanData_panther[aov_tbl_ordinal_top], 
+          method="kendall", 
+          adjust="none", alpha=.05)
+kendall_ts_r <- data.frame(tanner_stage_comp_ord = (kendall_ts$r %>% t() ))
+kendall_ts_p <- data.frame(p.value = (kendall_ts$p %>% t() ))
+kendall_ts_mat <- cbind(kendall_ts_r, kendall_ts_p)
+
+kendall_ts_mat_save <- corr.test(x = cleanData_panther$tanner_stage_comp_ord, 
+          y = cleanData_panther[analytes$AptName], 
+          method="kendall", 
+          adjust="none", alpha=.05)
+kendall_ts_mat_save_r <- data.frame(tanner_stage_comp_ord = (kendall_ts_mat_save$r %>% t() ))
+kendall_ts_mat_save_p <- data.frame(p.value = (kendall_ts_mat_save$p %>% t() ))
+kendall_ts_mat_save <- cbind(kendall_ts_mat_save_r, kendall_ts_mat_save_p)
+
+kendall_ts_mat_save <- kendall_ts_mat_save %>%
+  rownames_to_column(var = "AptName") %>%
+  left_join(analytes, by = "AptName")
+
+write.csv(kendall_ts_mat_save, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/kendall_correlation.csv", 
+          row.names = T)
+
+kendall_ts_mat <- kendall_ts_mat %>%
+  rownames_to_column(var = "AptName") %>%
+  left_join(analytes, by = "AptName") %>%
+  column_to_rownames("Target_nodup") %>%
+  dplyr::select(tanner_stage_comp_ord, p.value, Target)
+
+# Heatmap tables (combined)
+ts_tbl <- function(x){
+  gt(x)  %>%
+    data_color(columns = tanner_stage_comp_ord,
+               method = "numeric",
+               palette = c("#023e8a","#ade8f4",
+                           "#ffffff", 
+                           "#ffe5ec","#d62828"),
+               domain = c(-0.8, -0.2, 
+                          0, 
+                          0.2, 0.8)) %>%
+    tab_options(column_labels.hidden = T) %>% 
+    as_raw_html()
+}
+
+kendall_ts_mat %>% 
+  dplyr::mutate(direction = ifelse(tanner_stage_comp_ord < 0, "Negative", "Positive"), 
+         Target_nodup = row.names(.))  %>% 
+  filter(p.value < 0.05) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  group_by(relevel(factor(direction), "Negative")) %>% 
+  slice_head(n=75) %>% 
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  group_map(~ ts_tbl(.x)) %>%
+  data.frame(.) %>%
+  setNames(., c("Negative\n correlation coefficient", "Positive\n correlation coefficient")) %>%
+  gt() %>%
+  fmt_markdown(columns = TRUE) 
+```
+
+Total number of correlations with p<0.05: `r nrow(subset(kendall_ts_mat, p.value < 0.05))`
+
+Total number of negative correlations with p<0.05: `r nrow(subset(kendall_ts_mat, p.value < 0.05 & tanner_stage_comp_ord <0))`
+
+Total number of positive correlations with p<0.05: `r nrow(subset(kendall_ts_mat, p.value < 0.05 & tanner_stage_comp_ord >0))`
+
+#### Volcano plot of correlation
+
+```{r kendall-volcano, echo = F}
+plotVolcano_mod(kendall_ts_mat, 
+            FC = tanner_stage_comp_ord, 
+            p.value = p.value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0,
+            cutoff = 0.05,
+            x.lab = "Correlation",
+            main = "Kendall's rank sum correlations",
+            pt.size = 1,
+            fc_lab = "p > 0.05",
+            fc_lab_col = "#dad7cd",
+            sig_fc_lab = "p < 0.05") 
+```
+
+#### Positive correlations
+
+```{r kendall-corr-pos, warning=F, echo=F, message = F}
+kendall_ts_mat_positive <- subset(kendall_ts_mat, tanner_stage_comp_ord > 0 & p.value < 0.05) %>% 
+  rownames_to_column("Target_nodup") %>%
+  arrange(p.value)
+
+kendall_ts_mat_positive_analytes <- 
+  kendall_ts_mat_positive %>%
+  left_join(analytes)
+
+# Positive correlation table
+kendall_ts_mat_positive %>%
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  dplyr::mutate(row = (row_number() - 1) %% 29) |>
+  dplyr::mutate(id = row_number(), .by = row) |> 
+  pivot_wider(
+    names_from = id, values_from = -c(id, row),
+    names_vary = "slowest"
+  )  %>%
+  dplyr::select(-row)  %>%
+  gt() %>%
+  tab_header(title = "Positive correlations")  %>%
+  cols_label_with(fn = ~gsub("_\\d+$", "", .x)) %>%
+  cols_label_with(fn = ~gsub("tanner_stage_comp_ord" , "Correlation coefficient", .x)) %>%
+  cols_label_with(fn = ~gsub("Target" , "Protein", .x)) %>%
+  data_color(method = "numeric",
+             palette = c("#eae2b7", "#d62828"),
+             domain = c(0,0.6))
+
+# Box plots
+cleanData_panther %>% 
+  dplyr::select(record_id, tanner_stage_comp_panther_cat, starts_with("seq."))  %>%
+  pivot_longer(cols = starts_with("seq.")) %>%
+  dplyr::rename("AptName" = name) %>%
+  right_join(head(kendall_ts_mat_positive_analytes,20)) %>%
+  ggplot(aes(x=Target, y=value, fill=tanner_stage_comp_panther_cat)) + 
+  geom_boxplot() +
+  facet_wrap(~Target, scale="free") +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.background = element_rect(fill = "white",
+                                        color = "grey"),
+        strip.background = element_rect(fill = "white")) +
+  scale_fill_manual(values = c("#fbc4ab", "#f8ad9d", "#f4978e", "#f08080")) +
+  labs(fill = "Tanner Stage",
+       y = "ln(RFU)",
+       x = NULL)
+```
+
+#### Negative correlations
+
+```{r kendall-corr-neg, warning=F, echo=F, message = F}
+kendall_ts_mat_negative <- subset(kendall_ts_mat, tanner_stage_comp_ord < 0 & p.value < 0.05) %>% 
+  rownames_to_column("Target_nodup") %>%
+  arrange(p.value)
+
+kendall_ts_mat_negative_analytes <- 
+  kendall_ts_mat_negative %>%
+  left_join(analytes)
+
+# Negative correlation table
+kendall_ts_mat_negative %>%
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  dplyr::mutate(row = (row_number() - 1) %% 17) |>
+  dplyr::mutate(id = row_number(), .by = row) |> 
+  pivot_wider(
+    names_from = id, values_from = -c(id, row),
+    names_vary = "slowest"
+  )  %>%
+  dplyr::select(-row)  %>%
+  gt() %>%
+  tab_header(title = "Negative correlations")  %>%
+  cols_label_with(fn = ~gsub("_\\d+$", "", .x)) %>%
+  cols_label_with(fn = ~gsub("tanner_stage_comp_ord" , "Correlation coefficient", .x)) %>%
+  cols_label_with(fn = ~gsub("Target_nodup" , "Protein", .x)) %>%
+  #cols_label(tanner_stage_comp_ord = "correlation coefficient") %>%
+  data_color(method = "numeric",
+             palette = c("#023e8a", "#ade8f4"),
+             domain = c(-1,0))
+
+# Box plots
+cleanData_panther %>% 
+  dplyr::select(record_id, tanner_stage_comp_panther_cat, starts_with("seq.")) %>%
+  pivot_longer(cols = starts_with("seq.")) %>%
+  dplyr::rename("AptName" = name) %>%
+  right_join(head(kendall_ts_mat_negative_analytes,20)) %>%
+  ggplot(aes(x=Target, y=value, fill=tanner_stage_comp_panther_cat)) + 
+    geom_boxplot() +
+    facet_wrap(~Target, scale="free") +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.background = element_rect(fill = "white",
+                                        color = "grey"),
+        strip.background = element_rect(fill = "white")) +
+  scale_fill_manual(values = c("#90e0ef", "#00b4d8", "#0077b6", "#03045e")) +
+  labs(fill = "Tanner Stage",
+       y = "ln(RFU)",
+       x = NULL)
+```
+
+## Partial Kendall's rank sum correlations (5 Tanner stage groups) adjusting for risk
+
+```{r kendall-corr-multilevel, warning=F, echo=F, message = F}
+# Create an empty dataframe to store results
+kendall_partial_ts_df <- data.frame()
+
+# Loop through each element of aov_tbl_ordinal_top
+for (i in seq_along(aov_tbl_ordinal_top)) {
+  
+  # Calculate partial Kendall correlation
+  kendall_partial_ts <- correlation(data = cleanData_panther,
+                                    select = c("tanner_stage_comp_ord", "group_risk"),
+                                    select2 = aov_tbl_ordinal_top[i],
+                                    method = "kendall", 
+                                    partial = TRUE, 
+                                    multilevel = TRUE)
+  
+  # Append the result to the main dataframe
+  kendall_partial_ts_df <- rbind(kendall_partial_ts_df, kendall_partial_ts)
+}
+kendall_partial_ts_df<- as.data.frame(kendall_partial_ts_df)
+colnames(kendall_partial_ts_df) <- c('param1','AptName','tau', "conf.level","lower", "upper","z", "p.value", "method", "n_obs")
+kendall_partial_ts_df <- left_join(kendall_partial_ts_df,analytes)
+
+# Heatmap tables (combined)
+ts_tbl_partial <- function(x){
+  gt(x)  %>%
+    data_color(columns = tau,
+               method = "numeric",
+               palette = c("#023e8a","#ade8f4",
+                           "#ffffff", 
+                           "#ffe5ec","#d62828"),
+               domain = c(-0.8, -0.2, 
+                          0, 
+                          0.2, 0.8)) %>%
+    tab_options(column_labels.hidden = T) %>% 
+    as_raw_html()
+}
+
+kendall_partial_ts_df %>% 
+  dplyr::mutate(direction = ifelse(tau < 0, "Negative", "Positive"))  %>% 
+  filter(p.value < 0.05) %>%
+  arrange(desc(abs(tau))) %>% 
+  group_by(relevel(factor(direction), "Negative")) %>% 
+  slice_head(n=75) %>% 
+  dplyr::select(Target, tau) %>%
+  group_map(~ ts_tbl_partial(.x)) %>%
+  data.frame(.) %>%
+  setNames(., c("Negative\n correlation coefficient", "Positive\n correlation coefficient")) %>%
+  gt() %>%
+  fmt_markdown(columns = TRUE) 
+```
+
+Total number of correlations with p<0.05: `r nrow(subset(kendall_partial_ts_df, p.value < 0.05))`
+
+Total number of negative correlations with p<0.05: `r nrow(subset(kendall_partial_ts_df, p.value < 0.05 & tau <0))`
+
+Total number of positive correlations with p<0.05: `r nrow(subset(kendall_partial_ts_df, p.value < 0.05 & tau >0))`
+
+#### Volcano plot of correlation
+
+```{r kendall-multilevel-volcano, echo = F}
+plotVolcano_mod(kendall_partial_ts_df, 
+            FC = tau, 
+            p.value = p.value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0,
+            cutoff = 0.05,
+            x.lab = "Correlation",
+            main = "Kendall's rank sum multi-level correlations (adjusting for risk)",
+            pt.size = 1,
+            fc_lab = "p > 0.05",
+            fc_lab_col = "#dad7cd",
+            sig_fc_lab = "p < 0.05") 
+```
+
+# Spearman correlations (5 Tanner stage groups)
+
+```{r spearman-corr, warning=F, echo=F, message = F}
+# Spearman correlations (treat tanner stage as ordinal)
+spearman_ts <- correlation_table_minimal(data = label_harmonized(cleanData_panther, dict),
+                                         relevant_vars = c("tanner_stage_comp_ord", aov_tbl_ordinal_top),
+                                         cor_method = "spearman",
+                                         n_cols = 1,
+                                         dict = dict,
+                                         raw = T) %>%
+  dplyr::rename(tanner_stage_comp_ord = `Tanner stage`,
+                p.value = `p-value`) %>%
+  mutate(tanner_stage_comp_ord = as.numeric(tanner_stage_comp_ord))
+
+spearman_ts_save <- correlation_table_minimal(data = label_harmonized(cleanData_panther, dict),
+                                              relevant_vars = c("tanner_stage_comp_ord", analytes$AptName),
+                                              cor_method = "spearman",
+                                              n_cols = 1,
+                                              dict = dict,
+                                              raw = T) %>%
+  dplyr::rename(tanner_stage_comp_ord = `Tanner stage`,
+                p.value = `p-value`) %>%
+  mutate(tanner_stage_comp_ord = as.numeric(tanner_stage_comp_ord))
+
+spearman_ts_save <- spearman_ts_save %>%
+  rownames_to_column(var = "Target_nodup") %>%
+  left_join(analytes, by = "Target_nodup")
+
+write.csv(spearman_ts_save, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/spearman_correlation.csv", 
+          row.names = T)
+
+# Heatmap tables (combined)
+spearman_ts %>% 
+  dplyr::mutate(direction = ifelse(tanner_stage_comp_ord < 0, "Negative", "Positive"), 
+         Target_nodup = row.names(.))  %>% 
+  left_join(analytes, by = "Target_nodup") %>% 
+  filter(p.value < 0.05) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  group_by(relevel(factor(direction), "Negative")) %>% 
+  slice_head(n=75) %>% 
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  group_map(~ ts_tbl(.x)) %>%
+  data.frame(.) %>%
+  setNames(., c("Negative\n correlation coefficient", "Positive\n correlation coefficient")) %>%
+  gt() %>%
+  fmt_markdown(columns = TRUE) 
+```
+Total number of correlations with p<0.05: `r nrow(subset(spearman_ts, p.value < 0.05))`
+
+Total number of negative correlations with p<0.05: `r nrow(subset(spearman_ts, p.value < 0.05 & tanner_stage_comp_ord <0))`
+
+Total number of positive correlations with p<0.05: `r nrow(subset(spearman_ts, p.value < 0.05 & tanner_stage_comp_ord >0))`
+
+#### Volcano plot of correlation
+
+```{r spearman-volcano, echo = F}
+plotVolcano_mod((spearman_ts %>%
+                  rownames_to_column(var = "Target_nodup") %>%
+                  left_join(analytes, by = "Target_nodup")), 
+            FC = tanner_stage_comp_ord, 
+            p.value = p.value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0,
+            cutoff = 0.05,
+            x.lab = "Correlation",
+            main = "Spearman correlations",
+            pt.size = 1,
+            fc_lab = "p > 0.05",
+            fc_lab_col = "#dad7cd",
+            sig_fc_lab = "p < 0.05") 
+```
+
+#### Positive correlations
+
+```{r spearman-corr-pos, warning=F, echo=F, message = F}
+spearman_ts_positive <- subset(spearman_ts, tanner_stage_comp_ord > 0 & p.value < 0.05) %>% 
+  rownames_to_column("Target_nodup") %>%
+  arrange(p.value)
+
+spearman_ts_positive_analytes <- 
+  spearman_ts_positive %>%
+  left_join(analytes)
+
+# Positive correlation table
+spearman_ts_positive %>%
+  left_join(analytes, by = "Target_nodup") %>% 
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  dplyr::mutate(row = (row_number() - 1) %% 29) |>
+  dplyr::mutate(id = row_number(), .by = row) |> 
+  pivot_wider(
+    names_from = id, values_from = -c(id, row),
+    names_vary = "slowest"
+  )  %>%
+  dplyr::select(-row)  %>%
+  gt() %>%
+  tab_header(title = "Positive correlations")  %>%
+  cols_label_with(fn = ~gsub("_\\d+$", "", .x)) %>%
+  cols_label_with(fn = ~gsub("tanner_stage_comp_ord" , "Correlation coefficient", .x)) %>%
+  cols_label_with(fn = ~gsub("Target" , "Protein", .x)) %>%
+  data_color(method = "numeric",
+             palette = c("#eae2b7", "#d62828"),
+             domain = c(0,0.7))
+
+# Box plots
+cleanData_panther %>% 
+  dplyr::select(record_id, tanner_stage_comp_panther_cat, starts_with("seq."))  %>%
+  pivot_longer(cols = starts_with("seq.")) %>%
+  dplyr::rename("AptName" = name) %>%
+  right_join(head(spearman_ts_positive_analytes,20)) %>%
+  ggplot(aes(x=Target, y=value, fill=tanner_stage_comp_panther_cat)) + 
+  geom_boxplot() +
+  facet_wrap(~Target, scale="free") +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.background = element_rect(fill = "white",
+                                        color = "grey"),
+        strip.background = element_rect(fill = "white")) +
+  scale_fill_manual(values = c("#fbc4ab", "#f8ad9d", "#f4978e", "#f08080")) +
+  labs(fill = "Tanner Stage",
+       y = "ln(RFU)",
+       x = NULL)
+```
+
+#### Negative correlations
+
+```{r spearman-corr-neg, warning=F, echo=F, message = F}
+spearman_ts_negative <- subset(spearman_ts, tanner_stage_comp_ord < 0 & p.value < 0.05) %>% 
+  rownames_to_column("Target_nodup") %>%
+  arrange(p.value)
+
+spearman_ts_negative_analytes <- 
+  spearman_ts_negative %>%
+  left_join(analytes)
+
+# Negative correlation table
+spearman_ts_negative %>%
+  left_join(analytes, by = "Target_nodup") %>% 
+  dplyr::select(Target, tanner_stage_comp_ord) %>%
+  arrange(desc(abs(tanner_stage_comp_ord))) %>% 
+  dplyr::mutate(row = (row_number() - 1) %% 17) |>
+  dplyr::mutate(id = row_number(), .by = row) |> 
+  pivot_wider(
+    names_from = id, values_from = -c(id, row),
+    names_vary = "slowest"
+  )  %>%
+  dplyr::select(-row)  %>%
+  gt() %>%
+  tab_header(title = "Negative correlations")  %>%
+  cols_label_with(fn = ~gsub("_\\d+$", "", .x)) %>%
+  cols_label_with(fn = ~gsub("tanner_stage_comp_ord" , "Correlation coefficient", .x)) %>%
+  cols_label_with(fn = ~gsub("Target" , "Protein", .x)) %>%
+  #cols_label(tanner_stage_comp_ord = "correlation coefficient") %>%
+  data_color(method = "numeric",
+             palette = c("#023e8a", "#ade8f4"),
+             domain = c(-1,0))
+
+# Box plots
+cleanData_panther %>% 
+  dplyr::select(record_id, tanner_stage_comp_panther_cat, starts_with("seq.")) %>%
+  pivot_longer(cols = starts_with("seq.")) %>%
+  dplyr::rename("AptName" = name) %>%
+  right_join(head(spearman_ts_negative_analytes,20)) %>%
+  ggplot(aes(x=Target, y=value, fill=tanner_stage_comp_panther_cat)) + 
+    geom_boxplot() +
+    facet_wrap(~Target, scale="free") +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.background = element_rect(fill = "white",
+                                        color = "grey"),
+        strip.background = element_rect(fill = "white")) +
+  scale_fill_manual(values = c("#90e0ef", "#00b4d8", "#0077b6", "#03045e")) +
+  labs(fill = "Tanner Stage",
+       y = "ln(RFU)",
+       x = NULL)
+```
+
+## Partial Spearman's correlations (5 Tanner stage groups) adjusting for risk
+
+```{r spearman-corr-multilevel, warning=F, echo=F, message = F}
+# Create an empty dataframe to store results
+spearman_partial_ts_df <- data.frame()
+
+# Loop through each element of aov_tbl_ordinal_top
+for (i in seq_along(aov_tbl_ordinal_top)) {
+  
+  # Calculate partial spearman correlation
+  spearman_partial_ts <- correlation(data = cleanData_panther,
+                                    select = c("tanner_stage_comp_ord", "group_risk"),
+                                    select2 = aov_tbl_ordinal_top[i],
+                                    method = "spearman", 
+                                    partial = TRUE, 
+                                    multilevel = TRUE)
+  
+  # Append the result to the main dataframe
+  spearman_partial_ts_df <- rbind(spearman_partial_ts_df, spearman_partial_ts)
+}
+spearman_partial_ts_df<- as.data.frame(spearman_partial_ts_df)
+colnames(spearman_partial_ts_df) <- c('param1','AptName','tau', "conf.level","lower", "upper","z", "p.value", "method", "n_obs")
+spearman_partial_ts_df <- left_join(spearman_partial_ts_df,analytes)
+
+# Heatmap tables (combined)
+ts_tbl_partial <- function(x){
+  gt(x)  %>%
+    data_color(columns = tau,
+               method = "numeric",
+               palette = c("#023e8a","#ade8f4",
+                           "#ffffff", 
+                           "#ffe5ec","#d62828"),
+               domain = c(-0.8, -0.2, 
+                          0, 
+                          0.2, 0.8)) %>%
+    tab_options(column_labels.hidden = T) %>% 
+    as_raw_html()
+}
+
+spearman_partial_ts_df %>% 
+  dplyr::mutate(direction = ifelse(tau < 0, "Negative", "Positive"))  %>% 
+  filter(p.value < 0.05) %>%
+  arrange(desc(abs(tau))) %>% 
+  group_by(relevel(factor(direction), "Negative")) %>% 
+  slice_head(n=75) %>% 
+  dplyr::select(Target, tau) %>%
+  group_map(~ ts_tbl_partial(.x)) %>%
+  data.frame(.) %>%
+  setNames(., c("Negative\n correlation coefficient", "Positive\n correlation coefficient")) %>%
+  gt() %>%
+  fmt_markdown(columns = TRUE) 
+```
+
+Total number of correlations with p<0.05: `r nrow(subset(spearman_partial_ts_df, p.value < 0.05))`
+
+Total number of negative correlations with p<0.05: `r nrow(subset(spearman_partial_ts_df, p.value < 0.05 & tau <0))`
+
+Total number of positive correlations with p<0.05: `r nrow(subset(spearman_partial_ts_df, p.value < 0.05 & tau >0))`
+
+#### Volcano plot of correlation
+
+```{r spearman-multilevel-volcano, echo = F}
+plotVolcano_mod(spearman_partial_ts_df, 
+            FC = tau, 
+            p.value = p.value, 
+            label = Target, 
+            identify = T,
+            fc.cutoff = 0,
+            cutoff = 0.05,
+            x.lab = "Correlation",
+            main = "Spearman's multi-level correlations (adjusting for risk)",
+            pt.size = 1,
+            fc_lab = "p > 0.05",
+            fc_lab_col = "#dad7cd",
+            sig_fc_lab = "p < 0.05") 
+```
+
