@@ -87,6 +87,8 @@ clean_ind <- clean %>%
                                     1,0),
                 rc_ind = if_else(procedure == "renal_clearance_testing" & !is.na(date), 
                                 1,0),
+                hemo_ind = if_else(rowSums(!is.na(dplyr::select(., starts_with("gfr_raw")))) > 0, 
+                                   1,0),
                 dxa_ind = if_else(procedure == "dxa" & !is.na(date), 
                                   1,0),
                 mri_ind = if_else(procedure == "bold_mri" & !is.na(date), 
