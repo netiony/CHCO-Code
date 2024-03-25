@@ -1,0 +1,261 @@
+---
+title: "IMPROVE-T2D MMTT mixed models"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(tableone)
+library(dplyr)
+library(knitr)
+library(ggpubr)
+library(lme4)
+library(nlme)
+library(emmeans)
+library(sjPlot)
+library(effects)
+
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+
+options(scipen=999)
+
+#home_dir = ifelse(.Platform$OS.type != "unix","/Volumes/Shared/Shared Projects/Laura/Peds Endo/Nadeau/IMPROVE-T2D/Data raw","")
+#knitr::opts_knit$set(root.dir = home_dir)
+
+```
+
+```{r data, include=FALSE}
+#setwd(home_dir)
+alldata <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Nadeau/IMPROVE-T2D/Data raw/IMPROVET2D-MMTTVariables_DATA_2024-03-03_1411.csv")
+
+# select the participants
+# IT2D-2,3,5,6,8,11-16, 18-20
+data <- alldata %>% filter(subject_id %in% c("IT_02","IT_03","IT_05","IT_06","IT_08","IT_11","IT_12","IT_13","IT_14","IT_15","IT_16","IT_18","IT_19","IT_20"))
+
+# separate variables into MMTT and screening variables
+screen <- data %>% filter(redcap_event_name=="screening_arm_1") %>% 
+  select(subject_id,age_current,gender,screen_bmi,screen_bmi_percentile,screen_weight,hba1c,a1c_pre)
+mmtt <- data %>% filter(redcap_event_name=="study_visits_arm_1") %>% select(subject_id,study_visit_mttt,mmtt_wt,mmtt_insulin_0,mmtt_insulin_10,
+                          mmtt_insulin_20,mmtt_insulin_30,mmtt_insulin_45,mmtt_insulin_60,mmtt_insulin_90,mmtt_insulin_120,
+                          mmtt_insulin_150,mmtt_insulin_180,mmtt_insulin_210,mmtt_insulin_240,
+                          mmtt_bg_0,mmtt_bg_10,
+                          mmtt_bg_20,mmtt_bg_30,mmtt_bg_45,mmtt_bg_60,mmtt_bg_90,mmtt_bg_120,mmtt_bg_150,mmtt_bg_180,
+                          mmtt_bg_210,mmtt_bg_240,mmtt_hba1c_base,
+                          mmtt_cpep_0,mmtt_cpep_10,
+                          mmtt_cpep_20,mmtt_cpep_30,
+                          #mmtt_cpep_45,
+                          mmtt_cpep_60,mmtt_cpep_90,mmtt_cpep_120,
+                          #mmtt_cpep_150,
+                          mmtt_cpep_180,
+                          #mmtt_cpep_210,
+                          mmtt_cpep_240,
+                          mmtt_yy_0,mmtt_yy_10,
+                          #mmtt_yy_20,
+                          mmtt_yy_30,mmtt_yy_45,mmtt_yy_60,
+                          #mmtt_yy_90,
+                          mmtt_yy_120,
+                          #mmtt_yy_150,
+                          #mmtt_yy_180,
+                          #mmtt_yy_210,
+                          mmtt_yy_240,
+                          glucagon_0,glucagon_10,
+                          #glucagon_20,
+                          glucagon_30,glucagon_45,glucagon_60,
+                          #glucagon_90,
+                          glucagon_120,
+                          #glucagon_150,
+                          #glucagon_180,
+                          #glucagon_210,
+                          glucagon_240,
+                          glp1_0,glp1_10,glp1_30,glp1_45,glp1_60,glp1_120,glp1_240,
+                          ffa_0,
+                          #ffa_10,
+                          ffa_30,
+                          #ffa_45,
+                          ffa_60,ffa_120,ffa_240)
+# Keep pre-surgery and 3 month visits
+mmtt <- mmtt %>% filter(study_visit_mttt %in% c(1,2))
+# create separate dataframes for each assay - might make reshaping a bit easier since things were measured at different time points
+insulin <- mmtt %>% select(subject_id,study_visit_mttt,mmtt_insulin_0,mmtt_insulin_10,
+                          mmtt_insulin_20,mmtt_insulin_30,mmtt_insulin_45,mmtt_insulin_60,mmtt_insulin_90,mmtt_insulin_120,
+                          mmtt_insulin_150,mmtt_insulin_180,mmtt_insulin_210,mmtt_insulin_240)
+glucose <- mmtt %>% select(subject_id,study_visit_mttt,mmtt_bg_0,mmtt_bg_10,
+                          mmtt_bg_20,mmtt_bg_30,mmtt_bg_45,mmtt_bg_60,mmtt_bg_90,mmtt_bg_120,mmtt_bg_150,mmtt_bg_180,
+                          mmtt_bg_210,mmtt_bg_240)
+cpep <- mmtt %>% select(subject_id,study_visit_mttt,mmtt_cpep_0,mmtt_cpep_10,
+                          mmtt_cpep_20,mmtt_cpep_30,mmtt_cpep_60,mmtt_cpep_90,mmtt_cpep_120,
+                          mmtt_cpep_180,mmtt_cpep_240)
+pyy <- mmtt %>% select(subject_id,study_visit_mttt,mmtt_yy_0,mmtt_yy_10,
+                          mmtt_yy_30,mmtt_yy_45,mmtt_yy_60,mmtt_yy_120,mmtt_yy_240)
+glucagon <- mmtt %>% select(subject_id,study_visit_mttt,glucagon_0,glucagon_10,glucagon_30,glucagon_45,glucagon_60,
+                          glucagon_120,glucagon_240)
+glp1 <- mmtt %>% select(subject_id,study_visit_mttt,glp1_0,glp1_10,glp1_30,glp1_45,glp1_60,glp1_120,glp1_240)
+ffa <- mmtt %>% select(subject_id,study_visit_mttt,ffa_0,ffa_30,ffa_60,ffa_120,ffa_240)
+
+# create "doubly long" dataset
+insulin_long <- reshape(insulin, direction = "long", varying = c("mmtt_insulin_0","mmtt_insulin_10",
+                          "mmtt_insulin_20","mmtt_insulin_30","mmtt_insulin_45","mmtt_insulin_60","mmtt_insulin_90","mmtt_insulin_120",
+                          "mmtt_insulin_150","mmtt_insulin_180","mmtt_insulin_210","mmtt_insulin_240"), 
+                          v.names = "mmtt_insulin",times = c(0,10,20,30,45,60,90,120,150,180,210,240),
+                          idvar = c("subject_id","study_visit_mttt"))
+insulin_long <- insulin_long %>% arrange(subject_id,study_visit_mttt,time)
+
+glucose_long <- reshape(glucose, direction = "long", varying = c("mmtt_bg_0","mmtt_bg_10",
+                          "mmtt_bg_20","mmtt_bg_30","mmtt_bg_45","mmtt_bg_60","mmtt_bg_90","mmtt_bg_120","mmtt_bg_150","mmtt_bg_180",
+                          "mmtt_bg_210","mmtt_bg_240"), 
+                          v.names = "mmtt_bg",times = c(0,10,20,30,45,60,90,120,150,180,210,240),
+                          idvar = c("subject_id","study_visit_mttt"))
+glucose_long <- glucose_long %>% arrange(subject_id,study_visit_mttt,time)
+
+cpep_long <- reshape(cpep, direction = "long", varying = c("mmtt_cpep_0","mmtt_cpep_10",
+                          "mmtt_cpep_20","mmtt_cpep_30","mmtt_cpep_60","mmtt_cpep_90","mmtt_cpep_120",
+                          "mmtt_cpep_180","mmtt_cpep_240"), 
+                          v.names = "mmtt_cpep",times = c(0,10,20,30,60,90,120,180,240),
+                          idvar = c("subject_id","study_visit_mttt"))
+cpep_long <- cpep_long %>% arrange(subject_id,study_visit_mttt,time)
+
+pyy_long <- reshape(pyy, direction = "long", varying = c("mmtt_yy_0","mmtt_yy_10",
+                          "mmtt_yy_30","mmtt_yy_45","mmtt_yy_60","mmtt_yy_120","mmtt_yy_240"), 
+                          v.names = "mmtt_yy",times = c(0,10,30,45,60,120,240),
+                          idvar = c("subject_id","study_visit_mttt"))
+pyy_long <- pyy_long %>% arrange(subject_id,study_visit_mttt,time)
+
+glucagon_long <- reshape(glucagon, direction = "long", varying = c("glucagon_0","glucagon_10","glucagon_30","glucagon_45","glucagon_60",
+                          "glucagon_120","glucagon_240"), 
+                          v.names = "glucagon",times = c(0,10,30,45,60,120,240),
+                          idvar = c("subject_id","study_visit_mttt"))
+glucagon_long <- glucagon_long %>% arrange(subject_id,study_visit_mttt,time)
+
+glp1_long <- reshape(glp1, direction = "long", varying = c("glp1_0","glp1_10","glp1_30","glp1_45","glp1_60","glp1_120","glp1_240"), 
+                          v.names = "glp1",times = c(0,10,30,45,60,120,240),
+                          idvar = c("subject_id","study_visit_mttt"))
+glp1_long <- glp1_long %>% arrange(subject_id,study_visit_mttt,time)
+
+ffa_long <- reshape(ffa, direction = "long", varying = c("ffa_0","ffa_30","ffa_60","ffa_120","ffa_240"), 
+                          v.names = "ffa",times = c(0,30,60,120,240),
+                          idvar = c("subject_id","study_visit_mttt"))
+ffa_long <- ffa_long %>% arrange(subject_id,study_visit_mttt,time)
+```
+
+# Methods
+
+Mixed effects models were used to test the difference between MMTT labs before and after bariatric surgery, while accounting for the correlation of repeated measures within a participant. Estimated marginal means were calculated for each timepoint of the MMTT within a visit, and pairwise comparisons were used to test whether each timepoint differed across visits.
+
+# Results
+
+```{r echo=FALSE, include=FALSE}
+# need to turn this into a function
+#mod <- lme(mmtt_insulin ~ study_visit_mttt*as.factor(time),random=~1|subject_id,data = insulin_long,na.action = na.omit)
+#anova <- anova.lme(mod, type="marginal")
+#means <- emmeans(mod,c("study_visit_mttt","time"))
+#prs <-  pairs(means,adjust="tukey",by="time")
+
+mixed <- function(data, outcome){
+  data <- as.data.frame(data)
+  data$time <- as.factor(data$time)
+  form = as.formula(paste0(outcome,"~ study_visit_mttt*time"))
+  #mod <- lme(mmtt_insulin ~ study_visit_mttt*as.factor(time),random=~1|subject_id,data = insulin_long,na.action = na.omit)
+  mod <- lme(as.formula(form),random=~1|subject_id,data = data,na.action = na.omit, correlation = corCompSymm(form = ~1|subject_id))
+  anova <- anova.lme(mod, type="marginal")
+  m <- emmeans(mod,c("study_visit_mttt","time"))
+  prs <-  pairs(m,adjust="tukey",by="time")
+  plot_dat <- data$outcome
+  #p <- interaction.plot(x.factor = as.factor(data$time), trace.factor = data$study_visit_mttt, response = eval(quote(data[,outcome])))
+  #p <- plot_model(mod,data = insulin_long, type="int", terms=c("time","study_visit_mttt", ci.lvl=0.95))
+  # p = ggplot(data,aes_string(x = "time", y = outcome, group = "study_visit_mttt")) +
+  #  geom_line(alpha=0.1) +
+  #  geom_line(data=mod[[2]],aes(x="time",y=as.numeric(emmean),group=1),
+  #          size = 1,inherit.aes = F) +
+  #  theme_bw() +xlab("Timepoint") + ylab(ylab) 
+  #e <- effect("study_visit_mttt*time", mod)
+  #plot(e)
+  return(list(anova,m,prs))
+}
+
+```
+How to interpret the output: the first table is the ANOVA table, which gives parameter estimates for each term in the model. The term labeled "study_visit_mttt:as.factor(time)" tests whether the trajectories of the lab measure during the MMTT differed across visits. The second table provides estimated marginal means for each visit and timepoint. The third table provides p-values for the comparison of each timepoint across visits (e.g., is insulin at 10 minutes different at the visits before and after surgery). 
+
+## Insulin
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = insulin_long, outcome = "mmtt_insulin")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+kable(mod[[3]])
+#mod[[4]]
+```
+
+## Glucose
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = glucose_long, outcome = "mmtt_bg")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+kable(mod[[3]])
+#mod[[4]]
+```
+
+## C-peptide
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = cpep_long, outcome = "mmtt_cpep")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+kable(mod[[3]])
+#mod[[4]]
+```
+
+## PYY
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = pyy_long, outcome = "mmtt_yy")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+kable(mod[[3]])
+#mod[[4]]
+```
+
+## GLP1
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = glp1_long, outcome = "glp1")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+kable(mod[[3]])
+#mod[[4]]
+```
+
+## FFA
+
+```{r echo=FALSE, include=TRUE}
+mod <- mixed(data = ffa_long, outcome = "ffa")
+```
+
+```{r echo=FALSE}
+kable(mod[[1]])
+kable(mod[[2]])
+kable(mod[[3]])
+#mod[[4]]
+```

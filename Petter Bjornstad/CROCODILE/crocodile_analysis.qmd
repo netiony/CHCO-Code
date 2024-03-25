@@ -8,6 +8,7 @@ format:
     toc-depth: 5
     toc-location: left
     code-fold: true
+    embed-resources: true
 editor: visual
 ---
 
@@ -26,6 +27,12 @@ library(emmeans)
 library(table1)
 library(ggpubr)
 library(arsenal)
+library(Hmisc)
+library(lme4)
+library(nlme)
+library(knitr)
+library(MASS)
+options(scipen = 999)
 use_python("/usr/bin/python3", required = TRUE)
 ```
 
@@ -44,14 +51,12 @@ from scipy.stats import mannwhitneyu
 
 # Import data and variable names
 df = pd.read_csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", low_memory=False)
-exclude = pd.read_csv("/Users/choiyej/GitHub/YC_CHCO/CROCODILE/exclude_list.csv", low_memory=False)
+exclude = pd.read_csv("/Volumes/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/exclude_list.csv", low_memory=False)
 var_names = pd.read_csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv", low_memory=False)
-vw = pd.read_csv("/Volumes/Peds Endo/Petter Bjornstad/PENGUIN/Background/voxelwise_means_combined.csv", low_memory=False)
 # Create dictionary of variable names
 var_dict = var_names.set_index('variable_name')['label'].to_dict()
 # Subset to CROCODILE
 df = df.loc[df["study"]=="CROCODILE"]
-vw = vw.loc[vw["record_id"].str.startswith("CRC", na = False)]
 # Get last values for each visit
 df = df.groupby(by=["record_id", "visit"]).agg("last").reset_index()
 # Create urine albumin excretion variable (general 24 hrs)
@@ -60,8 +65,6 @@ df = df.assign(aer_24 = (df.u24_mab * df.u24_vl) / 1440)
 df["height_adj_total_kidney_volume"] = df["total_kidney_volume_ml"] / (df["height"] / 100)
 df["height_adj_right_kidney_volume"] = df["right_kidney_volume_ml"] / (df["height"] / 100)
 df["height_adj_left_kidney_volume"] = df["left_kidney_volume_ml"] / (df["height"] / 100)
-# Merge voxelwise analysis means
-df = pd.merge(df, vw, on = "record_id", how = "outer")
 # Exclude any removed participants
 df = df.loc[df["participation_status"] == "Participated"]
 # Average left/right cortex
@@ -86,7 +89,8 @@ df["avg_c_adc"] = df[["adc_left", "adc_right"]].mean(axis=1)
 # Average left/right PET Voxel wise
 df["avg_m_k2_wo_cyst_vw"] = df[["lm_k2_wo_cyst_vw", "rm_k2_wo_cyst_vw"]].mean(axis=1)
 df["avg_c_k2_wo_cyst_vw"] = df[["lc_k2_wo_cyst_vw", "rc_k2_wo_cyst_vw"]].mean(axis=1)
-
+# M/I
+df["m_i"] = df["p2_raw_m"] / df["p2_steady_state_insulin"]
 excluded_df = pd.merge(df, exclude, on='record_id')
 
 # Categorical variables
@@ -96,495 +100,2849 @@ groupby = "group"
 
 # Descriptive Tables
 
-```{r}
+```{r include = F}
+source("/Users/choiyej/GitHub/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/correlation_function.R")
+source("/Users/choiyej/GitHub/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/label_harmonized_function.R")
+
 dat <- py$df
 dat_exc <- py$excluded_df
+crc_dxa <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/CRC_extremities_lean_mass.csv")
+dat <- dat %>% left_join(crc_dxa)
+dat <- dat %>% mutate(appendicular_lean_mass = left_arm_lean_g + right_arm_lean_g + left_leg_lean_g + right_leg_lean_g,
+                      musclemass = (1.12 * appendicular_lean_mass) - 0.63)
+dict <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv")
+dict <- label_harmonized_dict(dat, dict)
+dict <- dict %>%
+  mutate(gbm_thick_artmean = "GBM thickness (nm)",
+         p2_gc_m = "GC M-value (mg/kg/min)",
+         appendicular_lean_mass = "Appendicular lean mass",
+         musclemass = "Muscle mass")
+dat$kidney_side <- as.factor(dat$kidney_side)
 
 save(dat, file = "/Volumes/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/croc_data.RData")
 
-table_one <- tableby(group ~ age + sex + fe(race) + weight + height + kwt(bmi, "Nmiss", "median", "q1q3", "range") +  hba1c + diabetes_duration + sbp + dbp + pulse + creatinine_s + eGFR_fas_cr +  kwt(acr_u, "Nmiss", "median", "q1q3", "range") + kwt(aer_24, "Nmiss", "median", "q1q3", "range")  + fe(metformin_timepoint) + fe(insulin_med_timepoint) +  fe(sglti_timepoint) + fe(tzd_timepoint) + fe(raasi_timepoint) + fe(statin), data = dat, total=F)
+table_one <- tableby(group ~ age + sex + fe(race) + weight + height + kwt(bmi, "Nmiss", "median", "q1q3", "range") +  hba1c + diabetes_duration + sbp + dbp + pulse + creatinine_s + eGFR_fas_cr + eGFR_CKD_epi+  kwt(acr_u, "Nmiss", "median", "q1q3", "range") + kwt(aer_24, "Nmiss", "median", "q1q3", "range")  + fe(metformin_timepoint) + fe(insulin_med_timepoint) +  fe(sglti_timepoint) + fe(tzd_timepoint) + fe(raasi_timepoint) + fe(statin) + kidney_side + appendicular_lean_mass + musclemass, data = dat, total=F)
 
-table_dxa <- tableby(group ~ dexa_body_fat + dexa_fat_kg + dexa_lean_kg + dexa_trunk_kg + p2_raw_m + p2_raw_leanm + kwt(p1_ffa_suppression, "Nmiss", "median", "q1q3", "range") + kwt(p2_ffa_suppression, "Nmiss", "median", "q1q3", "range"), data = dat, total=F)
+table_dxa <- tableby(group ~ dexa_body_fat + dexa_fat_kg + dexa_lean_kg + dexa_trunk_kg + p2_raw_m + p2_raw_leanm + p2_gc_m + p2_gc_leanm + baseline_ffa, data = dat, total=F)
 
-table_kidney <- tableby(group ~ gfr_raw_plasma + erpf_raw_plasma + rvr + glomerular_pressure + total_kidney_volume_ml + left_kidney_volume_ml + right_kidney_volume_ml + avg_pcascl + pcasl3d_left + pcasl3d_right + avg_c_r2 + bold_l_bl_cortex + bold_r_bl_cortex + avg_m_r2 + bold_l_bl_medulla + bold_r_bl_medulla + avg_m_fsoc + bold_l_pf_medulla + bold_r_pf_medulla + avg_c_adc + adc_left + adc_right, data = dat, total=F)
+table_kidney <- tableby(group ~ gfr_raw_plasma + erpf_raw_plasma + rvr + glomerular_pressure + total_kidney_volume_ml + left_kidney_volume_ml + right_kidney_volume_ml + avg_pcascl + pcasl3d_left + pcasl3d_right + avg_c_r2 + bold_l_bl_cortex + bold_r_bl_cortex + avg_m_r2 + bold_l_bl_medulla + bold_r_bl_medulla + avg_m_fsoc + fsoc_l_medulla + fsoc_r_medulla + avg_c_adc + adc_left + adc_right, data = dat, total=F)
 
 table_morpho <- tableby(group ~ fia +	glom_tuft_area +	glom_volume_weibel +	glom_volume_wiggins +	glom_volume_con +	mes_matrix_area +	mes_index +	mes_volume_weibel +	mes_volume_wiggins +	mes_volume_con +	glom_nuc_count, data = dat, total=F)
 #  + kwt(gbm_thick_harmmean, "Nmiss", "median", "q1q3", "range") + kwt(gbm_thick_artmean, "Nmiss", "median", "q1q3", "range")
 
-table_pet <- tableby(group ~ lc_f +	rc_f +	avg_c_f +	lm_f +	rm_f +	avg_m_f +	lc_k1 +	rc_k1 +	avg_c_k1 +	lm_k1 +	rm_k1 + avg_m_k1 + lc_k2_wo_cyst_vw + rc_k2_wo_cyst_vw + avg_c_k2_wo_cyst_vw + lm_k2_wo_cyst_vw + rm_k2_wo_cyst_vw + avg_m_k2_wo_cyst_vw + lc_k2 + rc_k2 + avg_c_k2 + lm_k2 + rm_k2 + avg_m_k2, data = dat_exc, total=F)
+table_pet <- tableby(group ~ lc_f +	rc_f +	avg_c_f +	lm_f +	rm_f +	avg_m_f +	lc_k1 +	rc_k1 +	avg_c_k1 +	lm_k1 +	rm_k1 + avg_m_k1 + lc_k2_wo_cyst_vw + rc_k2_wo_cyst_vw + avg_c_k2_wo_cyst_vw + lm_k2_wo_cyst_vw + rm_k2_wo_cyst_vw + avg_m_k2_wo_cyst_vw + lc_k2 + rc_k2 + avg_c_k2 + lm_k2 + rm_k2 + avg_m_k2 , data = dat_exc, total=F)
 
-table_biopsy <- tableby(group ~ kidney_side, data = dat, total=F)
+table_lipids <- tableby(group ~ cholesterol + ldl + hdl + kwt(triglycerides, "median", "q1q3"), data = dat, total=F)
 ```
 
 ```{r results='asis'}
-summary(table_one, pfootnote = T, digits = 2, digits.p = 3, digits.pct = 0)
+summary(table_one, pfootnote = T, digits = 1, digits.p = 3, digits.pct = 0)
+summary(table_dxa, pfootnote = T, digits = 1, digits.p = 3, digits.pct = 0)
+summary(table_kidney, pfootnote = T, digits = 3, digits.p = 3, digits.pct = 0)
+summary(table_morpho, pfootnote = T, digits = 1, digits.p = 3, digits.pct = 0)
+summary(table_pet, pfootnote = T, digits = 1, digits.p = 3, digits.pct = 0)
+summary(table_lipids, pfootnote = T, digits = 1, digits.p = 3, digits.pct = 0)
+```
+
+```{r include = F}
 t.test(dat$age ~ dat$group, var.equal=F)
-summary(table_dxa, pfootnote = T, digits = 1, digits.p = 2, digits.pct = 0)
-summary(table_kidney, pfootnote = T, digits = 1, digits.p = 2, digits.pct = 0)
-summary(table_morpho, pfootnote = T, digits = 1, digits.p = 2, digits.pct = 0)
-summary(table_pet, pfootnote = T, text=T, digits = 1, digits.p = 2, digits.pct = 0)
-summary(table_biopsy, pfootnote = T, digits = 1, digits.p = 2, digits.pct = 0)
+p1_nefa <- lm(p1_ffa_suppression ~ group + baseline_ffa + dexa_body_fat, data = dat)
+summary(p1_nefa)
+lsmeans(p1_nefa, "group")
+p2_nefa <- lm(p2_ffa_suppression ~ group + baseline_ffa + dexa_body_fat, data = dat)
+summary(p2_nefa)
+lsmeans(p2_nefa, "group")
+```
+
+```{r include = F}
+summary(lm(avg_m_r2 ~ group + avg_m_f, data = dat))
+lsmeans(lm(avg_m_r2 ~ group + avg_m_f, data = dat), specs = "group")
+summary(lm(avg_m_fsoc ~ group + avg_m_f, data = dat))
+lsmeans(lm(avg_m_fsoc ~ group + avg_m_f, data = dat), specs = "group")
+```
+
+```{r include = F}
+summary(lm(avg_c_f ~ p2_gc_m + age + sex + hba1c, data = dat))
+summary(lm(avg_m_f ~ p2_gc_m + age + sex + hba1c, data = dat))
+summary(lm(avg_c_k2 ~ p2_gc_m + age + sex + hba1c, data = dat)) #
+summary(lm(avg_m_k2 ~ p2_gc_m + age + sex + hba1c, data = dat)) #
+
+summary(lm(avg_c_f ~ gbm_thick_artmean + age + sex + hba1c, data = dat))
+summary(lm(avg_m_f ~ gbm_thick_artmean + age + sex + hba1c, data = dat))
+summary(lm(avg_c_k2 ~ gbm_thick_artmean + age + sex + hba1c, data = dat))
+summary(lm(avg_m_k2 ~ gbm_thick_artmean + age + sex + hba1c, data = dat))
 ```
 
 # Correlations
 
 ## Pooled
 
-```{r, include=F}
-# Make python version of df into R version df
-df_R <- py$df
-
-# ggplot(df_R, aes(lc_f, glom_tuft_area)) +
-#   ggtitle("Left F vs. Glomerular tuft area") +
-#   geom_point(aes(color=group)) +
-#   geom_smooth(method=lm, se=F) +
-#   stat_cor(method = "pearson") +
-#   scale_color_manual(values=c('deeppink', 'steelblue'))
-# 
-# ggplot(df_R, aes(acr_u, glom_tuft_area)) +
-#   ggtitle("ASL Left vs. Glomerular tuft area") +
-#   geom_point(aes(color=group)) +
-#   geom_smooth(method=lm, se=F) +
-#   stat_cor(method = "pearson") +
-#   scale_color_manual(values=c('deeppink', 'steelblue'))
-
-
-# Select relevant variables for the correlation matrix
-df_R_correlation <- df_R %>%
-  select(lc_f, 
-         rc_f,
-         lc_k1, 
-         rc_k1, 
-         lc_k2, 
-         rc_k2,
-         adc_left,
-         adc_right,
-         pcasl3d_left,
-         pcasl3d_right,
-         gfr_raw_plasma,
-         acr_u,
-         p1_raw_leanm,
-         p2_raw_leanm,
-         fia,
-         glom_tuft_area,
-         glom_volume_weibel,
-         glom_volume_wiggins,
-         glom_volume_con,
-         mes_matrix_area,
-         mes_index,
-         mes_volume_weibel,
-         mes_volume_wiggins,
-         mes_volume_con,
-         glom_nuc_count
-         )
-
-# Correlation matrix in table format
-M_table <- as.data.frame(cor(y = df_R_correlation[,1:14],
-                             x=df_R_correlation[,15:ncol(df_R_correlation)], 
-                             use = "pairwise.complete.obs")) 
-
-# Compute p-values to add to matrix table
-res2 <- rcorr(as.matrix(df_R_correlation))
-corr_pval <- as.data.frame(res2$P) %>%
-  select(lc_f, 
-         rc_f,
-         lc_k1, 
-         rc_k1, 
-         lc_k2, 
-         rc_k2,
-         adc_left,
-         adc_right,
-         pcasl3d_left,
-         pcasl3d_right,
-         gfr_raw_plasma,
-         acr_u,
-         p1_raw_leanm,
-         p2_raw_leanm) %>%
-  sapply(pvalue) 
-corr_pval <- as.data.frame(corr_pval) 
-colnames(corr_pval) <- rep("p_value", ncol(corr_pval))
-
-# Add p-values to matrix table
-corr_pval = corr_pval[15:nrow(corr_pval),]
-M_table_p <- bind_cols(M_table, corr_pval) %>%
-  relocate(map(1:ncol(M_table), ~ c(.x, .x + ncol(M_table))) %>% unlist())
-
-# Label variables
-var_R <- as.data.frame(py$var_dict)
-var_R %<>%
-  mutate(lc_f = "Left Cortex F") %>%
-  mutate(rc_f = "Right Cortex F") %>%
-  mutate(lc_k1 = "Left Cortex K1") %>%
-  mutate(rc_k1 = "Right Cortex K1") %>%
-  mutate(lc_k2 = "Left Cortex k2") %>%
-  mutate(rc_k2 = "Right Cortex k2")
-var_R <- var_R[intersect(names(M_table_p), names(var_R))]
-var_R[setdiff(names(M_table_p), names(var_R))] <- "p-value"
-Hmisc::label(M_table_p) = var_R[match(names(M_table_p), names(var_R))]
-var_R <- as.data.frame(py$var_dict)
-
-row.names(M_table_p) <- var_R[match(row.names(M_table_p), names(var_R))]
-```
-
-```{r}
-## Correlation matrix (table)
-# Matrix table with p-values
-kable(M_table_p, 
-      col.names = rep(c("Correlation", "p-value"), ncol(M_table_p)/2), 
-      caption = "Correlation", 
-      digits = c(1,4),
-      align = rep("r", ncol(M_table_p))) %>%
-  kable_styling(bootstrap_options = c("hover"),
-            full_width = F, 
-            fixed_thead = T) %>%
-  add_header_above(header = c(" "=1, 
-                     setNames(2, Hmisc::label(M_table_p)[1]), 
-                     setNames(2, Hmisc::label(M_table_p)[3]), 
-                     setNames(2, Hmisc::label(M_table_p)[5]), 
-                     setNames(2, Hmisc::label(M_table_p)[7]), 
-                     setNames(2, Hmisc::label(M_table_p)[9]), 
-                     setNames(2, Hmisc::label(M_table_p)[11]),
-                     setNames(2, Hmisc::label(M_table_p)[13]), 
-                     setNames(2, Hmisc::label(M_table_p)[15]), 
-                     setNames(2, Hmisc::label(M_table_p)[17]), 
-                     setNames(2, Hmisc::label(M_table_p)[19]), 
-                     setNames(2, Hmisc::label(M_table_p)[21]),
-                     setNames(2, Hmisc::label(M_table_p)[23]),
-                     setNames(2, Hmisc::label(M_table_p)[25]),
-                     setNames(2, Hmisc::label(M_table_p)[27]))) %>%
-  column_spec(1, width_min = "5in", border_right=T, bold = T) %>%
-  column_spec(3, border_right=T) %>%
-  column_spec(5, border_right=T) %>%
-  column_spec(7, border_right=T) %>%
-  column_spec(9, border_right=T) %>%
-  column_spec(11, border_right=T) %>%
-  column_spec(13, border_right=T) %>%
-  column_spec(15, border_right=T) %>%
-  column_spec(17, border_right=T) %>%
-  column_spec(19, border_right=T) %>%
-  column_spec(21, border_right=T) %>%
-  column_spec(23, border_right=T) %>%
-  column_spec(25, border_right=T) %>%
-  column_spec(27, border_right=T)
-
-  
-```
-
-## Healthy Controls
-
-```{r, include=F}
-# Make python version of df into R version df
-df_R <- py$df %>%
-  filter(group == "Lean Control")
-
-# Select relevant variables for the correlation matrix
-df_R_correlation <- df_R %>%
-  select(lc_f, 
-         rc_f,
-         lc_k1, 
-         rc_k1, 
-         lc_k2, 
-         rc_k2,
-         adc_left,
-         adc_right,
-         pcasl3d_left,
-         pcasl3d_right,
-         gfr_raw_plasma,
-         acr_u,
-         p1_raw_leanm,
-         p2_raw_leanm,
-         fia,
-         glom_tuft_area,
-         glom_volume_weibel,
-         glom_volume_wiggins,
-         glom_volume_con,
-         mes_matrix_area,
-         mes_index,
-         mes_volume_weibel,
-         mes_volume_wiggins,
-         mes_volume_con,
-         glom_nuc_count
-         )
-
-# Correlation matrix in table format
-M_table <- as.data.frame(cor(y = df_R_correlation[,1:14],
-                             x=df_R_correlation[,15:ncol(df_R_correlation)], 
-                             use = "pairwise.complete.obs")) 
-
-# Compute p-values to add to matrix table
-res2 <- rcorr(as.matrix(df_R_correlation))
-corr_pval <- as.data.frame(res2$P) %>%
-  select(lc_f, 
-         rc_f,
-         lc_k1, 
-         rc_k1, 
-         lc_k2, 
-         rc_k2,
-         adc_left,
-         adc_right,
-         pcasl3d_left,
-         pcasl3d_right,
-         gfr_raw_plasma,
-         acr_u,
-         p1_raw_leanm,
-         p2_raw_leanm) %>%
-  sapply(pvalue) 
-corr_pval <- as.data.frame(corr_pval) 
-colnames(corr_pval) <- rep("p_value", ncol(corr_pval))
-
-# Add p-values to matrix table
-corr_pval = corr_pval[15:nrow(corr_pval),]
-M_table_p <- bind_cols(M_table, corr_pval) %>%
-  relocate(map(1:ncol(M_table), ~ c(.x, .x + ncol(M_table))) %>% unlist())
-
-# Label variables
-var_R <- as.data.frame(py$var_dict)
-var_R %<>%
-  mutate(lc_f = "Left Cortex F") %>%
-  mutate(rc_f = "Right Cortex F") %>%
-  mutate(lc_k1 = "Left Cortex K1") %>%
-  mutate(rc_k1 = "Right Cortex K1") %>%
-  mutate(lc_k2 = "Left Cortex k2") %>%
-  mutate(rc_k2 = "Right Cortex k2")
-var_R <- var_R[intersect(names(M_table_p), names(var_R))]
-var_R[setdiff(names(M_table_p), names(var_R))] <- "p-value"
-Hmisc::label(M_table_p) = var_R[match(names(M_table_p), names(var_R))]
-var_R <- as.data.frame(py$var_dict)
-
-row.names(M_table_p) <- var_R[match(row.names(M_table_p), names(var_R))]
-```
-
-```{r}
-## Correlation matrix (table)
-# Matrix table with p-values
-kable(M_table_p, 
-      col.names = rep(c("Correlation", "p-value"), ncol(M_table_p)/2), 
-      caption = "Correlation", 
-      digits = c(1,4),
-      align = rep("r", ncol(M_table_p))) %>%
-  kable_styling(bootstrap_options = c("hover"),
-            full_width = F, 
-            fixed_thead = T) %>%
-  add_header_above(header = c(" "=1, 
-                     setNames(2, Hmisc::label(M_table_p)[1]), 
-                     setNames(2, Hmisc::label(M_table_p)[3]), 
-                     setNames(2, Hmisc::label(M_table_p)[5]), 
-                     setNames(2, Hmisc::label(M_table_p)[7]), 
-                     setNames(2, Hmisc::label(M_table_p)[9]), 
-                     setNames(2, Hmisc::label(M_table_p)[11]),
-                     setNames(2, Hmisc::label(M_table_p)[13]), 
-                     setNames(2, Hmisc::label(M_table_p)[15]), 
-                     setNames(2, Hmisc::label(M_table_p)[17]), 
-                     setNames(2, Hmisc::label(M_table_p)[19]), 
-                     setNames(2, Hmisc::label(M_table_p)[21]),
-                     setNames(2, Hmisc::label(M_table_p)[23]),
-                     setNames(2, Hmisc::label(M_table_p)[25]),
-                     setNames(2, Hmisc::label(M_table_p)[27]))) %>%
-  column_spec(1, width_min = "5in", border_right=T, bold = T) %>%
-  column_spec(3, border_right=T) %>%
-  column_spec(5, border_right=T) %>%
-  column_spec(7, border_right=T) %>%
-  column_spec(9, border_right=T) %>%
-  column_spec(11, border_right=T) %>%
-  column_spec(13, border_right=T) %>%
-  column_spec(15, border_right=T) %>%
-  column_spec(17, border_right=T) %>%
-  column_spec(19, border_right=T) %>%
-  column_spec(21, border_right=T) %>%
-  column_spec(23, border_right=T) %>%
-  column_spec(25, border_right=T) %>%
-  column_spec(27, border_right=T)
-
+```{r include = F}
+# correlation_table_minimal(data = dat,
+#                           relevant_vars = c("lc_f", "lm_f","lc_k2", "lm_k2",
+#                                             "p2_raw_m", "p2_gc_m", "gbm_thick_artmean", "gbm_thick_harmmean"),
+#                           n_cols = 4, dict = dict, cor_method = "spearman")
+# correlation_table_minimal(data = dat, 
+#                           relevant_vars = c("rc_f", "rm_f","rc_k2", "rm_k2", 
+#                                             "p2_raw_m", "p2_gc_m", "gbm_thick_artmean", "gbm_thick_harmmean"), 
+#                           n_cols = 4, dict = dict, cor_method = "spearman")
+correlation_table_minimal(data = dat, 
+                          relevant_vars = c("avg_c_f", "avg_m_f","avg_c_k2", "avg_m_k2", 
+                                            "p2_raw_m", "p2_gc_m", "gbm_thick_artmean", "gbm_thick_harmmean"), 
+                          n_cols = 4, dict = dict, cor_method = "spearman")
 ```
 
 ## Type 1 Diabetes
 
-```{r, include=F}
-# Make python version of df into R version df
-df_R <- py$df %>%
-  filter(group == "Type 1 Diabetes")
+```{r include = F}
+# correlation_table_minimal(data = subset(dat, group == "Type 1 Diabetes"), 
+#                           relevant_vars = c("lc_f", "lm_f","lc_k2", "lm_k2", 
+#                                             "p2_raw_m", "p2_gc_m", "gbm_thick_artmean", "gbm_thick_harmmean"), 
+#                           n_cols = 4, dict = dict, cor_method = "spearman")
+# 
+# correlation_table_minimal(data = subset(dat, group == "Type 1 Diabetes"), 
+#                           relevant_vars = c("rc_f", "rm_f","rc_k2", "rm_k2", 
+#                                             "p2_raw_m", "p2_gc_m", "gbm_thick_artmean", "gbm_thick_harmmean"), 
+#                           n_cols = 4, dict = dict, cor_method = "spearman")
 
-# Select relevant variables for the correlation matrix
-df_R_correlation <- df_R %>%
-  select(lc_f, 
-         rc_f,
-         lc_k1, 
-         rc_k1, 
-         lc_k2, 
-         rc_k2,
-         adc_left,
-         adc_right,
-         pcasl3d_left,
-         pcasl3d_right,
-         gfr_raw_plasma,
-         acr_u,
-         p1_raw_leanm,
-         p2_raw_leanm,
-         fia,
-         glom_tuft_area,
-         glom_volume_weibel,
-         glom_volume_wiggins,
-         glom_volume_con,
-         mes_matrix_area,
-         mes_index,
-         mes_volume_weibel,
-         mes_volume_wiggins,
-         mes_volume_con,
-         glom_nuc_count
-         )
-
-# Correlation matrix in table format
-M_table <- as.data.frame(cor(y = df_R_correlation[,1:14],
-                             x=df_R_correlation[,15:ncol(df_R_correlation)], 
-                             use = "pairwise.complete.obs")) 
-
-# Compute p-values to add to matrix table
-res2 <- rcorr(as.matrix(df_R_correlation))
-corr_pval <- as.data.frame(res2$P) %>%
-  select(lc_f, 
-         rc_f,
-         lc_k1, 
-         rc_k1, 
-         lc_k2, 
-         rc_k2,
-         adc_left,
-         adc_right,
-         pcasl3d_left,
-         pcasl3d_right,
-         gfr_raw_plasma,
-         acr_u,
-         p1_raw_leanm,
-         p2_raw_leanm) %>%
-  sapply(pvalue) 
-corr_pval <- as.data.frame(corr_pval) 
-colnames(corr_pval) <- rep("p_value", ncol(corr_pval))
-
-# Add p-values to matrix table
-corr_pval = corr_pval[15:nrow(corr_pval),]
-M_table_p <- bind_cols(M_table, corr_pval) %>%
-  relocate(map(1:ncol(M_table), ~ c(.x, .x + ncol(M_table))) %>% unlist())
-
-# Label variables
-var_R <- as.data.frame(py$var_dict)
-var_R %<>%
-  mutate(lc_f = "Left Cortex F") %>%
-  mutate(rc_f = "Right Cortex F") %>%
-  mutate(lc_k1 = "Left Cortex K1") %>%
-  mutate(rc_k1 = "Right Cortex K1") %>%
-  mutate(lc_k2 = "Left Cortex k2") %>%
-  mutate(rc_k2 = "Right Cortex k2")
-var_R <- var_R[intersect(names(M_table_p), names(var_R))]
-var_R[setdiff(names(M_table_p), names(var_R))] <- "p-value"
-Hmisc::label(M_table_p) = var_R[match(names(M_table_p), names(var_R))]
-var_R <- as.data.frame(py$var_dict)
-
-row.names(M_table_p) <- var_R[match(row.names(M_table_p), names(var_R))]
+correlation_table_minimal(data = subset(dat, group == "Type 1 Diabetes"), 
+                          relevant_vars = c("avg_c_f", "avg_m_f","avg_c_k2", "avg_m_k2", 
+                                            "p2_raw_m", "p2_gc_m", "gbm_thick_artmean", "gbm_thick_harmmean"), 
+                          n_cols = 4, dict = dict, cor_method = "spearman")
 ```
 
+## Misc correlations
+
+```{r include = F}
+correlation_table_minimal(data = dat, 
+                          relevant_vars = c("pcasl3d_left", "pcasl3d_right", "avg_pcascl",
+                                            "p2_raw_m", "p2_gc_m", "gbm_thick_artmean", "gbm_thick_harmmean"), 
+                          n_cols = 3, dict = dict, cor_method = "spearman")
+```
+
+# Heatmap of correlation
+
+```{r include = F}
+png(height = 1200, width = 800, file = "/Volumes/Peds Endo/Petter Bjornstad/CROCODILE/Dissemination/Figures/YC/Correlation_clinical.png", res = 170)
+corr_plot_modified(data = dat,
+                   X = c("avg_c_f", "avg_m_f","avg_c_k2", "avg_m_k2"),
+                   Y = c("gbm_thick_artmean", "p2_gc_m"),
+                   dict = dict,
+                   cor_method = "spearman")
+dev.off()
+```
+
+```{r echo = F, message = F}
+tissue_met <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/CRC_tissue_metabolomics_011624.csv", na.strings = c("NA", "")) %>% 
+  mutate(record_id = case_when(record_id < 10 ~ paste0("CRC-0", record_id),
+                               T ~ paste0("CRC-",record_id))) %>%
+  left_join(subset(dat, select = c(record_id, group, bmi, hba1c, age)))
+
+# Simulating metaboanalyst method of imputing missingness
+# tissue_met <- tissue_met %>%
+#   group_by(record_id) %>%
+#   dplyr::summarise(count = n()) %>%
+#   filter(count == 1) %>% mutate(redcap_repeat_instance = 2,
+#                                 redcap_repeat_instrument = "metabolomics_tissue") %>% 
+#   dplyr::select(-count) %>%
+#   full_join(tissue_met) %>%
+#   group_by(record_id) %>%
+#   tidyr::fill(group, .direction = "up")
+
+impute_values <- tissue_met %>%
+  dplyr::summarise(across(
+    .cols = everything(), 
+    .fns = ~ if(cur_column() %in% c("record_id", "redcap_repeat_instrument", "group", "redcap_repeat_instance", "age", "bmi", "hba1c")) {
+                NA
+              } else {
+                min(.x[.x > 0], na.rm = TRUE) / 5
+              }
+  ))
+
+for (col in colnames(tissue_met)) {
+  tissue_met[[col]] <- ifelse(
+    is.na(tissue_met[[col]]),
+    impute_values[[col]],
+    tissue_met[[col]]
+  )
+}
+
+tissue_met <- tissue_met %>% 
+               arrange(group)
+record_id_order <- unique(tissue_met$record_id)
+tissue_met$record_id <- factor(tissue_met$record_id, levels = record_id_order)
+
+tissue_met_avg <- tissue_met %>%
+  group_by(record_id) %>%
+  dplyr::summarise(
+    across(where(is.numeric), ~mean(., na.rm = TRUE)),
+    across(where(is.character), ~first(.))
+  ) 
+```
+
+# Tissue metabolites descriptive
+
+## Replicating Guanshi's output
+
+```{r results='asis', echo = F, message = F, warning=F}
+# Summary
+summary(tableby(group ~  isocitric_citric_acid_tissue +  aconitic_acid_tissue +  alpha_ketoglutaric_acid_tissue + succinic_acid_tissue +  fumaric_acid_tissue +  malic_acid_tissue +  oxaloacetic_acid_tissue +  anova(adnine_tissue), data = tissue_met, numeric.test="wt", total = F))
+```
+
+## Average of each participant
+
+```{r results='asis', echo = F, message = F, warning=F}
+summary(tableby(group ~  isocitric_citric_acid_tissue +  aconitic_acid_tissue +  alpha_ketoglutaric_acid_tissue + succinic_acid_tissue +  fumaric_acid_tissue +  malic_acid_tissue +  oxaloacetic_acid_tissue +  anova(adnine_tissue), data = tissue_met_avg, numeric.test="wt", total = F))
+```
+
+# Mixed model of tissue metabolites
+
+```{r echo = F}
+metplot <- function(data, y_var) {
+  p <- data %>% 
+    ggplot(aes(x = factor(record_id, levels = unique(record_id_order)), 
+               y = .data[[y_var]], 
+               color = group)) +
+    geom_boxplot() +
+    geom_jitter() +
+    geom_hline(yintercept = mean(subset(data, group == "Lean Control")[[y_var]]), color = "#f8766d") +
+    geom_hline(yintercept = mean(subset(data, group == "Type 1 Diabetes")[[y_var]]), color = "#00bfc4") +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 90, hjust = 1),
+          axis.title.x = element_blank())
+  
+  return(p)
+}
+```
+
+## Isocitric/citric acid
+
+```{r echo = F}
+ggarrange(metplot(tissue_met, "isocitric_citric_acid_tissue"), 
+          metplot(tissue_met_avg, "isocitric_citric_acid_tissue"),
+          common.legend = T)
+hist(tissue_met$isocitric_citric_acid_tissue)
+```
+
+### Average (no random effects)
+
+```{r echo = F, results='asis'}
+# Model with gamma link
+model_1 <- glm(isocitric_citric_acid_tissue ~ group,
+               family = Gamma, data = tissue_met_avg)
+model_1_summary <- summary(model_1)
+
+# Model with log transformation
+model_2 <- glm(log(isocitric_citric_acid_tissue) ~ group,
+               data = tissue_met_avg)
+model_2_summary <- summary(model_2)
+
+# Model with sqrt transformation
+model_3 <- glm(sqrt(isocitric_citric_acid_tissue) ~ group,
+               data = tissue_met_avg)
+model_3_summary <- summary(model_3)
+
+# Model with box cox transformation
+bc <- boxcox(isocitric_citric_acid_tissue ~ group, data = tissue_met_avg)
+lambda <- bc$x[which.max(bc$y)]
+model_4 <- lm(((isocitric_citric_acid_tissue^lambda -1)/lambda) ~ group, data = tissue_met_avg)
+model_4_summary <- summary(model_4)
+
+print(paste0("Lambda (for Box cox): ", round(lambda, digits = 3)))
+
+summaries_df <- data.frame(
+  Model = c("Gamma link", "Log transformed", "Sqrt transformed", "Box cox transformed"),
+  AIC = c(model_1_summary$aic,
+          model_2_summary$aic,
+          model_3_summary$aic,
+          ""))
+
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary, model_4_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$coefficients[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+layout(1)
+```
+#### Sqrt back-transformation
 ```{r}
-## Correlation matrix (table)
-# Matrix table with p-values
-kable(M_table_p, 
-      col.names = rep(c("Correlation", "p-value"), ncol(M_table_p)/2), 
-      caption = "Correlation", 
-      digits = c(1,4),
-      align = rep("r", ncol(M_table_p))) %>%
-  kable_styling(bootstrap_options = c("hover"),
-            full_width = F, 
-            fixed_thead = T) %>%
-  add_header_above(header = c(" "=1, 
-                     setNames(2, Hmisc::label(M_table_p)[1]), 
-                     setNames(2, Hmisc::label(M_table_p)[3]), 
-                     setNames(2, Hmisc::label(M_table_p)[5]), 
-                     setNames(2, Hmisc::label(M_table_p)[7]), 
-                     setNames(2, Hmisc::label(M_table_p)[9]), 
-                     setNames(2, Hmisc::label(M_table_p)[11]),
-                     setNames(2, Hmisc::label(M_table_p)[13]), 
-                     setNames(2, Hmisc::label(M_table_p)[15]), 
-                     setNames(2, Hmisc::label(M_table_p)[17]), 
-                     setNames(2, Hmisc::label(M_table_p)[19]), 
-                     setNames(2, Hmisc::label(M_table_p)[21]),
-                     setNames(2, Hmisc::label(M_table_p)[23]),
-                     setNames(2, Hmisc::label(M_table_p)[25]),
-                     setNames(2, Hmisc::label(M_table_p)[27]))) %>%
-  column_spec(1, width_min = "5in", border_right=T, bold = T) %>%
-  column_spec(3, border_right=T) %>%
-  column_spec(5, border_right=T) %>%
-  column_spec(7, border_right=T) %>%
-  column_spec(9, border_right=T) %>%
-  column_spec(11, border_right=T) %>%
-  column_spec(13, border_right=T) %>%
-  column_spec(15, border_right=T) %>%
-  column_spec(17, border_right=T) %>%
-  column_spec(19, border_right=T) %>%
-  column_spec(21, border_right=T) %>%
-  column_spec(23, border_right=T) %>%
-  column_spec(25, border_right=T) %>%
-  column_spec(27, border_right=T)
+# Coefficients of HC
+sqrt_coef_hc <- model_3_summary$coefficients[[1]]
+sqrt_coef_hc_low <- sqrt_coef_hc - (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+sqrt_coef_hc_high <- sqrt_coef_hc + (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+
+sqrt_coef_hc_t <- sqrt_coef_hc^2 * sign(sqrt_coef_hc)
+sqrt_coef_hc_low_t <- sqrt_coef_hc_low^2 * sign(sqrt_coef_hc_low)
+sqrt_coef_hc_high_t <- sqrt_coef_hc_high^2 * sign(sqrt_coef_hc_high)
+
+print(paste0("HC: ",round(sqrt_coef_hc_t, 2),
+             " (95% CI: ", round(sqrt_coef_hc_low_t, 2), ", ",
+             round(sqrt_coef_hc_high_t, 2), ", p=", round(model_3_summary$coefficients[[1,4]],10), ")"))
+
+# Coefficients of T1D
+model_3_summary <- summary(glm(sqrt(isocitric_citric_acid_tissue) ~ factor(group, levels = c("Type 1 Diabetes", "Lean Control")),
+               data = tissue_met_avg))
+sqrt_coef_t1d <- model_3_summary$coefficients[[1]]
+sqrt_coef_t1d_low <- sqrt_coef_t1d - (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+sqrt_coef_t1d_high <- sqrt_coef_t1d + (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+
+sqrt_coef_t1d_t <- sqrt_coef_t1d^2 * sign(sqrt_coef_t1d)
+sqrt_coef_t1d_low_t <- sqrt_coef_t1d_low^2 * sign(sqrt_coef_t1d_low)
+sqrt_coef_t1d_high_t <- sqrt_coef_t1d_high^2 * sign(sqrt_coef_t1d_high)
+
+print(paste0("T1D: ",round(sqrt_coef_t1d_t, 2),
+             " (95% CI: ", round(sqrt_coef_t1d_low_t, 2), ", ",
+             round(sqrt_coef_t1d_high_t, 2), ", p=", round(model_3_summary$coefficients[[1,4]],10), ")"))
+
+# Coefficients of difference
+model_3_summary <- summary(glm(sqrt(isocitric_citric_acid_tissue) ~ group,
+               data = tissue_met_avg))
+sqrt_coef_diff <- model_3_summary$coefficients[[2]]
+sqrt_coef_diff_low <- sqrt_coef_diff - (model_3_summary$coefficients[[2,2]]*qnorm(0.975))
+sqrt_coef_diff_high <- sqrt_coef_diff + (model_3_summary$coefficients[[2,2]]*qnorm(0.975))
+
+sqrt_coef_diff_t <- sqrt_coef_diff^2 * sign(sqrt_coef_diff)
+sqrt_coef_diff_low_t <- sqrt_coef_diff_low^2 * sign(sqrt_coef_diff_low)
+sqrt_coef_diff_high_t <- sqrt_coef_diff_high^2 * sign(sqrt_coef_diff_high)
+
+print(paste0("Diff: ",round(sqrt_coef_diff_t, 2),
+             " (95% CI: ", round(sqrt_coef_diff_low_t, 2), ", ",
+             round(sqrt_coef_diff_high_t, 2), ", p=", round(model_3_summary$coefficients[[2,4]],10), ")"))
+
+# Log2FC
+log2fc <- log2((sqrt_coef_t1d/sqrt_coef_hc)^2)
+print(paste0("Log2FC: ", round(log2fc,3)))
 ```
 
-```{python, include = F}
-tab_2_vars = ["dexa_body_fat", "dexa_fat_kg", "dexa_lean_kg", "dexa_trunk_kg", "p1_raw_m", "p1_raw_leanm", "p2_raw_m", "p2_raw_leanm", "p1_ffa_suppression", "p2_ffa_suppression"]
+### Log-transformed
 
-hist_vars = df[list(tab_2_vars)].select_dtypes(include=np.number).columns.tolist()
-for v in hist_vars:
-   ax = sns.displot(df, x=v, hue="group", element="step")
-   ax.set(xlabel=v)
-   plt.show()
-   
-tab_2_nn =  ["p1_ffa_suppression", "p2_ffa_suppression"]
+```{r echo = F, results='asis'}
+# Model with random intercept
+model_1 <- lme(fixed = log(isocitric_citric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
 
-tab_2 = TableOne(df, tab_2_vars, nonnormal=tab_2_nn, groupby="group", pval=True, normal_test=True, tukey_test=True, decimals=3, rename=var_dict)
+# Model with random intercept (CompSymm)
+model_2 <- lme(fixed = log(isocitric_citric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+# Model with random intercept and random slope (AR1)
+model_3 <- lme(fixed = log(isocitric_citric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_3_summary <- summary(model_3)
+
+# Model with random intercept and random slope
+model_4 <- lme(fixed = log(isocitric_citric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             data = tissue_met)
+model_4_summary <- summary(model_4)
+
+# Model with random intercept and random slope (CompSymm)
+model_5 <- lme(fixed = log(isocitric_citric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_5_summary <- summary(model_5)
+
+# Model with random intercept and random slope (AR1)
+model_6 <- lme(fixed = log(isocitric_citric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_6_summary <- summary(model_6)
+
+
+summaries_df <- data.frame(
+  Model = c("Random intercept", "Random intercept (CompSym)", "Random intercept (AR1)", 
+            "Random int + slope", "Random int + slope (CompSym)", "Random int + slope (AR1"),
+  AIC = c(model_1_summary$AIC,
+          model_2_summary$AIC,
+          model_3_summary$AIC,
+          model_4_summary$AIC,
+          model_5_summary$AIC,
+          model_6_summary$AIC),
+  BIC = c(model_1_summary$BIC,
+          model_2_summary$BIC,
+          model_3_summary$BIC,
+          model_4_summary$BIC,
+          model_5_summary$BIC,
+          model_6_summary$BIC),
+  LogLik = c(model_1_summary$logLik,
+             model_2_summary$logLik,
+             model_3_summary$logLik,
+             model_4_summary$logLik,
+             model_5_summary$logLik,
+             model_6_summary$logLik))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary,
+                        model_4_summary, model_5_summary, model_6_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$tTable[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+qqnorm(residuals(model_5)); qqline(residuals(model_5))
+plot(residuals(model_5) ~ fitted(model_5), main = "Residuals vs. Index")
+lines(lowess(fitted(model_5), residuals(model_5)), col="red")
+qqnorm(residuals(model_6)); qqline(residuals(model_6))
+plot(residuals(model_6) ~ fitted(model_6), main = "Residuals vs. Index")
+lines(lowess(fitted(model_6), residuals(model_6)), col="red")
+layout(1)
 ```
 
-```{python, include=F}
-tab_2
+### Non-transformed
+
+```{r echo = F, results='asis'}
+# Model with random intercept
+model_1 <- lme(fixed = (isocitric_citric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
+
+# Model with random intercept (CompSymm)
+model_2 <- lme(fixed = (isocitric_citric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+# Model with random intercept and random slope (AR1)
+model_3 <- lme(fixed = (isocitric_citric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_3_summary <- summary(model_3)
+
+# Model with random intercept and random slope
+model_4 <- lme(fixed = (isocitric_citric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             data = tissue_met)
+model_4_summary <- summary(model_4)
+
+# Model with random intercept and random slope (CompSymm)
+model_5 <- lme(fixed = (isocitric_citric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_5_summary <- summary(model_5)
+
+# Model with random intercept and random slope (AR1)
+model_6 <- lme(fixed = (isocitric_citric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_6_summary <- summary(model_6)
+
+
+summaries_df <- data.frame(
+  Model = c("Random intercept", "Random intercept (CompSym)", "Random intercept (AR1)", 
+            "Random int + slope", "Random int + slope (CompSym)", "Random int + slope (AR1"),
+  AIC = c(model_1_summary$AIC,
+          model_2_summary$AIC,
+          model_3_summary$AIC,
+          model_4_summary$AIC,
+          model_5_summary$AIC,
+          model_6_summary$AIC),
+  BIC = c(model_1_summary$BIC,
+          model_2_summary$BIC,
+          model_3_summary$BIC,
+          model_4_summary$BIC,
+          model_5_summary$BIC,
+          model_6_summary$BIC),
+  LogLik = c(model_1_summary$logLik,
+             model_2_summary$logLik,
+             model_3_summary$logLik,
+             model_4_summary$logLik,
+             model_5_summary$logLik,
+             model_6_summary$logLik))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary,
+                        model_4_summary, model_5_summary, model_6_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$tTable[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+qqnorm(residuals(model_5)); qqline(residuals(model_5))
+plot(residuals(model_5) ~ fitted(model_5), main = "Residuals vs. Index")
+lines(lowess(fitted(model_5), residuals(model_5)), col="red")
+qqnorm(residuals(model_6)); qqline(residuals(model_6))
+plot(residuals(model_6) ~ fitted(model_6), main = "Residuals vs. Index")
+lines(lowess(fitted(model_6), residuals(model_6)), col="red")
+layout(1)
 ```
 
-```{python, include = F}
-tab_3_vars = ["gfr_raw_plasma", "erpf_raw_plasma", "rvr", "glomerular_pressure", "total_kidney_volume_ml", "height_adj_total_kidney_volume", "pcasl3d_left", "pcasl3d_right", "bold_l_bl_cortex", "bold_l_bl_kidney", "bold_l_bl_medulla", "bold_r_bl_cortex", "bold_r_bl_kidney", "bold_r_bl_medulla", "fsoc_l_cortex", "fsoc_l_kidney", "fsoc_l_medulla", "fsoc_r_cortex", "fsoc_r_kidney", "fsoc_r_medulla", "adc_left", "adc_right", "avg_pcascl", "avg_k_r2", "avg_c_r2", "avg_m_r2", "avg_k_fsoc", "avg_c_fsoc", "avg_m_fsoc", "avg_c_adc", "fia", "glom_tuft_area", "glom_volume_con", "mes_matrix_area", "mes_index", "mes_volume_con"]
+## Aconitic acid
 
-hist_vars = df[list(tab_3_vars)].select_dtypes(include=np.number).columns.tolist()
-for v in hist_vars:
-   ax = sns.displot(df, x=v, hue="group", element="step")
-   ax.set(xlabel=v)
-   plt.show()
-
-
-tab_3_nn =  ["glomerular_pressure", "mes_matrix_area", "mes_volume_con"]
-tab_3 = TableOne(df, tab_3_vars, nonnormal=tab_3_nn, groupby="group", pval=True, normal_test=True, tukey_test=True, decimals=3, rename=var_dict)
+```{r echo = F}
+ggarrange(metplot(tissue_met, "aconitic_acid_tissue"), 
+          metplot(tissue_met_avg, "aconitic_acid_tissue"),
+          common.legend = T)
+hist(tissue_met$aconitic_acid_tissue)
 ```
 
-```{python, include=F}
-tab_3
+### Average (no random effects)
+
+```{r echo = F, results='asis'}
+# Model with gamma link
+model_1 <- glm(aconitic_acid_tissue ~ group,
+               family = Gamma, data = tissue_met_avg)
+model_1_summary <- summary(model_1)
+
+# Model with log transformation
+model_2 <- glm(log(aconitic_acid_tissue) ~ group,
+               data = tissue_met_avg)
+model_2_summary <- summary(model_2)
+
+# Model with log transformation
+model_3 <- glm(sqrt(aconitic_acid_tissue) ~ group,
+               data = tissue_met_avg)
+model_3_summary <- summary(model_3)
+
+# Model with box cox transformation
+bc <- boxcox(aconitic_acid_tissue ~ group, data = tissue_met_avg)
+lambda <- bc$x[which.max(bc$y)]
+model_4 <- lm(((aconitic_acid_tissue^lambda -1)/lambda) ~ group, data = tissue_met_avg)
+model_4_summary <- summary(model_4)
+
+print(paste0("Lambda (for Box cox): ", round(lambda, digits = 3)))
+
+summaries_df <- data.frame(
+  Model = c("Gamma link", "Log transformed", "Sqrt transformed", "Box cox transformed"),
+  AIC = c(model_1_summary$aic,
+          model_2_summary$aic,
+          model_3_summary$aic,
+          ""))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary, model_4_summary)
+
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$coefficients[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+layout(1)
+```
+#### Sqrt back-transformation
+```{r}
+# Coefficients of HC
+sqrt_coef_hc <- model_3_summary$coefficients[[1]]
+sqrt_coef_hc_low <- sqrt_coef_hc - (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+sqrt_coef_hc_high <- sqrt_coef_hc + (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+
+sqrt_coef_hc_t <- sqrt_coef_hc^2 * sign(sqrt_coef_hc)
+sqrt_coef_hc_low_t <- sqrt_coef_hc_low^2 * sign(sqrt_coef_hc_low)
+sqrt_coef_hc_high_t <- sqrt_coef_hc_high^2 * sign(sqrt_coef_hc_high)
+
+print(paste0("HC: ",round(sqrt_coef_hc_t, 2),
+             " (95% CI: ", round(sqrt_coef_hc_low_t, 2), ", ",
+             round(sqrt_coef_hc_high_t, 2), ", p=", round(model_3_summary$coefficients[[1,4]],10), ")"))
+
+# Coefficients of T1D
+model_3_summary <- summary(glm(sqrt(aconitic_acid_tissue) ~ factor(group, levels = c("Type 1 Diabetes", "Lean Control")),
+               data = tissue_met_avg))
+sqrt_coef_t1d <- model_3_summary$coefficients[[1]]
+sqrt_coef_t1d_low <- sqrt_coef_t1d - (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+sqrt_coef_t1d_high <- sqrt_coef_t1d + (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+
+sqrt_coef_t1d_t <- sqrt_coef_t1d^2 * sign(sqrt_coef_t1d)
+sqrt_coef_t1d_low_t <- sqrt_coef_t1d_low^2 * sign(sqrt_coef_t1d_low)
+sqrt_coef_t1d_high_t <- sqrt_coef_t1d_high^2 * sign(sqrt_coef_t1d_high)
+
+print(paste0("T1D: ",round(sqrt_coef_t1d_t, 2),
+             " (95% CI: ", round(sqrt_coef_t1d_low_t, 2), ", ",
+             round(sqrt_coef_t1d_high_t, 2), ", p=", round(model_3_summary$coefficients[[1,4]],10), ")"))
+
+# Coefficients of difference
+model_3_summary <- summary(glm(sqrt(aconitic_acid_tissue) ~ group,
+               data = tissue_met_avg))
+sqrt_coef_diff <- model_3_summary$coefficients[[2]]
+sqrt_coef_diff_low <- sqrt_coef_diff - (model_3_summary$coefficients[[2,2]]*qnorm(0.975))
+sqrt_coef_diff_high <- sqrt_coef_diff + (model_3_summary$coefficients[[2,2]]*qnorm(0.975))
+
+sqrt_coef_diff_t <- sqrt_coef_diff^2 * sign(sqrt_coef_diff)
+sqrt_coef_diff_low_t <- sqrt_coef_diff_low^2 * sign(sqrt_coef_diff_low)
+sqrt_coef_diff_high_t <- sqrt_coef_diff_high^2 * sign(sqrt_coef_diff_high)
+
+print(paste0("Diff: ",round(sqrt_coef_diff_t, 2),
+             " (95% CI: ", round(sqrt_coef_diff_low_t, 2), ", ",
+             round(sqrt_coef_diff_high_t, 2), ", p=", round(model_3_summary$coefficients[[2,4]],10), ")"))
+
+# Log2FC
+log2fc <- log2((sqrt_coef_t1d/sqrt_coef_hc)^2)
+print(paste0("Log2FC: ", round(log2fc,3)))
 ```
 
-```{python, include = F}
-tab_4_vars = ["lc_f","rc_f", "avg_c_f", "lm_f","rm_f", "avg_m_f", "lc_k1", "rc_k1", "avg_c_k1", "lm_k1", "rm_k1", "avg_m_k1", "lc_k2", "rc_k2", "avg_c_k2", "lm_k2", "rm_k2", "avg_m_k2"]
+### Log-transformed
 
-hist_vars = df[list(tab_4_vars)].select_dtypes(include=np.number).columns.tolist()
-for v in hist_vars:
-   ax = sns.displot(df, x=v, hue="group", element="step")
-   ax.set(xlabel=v)
-   plt.show()
+```{r echo = F, results='asis'}
+# Model with random intercept
+model_1 <- lme(fixed = log(aconitic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
+
+# Model with random intercept (CompSymm)
+model_2 <- lme(fixed = log(aconitic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+# Model with random intercept and random slope (AR1)
+model_3 <- lme(fixed = log(aconitic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_3_summary <- summary(model_3)
+
+# Model with random intercept and random slope
+model_4 <- lme(fixed = log(aconitic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             data = tissue_met)
+model_4_summary <- summary(model_4)
+
+# Model with random intercept and random slope (CompSymm)
+model_5 <- lme(fixed = log(aconitic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_5_summary <- summary(model_5)
+
+# Model with random intercept and random slope (AR1)
+model_6 <- lme(fixed = log(aconitic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_6_summary <- summary(model_6)
 
 
-tab_4_nn =  tab_4_vars
-tab_4 = TableOne(df, tab_4_vars, nonnormal=tab_4_nn, groupby="group", pval=True, normal_test=True, tukey_test=True, decimals=3, rename=var_dict)
+summaries_df <- data.frame(
+  Model = c("Random intercept", "Random intercept (CompSym)", "Random intercept (AR1)", 
+            "Random int + slope", "Random int + slope (CompSym)", "Random int + slope (AR1"),
+  AIC = c(model_1_summary$AIC,
+          model_2_summary$AIC,
+          model_3_summary$AIC,
+          model_4_summary$AIC,
+          model_5_summary$AIC,
+          model_6_summary$AIC),
+  BIC = c(model_1_summary$BIC,
+          model_2_summary$BIC,
+          model_3_summary$BIC,
+          model_4_summary$BIC,
+          model_5_summary$BIC,
+          model_6_summary$BIC),
+  LogLik = c(model_1_summary$logLik,
+             model_2_summary$logLik,
+             model_3_summary$logLik,
+             model_4_summary$logLik,
+             model_5_summary$logLik,
+             model_6_summary$logLik))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary,
+                        model_4_summary, model_5_summary, model_6_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$tTable[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+qqnorm(residuals(model_5)); qqline(residuals(model_5))
+plot(residuals(model_5) ~ fitted(model_5), main = "Residuals vs. Index")
+lines(lowess(fitted(model_5), residuals(model_5)), col="red")
+qqnorm(residuals(model_6)); qqline(residuals(model_6))
+plot(residuals(model_6) ~ fitted(model_6), main = "Residuals vs. Index")
+lines(lowess(fitted(model_6), residuals(model_6)), col="red")
+layout(1)
 ```
 
-```{python, include=F}
-tab_4
+### Non-transformed
+
+```{r echo = F, results='asis'}
+# Model with random intercept
+model_1 <- lme(fixed = (aconitic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
+
+# Model with random intercept (CompSymm)
+model_2 <- lme(fixed = (aconitic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+# Model with random intercept and random slope (AR1)
+model_3 <- lme(fixed = (aconitic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_3_summary <- summary(model_3)
+
+# Model with random intercept and random slope
+model_4 <- lme(fixed = (aconitic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             data = tissue_met)
+model_4_summary <- summary(model_4)
+
+# Model with random intercept and random slope (CompSymm)
+model_5 <- lme(fixed = (aconitic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_5_summary <- summary(model_5)
+
+# Model with random intercept and random slope (AR1)
+model_6 <- lme(fixed = (aconitic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_6_summary <- summary(model_6)
+
+
+summaries_df <- data.frame(
+  Model = c("Random intercept", "Random intercept (CompSym)", "Random intercept (AR1)", 
+            "Random int + slope", "Random int + slope (CompSym)", "Random int + slope (AR1"),
+  AIC = c(model_1_summary$AIC,
+          model_2_summary$AIC,
+          model_3_summary$AIC,
+          model_4_summary$AIC,
+          model_5_summary$AIC,
+          model_6_summary$AIC),
+  BIC = c(model_1_summary$BIC,
+          model_2_summary$BIC,
+          model_3_summary$BIC,
+          model_4_summary$BIC,
+          model_5_summary$BIC,
+          model_6_summary$BIC),
+  LogLik = c(model_1_summary$logLik,
+             model_2_summary$logLik,
+             model_3_summary$logLik,
+             model_4_summary$logLik,
+             model_5_summary$logLik,
+             model_6_summary$logLik))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary,
+                        model_4_summary, model_5_summary, model_6_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$tTable[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+qqnorm(residuals(model_5)); qqline(residuals(model_5))
+plot(residuals(model_5) ~ fitted(model_5), main = "Residuals vs. Index")
+lines(lowess(fitted(model_5), residuals(model_5)), col="red")
+qqnorm(residuals(model_6)); qqline(residuals(model_6))
+plot(residuals(model_6) ~ fitted(model_6), main = "Residuals vs. Index")
+lines(lowess(fitted(model_6), residuals(model_6)), col="red")
+layout(1)
 ```
 
-```{r, include=F}
-# "gfr_raw_plasma", "erpf_raw_plasma", "rvr", "glomerular_pressure", "total_kidney_volume_ml", "height_adj_total_kidney_volume", "pcasl3d_left", "pcasl3d_right", "bold_l_bl_cortex", "bold_l_bl_kidney", "bold_l_bl_medulla", "bold_l_pf_cortex", "bold_l_pf_kidney", "bold_l_pf_medulla", "bold_r_bl_cortex", "bold_r_bl_kidney", "bold_r_bl_medulla", "bold_r_pf_cortex", "bold_r_pf_kidney", "bold_r_pf_medulla", "fsoc_l_cortex", "fsoc_l_kidney", "fsoc_l_medulla", "fsoc_r_cortex", "fsoc_r_kidney", "fsoc_r_medulla", "adc_left", "adc_right", "fia", "glom_tuft_area", "glom_volume_con", "mes_matrix_area", "mes_index", "mes_volume_con"
-df_R <- as.data.frame(py$df)
-table(df_R$record_id[is.na(df_R$group)])
-table(df_R$group[is.na(df_R$fia)])
-table(df_R$group[is.na(df_R$glom_tuft_area)])
-table(df_R$group[is.na(df_R$glom_volume_con)])
-table(df_R$group[is.na(df_R$mes_matrix_area)])
-table(df_R$group[is.na(df_R$mes_index)])
-table(df_R$group[is.na(df_R$rc_f)])
+## Alpha-ketoglutaric acid
+
+```{r echo = F}
+ggarrange(metplot(tissue_met, "alpha_ketoglutaric_acid_tissue"), 
+          metplot(tissue_met_avg, "alpha_ketoglutaric_acid_tissue"),
+          common.legend = T)
+hist(tissue_met$alpha_ketoglutaric_acid_tissue)
+```
+
+### Average (no random effects)
+
+```{r echo = F, results='asis'}
+# Model with gamma link
+model_1 <- glm(alpha_ketoglutaric_acid_tissue ~ group,
+               family = Gamma, data = tissue_met_avg)
+model_1_summary <- summary(model_1)
+
+# Model with log transformation
+model_2 <- glm(log(alpha_ketoglutaric_acid_tissue) ~ group,
+               data = tissue_met_avg)
+model_2_summary <- summary(model_2)
+
+# Model with sqrt transformation
+model_3 <- glm(sqrt(alpha_ketoglutaric_acid_tissue) ~ group,
+               data = tissue_met_avg)
+model_3_summary <- summary(model_3)
+
+# Model with box cox transformation
+bc <- boxcox(alpha_ketoglutaric_acid_tissue ~ group, data = tissue_met_avg)
+lambda <- bc$x[which.max(bc$y)]
+model_4 <- lm(((alpha_ketoglutaric_acid_tissue^lambda -1)/lambda) ~ group, data = tissue_met_avg)
+model_4_summary <- summary(model_4)
+
+print(paste0("Lambda (for Box cox): ", round(lambda, digits = 3)))
+
+summaries_df <- data.frame(
+  Model = c("Gamma link", "Log transformed", "Sqrt transformed", "Box cox transformed"),
+  AIC = c(model_1_summary$aic,
+          model_2_summary$aic,
+          model_3_summary$aic,
+          ""))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary, model_4_summary)
+
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$coefficients[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+layout(1)
+```
+#### Sqrt back-transformation
+```{r}
+# Coefficients of HC
+sqrt_coef_hc <- model_3_summary$coefficients[[1]]
+sqrt_coef_hc_low <- sqrt_coef_hc - (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+sqrt_coef_hc_high <- sqrt_coef_hc + (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+
+sqrt_coef_hc_t <- sqrt_coef_hc^2 * sign(sqrt_coef_hc)
+sqrt_coef_hc_low_t <- sqrt_coef_hc_low^2 * sign(sqrt_coef_hc_low)
+sqrt_coef_hc_high_t <- sqrt_coef_hc_high^2 * sign(sqrt_coef_hc_high)
+
+print(paste0("HC: ",round(sqrt_coef_hc_t, 2),
+             " (95% CI: ", round(sqrt_coef_hc_low_t, 2), ", ",
+             round(sqrt_coef_hc_high_t, 2), ", p=", round(model_3_summary$coefficients[[1,4]],10), ")"))
+
+# Coefficients of T1D
+model_3_summary <- summary(glm(sqrt(alpha_ketoglutaric_acid_tissue) ~ factor(group, levels = c("Type 1 Diabetes", "Lean Control")),
+               data = tissue_met_avg))
+sqrt_coef_t1d <- model_3_summary$coefficients[[1]]
+sqrt_coef_t1d_low <- sqrt_coef_t1d - (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+sqrt_coef_t1d_high <- sqrt_coef_t1d + (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+
+sqrt_coef_t1d_t <- sqrt_coef_t1d^2 * sign(sqrt_coef_t1d)
+sqrt_coef_t1d_low_t <- sqrt_coef_t1d_low^2 * sign(sqrt_coef_t1d_low)
+sqrt_coef_t1d_high_t <- sqrt_coef_t1d_high^2 * sign(sqrt_coef_t1d_high)
+
+print(paste0("T1D: ",round(sqrt_coef_t1d_t, 2),
+             " (95% CI: ", round(sqrt_coef_t1d_low_t, 2), ", ",
+             round(sqrt_coef_t1d_high_t, 2), ", p=", round(model_3_summary$coefficients[[1,4]],10), ")"))
+
+# Coefficients of difference
+model_3_summary <- summary(glm(sqrt(alpha_ketoglutaric_acid_tissue) ~ group,
+               data = tissue_met_avg))
+sqrt_coef_diff <- model_3_summary$coefficients[[2]]
+sqrt_coef_diff_low <- sqrt_coef_diff - (model_3_summary$coefficients[[2,2]]*qnorm(0.975))
+sqrt_coef_diff_high <- sqrt_coef_diff + (model_3_summary$coefficients[[2,2]]*qnorm(0.975))
+
+sqrt_coef_diff_t <- sqrt_coef_diff^2 * sign(sqrt_coef_diff)
+sqrt_coef_diff_low_t <- sqrt_coef_diff_low^2 * sign(sqrt_coef_diff_low)
+sqrt_coef_diff_high_t <- sqrt_coef_diff_high^2 * sign(sqrt_coef_diff_high)
+
+print(paste0("Diff: ",round(sqrt_coef_diff_t, 2),
+             " (95% CI: ", round(sqrt_coef_diff_low_t, 2), ", ",
+             round(sqrt_coef_diff_high_t, 2), ", p=", round(model_3_summary$coefficients[[2,4]],10), ")"))
+
+# Log2FC
+log2fc <- log2((sqrt_coef_t1d/sqrt_coef_hc)^2)
+print(paste0("Log2FC: ", round(log2fc,3)))
+```
+
+### Log-transformed
+
+```{r echo = F, results='asis'}
+# Model with random intercept
+model_1 <- lme(fixed = log(alpha_ketoglutaric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
+
+# Model with random intercept (CompSymm)
+model_2 <- lme(fixed = log(alpha_ketoglutaric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+# Model with random intercept and random slope (AR1)
+model_3 <- lme(fixed = log(alpha_ketoglutaric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_3_summary <- summary(model_3)
+
+# Model with random intercept and random slope
+model_4 <- lme(fixed = log(alpha_ketoglutaric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             data = tissue_met)
+model_4_summary <- summary(model_4)
+
+# Model with random intercept and random slope (CompSymm)
+model_5 <- lme(fixed = log(alpha_ketoglutaric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_5_summary <- summary(model_5)
+
+# Model with random intercept and random slope (AR1)
+model_6 <- lme(fixed = log(alpha_ketoglutaric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_6_summary <- summary(model_6)
+
+
+summaries_df <- data.frame(
+  Model = c("Random intercept", "Random intercept (CompSym)", "Random intercept (AR1)", 
+            "Random int + slope", "Random int + slope (CompSym)", "Random int + slope (AR1"),
+  AIC = c(model_1_summary$AIC,
+          model_2_summary$AIC,
+          model_3_summary$AIC,
+          model_4_summary$AIC,
+          model_5_summary$AIC,
+          model_6_summary$AIC),
+  BIC = c(model_1_summary$BIC,
+          model_2_summary$BIC,
+          model_3_summary$BIC,
+          model_4_summary$BIC,
+          model_5_summary$BIC,
+          model_6_summary$BIC),
+  LogLik = c(model_1_summary$logLik,
+             model_2_summary$logLik,
+             model_3_summary$logLik,
+             model_4_summary$logLik,
+             model_5_summary$logLik,
+             model_6_summary$logLik))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary,
+                        model_4_summary, model_5_summary, model_6_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$tTable[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+qqnorm(residuals(model_5)); qqline(residuals(model_5))
+plot(residuals(model_5) ~ fitted(model_5), main = "Residuals vs. Index")
+lines(lowess(fitted(model_5), residuals(model_5)), col="red")
+qqnorm(residuals(model_6)); qqline(residuals(model_6))
+plot(residuals(model_6) ~ fitted(model_6), main = "Residuals vs. Index")
+lines(lowess(fitted(model_6), residuals(model_6)), col="red")
+layout(1)
+```
+
+### Non-transformed
+
+```{r echo = F, results='asis'}
+# Model with random intercept
+model_1 <- lme(fixed = (alpha_ketoglutaric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
+
+
+# Model with random intercept (CompSymm)
+model_2 <- lme(fixed = (alpha_ketoglutaric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+
+# Model with random intercept and random slope (AR1)
+model_3 <- lme(fixed = (alpha_ketoglutaric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_3_summary <- summary(model_3)
+
+# Model with random intercept and random slope
+model_4 <- lme(fixed = (alpha_ketoglutaric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             data = tissue_met)
+model_4_summary <- summary(model_4)
+
+# Model with random intercept and random slope (CompSymm)
+model_5 <- lme(fixed = (alpha_ketoglutaric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_5_summary <- summary(model_5)
+
+# Model with random intercept and random slope (AR1)
+model_6 <- lme(fixed = (alpha_ketoglutaric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_6_summary <- summary(model_6)
+
+
+summaries_df <- data.frame(
+  Model = c("Random intercept", "Random intercept (CompSym)", "Random intercept (AR1)", 
+            "Random int + slope", "Random int + slope (CompSym)", "Random int + slope (AR1"),
+  AIC = c(model_1_summary$AIC,
+          model_2_summary$AIC,
+          model_3_summary$AIC,
+          model_4_summary$AIC,
+          model_5_summary$AIC,
+          model_6_summary$AIC),
+  BIC = c(model_1_summary$BIC,
+          model_2_summary$BIC,
+          model_3_summary$BIC,
+          model_4_summary$BIC,
+          model_5_summary$BIC,
+          model_6_summary$BIC),
+  LogLik = c(model_1_summary$logLik,
+             model_2_summary$logLik,
+             model_3_summary$logLik,
+             model_4_summary$logLik,
+             model_5_summary$logLik,
+             model_6_summary$logLik))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary,
+                        model_4_summary, model_5_summary, model_6_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$tTable[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+qqnorm(residuals(model_5)); qqline(residuals(model_5))
+plot(residuals(model_5) ~ fitted(model_5), main = "Residuals vs. Index")
+lines(lowess(fitted(model_5), residuals(model_5)), col="red")
+qqnorm(residuals(model_6)); qqline(residuals(model_6))
+plot(residuals(model_6) ~ fitted(model_6), main = "Residuals vs. Index")
+lines(lowess(fitted(model_6), residuals(model_6)), col="red")
+layout(1)
+```
+
+## Succinic acid
+
+```{r echo = F}
+ggarrange(metplot(tissue_met, "succinic_acid_tissue"), 
+          metplot(tissue_met_avg, "succinic_acid_tissue"),
+          common.legend = T)
+hist(tissue_met$succinic_acid_tissue)
+```
+
+### Average (no random effects)
+
+```{r echo = F, results='asis'}
+# Model with gamma link
+model_1 <- glm(succinic_acid_tissue ~ group,
+               family = Gamma, data = tissue_met_avg)
+model_1_summary <- summary(model_1)
+
+# Model with log transformation
+model_2 <- glm(log(succinic_acid_tissue) ~ group,
+               data = tissue_met_avg)
+model_2_summary <- summary(model_2)
+
+# Model with sqrt transformation
+model_3 <- glm(sqrt(succinic_acid_tissue) ~ group,
+               data = tissue_met_avg)
+model_3_summary <- summary(model_3)
+
+# Model with box cox transformation
+bc <- boxcox(succinic_acid_tissue ~ group, data = tissue_met_avg)
+lambda <- bc$x[which.max(bc$y)]
+model_4 <- lm(((succinic_acid_tissue^lambda -1)/lambda) ~ group, data = tissue_met_avg)
+model_4_summary <- summary(model_4)
+
+print(paste0("Lambda (for Box cox): ", round(lambda, digits = 3)))
+
+summaries_df <- data.frame(
+  Model = c("Gamma link", "Log transformed", "Sqrt transformed", "Box cox transformed"),
+  AIC = c(model_1_summary$aic,
+          model_2_summary$aic,
+          model_3_summary$aic,
+          ""))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary, model_4_summary)
+
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$coefficients[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+layout(1)
+```
+#### Sqrt back-transformation
+```{r}
+# Coefficients of HC
+sqrt_coef_hc <- model_3_summary$coefficients[[1]]
+sqrt_coef_hc_low <- sqrt_coef_hc - (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+sqrt_coef_hc_high <- sqrt_coef_hc + (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+
+sqrt_coef_hc_t <- sqrt_coef_hc^2 * sign(sqrt_coef_hc)
+sqrt_coef_hc_low_t <- sqrt_coef_hc_low^2 * sign(sqrt_coef_hc_low)
+sqrt_coef_hc_high_t <- sqrt_coef_hc_high^2 * sign(sqrt_coef_hc_high)
+
+print(paste0("HC: ",round(sqrt_coef_hc_t, 2),
+             " (95% CI: ", round(sqrt_coef_hc_low_t, 2), ", ",
+             round(sqrt_coef_hc_high_t, 2), ", p=", round(model_3_summary$coefficients[[1,4]],10), ")"))
+
+# Coefficients of T1D
+model_3_summary <- summary(glm(sqrt(succinic_acid_tissue) ~ factor(group, levels = c("Type 1 Diabetes", "Lean Control")),
+               data = tissue_met_avg))
+sqrt_coef_t1d <- model_3_summary$coefficients[[1]]
+sqrt_coef_t1d_low <- sqrt_coef_t1d - (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+sqrt_coef_t1d_high <- sqrt_coef_t1d + (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+
+sqrt_coef_t1d_t <- sqrt_coef_t1d^2 * sign(sqrt_coef_t1d)
+sqrt_coef_t1d_low_t <- sqrt_coef_t1d_low^2 * sign(sqrt_coef_t1d_low)
+sqrt_coef_t1d_high_t <- sqrt_coef_t1d_high^2 * sign(sqrt_coef_t1d_high)
+
+print(paste0("T1D: ",round(sqrt_coef_t1d_t, 2),
+             " (95% CI: ", round(sqrt_coef_t1d_low_t, 2), ", ",
+             round(sqrt_coef_t1d_high_t, 2), ", p=", round(model_3_summary$coefficients[[1,4]],10), ")"))
+
+# Coefficients of difference
+model_3_summary <- summary(glm(sqrt(succinic_acid_tissue) ~ group,
+               data = tissue_met_avg))
+sqrt_coef_diff <- model_3_summary$coefficients[[2]]
+sqrt_coef_diff_low <- sqrt_coef_diff - (model_3_summary$coefficients[[2,2]]*qnorm(0.975))
+sqrt_coef_diff_high <- sqrt_coef_diff + (model_3_summary$coefficients[[2,2]]*qnorm(0.975))
+
+sqrt_coef_diff_t <- sqrt_coef_diff^2 * sign(sqrt_coef_diff)
+sqrt_coef_diff_low_t <- sqrt_coef_diff_low^2 * sign(sqrt_coef_diff_low)
+sqrt_coef_diff_high_t <- sqrt_coef_diff_high^2 * sign(sqrt_coef_diff_high)
+
+print(paste0("Diff: ",round(sqrt_coef_diff_t, 2),
+             " (95% CI: ", round(sqrt_coef_diff_low_t, 2), ", ",
+             round(sqrt_coef_diff_high_t, 2), ", p=", round(model_3_summary$coefficients[[2,4]],10), ")"))
+
+# Log2FC
+log2fc <- log2((sqrt_coef_t1d/sqrt_coef_hc)^2)
+print(paste0("Log2FC: ", round(log2fc,3)))
+```
+
+### Log-transformed
+
+```{r echo = F, results='asis'}
+# Model with random intercept
+model_1 <- lme(fixed = log(succinic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
+
+# Model with random intercept (CompSymm)
+model_2 <- lme(fixed = log(succinic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+# Model with random intercept and random slope (AR1)
+model_3 <- lme(fixed = log(succinic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_3_summary <- summary(model_3)
+
+# Model with random intercept and random slope
+model_4 <- lme(fixed = log(succinic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             data = tissue_met)
+model_4_summary <- summary(model_4)
+
+# Model with random intercept and random slope (CompSymm)
+model_5 <- lme(fixed = log(succinic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_5_summary <- summary(model_5)
+
+# Model with random intercept and random slope (AR1)
+model_6 <- lme(fixed = log(succinic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_6_summary <- summary(model_6)
+
+
+summaries_df <- data.frame(
+  Model = c("Random intercept", "Random intercept (CompSym)", "Random intercept (AR1)", 
+            "Random int + slope", "Random int + slope (CompSym)", "Random int + slope (AR1"),
+  AIC = c(model_1_summary$AIC,
+          model_2_summary$AIC,
+          model_3_summary$AIC,
+          model_4_summary$AIC,
+          model_5_summary$AIC,
+          model_6_summary$AIC),
+  BIC = c(model_1_summary$BIC,
+          model_2_summary$BIC,
+          model_3_summary$BIC,
+          model_4_summary$BIC,
+          model_5_summary$BIC,
+          model_6_summary$BIC),
+  LogLik = c(model_1_summary$logLik,
+             model_2_summary$logLik,
+             model_3_summary$logLik,
+             model_4_summary$logLik,
+             model_5_summary$logLik,
+             model_6_summary$logLik))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary,
+                        model_4_summary, model_5_summary, model_6_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$tTable[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+qqnorm(residuals(model_5)); qqline(residuals(model_5))
+plot(residuals(model_5) ~ fitted(model_5), main = "Residuals vs. Index")
+lines(lowess(fitted(model_5), residuals(model_5)), col="red")
+qqnorm(residuals(model_6)); qqline(residuals(model_6))
+plot(residuals(model_6) ~ fitted(model_6), main = "Residuals vs. Index")
+lines(lowess(fitted(model_6), residuals(model_6)), col="red")
+layout(1)
+```
+
+### Non-transformed
+
+```{r echo = F, results='asis'}
+# Model with random intercept
+model_1 <- lme(fixed = (succinic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
+
+# Model with random intercept (CompSymm)
+model_2 <- lme(fixed = (succinic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+# Model with random intercept and random slope (AR1)
+model_3 <- lme(fixed = (succinic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_3_summary <- summary(model_3)
+
+# Model with random intercept and random slope
+model_4 <- lme(fixed = (succinic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             data = tissue_met)
+model_4_summary <- summary(model_4)
+
+# Model with random intercept and random slope (CompSymm)
+model_5 <- lme(fixed = (succinic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_5_summary <- summary(model_5)
+
+# Model with random intercept and random slope (AR1)
+model_6 <- lme(fixed = (succinic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_6_summary <- summary(model_6)
+
+
+summaries_df <- data.frame(
+  Model = c("Random intercept", "Random intercept (CompSym)", "Random intercept (AR1)", 
+            "Random int + slope", "Random int + slope (CompSym)", "Random int + slope (AR1"),
+  AIC = c(model_1_summary$AIC,
+          model_2_summary$AIC,
+          model_3_summary$AIC,
+          model_4_summary$AIC,
+          model_5_summary$AIC,
+          model_6_summary$AIC),
+  BIC = c(model_1_summary$BIC,
+          model_2_summary$BIC,
+          model_3_summary$BIC,
+          model_4_summary$BIC,
+          model_5_summary$BIC,
+          model_6_summary$BIC),
+  LogLik = c(model_1_summary$logLik,
+             model_2_summary$logLik,
+             model_3_summary$logLik,
+             model_4_summary$logLik,
+             model_5_summary$logLik,
+             model_6_summary$logLik))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary,
+                        model_4_summary, model_5_summary, model_6_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$tTable[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+qqnorm(residuals(model_5)); qqline(residuals(model_5))
+plot(residuals(model_5) ~ fitted(model_5), main = "Residuals vs. Index")
+lines(lowess(fitted(model_5), residuals(model_5)), col="red")
+qqnorm(residuals(model_6)); qqline(residuals(model_6))
+plot(residuals(model_6) ~ fitted(model_6), main = "Residuals vs. Index")
+lines(lowess(fitted(model_6), residuals(model_6)), col="red")
+layout(1)
+```
+
+## Fumaric acid
+
+```{r echo = F}
+ggarrange(metplot(tissue_met, "fumaric_acid_tissue"), 
+          metplot(tissue_met_avg, "fumaric_acid_tissue"),
+          common.legend = T)
+hist(tissue_met$fumaric_acid_tissue)
+```
+
+### Average (no random effects)
+
+```{r echo = F, results='asis'}
+# Model with gamma link
+model_1 <- glm(fumaric_acid_tissue ~ group,
+               family = Gamma, data = tissue_met_avg)
+model_1_summary <- summary(model_1)
+
+# Model with log transformation
+model_2 <- glm(log(fumaric_acid_tissue) ~ group,
+               data = tissue_met_avg)
+model_2_summary <- summary(model_2)
+
+# Model with sqrt transformation
+model_3 <- glm(sqrt(fumaric_acid_tissue) ~ group,
+               data = tissue_met_avg)
+model_3_summary <- summary(model_3)
+
+# Model with box cox transformation
+bc <- boxcox(fumaric_acid_tissue ~ group, data = tissue_met_avg)
+lambda <- bc$x[which.max(bc$y)]
+model_4 <- lm(((fumaric_acid_tissue^lambda -1)/lambda) ~ group, data = tissue_met_avg)
+model_4_summary <- summary(model_4)
+
+print(paste0("Lambda (for Box cox): ", round(lambda, digits = 3)))
+
+summaries_df <- data.frame(
+  Model = c("Gamma link", "Log transformed", "Sqrt transformed", "Box cox transformed"),
+  AIC = c(model_1_summary$aic,
+          model_2_summary$aic,
+          model_3_summary$aic,
+          ""))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary, model_4_summary)
+
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$coefficients[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+layout(1)
+```
+#### Sqrt back-transformation
+```{r}
+# Coefficients of HC
+sqrt_coef_hc <- model_3_summary$coefficients[[1]]
+sqrt_coef_hc_low <- sqrt_coef_hc - (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+sqrt_coef_hc_high <- sqrt_coef_hc + (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+
+sqrt_coef_hc_t <- sqrt_coef_hc^2 * sign(sqrt_coef_hc)
+sqrt_coef_hc_low_t <- sqrt_coef_hc_low^2 * sign(sqrt_coef_hc_low)
+sqrt_coef_hc_high_t <- sqrt_coef_hc_high^2 * sign(sqrt_coef_hc_high)
+
+print(paste0("HC: ",round(sqrt_coef_hc_t, 2),
+             " (95% CI: ", round(sqrt_coef_hc_low_t, 2), ", ",
+             round(sqrt_coef_hc_high_t, 2), ", p=", round(model_3_summary$coefficients[[1,4]],10), ")"))
+
+# Coefficients of T1D
+model_3_summary <- summary(glm(sqrt(fumaric_acid_tissue) ~ factor(group, levels = c("Type 1 Diabetes", "Lean Control")),
+               data = tissue_met_avg))
+sqrt_coef_t1d <- model_3_summary$coefficients[[1]]
+sqrt_coef_t1d_low <- sqrt_coef_t1d - (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+sqrt_coef_t1d_high <- sqrt_coef_t1d + (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+
+sqrt_coef_t1d_t <- sqrt_coef_t1d^2 * sign(sqrt_coef_t1d)
+sqrt_coef_t1d_low_t <- sqrt_coef_t1d_low^2 * sign(sqrt_coef_t1d_low)
+sqrt_coef_t1d_high_t <- sqrt_coef_t1d_high^2 * sign(sqrt_coef_t1d_high)
+
+print(paste0("T1D: ",round(sqrt_coef_t1d_t, 2),
+             " (95% CI: ", round(sqrt_coef_t1d_low_t, 2), ", ",
+             round(sqrt_coef_t1d_high_t, 2), ", p=", round(model_3_summary$coefficients[[1,4]],10), ")"))
+
+# Coefficients of difference
+model_3_summary <- summary(glm(sqrt(fumaric_acid_tissue) ~ group,
+               data = tissue_met_avg))
+sqrt_coef_diff <- model_3_summary$coefficients[[2]]
+sqrt_coef_diff_low <- sqrt_coef_diff - (model_3_summary$coefficients[[2,2]]*qnorm(0.975))
+sqrt_coef_diff_high <- sqrt_coef_diff + (model_3_summary$coefficients[[2,2]]*qnorm(0.975))
+
+sqrt_coef_diff_t <- sqrt_coef_diff^2 * sign(sqrt_coef_diff)
+sqrt_coef_diff_low_t <- sqrt_coef_diff_low^2 * sign(sqrt_coef_diff_low)
+sqrt_coef_diff_high_t <- sqrt_coef_diff_high^2 * sign(sqrt_coef_diff_high)
+
+print(paste0("Diff: ",round(sqrt_coef_diff_t, 2),
+             " (95% CI: ", round(sqrt_coef_diff_low_t, 2), ", ",
+             round(sqrt_coef_diff_high_t, 2), ", p=", round(model_3_summary$coefficients[[2,4]],10), ")"))
+
+# Log2FC
+log2fc <- log2((sqrt_coef_t1d/sqrt_coef_hc)^2)
+print(paste0("Log2FC: ", round(log2fc,3)))
+```
+
+### Log-transformed
+
+```{r echo = F, results='asis'}
+# Model with random intercept
+model_1 <- lme(fixed = log(fumaric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
+
+# Model with random intercept (CompSymm)
+model_2 <- lme(fixed = log(fumaric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+# Model with random intercept and random slope (AR1)
+model_3 <- lme(fixed = log(fumaric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_3_summary <- summary(model_3)
+
+# Model with random intercept and random slope
+model_4 <- lme(fixed = log(fumaric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             data = tissue_met)
+model_4_summary <- summary(model_4)
+
+# Model with random intercept and random slope (CompSymm)
+model_5 <- lme(fixed = log(fumaric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_5_summary <- summary(model_5)
+
+# Model with random intercept and random slope (AR1)
+model_6 <- lme(fixed = log(fumaric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_6_summary <- summary(model_6)
+
+
+summaries_df <- data.frame(
+  Model = c("Random intercept", "Random intercept (CompSym)", "Random intercept (AR1)", 
+            "Random int + slope", "Random int + slope (CompSym)", "Random int + slope (AR1"),
+  AIC = c(model_1_summary$AIC,
+          model_2_summary$AIC,
+          model_3_summary$AIC,
+          model_4_summary$AIC,
+          model_5_summary$AIC,
+          model_6_summary$AIC),
+  BIC = c(model_1_summary$BIC,
+          model_2_summary$BIC,
+          model_3_summary$BIC,
+          model_4_summary$BIC,
+          model_5_summary$BIC,
+          model_6_summary$BIC),
+  LogLik = c(model_1_summary$logLik,
+             model_2_summary$logLik,
+             model_3_summary$logLik,
+             model_4_summary$logLik,
+             model_5_summary$logLik,
+             model_6_summary$logLik))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary,
+                        model_4_summary, model_5_summary, model_6_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$tTable[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+qqnorm(residuals(model_5)); qqline(residuals(model_5))
+plot(residuals(model_5) ~ fitted(model_5), main = "Residuals vs. Index")
+lines(lowess(fitted(model_5), residuals(model_5)), col="red")
+qqnorm(residuals(model_6)); qqline(residuals(model_6))
+plot(residuals(model_6) ~ fitted(model_6), main = "Residuals vs. Index")
+lines(lowess(fitted(model_6), residuals(model_6)), col="red")
+layout(1)
+```
+
+### Non-transformed
+
+```{r echo = F, results='asis'}
+# Model with random intercept
+model_1 <- lme(fixed = (fumaric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
+
+# Model with random intercept (CompSymm)
+model_2 <- lme(fixed = (fumaric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+# Model with random intercept and random slope (AR1)
+model_3 <- lme(fixed = (fumaric_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_3_summary <- summary(model_3)
+
+# Model with random intercept and random slope
+model_4 <- lme(fixed = (fumaric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             data = tissue_met)
+model_4_summary <- summary(model_4)
+
+# Model with random intercept and random slope (CompSymm)
+model_5 <- lme(fixed = (fumaric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_5_summary <- summary(model_5)
+
+# Model with random intercept and random slope (AR1)
+model_6 <- lme(fixed = (fumaric_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_6_summary <- summary(model_6)
+
+
+summaries_df <- data.frame(
+  Model = c("Random intercept", "Random intercept (CompSym)", "Random intercept (AR1)", 
+            "Random int + slope", "Random int + slope (CompSym)", "Random int + slope (AR1"),
+  AIC = c(model_1_summary$AIC,
+          model_2_summary$AIC,
+          model_3_summary$AIC,
+          model_4_summary$AIC,
+          model_5_summary$AIC,
+          model_6_summary$AIC),
+  BIC = c(model_1_summary$BIC,
+          model_2_summary$BIC,
+          model_3_summary$BIC,
+          model_4_summary$BIC,
+          model_5_summary$BIC,
+          model_6_summary$BIC),
+  LogLik = c(model_1_summary$logLik,
+             model_2_summary$logLik,
+             model_3_summary$logLik,
+             model_4_summary$logLik,
+             model_5_summary$logLik,
+             model_6_summary$logLik))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary,
+                        model_4_summary, model_5_summary, model_6_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$tTable[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+qqnorm(residuals(model_5)); qqline(residuals(model_5))
+plot(residuals(model_5) ~ fitted(model_5), main = "Residuals vs. Index")
+lines(lowess(fitted(model_5), residuals(model_5)), col="red")
+qqnorm(residuals(model_6)); qqline(residuals(model_6))
+plot(residuals(model_6) ~ fitted(model_6), main = "Residuals vs. Index")
+lines(lowess(fitted(model_6), residuals(model_6)), col="red")
+layout(1)
+```
+
+## Malic acid
+
+```{r echo = F}
+ggarrange(metplot(tissue_met, "malic_acid_tissue"), 
+          metplot(tissue_met_avg, "malic_acid_tissue"),
+          common.legend = T)
+hist(tissue_met$malic_acid_tissue)
+```
+
+### Average (no random effects)
+
+```{r echo = F, results='asis'}
+# Model with gamma link
+model_1 <- glm(malic_acid_tissue ~ group,
+               family = Gamma, data = tissue_met_avg)
+model_1_summary <- summary(model_1)
+
+# Model with log transformation
+model_2 <- glm(log(malic_acid_tissue) ~ group,
+               data = tissue_met_avg)
+model_2_summary <- summary(model_2)
+
+# Model with sqrt transformation
+model_3 <- glm(sqrt(malic_acid_tissue) ~ group,
+               data = tissue_met_avg)
+model_3_summary <- summary(model_3)
+
+# Model with box cox transformation
+bc <- boxcox(malic_acid_tissue ~ group, data = tissue_met_avg)
+lambda <- bc$x[which.max(bc$y)]
+model_4 <- lm(((malic_acid_tissue^lambda -1)/lambda) ~ group, data = tissue_met_avg)
+model_4_summary <- summary(model_4)
+
+print(paste0("Lambda (for Box cox): ", round(lambda, digits = 3)))
+
+summaries_df <- data.frame(
+  Model = c("Gamma link", "Log transformed", "Sqrt transformed", "Box cox transformed"),
+  AIC = c(model_1_summary$aic,
+          model_2_summary$aic,
+          model_3_summary$aic,
+          ""))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary, model_4_summary)
+
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$coefficients[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+layout(1)
+```
+#### Sqrt back-transformation
+```{r}
+# Coefficients of HC
+sqrt_coef_hc <- model_3_summary$coefficients[[1]]
+sqrt_coef_hc_low <- sqrt_coef_hc - (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+sqrt_coef_hc_high <- sqrt_coef_hc + (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+
+sqrt_coef_hc_t <- sqrt_coef_hc^2 * sign(sqrt_coef_hc)
+sqrt_coef_hc_low_t <- sqrt_coef_hc_low^2 * sign(sqrt_coef_hc_low)
+sqrt_coef_hc_high_t <- sqrt_coef_hc_high^2 * sign(sqrt_coef_hc_high)
+
+print(paste0("HC: ",round(sqrt_coef_hc_t, 2),
+             " (95% CI: ", round(sqrt_coef_hc_low_t, 2), ", ",
+             round(sqrt_coef_hc_high_t, 2), ", p=", round(model_3_summary$coefficients[[1,4]],10), ")"))
+
+# Coefficients of T1D
+model_3_summary <- summary(glm(sqrt(malic_acid_tissue) ~ factor(group, levels = c("Type 1 Diabetes", "Lean Control")),
+               data = tissue_met_avg))
+sqrt_coef_t1d <- model_3_summary$coefficients[[1]]
+sqrt_coef_t1d_low <- sqrt_coef_t1d - (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+sqrt_coef_t1d_high <- sqrt_coef_t1d + (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+
+sqrt_coef_t1d_t <- sqrt_coef_t1d^2 * sign(sqrt_coef_t1d)
+sqrt_coef_t1d_low_t <- sqrt_coef_t1d_low^2 * sign(sqrt_coef_t1d_low)
+sqrt_coef_t1d_high_t <- sqrt_coef_t1d_high^2 * sign(sqrt_coef_t1d_high)
+
+print(paste0("T1D: ",round(sqrt_coef_t1d_t, 2),
+             " (95% CI: ", round(sqrt_coef_t1d_low_t, 2), ", ",
+             round(sqrt_coef_t1d_high_t, 2), ", p=", round(model_3_summary$coefficients[[1,4]],10), ")"))
+
+# Coefficients of difference
+model_3_summary <- summary(glm(sqrt(malic_acid_tissue) ~ group,
+               data = tissue_met_avg))
+sqrt_coef_diff <- model_3_summary$coefficients[[2]]
+sqrt_coef_diff_low <- sqrt_coef_diff - (model_3_summary$coefficients[[2,2]]*qnorm(0.975))
+sqrt_coef_diff_high <- sqrt_coef_diff + (model_3_summary$coefficients[[2,2]]*qnorm(0.975))
+
+sqrt_coef_diff_t <- sqrt_coef_diff^2 * sign(sqrt_coef_diff)
+sqrt_coef_diff_low_t <- sqrt_coef_diff_low^2 * sign(sqrt_coef_diff_low)
+sqrt_coef_diff_high_t <- sqrt_coef_diff_high^2 * sign(sqrt_coef_diff_high)
+
+print(paste0("Diff: ",round(sqrt_coef_diff_t, 2),
+             " (95% CI: ", round(sqrt_coef_diff_low_t, 2), ", ",
+             round(sqrt_coef_diff_high_t, 2), ", p=", round(model_3_summary$coefficients[[2,4]],10), ")"))
+
+# Log2FC
+log2fc <- log2((sqrt_coef_t1d/sqrt_coef_hc)^2)
+print(paste0("Log2FC: ", round(log2fc,3)))
+```
+
+### Log-transformed
+
+```{r echo = F, results='asis'}
+# Model with random intercept
+model_1 <- lme(fixed = log(malic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
+
+# Model with random intercept (CompSymm)
+model_2 <- lme(fixed = log(malic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+# Model with random intercept and random slope (AR1)
+model_3 <- lme(fixed = log(malic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_3_summary <- summary(model_3)
+
+# Model with random intercept and random slope
+model_4 <- lme(fixed = log(malic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             data = tissue_met)
+model_4_summary <- summary(model_4)
+
+# Model with random intercept and random slope (CompSymm)
+model_5 <- lme(fixed = log(malic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_5_summary <- summary(model_5)
+
+# Model with random intercept and random slope (AR1)
+model_6 <- lme(fixed = log(malic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_6_summary <- summary(model_6)
+
+
+summaries_df <- data.frame(
+  Model = c("Random intercept", "Random intercept (CompSym)", "Random intercept (AR1)", 
+            "Random int + slope", "Random int + slope (CompSym)", "Random int + slope (AR1"),
+  AIC = c(model_1_summary$AIC,
+          model_2_summary$AIC,
+          model_3_summary$AIC,
+          model_4_summary$AIC,
+          model_5_summary$AIC,
+          model_6_summary$AIC),
+  BIC = c(model_1_summary$BIC,
+          model_2_summary$BIC,
+          model_3_summary$BIC,
+          model_4_summary$BIC,
+          model_5_summary$BIC,
+          model_6_summary$BIC),
+  LogLik = c(model_1_summary$logLik,
+             model_2_summary$logLik,
+             model_3_summary$logLik,
+             model_4_summary$logLik,
+             model_5_summary$logLik,
+             model_6_summary$logLik))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary,
+                        model_4_summary, model_5_summary, model_6_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$tTable[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+qqnorm(residuals(model_5)); qqline(residuals(model_5))
+plot(residuals(model_5) ~ fitted(model_5), main = "Residuals vs. Index")
+lines(lowess(fitted(model_5), residuals(model_5)), col="red")
+qqnorm(residuals(model_6)); qqline(residuals(model_6))
+plot(residuals(model_6) ~ fitted(model_6), main = "Residuals vs. Index")
+lines(lowess(fitted(model_6), residuals(model_6)), col="red")
+layout(1)
+```
+
+### Non-transformed
+
+```{r echo = F, results='asis'}
+# Model with random intercept
+model_1 <- lme(fixed = (malic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
+
+# Model with random intercept (CompSymm)
+model_2 <- lme(fixed = (malic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+# Model with random intercept and random slope (AR1)
+model_3 <- lme(fixed = (malic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_3_summary <- summary(model_3)
+
+# Model with random intercept and random slope
+model_4 <- lme(fixed = (malic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             data = tissue_met)
+model_4_summary <- summary(model_4)
+
+# Model with random intercept and random slope (CompSymm)
+model_5 <- lme(fixed = (malic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_5_summary <- summary(model_5)
+
+# Model with random intercept and random slope (AR1)
+model_6 <- lme(fixed = (malic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_6_summary <- summary(model_6)
+
+
+summaries_df <- data.frame(
+  Model = c("Random intercept", "Random intercept (CompSym)", "Random intercept (AR1)", 
+            "Random int + slope", "Random int + slope (CompSym)", "Random int + slope (AR1"),
+  AIC = c(model_1_summary$AIC,
+          model_2_summary$AIC,
+          model_3_summary$AIC,
+          model_4_summary$AIC,
+          model_5_summary$AIC,
+          model_6_summary$AIC),
+  BIC = c(model_1_summary$BIC,
+          model_2_summary$BIC,
+          model_3_summary$BIC,
+          model_4_summary$BIC,
+          model_5_summary$BIC,
+          model_6_summary$BIC),
+  LogLik = c(model_1_summary$logLik,
+             model_2_summary$logLik,
+             model_3_summary$logLik,
+             model_4_summary$logLik,
+             model_5_summary$logLik,
+             model_6_summary$logLik))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary,
+                        model_4_summary, model_5_summary, model_6_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$tTable[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+qqnorm(residuals(model_5)); qqline(residuals(model_5))
+plot(residuals(model_5) ~ fitted(model_5), main = "Residuals vs. Index")
+lines(lowess(fitted(model_5), residuals(model_5)), col="red")
+qqnorm(residuals(model_6)); qqline(residuals(model_6))
+plot(residuals(model_6) ~ fitted(model_6), main = "Residuals vs. Index")
+lines(lowess(fitted(model_6), residuals(model_6)), col="red")
+layout(1)
+```
+
+## Oxaloacetic acid
+
+```{r echo = F}
+ggarrange(metplot(tissue_met, "oxaloacetic_acid_tissue"), 
+          metplot(tissue_met_avg, "oxaloacetic_acid_tissue"),
+          common.legend = T)
+hist(tissue_met$oxaloacetic_acid_tissue)
+```
+
+### Average (no random effects)
+
+```{r echo = F, results='asis'}
+# Model with gamma link
+model_1 <- glm(oxaloacetic_acid_tissue ~ group,
+               family = Gamma, data = tissue_met_avg)
+model_1_summary <- summary(model_1)
+
+# Model with log transformation
+model_2 <- glm(log(oxaloacetic_acid_tissue) ~ group,
+               data = tissue_met_avg)
+model_2_summary <- summary(model_2)
+
+# Model with sqrt transformation
+model_3 <- glm(sqrt(oxaloacetic_acid_tissue) ~ group,
+               data = tissue_met_avg)
+model_3_summary <- summary(model_3)
+
+# Model with box cox transformation
+bc <- boxcox(oxaloacetic_acid_tissue ~ group, data = tissue_met_avg)
+lambda <- bc$x[which.max(bc$y)]
+model_4 <- lm(((oxaloacetic_acid_tissue^lambda -1)/lambda) ~ group, data = tissue_met_avg)
+model_4_summary <- summary(model_4)
+
+print(paste0("Lambda (for Box cox): ", round(lambda, digits = 3)))
+
+summaries_df <- data.frame(
+  Model = c("Gamma link", "Log transformed", "Sqrt transformed", "Box cox transformed"),
+  AIC = c(model_1_summary$aic,
+          model_2_summary$aic,
+          model_3_summary$aic,
+          ""))
+
+model_summaries <- list(model_1_summary, model_2_summary, 
+                        model_3_summary, model_4_summary)
+
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$coefficients[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+layout(1)
+```
+#### Sqrt back-transformation
+```{r}
+# Coefficients of HC
+sqrt_coef_hc <- model_3_summary$coefficients[[1]]
+sqrt_coef_hc_low <- sqrt_coef_hc - (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+sqrt_coef_hc_high <- sqrt_coef_hc + (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+
+sqrt_coef_hc_t <- sqrt_coef_hc^2 * sign(sqrt_coef_hc)
+sqrt_coef_hc_low_t <- sqrt_coef_hc_low^2 * sign(sqrt_coef_hc_low)
+sqrt_coef_hc_high_t <- sqrt_coef_hc_high^2 * sign(sqrt_coef_hc_high)
+
+print(paste0("HC: ",round(sqrt_coef_hc_t, 2),
+             " (95% CI: ", round(sqrt_coef_hc_low_t, 2), ", ",
+             round(sqrt_coef_hc_high_t, 2), ", p=", round(model_3_summary$coefficients[[1,4]],10), ")"))
+
+# Coefficients of T1D
+model_3_summary <- summary(glm(sqrt(oxaloacetic_acid_tissue) ~ factor(group, levels = c("Type 1 Diabetes", "Lean Control")),
+               data = tissue_met_avg))
+sqrt_coef_t1d <- model_3_summary$coefficients[[1]]
+sqrt_coef_t1d_low <- sqrt_coef_t1d - (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+sqrt_coef_t1d_high <- sqrt_coef_t1d + (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+
+sqrt_coef_t1d_t <- sqrt_coef_t1d^2 * sign(sqrt_coef_t1d)
+sqrt_coef_t1d_low_t <- sqrt_coef_t1d_low^2 * sign(sqrt_coef_t1d_low)
+sqrt_coef_t1d_high_t <- sqrt_coef_t1d_high^2 * sign(sqrt_coef_t1d_high)
+
+print(paste0("T1D: ",round(sqrt_coef_t1d_t, 2),
+             " (95% CI: ", round(sqrt_coef_t1d_low_t, 2), ", ",
+             round(sqrt_coef_t1d_high_t, 2), ", p=", round(model_3_summary$coefficients[[1,4]],10), ")"))
+
+# Coefficients of difference
+model_3_summary <- summary(glm(sqrt(oxaloacetic_acid_tissue) ~ group,
+               data = tissue_met_avg))
+sqrt_coef_diff <- model_3_summary$coefficients[[2]]
+sqrt_coef_diff_low <- sqrt_coef_diff - (model_3_summary$coefficients[[2,2]]*qnorm(0.975))
+sqrt_coef_diff_high <- sqrt_coef_diff + (model_3_summary$coefficients[[2,2]]*qnorm(0.975))
+
+sqrt_coef_diff_t <- sqrt_coef_diff^2 * sign(sqrt_coef_diff)
+sqrt_coef_diff_low_t <- sqrt_coef_diff_low^2 * sign(sqrt_coef_diff_low)
+sqrt_coef_diff_high_t <- sqrt_coef_diff_high^2 * sign(sqrt_coef_diff_high)
+
+print(paste0("Diff: ",round(sqrt_coef_diff_t, 2),
+             " (95% CI: ", round(sqrt_coef_diff_low_t, 2), ", ",
+             round(sqrt_coef_diff_high_t, 2), ", p=", round(model_3_summary$coefficients[[2,4]],10), ")"))
+
+# Log2FC
+log2fc <- log2((sqrt_coef_t1d/sqrt_coef_hc)^2)
+print(paste0("Log2FC: ", round(log2fc,3)))
+```
+
+### Log-transformed
+
+```{r echo = F, results='asis'}
+# Model with random intercept
+model_1 <- lme(fixed = log(oxaloacetic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
+
+
+# Model with random intercept (CompSymm)
+model_2 <- lme(fixed = log(oxaloacetic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corCompSymm(form = ~oxaloacetic_acid_tissue|record_id),
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+# Model with random intercept and random slope (AR1)
+model_3 <- lme(fixed = log(oxaloacetic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_3_summary <- summary(model_3)
+
+# Model with random intercept and random slope
+model_4 <- lme(fixed = log(oxaloacetic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             data = tissue_met)
+model_4_summary <- summary(model_4)
+
+
+# Model with random intercept and random slope (CompSymm)
+model_5 <- lme(fixed = log(oxaloacetic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_5_summary <- summary(model_5)
+
+
+# Model with random intercept and random slope (AR1)
+model_6 <- lme(fixed = log(oxaloacetic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_6_summary <- summary(model_6)
+
+
+summaries_df <- data.frame(
+  Model = c("Random intercept", "Random intercept (CompSym)", "Random intercept (AR1)", 
+            "Random int + slope", "Random int + slope (CompSym)", "Random int + slope (AR1"),
+  AIC = c(model_1_summary$AIC,
+          model_2_summary$AIC,
+          model_3_summary$AIC,
+          model_4_summary$AIC,
+          model_5_summary$AIC,
+          model_6_summary$AIC),
+  BIC = c(model_1_summary$BIC,
+          model_2_summary$BIC,
+          model_3_summary$BIC,
+          model_4_summary$BIC,
+          model_5_summary$BIC,
+          model_6_summary$BIC),
+  LogLik = c(model_1_summary$logLik,
+             model_2_summary$logLik,
+             model_3_summary$logLik,
+             model_4_summary$logLik,
+             model_5_summary$logLik,
+             model_6_summary$logLik))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary,
+                        model_4_summary, model_5_summary, model_6_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$tTable[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+qqnorm(residuals(model_5)); qqline(residuals(model_5))
+plot(residuals(model_5) ~ fitted(model_5), main = "Residuals vs. Index")
+lines(lowess(fitted(model_5), residuals(model_5)), col="red")
+qqnorm(residuals(model_6)); qqline(residuals(model_6))
+plot(residuals(model_6) ~ fitted(model_6), main = "Residuals vs. Index")
+lines(lowess(fitted(model_6), residuals(model_6)), col="red")
+layout(1)
+```
+
+### Generalized linear mixed model
+
+```{r echo = F, results='asis'}
+# Model with random intercept (Gamma link)
+model_1 <- glmer((oxaloacetic_acid_tissue) ~ group + (1|record_id),
+             family = Gamma(), 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
+
+# Model with random intercept (Inverse gaussian link)
+model_2 <- glmer((oxaloacetic_acid_tissue) ~ group + (1|record_id),
+             family = inverse.gaussian(), 
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+summaries_df <- data.frame(
+  Model = c("Gamma Link", "Inverse gaussian link"),
+  AIC = c(model_1_summary$AICtab[[1]], model_2_summary$AICtab[[1]]),
+  BIC = c(model_1_summary$AICtab[[2]], model_2_summary$AICtab[[2]]),
+  LogLik = c(model_1_summary$AICtab[[3]], model_2_summary$AICtab[[3]]))
+model_summaries <- list(model_1_summary, model_2_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$coefficients[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_1), main = "Residuals vs. Index")
+layout(1)
+```
+
+### Non-transformed
+
+```{r echo = F, results='asis'}
+# Model with random intercept
+model_1 <- lme(fixed = (oxaloacetic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
+
+
+# Model with random intercept (CompSymm)
+model_2 <- lme(fixed = (oxaloacetic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+
+# Model with random intercept and random slope (AR1)
+model_3 <- lme(fixed = (oxaloacetic_acid_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_3_summary <- summary(model_3)
+
+
+# Model with random intercept and random slope
+model_4 <- lme(fixed = (oxaloacetic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             data = tissue_met)
+model_4_summary <- summary(model_4)
+
+# Model with random intercept and random slope (CompSymm)
+model_5 <- lme(fixed = (oxaloacetic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_5_summary <- summary(model_5)
+
+# Model with random intercept and random slope (AR1)
+model_6 <- lme(fixed = (oxaloacetic_acid_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_6_summary <- summary(model_6)
+
+
+summaries_df <- data.frame(
+  Model = c("Random intercept", "Random intercept (CompSym)", "Random intercept (AR1)", 
+            "Random int + slope", "Random int + slope (CompSym)", "Random int + slope (AR1"),
+  AIC = c(model_1_summary$AIC,
+          model_2_summary$AIC,
+          model_3_summary$AIC,
+          model_4_summary$AIC,
+          model_5_summary$AIC,
+          model_6_summary$AIC),
+  BIC = c(model_1_summary$BIC,
+          model_2_summary$BIC,
+          model_3_summary$BIC,
+          model_4_summary$BIC,
+          model_5_summary$BIC,
+          model_6_summary$BIC),
+  LogLik = c(model_1_summary$logLik,
+             model_2_summary$logLik,
+             model_3_summary$logLik,
+             model_4_summary$logLik,
+             model_5_summary$logLik,
+             model_6_summary$logLik))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary,
+                        model_4_summary, model_5_summary, model_6_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$tTable[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+qqnorm(residuals(model_5)); qqline(residuals(model_5))
+plot(residuals(model_5) ~ fitted(model_5), main = "Residuals vs. Index")
+lines(lowess(fitted(model_5), residuals(model_5)), col="red")
+qqnorm(residuals(model_6)); qqline(residuals(model_6))
+plot(residuals(model_6) ~ fitted(model_6), main = "Residuals vs. Index")
+lines(lowess(fitted(model_6), residuals(model_6)), col="red")
+layout(1)
+```
+
+## Adenine
+
+```{r echo = F}
+ggarrange(metplot(tissue_met, "adnine_tissue"), 
+          metplot(tissue_met_avg, "adnine_tissue"),
+          common.legend = T)
+hist(tissue_met$adnine_tissue)
+```
+
+### Average (no random effects)
+
+```{r echo = F, results='asis'}
+# Model with gamma link
+model_1 <- glm(adnine_tissue ~ group,
+               family = Gamma, data = tissue_met_avg)
+model_1_summary <- summary(model_1)
+
+# Model with log transformation
+model_2 <- glm(log(adnine_tissue) ~ group,
+               data = tissue_met_avg)
+model_2_summary <- summary(model_2)
+
+# Model with sqrt transformation
+model_3 <- glm(sqrt(adnine_tissue) ~ group,
+               data = tissue_met_avg)
+model_3_summary <- summary(model_3)
+
+# Model with box cox transformation
+bc <- boxcox(adnine_tissue ~ group, data = tissue_met_avg)
+lambda <- bc$x[which.max(bc$y)]
+model_4 <- lm(((adnine_tissue^lambda -1)/lambda) ~ group, data = tissue_met_avg)
+model_4_summary <- summary(model_4)
+
+print(paste0("Lambda (for Box cox): ", round(lambda, digits = 3)))
+
+summaries_df <- data.frame(
+  Model = c("Gamma link", "Log transformed", "Sqrt transformed", "Box cox transformed"),
+  AIC = c(model_1_summary$aic,
+          model_2_summary$aic,
+          model_3_summary$aic,
+          ""))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary, model_4_summary)
+
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$coefficients[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+layout(1)
+```
+#### Sqrt back-transformation
+```{r}
+# Coefficients of HC
+sqrt_coef_hc <- model_3_summary$coefficients[[1]]
+sqrt_coef_hc_low <- sqrt_coef_hc - (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+sqrt_coef_hc_high <- sqrt_coef_hc + (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+
+sqrt_coef_hc_t <- sqrt_coef_hc^2 * sign(sqrt_coef_hc)
+sqrt_coef_hc_low_t <- sqrt_coef_hc_low^2 * sign(sqrt_coef_hc_low)
+sqrt_coef_hc_high_t <- sqrt_coef_hc_high^2 * sign(sqrt_coef_hc_high)
+
+print(paste0("HC: ",round(sqrt_coef_hc_t, 2),
+             " (95% CI: ", round(sqrt_coef_hc_low_t, 2), ", ",
+             round(sqrt_coef_hc_high_t, 2), ", p=", round(model_3_summary$coefficients[[1,4]],10), ")"))
+
+# Coefficients of T1D
+model_3_summary <- summary(glm(sqrt(isocitric_citric_acid_tissue) ~ factor(group, levels = c("Type 1 Diabetes", "Lean Control")),
+               data = tissue_met_avg))
+sqrt_coef_t1d <- model_3_summary$coefficients[[1]]
+sqrt_coef_t1d_low <- sqrt_coef_t1d - (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+sqrt_coef_t1d_high <- sqrt_coef_t1d + (model_3_summary$coefficients[[1,2]]*qnorm(0.975))
+
+sqrt_coef_t1d_t <- sqrt_coef_t1d^2 * sign(sqrt_coef_t1d)
+sqrt_coef_t1d_low_t <- sqrt_coef_t1d_low^2 * sign(sqrt_coef_t1d_low)
+sqrt_coef_t1d_high_t <- sqrt_coef_t1d_high^2 * sign(sqrt_coef_t1d_high)
+
+print(paste0("T1D: ",round(sqrt_coef_t1d_t, 2),
+             " (95% CI: ", round(sqrt_coef_t1d_low_t, 2), ", ",
+             round(sqrt_coef_t1d_high_t, 2), ", p=", round(model_3_summary$coefficients[[1,4]],10), ")"))
+
+# Coefficients of difference
+model_3_summary <- summary(glm(sqrt(isocitric_citric_acid_tissue) ~ group,
+               data = tissue_met_avg))
+sqrt_coef_diff <- model_3_summary$coefficients[[2]]
+sqrt_coef_diff_low <- sqrt_coef_diff - (model_3_summary$coefficients[[2,2]]*qnorm(0.975))
+sqrt_coef_diff_high <- sqrt_coef_diff + (model_3_summary$coefficients[[2,2]]*qnorm(0.975))
+
+sqrt_coef_diff_t <- sqrt_coef_diff^2 * sign(sqrt_coef_diff)
+sqrt_coef_diff_low_t <- sqrt_coef_diff_low^2 * sign(sqrt_coef_diff_low)
+sqrt_coef_diff_high_t <- sqrt_coef_diff_high^2 * sign(sqrt_coef_diff_high)
+
+print(paste0("Diff: ",round(sqrt_coef_diff_t, 2),
+             " (95% CI: ", round(sqrt_coef_diff_low_t, 2), ", ",
+             round(sqrt_coef_diff_high_t, 2), ", p=", round(model_3_summary$coefficients[[2,4]],10), ")"))
+
+# Log2FC
+log2fc <- log2((sqrt_coef_t1d/sqrt_coef_hc)^2)
+print(paste0("Log2FC: ", round(log2fc,3)))
+```
+
+### Log-transformed
+
+```{r echo = F, results='asis'}
+# Model with random intercept
+model_1 <- lme(fixed = log(adnine_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
+
+# Model with random intercept (CompSymm)
+model_2 <- lme(fixed = log(adnine_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+# Model with random intercept and random slope (AR1)
+model_3 <- lme(fixed = log(adnine_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_3_summary <- summary(model_3)
+
+
+# Model with random intercept and random slope
+model_4 <- lme(fixed = log(adnine_tissue) ~ group,
+             random = ~ group | record_id, 
+             data = tissue_met)
+model_4_summary <- summary(model_4)
+
+# Model with random intercept and random slope (CompSymm)
+model_5 <- lme(fixed = log(adnine_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_5_summary <- summary(model_5)
+
+# Model with random intercept and random slope (AR1)
+model_6 <- lme(fixed = log(adnine_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_6_summary <- summary(model_6)
+
+
+summaries_df <- data.frame(
+  Model = c("Random intercept", "Random intercept (CompSym)", "Random intercept (AR1)", 
+            "Random int + slope", "Random int + slope (CompSym)", "Random int + slope (AR1"),
+  AIC = c(model_1_summary$AIC,
+          model_2_summary$AIC,
+          model_3_summary$AIC,
+          model_4_summary$AIC,
+          model_5_summary$AIC,
+          model_6_summary$AIC),
+  BIC = c(model_1_summary$BIC,
+          model_2_summary$BIC,
+          model_3_summary$BIC,
+          model_4_summary$BIC,
+          model_5_summary$BIC,
+          model_6_summary$BIC),
+  LogLik = c(model_1_summary$logLik,
+             model_2_summary$logLik,
+             model_3_summary$logLik,
+             model_4_summary$logLik,
+             model_5_summary$logLik,
+             model_6_summary$logLik))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary,
+                        model_4_summary, model_5_summary, model_6_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$tTable[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+qqnorm(residuals(model_5)); qqline(residuals(model_5))
+plot(residuals(model_5) ~ fitted(model_5), main = "Residuals vs. Index")
+lines(lowess(fitted(model_5), residuals(model_5)), col="red")
+qqnorm(residuals(model_6)); qqline(residuals(model_6))
+plot(residuals(model_6) ~ fitted(model_6), main = "Residuals vs. Index")
+lines(lowess(fitted(model_6), residuals(model_6)), col="red")
+layout(1)
+```
+
+### Non-transformed
+
+```{r echo = F, results='asis'}
+# Model with random intercept
+model_1 <- lme(fixed = (adnine_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             data = tissue_met)
+model_1_summary <- summary(model_1)
+
+
+# Model with random intercept (CompSymm)
+model_2 <- lme(fixed = (adnine_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_2_summary <- summary(model_2)
+
+
+# Model with random intercept and random slope (AR1)
+model_3 <- lme(fixed = (adnine_tissue) ~ group,
+             random = ~ 1 | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_3_summary <- summary(model_3)
+
+
+# Model with random intercept and random slope
+model_4 <- lme(fixed = (adnine_tissue) ~ group,
+             random = ~ group | record_id, 
+             data = tissue_met)
+model_4_summary <- summary(model_4)
+
+# Model with random intercept and random slope (CompSymm)
+model_5 <- lme(fixed = (adnine_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corCompSymm(form = ~1|record_id),
+             data = tissue_met)
+model_5_summary <- summary(model_5)
+
+
+# Model with random intercept and random slope (AR1)
+model_6 <- lme(fixed = (adnine_tissue) ~ group,
+             random = ~ group | record_id, 
+             correlation = corAR1(form = ~1|record_id),
+             data = tissue_met)
+model_6_summary <- summary(model_6)
+
+
+summaries_df <- data.frame(
+  Model = c("Random intercept", "Random intercept (CompSym)", "Random intercept (AR1)", 
+            "Random int + slope", "Random int + slope (CompSym)", "Random int + slope (AR1"),
+  AIC = c(model_1_summary$AIC,
+          model_2_summary$AIC,
+          model_3_summary$AIC,
+          model_4_summary$AIC,
+          model_5_summary$AIC,
+          model_6_summary$AIC),
+  BIC = c(model_1_summary$BIC,
+          model_2_summary$BIC,
+          model_3_summary$BIC,
+          model_4_summary$BIC,
+          model_5_summary$BIC,
+          model_6_summary$BIC),
+  LogLik = c(model_1_summary$logLik,
+             model_2_summary$logLik,
+             model_3_summary$logLik,
+             model_4_summary$logLik,
+             model_5_summary$logLik,
+             model_6_summary$logLik))
+model_summaries <- list(model_1_summary, model_2_summary, model_3_summary,
+                        model_4_summary, model_5_summary, model_6_summary)
+# Initialize an empty list to store the tTable rows
+tTable_rows <- list()
+
+# Iterate over each model summary
+for (summary in model_summaries) {
+  # Extract the second row of the tTable and append it to the list
+  tTable_rows[[length(tTable_rows) + 1]] <- summary$tTable[2, ]
+}
+  
+summary_combined_df <- cbind(summaries_df, do.call(rbind, tTable_rows))
+kable(summary_combined_df, digits = 3)
+
+par(mfrow = c(2,2))
+qqnorm(residuals(model_1)); qqline(residuals(model_1))
+plot(residuals(model_1) ~ fitted(model_1), main = "Residuals vs. Index")
+lines(lowess(fitted(model_1), residuals(model_1)), col="red")
+qqnorm(residuals(model_2)); qqline(residuals(model_2))
+plot(residuals(model_2) ~ fitted(model_2), main = "Residuals vs. Index")
+lines(lowess(fitted(model_2), residuals(model_2)), col="red")
+qqnorm(residuals(model_3)); qqline(residuals(model_3))
+plot(residuals(model_3) ~ fitted(model_3), main = "Residuals vs. Index")
+lines(lowess(fitted(model_3), residuals(model_3)), col="red")
+qqnorm(residuals(model_4)); qqline(residuals(model_4))
+plot(residuals(model_4) ~ fitted(model_4), main = "Residuals vs. Index")
+lines(lowess(fitted(model_4), residuals(model_4)), col="red")
+qqnorm(residuals(model_5)); qqline(residuals(model_5))
+plot(residuals(model_5) ~ fitted(model_5), main = "Residuals vs. Index")
+lines(lowess(fitted(model_5), residuals(model_5)), col="red")
+qqnorm(residuals(model_6)); qqline(residuals(model_6))
+plot(residuals(model_6) ~ fitted(model_6), main = "Residuals vs. Index")
+lines(lowess(fitted(model_6), residuals(model_6)), col="red")
+layout(1)
 ```

@@ -38,8 +38,8 @@ def clean_panther():
     # Demographics
     # --------------------------------------------------------------------------
 
-    dem_cols = ["record_id", "group", "dob", "t2d_date",
-                "sex", "race", "ethnicity", "sglt2i", "participation_status"]
+    dem_cols = ["record_id", "group", "dob", "t2d_date", 
+                "sex", "race", "ethnicity", "sglt2i", "participation_status","mrn"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols,
                                             events=["screening_arm_1"]))
@@ -100,15 +100,15 @@ def clean_panther():
         inplace=True)
     med = med.rename(columns={"redcap_event_name": "visit"})
     # Meds by regex
-    med["sglt2i_timepoint"]=med.apply(lambda x: x.str.contains('sgl|canag|dapagl|empag|floz', case=False).any(), axis=1)
+    med["sglti_timepoint"]=med.apply(lambda x: x.str.contains('sgl|canag|dapagl|empag|floz', case=False).any(), axis=1)
     med["ace_inhibitor"]=med.apply(lambda x: x.str.contains('lisino|liso', case=False).any(), axis=1)
     med["raasi_timepoint"]=np.where(np.logical_or.reduce((med.ace_inhibitor==True, med.htn_med___1=="1", med.htn_med___2=="1")), True, False)
     med["metformin_timepoint"]=med.apply(lambda x: x.str.contains('met|axpin|diage|gluci|glucophage|metabe', case=False).any(), axis=1)
     med["insulin_med_timepoint"]=med.apply(lambda x: x.str.contains('insul|lantus', case=False).any(), axis=1)
-    meds=["sglt2i_timepoint", "raasi_timepoint", "metformin_timepoint", "insulin_med_timepoint"]
+    meds=["sglti_timepoint", "raasi_timepoint", "metformin_timepoint", "insulin_med_timepoint"]
     med[meds]= med[meds].applymap(lambda x: "Yes" if x else "No")
     # SGLT2i, RAASi, Metformin
-    med = med[["record_id", "visit", "sglt2i_timepoint", "raasi_timepoint", "metformin_timepoint", "insulin_med_timepoint"]].copy()
+    med = med[["record_id", "visit", "sglti_timepoint", "raasi_timepoint", "metformin_timepoint", "insulin_med_timepoint"]].copy()
     med["procedure"] = "medications"
     med["date"] = screen["date"]
 
@@ -138,7 +138,7 @@ def clean_panther():
     # IVGTT
     # --------------------------------------------------------------------------
 
-    var = ["record_id"] + [v for v in meta.loc[meta["form_name"].str.startswith("ivgtt"), "field_name"]]
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"].str.startswith("ivgtt"), "field_name"]] + [v for v in meta.loc[meta["form_name"].str.startswith("minmod"), "field_name"]]
     ivgtt = pd.DataFrame(proj.export_records(fields=var))
     ivgtt["redcap_event_name"].replace(
         {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1", "year_2_arm_1": "year_2"}, 

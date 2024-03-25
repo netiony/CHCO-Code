@@ -36,13 +36,13 @@ library(dplyr)
 # Import proteomics data for IMPROVE
 load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/IMPROVE T2D/Somalogic data/improve_soma.Rdata")
 load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/IMPROVE T2D/Somalogic data/analytes.Rdata")
-# Format and combine
-soma <- improve_soma %>% select(SampleDescription, TimePoint, contains("seq."))
 # Transform
-soma[, 3:ncol(soma)] <- lapply(soma[, 3:ncol(soma)], log)
-# Merge clinical and SOMA data
-soma <- soma %>%
-  rename(record_id = "SampleDescription", visit = "TimePoint") %>%
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(improve_soma))
+improve_soma <- improve_soma %>% modify_if(is_seq(names(.)), log)
+improve_soma$record_id <- improve_soma$SampleDescription
+improve_soma$visit <- improve_soma$TimePoint
+improve_soma <- improve_soma %>%
   mutate(
     record_id = sub("IT2D-", "IT_", record_id),
     visit = case_when(
@@ -51,18 +51,24 @@ soma <- soma %>%
       visit == "12M" ~ "12_months_post_surgery"
     )
   )
-soma$visit = factor(soma$visit,levels = c("baseline","3_months_post_surgery","12_months_post_surgery"))
+improve_soma$visit = factor(improve_soma$visit,levels = c("baseline","3_months_post_surgery","12_months_post_surgery"))
+
+# create df with only participants who have transcriptomics
+# "IT_07_12M","IT_07_BL","IT_08_12M","IT_08_BL","IT_10_12M","IT_10_BL","IT_11_12M","IT_11_BL","IT_12_12M","IT_12_BL
+improve_soma_transcriptomics <- improve_soma %>% filter(
+  record_id %in% c("IT_07","IT_08","IT_10","IT_11","IT_12")
+)
 ```
 
 ```{r}
-
+# analysis in the entire cohort
 #| cache: true
 seqs <- analytes$AptName
 # Parallel processing
 cl <- makeForkCluster(8)
 rows <- parLapply(cl, seqs, function(y) {
   f <- as.formula(paste0(y, "~ visit + (1|record_id)"))
-  m <- lmer(f, data = soma)
+  m <- lmer(f, data = improve_soma)
   emm <- emmeans(m, specs = ~visit)
   # Contrast not necessary with current parameterization, but nice to have written
   c <- contrast(emm,
@@ -75,12 +81,63 @@ rows <- parLapply(cl, seqs, function(y) {
   return(c)
 })
 stopCluster(cl)
+cl <- makeForkCluster(8)
+means <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|record_id)"))
+  m <- lmer(f, data = improve_soma)
+  emm <- emmeans(m, specs = ~visit)
+  # Contrast not necessary with current parameterization, but nice to have written
+  c <- contrast(emm,
+    method =
+      list("Month 3 - Baseline" = c(0, 1, 0) - c(1, 0, 0),
+           "Month 12 - Baseline" = c(0, 0, 1) - c(1, 0, 0))
+  )
+  c <- as.data.frame(c)
+  c$AptName <- y
+  return(emm)
+})
+stopCluster(cl)
+
+# analysis in those with transcriptomics
+#| cache: true
+seqs <- analytes$AptName
+# Parallel processing
+cl <- makeForkCluster(8)
+rows_t <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|record_id)"))
+  m <- lmer(f, data = improve_soma_transcriptomics)
+  emm <- emmeans(m, specs = ~visit)
+  # Contrast not necessary with current parameterization, but nice to have written
+  c <- contrast(emm,
+    method =
+      list("Month 12 - Baseline" = c(0, 1) - c(1, 0))
+  )
+  c <- as.data.frame(c)
+  c$AptName <- y
+  return(c)
+})
+stopCluster(cl)
+cl <- makeForkCluster(8)
+means_t <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|record_id)"))
+  m <- lmer(f, data = improve_soma_transcriptomics)
+  emm <- emmeans(m, specs = ~visit)
+  # Contrast not necessary with current parameterization, but nice to have written
+  c <- contrast(emm,
+    method =
+      list("Month 12 - Baseline" = c(0, 1) - c(1, 0))
+  )
+  c <- as.data.frame(c)
+  c$AptName <- y
+  return(emm)
+})
+stopCluster(cl)
 ```
 
 ## Initial LMM results
 
 ```{r}
-# Format results
+# Format results - entire cohort
 lmm_res <- do.call(rbind, rows)
 lmm_res$p.value.adj <- p.adjust(lmm_res$p.value, method = "BH")
 lmm_res$Target <- analytes$Target[match(lmm_res$AptName, analytes$AptName)]
@@ -94,6 +151,41 @@ lmm_res <- lmm_res[order(lmm_res$p.value, decreasing = F), ]
 lmm_res <- split.data.frame(lmm_res, lmm_res$contrast)
 names <- names(lmm_res)
 openxlsx::write.xlsx(lmm_res, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/IMPROVE T2D/Results/IMPROVE Somalogic results.xlsx", sheetName=names)
+# emmeans
+means_res <- NULL
+for (i in 1:nrow(analytes)) {
+  temp <- summary(means[[i]])
+  a <- analytes[i, c("Target", "TargetFullName", "UniProt")]
+  a <- rbind(a, a[rep(1,2),])
+  temp <- cbind(a, temp)
+  means_res <- rbind(means_res, temp)
+}
+openxlsx::write.xlsx(means_res, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/IMPROVE T2D/Results/IMPROVE emmeans.xlsx")
+
+# Format results - transcriptomics cohort
+lmm_res_t <- do.call(rbind, rows_t)
+lmm_res_t$p.value.adj <- p.adjust(lmm_res_t$p.value, method = "BH")
+lmm_res_t$Target <- analytes$Target[match(lmm_res_t$AptName, analytes$AptName)]
+lmm_res_t$UniProt <- analytes$UniProt[match(lmm_res_t$AptName, analytes$AptName)]
+lmm_res_t$TargetFullName <- analytes$TargetFullName[match(lmm_res_t$AptName, analytes$AptName)]
+lmm_res_t <- lmm_res_t[, c(
+  "AptName", "Target","TargetFullName","UniProt","contrast","estimate", "SE", "df",
+  "t.ratio", "p.value", "p.value.adj"
+)]
+lmm_res_t <- lmm_res_t[order(lmm_res_t$p.value, decreasing = F), ]
+lmm_res_t <- split.data.frame(lmm_res_t, lmm_res_t$contrast)
+names <- names(lmm_res_t)
+openxlsx::write.xlsx(lmm_res_t, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/IMPROVE T2D/Results/IMPROVE Somalogic results transcriptomics cohort.xlsx", sheetName=names)
+# emmeans
+means_res_t <- NULL
+for (i in 1:nrow(analytes)) {
+  temp <- summary(means_t[[i]])
+  a <- analytes[i, c("Target", "TargetFullName", "UniProt")]
+  a <- rbind(a, a[rep(1,1),])
+  temp <- cbind(a, temp)
+  means_res_t <- rbind(means_res_t, temp)
+}
+openxlsx::write.xlsx(means_res_t, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/IMPROVE T2D/Results/IMPROVE emmeans transcriptomics cohort.xlsx")
 ```
 
 

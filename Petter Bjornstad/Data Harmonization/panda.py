@@ -38,7 +38,7 @@ def clean_panda():
     # Demographics
     # --------------------------------------------------------------------------
 
-    dem_cols = ["record_id", "crc_substudy", "dob", "diabetes_dx_date", "sex", "race", "ethnicity", "participation_status"]
+    dem_cols = ["record_id", "crc_substudy", "dob", "diabetes_dx_date", "sex", "race", "ethnicity", "participation_status","mrn"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols, events=["screening_arm_1", "screening__annual_arm_2"]))
     # Replace missing values
@@ -68,6 +68,7 @@ def clean_panda():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "medical_history", "field_name"]]
     med = pd.DataFrame(proj.export_records(fields=var))
+    med = med[med['redcap_event_name'].str.contains('screen', na=False)]
     # Replace missing values
     med.replace(rep, np.nan, inplace=True)
     med_list = {'diabetes_tx___1': "insulin_pump_timepoint",
@@ -86,7 +87,8 @@ def clean_panda():
                 "pump_basal_rate": "pump_basal_rate", 
                 "cgm_yn": "cgm_yn"}
     og_names = list(med_list.keys())
-    med = med[["record_id"] + og_names]
+    hx_list = [col for col in med.columns if col.startswith('hx_')]
+    med = med[["record_id"] + og_names + hx_list]
     med.rename(med_list, axis=1, inplace=True)
     # RAASi
     med = med.assign(raasi_timepoint=np.maximum(pd.to_numeric(
@@ -123,7 +125,8 @@ def clean_panda():
     # Screening labs
     # --------------------------------------------------------------------------
 
-    screen = pd.DataFrame(proj.export_records(forms=["screening_labs", "annual_labs"], events=["screening_arm_1", "annual_visit_1_arm_1", "screening__annual_arm_2"]))
+    screen = pd.DataFrame(proj.export_records(forms=["screening_labs", "annual_labs"]))
+    screen = screen[screen['redcap_event_name'].str.contains('screen', na=False)]
     # Replace missing values
     screen.replace(rep, np.nan, inplace=True)
     screen.rename({"screen_a1c": "hba1c"}, axis=1, inplace=True)
@@ -146,7 +149,7 @@ def clean_panda():
     screen["visit"] = "baseline"
     screen["procedure"] = "screening"
     # Assume medication review done at screening
-    med["date"] = screen["date"]
+    med = pd.merge(med, screen[['record_id', 'date']], on='record_id', how='left')
 
     # --------------------------------------------------------------------------
     # Labs
@@ -235,9 +238,7 @@ def clean_panda():
     biopsy.replace(rep, np.nan, inplace=True)
     biopsy.drop([col for col in biopsy.columns if '_yn' in col] +
                 [col for col in biopsy.columns if 'procedure_' in col] +
-                [col for col in biopsy.columns if 'phys_' in col] +
-                ["core_diagnostic", "core_hypo_cryo", "core_oct", "core_rna", 
-                "bx_number"],
+                [col for col in biopsy.columns if 'phys_' in col],
                 axis=1, inplace=True)
     biopsy.columns = biopsy.columns.str.replace(r"bx_", "", regex=True)
     biopsy.columns = biopsy.columns.str.replace(r"labs_", "", regex=True)

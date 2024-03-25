@@ -1,0 +1,143 @@
+---
+title: "Moore - Phenteramine vs. Placebo"
+author: "Laura Pyle"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(dplyr)
+library(tableone)
+library(stringr)
+library(growthcleanr)
+
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+```
+
+# Questions
+
+
+# Methods
+
+- To create a combined race ethnicity variable: 3 participants checked Hispanic/Latino and either White or Other race and were classified as Hispanic. 3 participants checked Black +/- White and were classified as White. The remaining participants checked only White and were classified as White.
+- Lab data for table 1 were taken from the Screening/Enrollment Visit, not Visit 1, as all data were missing at Visit 1.
+- Some participants had more than one CESD administered at Visit 1. The most recent CESD was used.
+
+```{r, include=FALSE}
+# Demographics data
+demo <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Moore/Phenteramine RCT/Data raw/PilotRCTPhentermineT-LPDemographics_DATA_LABELS_2024-02-05_1920.csv")
+demo <- demo %>% filter(!(Record.ID %in% c("Jacky Test","Jacky Test 2")))
+demo <- demo %>% filter(Repeat.Instrument=="Demographics Form")
+demo <- demo %>% filter(!is.na(Age..completed.years..at.Enrollment))
+# participant 28 withdrew before taking a single dose of study medication
+demo <- demo %>% filter(!(Record.ID == "028"))
+demo$Obesity.Class.at.Enrollment <- as.factor(demo$Obesity.Class.at.Enrollment)
+# create combined race/ethnicity
+# there are 3 people who checked Latino - 2 checked white and 1 checked other for race
+# if they checked black (+/- white), classify them as black
+demo <- demo %>% mutate(
+  race_eth = case_when(
+  Adolescent..Young.Adult.Ethnicity == "Hispanic or Latino" ~ "Hispanic or Latino",
+  Adolescent.Young.Adult.Race..choice.Black.or.African.American. == "Checked" ~ "Non-Hispanic Black",
+  Adolescent.Young.Adult.Race..choice.White. == "Checked" & 
+    !(Adolescent.Young.Adult.Race..choice.Black.or.African.American. == "Checked") ~ "Non-Hispanic White"
+  )
+)
+# turn household income into numeric
+demo$Estimated.yearly.household.income. <- str_remove(demo$Estimated.yearly.household.income., "\\$")
+demo$Estimated.yearly.household.income. <- str_remove(demo$Estimated.yearly.household.income., ",")
+demo <- demo %>% mutate(
+  Household.income.numeric = case_when(
+    Estimated.yearly.household.income. == "2850 per month" ~ 34200,
+    !(Estimated.yearly.household.income. == "$2,850 per month") ~ as.numeric(Estimated.yearly.household.income.)
+  )
+)
+# summary variable for food insecurity
+demo <- demo %>% mutate (
+  food_insecurity = case_when(
+    X.Within.the.past.12.months..we.worried.about.whether.our.food.would.run.out.before.we.got.money.to.buy.more. == "YES" ~ "Yes",
+    X.Within.the.past.12.months..the.food.we.bought.didn.t.last.and.we.didn.t.have.money.to.get.more. == "YES" ~ "Yes",
+    .default = "No"
+  )
+)
+
+# Drug tolerance - randomization assignment
+drug_tol <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Moore/Phenteramine RCT/Data raw/PilotRCTPhentermineT-LPDrugTolerance_DATA_LABELS_2024-02-05_1945.csv", na.strings = c("NA", "", " "))
+drug_tol <- drug_tol %>% filter(!is.na(Randomization.Assignment))
+t1_data <- merge(demo, drug_tol, by="Record.ID", all.x = T, all.y = F)
+
+# Height/weight/vitals
+ht_wt_vitals <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Moore/Phenteramine RCT/Data raw/PilotRCTPhentermineT-LPHtWtVitals_DATA_LABELS_2024-02-06_1154.csv", na.strings = c("NA", "", " "))
+ht_wt_vitals <- ht_wt_vitals %>% filter(Event.Name == "Study Visit 1")
+ht_wt_vitals <- ht_wt_vitals %>% filter(!is.na(Repeat.Instrument))
+# per Jaime, use 2nd record for participant 0002
+ht_wt_vitals <- ht_wt_vitals %>% filter(!(Record.ID == "0002" & Repeat.Instance == 1))
+num_vars <- c("Height.1..cm.", "Height.2..cm.", "Height.3..cm.", "Weight.1..kg.", "Weight.2..kg.", "Weight.3..kg.",
+              "Systolic.Blood.Pressure.1", "Systolic.Blood.Pressure.2", "Systolic.Blood.Pressure.3",
+              "Diastolic.Blood.Pressure.1", "Diastolic.Blood.Pressure.2", "Diastolic.Blood.Pressure.3")
+ht_wt_vitals[num_vars] <- apply(ht_wt_vitals[,num_vars],2,as.numeric)
+ht_wt_vitals$ht <- rowMeans(ht_wt_vitals[, c("Height.1..cm.", "Height.2..cm.", "Height.3..cm.")])
+ht_wt_vitals$height_m <- ht_wt_vitals$ht/100
+ht_wt_vitals$wt <- rowMeans(ht_wt_vitals[, c("Weight.1..kg.", "Weight.2..kg.", "Weight.3..kg.")])
+ht_wt_vitals$sbp <- rowMeans(ht_wt_vitals[, c("Systolic.Blood.Pressure.1", "Systolic.Blood.Pressure.2", "Systolic.Blood.Pressure.3")])
+ht_wt_vitals$dbp <- rowMeans(ht_wt_vitals[, c("Diastolic.Blood.Pressure.1", "Diastolic.Blood.Pressure.2", "Diastolic.Blood.Pressure.3")])
+ht_wt_vitals$hr <- rowMeans(ht_wt_vitals[, c("Heart.Rate.1.", "Heart.Rate.2.", "Heart.Rate.3.")])
+sex_age <- demo[, c("Record.ID", "Biological.Sex", "AgeAtVisit1")]
+ht_wt_vitals <- merge(sex_age, ht_wt_vitals, by="Record.ID", all.x = T, all.y = F)
+ht_wt_vitals$sex <- ht_wt_vitals$Biological.Sex
+ht_wt_vitals$bmi <- ht_wt_vitals$wt / (ht_wt_vitals$height_m * ht_wt_vitals$height_m)
+ht_wt_vitals$agem <- ht_wt_vitals$AgeAtVisit1 * 12
+ht_wt_vitals_bmiz <- ext_bmiz(ht_wt_vitals)
+ht_wt_vitals_keep <- ht_wt_vitals_bmiz %>% select(Record.ID, height_m, wt, bmi, bmiz, bmip95, sbp, dbp)
+t1_data <- merge(t1_data, ht_wt_vitals_keep, by="Record.ID", all.x = T, all.y = F)
+
+# Labs
+labs <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Moore/Phenteramine RCT/Data raw/PilotRCTPhentermineT-LPLabs_DATA_2024-02-16_2219.csv")
+labs <- labs %>% filter(redcap_event_name == "screeningenrollmen_arm_1")
+labs <- labs %>% filter(redcap_repeat_instrument == "labs")
+labs$Record.ID <- labs$record_id
+labs_keep <- labs %>% select(Record.ID, labs_a1c, labs_trig, labs_hdl, labs_ldl, labs_alt)
+t1_data <- merge(t1_data, labs_keep, by="Record.ID", all.x = T, all.y = F)
+
+# CESD
+cesd <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Moore/Phenteramine RCT/Data raw/PilotRCTPhentermineT-LPCESD_DATA_2024-02-16_2232.csv")
+cesd <- cesd %>% filter(redcap_event_name == "study_visit_1_arm_1")
+cesd <- cesd %>% filter(redcap_repeat_instrument == "cesd")
+# some people have more than 1 CESD at this visit - keep the most recent
+cesd <- cesd %>% arrange(record_id, desc(cesd_dateofvisit))
+cesd <- cesd %>% group_by(record_id) %>% filter(row_number()==1)
+cesd$Record.ID <- cesd$record_id
+cesd <- ungroup(cesd)
+cesd_keep <- cesd %>% select(Record.ID, cesd_score)
+t1_data <- merge(t1_data, cesd_keep, by="Record.ID", all.x = T, all.y = F)
+t1_data$cesd_score_ge20 <- as.factor(ifelse(t1_data$cesd_score >= 20, 1, 0))
+
+# DEXA
+dxa <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Moore/Phenteramine RCT/Data raw/PilotRCTPhentermineT-LPDEXA_DATA_2024-02-16_2244.csv")
+dxa <- dxa %>% filter(redcap_event_name == "study_visit_1_arm_1")
+
+# RMR
+rmr <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Moore/Phenteramine RCT/Data raw/PilotRCTPhentermineT-LPRMR_DATA_2024-02-16_2245.csv")
+
+```
+
+# Results
+
+## Table 1
+
+```{r, include=FALSE}
+t1 <- CreateTableOne(data = t1_data, vars = c("AgeAtVisit1", "Biological.Sex", "race_eth", "Primary.Bariatric.Surgical.Procedure",
+                                              "Months.post.MBS.at.Enrollment", "Obesity.Class.at.Enrollment", "Qualifying.Inclusion.Criteria",
+                                              "Health.Insurance.Type", "Primary.caregiver.s.highest.level.of.education.",
+                                              "Household.income.numeric", "food_insecurity", "height_m", "weight_kg", "sbp", "dbp",
+                                              "hr", "record_id", "labs_a1c", "labs_trig", "labs_hdl", "labs_ldl", "labs_alt",
+                                              "cesd_score", "cesd_score_ge20"), 
+                     strata = "Randomization.Assignment")
+t1 <- print(t1, nonnormal = c("Age..completed.years..at.Enrollment", "labs_a1c", "labs_trig", "labs_alt"), 
+            showAllLevels = T,)
+```
+
+```{r, include=TRUE}
+kable(t1)
+```

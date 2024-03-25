@@ -1,6 +1,45 @@
 library(dplyr)
-ivgtt_dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/fsIVGTT/PANTHER_DATA_2023-10-23_1044_fsIVGTT_labs_filled.csv")
-ivgtt_time <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/fsIVGTT/PANTHER_IVGTT_time_discrepency.csv")
+
+# PANTHER raw lab data cleaning
+panther_dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = "") %>% filter(study == "PANTHER") %>%
+  dplyr::select(mrn, record_id) %>% distinct(record_id, .keep_all = T)
+panther_lab <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Raw/PANTHER glucose_insulin labs 030124.csv", na.strings = "")
+
+panther_lab_tst <- panther_lab %>%
+  filter(grepl("gluc|ins", TestName, ignore.case=T)) %>%
+  mutate(TestName = gsub("\\s+", "", TestName)) %>%
+  mutate(test = gsub("glucose", "gluc_", TestName, ignore.case = T),
+         test = gsub("insulin", "ins_", test, ignore.case = T),
+         test = gsub("-", "minus_", test, ignore.case = T),
+         test = gsub("ins_minus_endo", "ins_", test, ignore.case = T),
+         test = gsub("min$", "", test, ignore.case = T)) %>%
+  rename("mrn" = MRN, "date" = Collection.Date, "value" = Result.Numeric) %>%
+  dplyr::select(mrn, date, value, test) %>% arrange(mrn) %>%
+  mutate(date = as.Date(date, format = "%m/%d/%y")) %>% 
+  group_by(mrn) %>%
+  mutate(visit = case_when(date == min(date) ~ "baseline",
+                           date == max(date) ~ "year_1",
+                           T ~ "")) %>% ungroup()
+
+panther_lab_clean <- spread(panther_lab_tst, key = test, value = value) %>%
+  left_join(panther_dat, by = "mrn") %>%
+  dplyr::select(-c(gluc_, date)) %>%
+  dplyr::select(record_id, mrn, visit, everything()) %>%
+  filter(visit != "")
+panther_lab_clean[panther_lab_clean==-999.99] <- NA
+write.csv(panther_lab_clean, "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/PANTHER glucose_insulin labs 030124_clean.csv", row.names = F, na = "")
+
+## Import from RedCap
+library(REDCapR)
+ivgtt_dat <- redcap_read(redcap_uri = "https://redcap.ucdenver.edu/api/", 
+                         token = "1EC857A51835CF17893236DB1262E77E", 
+                         fields = c("record_id"), 
+                         forms = c("ivgtt_labs"), 
+                         verbose = T)$data %>%
+  filter(redcap_event_name == "baseline_arm_1")
+ivgtt_dat <- ivgtt_dat[rowSums(!is.na(ivgtt_dat[, grepl("^gluc_|^ins_", names(ivgtt_dat))])) > 0, ]
+
+ivgtt_time <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/fsIVGTT/PANTHER_IVGTT_time_discrepency030624.csv")
 
 ivgtt_time <- ivgtt_time %>% filter(time!=150)
 
@@ -38,3 +77,5 @@ for (i in 1:length(ivgtt_dat$record_id)) {
   ivgtt_list[[df_name]] <- result_dat
   write.csv(result_dat, paste0("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/fsIVGTT/subject_level_data/", df_name, ".csv"), quote = FALSE, row.names = FALSE)
 }
+
+

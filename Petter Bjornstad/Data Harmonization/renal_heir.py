@@ -37,17 +37,18 @@ def clean_renal_heir():
     # Demographics
     # --------------------------------------------------------------------------
 
-    dem_cols = ["subject_id", "co_enroll_id", "dob", "diagnosis",
-                "group", "gender", "race", "ethnicity", "sglt2i", "participation_status"]
+    dem_cols = ["subject_id", "co_enroll_id", "dob", "diagnosis", 
+                "group", "gender", "race", "ethnicity", "sglt2i", "participation_status","mr_number"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols))
     # Replace missing values
     demo.replace(rep, np.nan, inplace=True)
-    demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date", "sglt2i": "sglt2i_ever"},
+    demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date", "sglt2i": "sglt2i_ever", "mr_number": "mrn"},
                 inplace=True, axis=1)
     dem_cols[3] = "diabetes_dx_date"
     dem_cols[5] = "sex"
     dem_cols[8] = "sglt2i_ever"
+    dem_cols[10] = "mrn"
     # Race columns combined into one
     demo = combine_checkboxes(demo, base_name="race", levels=[
         "American Indian or Alaskan Native", "Asian", "Hawaiian or Pacific Islander", "Black or African American", "White", "Unknown", "Other"])
@@ -152,9 +153,10 @@ def clean_renal_heir():
     dxa.replace(rep, np.nan, inplace=True)
     dxa.columns = dxa.columns.str.replace(
         r"dexa_", "", regex=True)
-    dxa_cols = dxa.columns[2:].to_list()
+    dxa_cols = dxa.columns[4:].to_list()
     dxa.rename(dict(zip(dxa_cols, ["dexa_" + d for d in dxa_cols])),
                axis=1, inplace=True)
+               
     dxa["procedure"] = "dxa"
     dxa["visit"] = "baseline"
 

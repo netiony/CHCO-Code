@@ -6,7 +6,7 @@ if(Sys.info()["sysname"] == "Windows"){
 } else if (Sys.info()["sysname"] == "Linux"){
   home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
 } else if (Sys.info()["sysname"] == "Darwin"){
-  home_dir = "/Volumes/Peds Endo/Petter Bjornstad/TODAY subaward"
+  home_dir = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
 }
 
 setwd(home_dir)
@@ -15,6 +15,7 @@ setwd(home_dir)
 comorb <- read.csv("./Clinical data/COMORB.csv")
 comorb$MIC.OR.MAC <- ifelse(comorb$MAC==1 | comorb$MIC==1,1,
                             ifelse(is.na(comorb$MAC) & is.na(comorb$MIC), NA, 0))
+comorb <- comorb %>% mutate(DAYSTOMIC.OR.MAC = pmin(DAYSTOMIC, DAYSTOMAC))
 comorb$releaseid <- comorb$RELEASEID
 comorb$RELEASEID <- NULL
 # Merge in bariatric surgery info
@@ -103,6 +104,19 @@ comorb <- comorb %>% mutate(MAC = case_when(
   MAC==1 & is.na(DAYSTOTME) ~ MAC,
   MAC==1 & !is.na(DAYSTOTME) & DAYSTOMAC>DAYSTOTME ~ as.integer(0),
   MAC==1 & !is.na(DAYSTOTME) & DAYSTOMAC<=DAYSTOTME ~ MAC
+))  
+# MIC.OR.MAC
+comorb <- comorb %>% mutate(DAYSTOMIC.OR.MAC = case_when(
+  MIC.OR.MAC==0 ~ DAYSTOMIC.OR.MAC,
+  MIC.OR.MAC==1 & is.na(DAYSTOTME) ~ DAYSTOMIC.OR.MAC,
+  MIC.OR.MAC==1 & !is.na(DAYSTOTME) & DAYSTOMIC.OR.MAC>DAYSTOTME ~ DAYSTOTME,
+  MIC.OR.MAC==1 & !is.na(DAYSTOTME) & DAYSTOMIC.OR.MAC<=DAYSTOTME ~ DAYSTOMIC.OR.MAC
+))  
+comorb <- comorb %>% mutate(MIC.OR.MAC = case_when(
+  MIC.OR.MAC==0 ~ MIC.OR.MAC,
+  MIC.OR.MAC==1 & is.na(DAYSTOTME) ~ MIC.OR.MAC,
+  MIC.OR.MAC==1 & !is.na(DAYSTOTME) & DAYSTOMIC.OR.MAC>DAYSTOTME ~ as.integer(0),
+  MIC.OR.MAC==1 & !is.na(DAYSTOTME) & DAYSTOMIC.OR.MAC<=DAYSTOTME ~ MIC.OR.MAC
 ))  
 # NEPHRO
 comorb <- comorb %>% mutate(DAYSTONEPHRO = case_when(

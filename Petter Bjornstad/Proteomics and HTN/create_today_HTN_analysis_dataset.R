@@ -1,8 +1,3 @@
-# Getting an error when joining df and soma, because there are duplicate records for RH-14-O baseline visit
-# need to carefully check number of observations by study and group
-# starting with individual study soma files, through combined df in this file, to analysis code for correlations
-# I don't think I'm getting as many participants in the correlations as I should
-
 library(tidyverse)
 library(readxl)
 library(Seurat)
@@ -47,8 +42,10 @@ top_htn_df <- read_excel("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter
 de_genes_htn <- top_htn_df[top_htn_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_htn <- setNames(de_genes_htn$estimate, de_genes_htn$EntrezGeneID)
 top_htn <- top_htn_df %>%
-  filter(adj.p.value <= 0.05) %>%
-  slice_max(abs(log(estimate)), n = 5) %>%
+  filter(Target %in% c("WFKN2","SEZ6L","SCG3","PSA","LSAMP","H6ST3","T132B","Nr-CAM","PEDF","IGLO5",
+                       "PSB3","Myosin light chain 1","PCD10:ECD","UNC5H4","TLR5","SLIK1","PSPC1",
+                       "STA10","Secretoglobin family 3A member 1","sICAM-5")) %>%
+  slice_max(abs(log(estimate)), n = 20) %>%
   pull(AptName)
 top_neuro_df <- read_excel("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "NEURO CPH")
 de_genes_neuro <- top_neuro_df[top_neuro_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
@@ -133,7 +130,6 @@ soma <- soma %>%
 # Import and clean harmonized data
 df <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = c(" ", "", "-9999",-9999))
 coenroll_id <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Renal HERITAGE/Data_Cleaned/coenrolled_ids.csv") %>%
-  filter(rh2_id!="") %>%
   pivot_longer(cols = 'improve_id':'rh2_id',
                values_to = "record_id") %>% 
   dplyr::select(merged_id, record_id) %>%
@@ -179,23 +175,23 @@ df$hyp <- factor(df$eGFR_fas_cr >= 135, levels = c(F, T), labels = c("eGFR < 135
 # UACR
 df$elevated_uacr <- factor(df$acr_u >= 30, labels = c("UACR < 30", "UACR >= 30"))
 # Merge
-df <- merge(df, soma, by = c("record_id", "visit"), all.x = T, all.y = T)
+df <- merge(df, soma, by = c("record_id", "visit"), all.x = F, all.y = T)
 # Baseline visit only for IMPROVE
 df <- df %>% filter(visit == "baseline")
 
-coenroll <- df %>% filter(!is.na(co_enroll_id))
-coenroll$merged_id <- str_replace(coenroll$merged_id, "IT2D", "IT_")
-coenroll <- coenroll %>% 
-  mutate(
-    merged_id = case_when(
-      (is.na(merged_id) & str_starts("IT", record_id)) ~ paste0(record_id, "-", co_enroll_id),
-      (is.na(merged_id) & !str_starts("IT", record_id)) ~ paste0(co_enroll_id, "-", record_id),
-      !is.na(merged_id) ~ merged_id
-    )
-  )
-temp <- coenroll %>% group_by(merged_id) %>% arrange(date) %>% filter(row_number()==1)
-out <- temp$co_enroll_id
-df <- df %>% filter(!co_enroll_id %in% out)
+# coenroll <- df %>% filter(!is.na(co_enroll_id))
+# coenroll$merged_id <- str_replace(coenroll$merged_id, "IT2D", "IT_")
+# coenroll <- coenroll %>% 
+#   mutate(
+#     merged_id = case_when(
+#       (is.na(merged_id) & str_starts("IT", record_id)) ~ paste0(record_id, "-", co_enroll_id),
+#       (is.na(merged_id) & !str_starts("IT", record_id)) ~ paste0(co_enroll_id, "-", record_id),
+#       !is.na(merged_id) ~ merged_id
+#     )
+#   )
+# temp <- coenroll %>% group_by(merged_id) %>% arrange(date) %>% filter(row_number()==1)
+# out <- temp$co_enroll_id
+# df <- df %>% filter(!co_enroll_id %in% out)
 
 # Import Olink data and combine
 olink_map <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Olink Data/Data_Clean/olink_id_map.csv")

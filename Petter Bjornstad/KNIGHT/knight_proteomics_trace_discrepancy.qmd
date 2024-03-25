@@ -1,0 +1,362 @@
+---
+title: "KNIGHT Proteomics"
+author: "Laura Pyle"
+date: "today"
+date-format: long
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
+    code-fold: true
+    self-contained: true
+    fig-cap-location: top
+    page-layout: full
+editor: source
+execute:
+  echo: false
+  message: false
+---
+
+```{r libraries}
+#| include: false
+library(limma)
+library(clusterProfiler)
+library(ReactomePA)
+library(enrichplot)
+library(Hmisc)
+library(knitr)
+library(tidyverse)
+library(gtsummary)
+library(ggpubr)
+library(lmerTest)
+library(parallel)
+library(emmeans)
+library(RColorBrewer)
+library(VennDiagram)
+library(broom.mixed)
+library(readxl)
+library(dplyr)
+library(stringr)
+library(ggrepel)
+library(SomaDataIO)
+```
+
+```{r functions}
+volcano <- function(data, lab = "Target", xcol = "logFC", ycol = "P.Value",
+                    top = 6,
+                    xlimit = c(-1, 1), ylimit = c(0, -log10(10e-7)),
+                    xlabel = "logFC", pCutoff = 0.05, overlaps = 10,
+                    log_t = F) {
+  data <- as.data.frame(data)
+  t <- data[data[, "adj.P.Val"] <= pCutoff, ]
+  if (log_t) {
+    t <- t[order(abs(log(t[, xcol])), decreasing = T), ]
+  } else {
+    t <- t[order(abs(t[, xcol]), decreasing = T), ]
+  }
+  data$top <- data[, "AptName"] %in% t[1:top, "AptName"]
+  data$logp <- -log10(data[, ycol])
+  data$fc <- data[, xcol]
+  data$sig <- data[, ycol] <= pCutoff
+  p <- ggplot(data = data, aes(x = fc, y = logp, color = sig)) +
+    geom_hline(yintercept = -log10(pCutoff), linetype = "dashed") +
+    geom_point(size = 2) +
+    geom_label_repel(
+      data = data[data$top, ], aes(label = Target), color = "black",
+      max.overlaps = overlaps
+    ) +
+    scale_color_manual(values = c("grey", "#3e6dbf")) +
+    xlab(xlabel) +
+    ylab(bquote(~ -Log[10] ~ italic(P))) +
+    theme_bw() +
+    theme(legend.position = "none")
+  return(p)
+}
+
+```
+
+```{r, include=F}
+# in this version of the code, reading straight from the second ANML file we received, not combined data
+load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Somalogic data/analytes.Rdata")
+knight_soma <- read_adat("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Local cohort Somalogic data/WUS-23-004/WUS_23_004_2023-11-15/WUS_23_004_v4.1_EDTAPlasma.hybNorm_medNormInt_plateScale_calibrate_anmlQC_qcCheck_anmlSMP.adat")
+
+#knight_soma <- knight_soma %>% select(-Optional2)
+knight_soma <- knight_soma %>% filter(!is.na(SampleDescription))
+# remove fc mouse and no protein
+drop <- analytes %>% filter(Target == "Fc_MOUSE" | Target == "No Protein" | !(Organism == "Human") | !(Type == "Protein"))
+apt_drop <- drop$AptName
+knight_soma <- knight_soma %>% select(!all_of(apt_drop))
+analytes <- analytes %>% filter(!Target == "Fc_MOUSE")
+analytes <- analytes %>% filter(!Target == "No Protein")
+analytes <- analytes %>% filter(Organism == "Human")
+analytes <- analytes %>% filter(Type == "Protein")
+
+# pull out KNIGHT samples only
+knight_soma <- knight_soma %>% filter(grepl("KGHT",SampleDescription) | grepl("SHB",SampleDescription))
+# delete extraneous stuff in the sample description
+knight_soma$SampleDescription <- str_sub(knight_soma$SampleDescription, 12)
+knight_soma$SampleDescription <- str_remove(knight_soma$SampleDescription, " ")
+knight_soma$SampleDescription <- str_remove_all(knight_soma$SampleDescription, "\\(\\S+")
+knight_soma$SampleDescription <- str_trim(knight_soma$SampleDescription)
+
+# read in linkage file for Natalie's studies
+link <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Somalogic data/BCF-23-091 Linker File 10.05.2023.csv")
+link$Study.ID <- link$Sequence.Number
+redcap <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Somalogic data/200572DataKNIGHT_DATA_LABELS_2023-12-10_1551.csv")
+redcap <- redcap %>% filter(Event.Name == "Screening")
+redcap <- redcap %>% select(Study.ID, Sex.assigned.at.birth)
+link <- merge(link, redcap, by="Study.ID", all.x = T, all.y = F)
+link$SampleDescription <- link$Barcode
+link <- link %>% select(SampleDescription, Study.ID, Timepoint.Label, Sex.assigned.at.birth)
+knight_soma <- left_join(knight_soma, link, by="SampleDescription")
+
+# read in linkage file for Netherlands samples
+# actually, not sure I need these...there is a field called TimePoint
+#nethlink <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Somalogic data/sample ID and visit labels SOMAscan WUS-23-004.csv")
+#nethlink <- nethlink %>% filter(str_detect(SampleId, "KGHT"))
+#nethlink <- nethlink %>% select(GTAC_ID, TimePoint)
+#knight_soma$GTAC_ID <- str_sub(knight_soma$SampleId, 1, 10)
+#knight_soma <- merge(knight_soma, nethlink, by="GTAC_ID", all.x = T, all.y = T)
+
+# create new variable for harmonized time point
+knight_soma$time <-  
+  case_when(
+  knight_soma$TimePoint == "V1" ~ 1,
+  knight_soma$TimePoint == "V2" ~ 2,
+  knight_soma$Timepoint.Label == "Baseline" ~ 1,
+  knight_soma$Timepoint.Label == "M3" ~ 2,
+  .default = NA
+)
+
+knight_soma$group <-  
+  case_when(
+  str_sub(knight_soma$SampleDescription, 1, 2) == "MV" ~ "MTF",
+  str_sub(knight_soma$SampleDescription, 1, 2) == "VM" ~ "FTM",
+  knight_soma$Sex.assigned.at.birth == "Male" ~ "MTF",
+  knight_soma$Sex.assigned.at.birth == "Female" ~ "FTM",
+  .default = NA
+)
+
+knight_soma$Study.ID <- ifelse(is.na(knight_soma$Study.ID), knight_soma$SampleDescription, knight_soma$Study.ID)
+
+# identify columns corresponding to proteins
+#is_seq <- function(.x) grepl("^seq\\.[0-9]{4}", .x) # regex for analytes
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(knight_soma))
+# log transform
+knight_soma <- knight_soma %>% modify_if(is_seq(names(.)), log)
+knight_soma$Study.ID <- knight_soma$SampleDescription
+knight_soma_trace <- knight_soma
+```
+
+```{r, include=FALSE}
+#| label: tbl-characteristics
+#| tbl-cap: Participant characteristics
+#df %>%
+#  dplyr::select(
+#    SEX, age, ETHN, RACE, SURG, diab, diab_resolved, sbp, dbp, hrate, bfat, bmi,
+#    weight, height, UACRATIO, albuminuria, CYSC, visit
+#  ) %>%
+#  tbl_summary(by = visit, missing_text = "Missing") %>%
+#  modify_header(label = "**Visit**") %>%
+#  bold_labels() %>%
+#  as_kable_extra()
+```
+
+# Univariable analyses 
+
+## Male to Female
+
+```{r, include=FALSE}
+# Calculate change in each protein
+df_diff <- knight_soma %>%
+  arrange(Study.ID, time) %>%
+  group_by(Study.ID, group) %>%
+  reframe(across(contains("seq"), ~ diff(as.numeric(.x))))
+
+# First MTF
+# Limma setup
+# Y needs "genes" in rows
+y <- df_diff %>%
+  filter(group == "MTF") %>%
+  dplyr::select(contains("seq")) %>%
+  t()
+# Design matrix
+design_mat <- model.matrix(~1, data = df_diff[df_diff$group == "MTF",])
+# Fit
+fit <- lmFit(y, design_mat)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+res$UniProt <- analytes$UniProt[match(rownames(res), analytes$AptName)]
+write.csv(res, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Testing ANML vs median/limma_MTF_results_testing_discrepancy.csv", row.names = F)
+# Write results for online enrichment
+res_for_enrichment <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res_for_enrichment <- res_for_enrichment[order(res_for_enrichment$logFC, decreasing = T), ]
+res_for_enrichment$UniProt <- analytes$UniProt[match(rownames(res_for_enrichment), analytes$AptName)]
+res_for_enrichment <- res_for_enrichment[, c("UniProt", "AveExpr")]
+#write.csv(res_for_enrichment, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/limma_intercept_only_results.csv", row.names = F)
+# Table
+#kable(res[1:10, ], digits = 3, row.names = F)
+
+top_mtf <- res
+top_mtf$AptName <- row.names(top_mtf)
+v_mtf <- volcano(top_mtf)
+```
+
+```{r, echo=FALSE, warning=FALSE}
+v_mtf
+```
+
+There were `r nrow(res[res$adj.P.Val < 0.05,])` proteins significantly different after p value adjustment. Of these, `r sum(res[res$adj.P.Val < 0.05,]$logFC>0)` were higher on average at the second visit compared to the first, and `r sum(res[res$adj.P.Val < 0.05,]$logFC<0)` were lower. See separate output file for univariate results.
+
+### Gene set enrichment analysis (GSEA) with Reactome
+
+GSEA tests whether proteins in a particular biological pathway are more likely to have a large effect size compared to proteins in other biological pathways.
+
+```{r, include=FALSE}
+res$EntrezGeneID <- analytes$EntrezGeneID[match(rownames(res), analytes$AptName)]
+de <- res$logFC
+names(de) <- res$EntrezGeneID
+de <- de[names(de) != ""]
+de <- de[!duplicated(names(de))]
+de <- sort(de, decreasing = T)
+all_prots_gse <- gsePathway(de,
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  verbose = FALSE
+)
+```
+
+```{r, echo=FALSE, warning=FALSE}
+dotplot(all_prots_gse)
+```
+
+### Over-representation analysis
+
+ORA tests whether the number of differentially expressed proteins in a pathway is larger than would be expected by chance. GSEA is a more robust analysis, but the advantage of ORA is that pathways can be separated into those that are upregulated and downregulated. A pathway can be both upregulated and downregulated, if some genes are upregulated and others are downregulated.
+
+```{r, include=FALSE}
+up <- rownames(res)[res$logFC > 0]
+up <- analytes$EntrezGeneID[match(up, analytes$AptName)]
+up <- up[up != ""]
+down <- rownames(res)[res$logFC < 0]
+down <- analytes$EntrezGeneID[match(down, analytes$AptName)]
+down <- down[down != ""]
+# Reactome enrichment
+upreact <- enrichPathway(up)
+upreact <- setReadable(upreact, "org.Hs.eg.db", "ENTREZID")
+downreact <- enrichPathway(down)
+downreact <- setReadable(downreact, "org.Hs.eg.db", "ENTREZID")
+```
+
+```{r, echo=FALSE, warning=FALSE}
+#| fig-width: 7
+#| fig-height: 10
+# Plots
+updot <- dotplot(upreact) + ggtitle("Upregulated") +
+  theme(plot.title = element_text(hjust = 0.5))
+downdot <- dotplot(downreact) + ggtitle("Downregulated") +
+  theme(plot.title = element_text(hjust = 0.5))
+updot
+downdot
+```
+
+## Female to Male
+
+```{r, include=FALSE}
+# First MTF
+# Limma setup
+# Y needs "genes" in rows
+y <- df_diff %>%
+  filter(group == "FTM") %>%
+  dplyr::select(contains("seq")) %>%
+  t()
+# Design matrix
+design_mat <- model.matrix(~1, data = df_diff[df_diff$group == "FTM",])
+# Fit
+fit <- lmFit(y, design_mat)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+res$UniProt <- analytes$UniProt[match(rownames(res), analytes$AptName)]
+write.csv(res, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Testing ANML vs median/limma_FTM_results_testing_discrepancy.csv", row.names = F)
+# Write results for online enrichment
+res_for_enrichment <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res_for_enrichment <- res_for_enrichment[order(res_for_enrichment$logFC, decreasing = T), ]
+res_for_enrichment$UniProt <- analytes$UniProt[match(rownames(res_for_enrichment), analytes$AptName)]
+res_for_enrichment <- res_for_enrichment[, c("UniProt", "AveExpr")]
+#write.csv(res_for_enrichment, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/limma_intercept_only_results.csv", row.names = F)
+# Table
+#kable(res[1:10, ], digits = 3, row.names = F)
+
+top_ftm <- res
+top_ftm$AptName <- row.names(top_ftm)
+v_ftm <- volcano(top_ftm)
+```
+
+```{r, echo=FALSE, warning=FALSE}
+v_ftm
+```
+
+There were `r nrow(res[res$adj.P.Val < 0.05,])` proteins significantly different after p value adjustment. Of these, `r sum(res[res$adj.P.Val < 0.05,]$logFC>0)` were higher on average at the second visit compared to the first, and `r sum(res[res$adj.P.Val < 0.05,]$logFC<0)` were lower. See separate output file for univariate results.
+
+### Gene set enrichment analysis (GSEA) with Reactome
+
+GSEA tests whether proteins in a particular biological pathway are more likely to have a large effect size compared to proteins in other biological pathways.
+
+```{r, include=FALSE}
+res$EntrezGeneID <- analytes$EntrezGeneID[match(rownames(res), analytes$AptName)]
+de <- res$logFC
+names(de) <- res$EntrezGeneID
+de <- de[names(de) != ""]
+de <- de[!duplicated(names(de))]
+de <- sort(de, decreasing = T)
+all_prots_gse <- gsePathway(de,
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  verbose = FALSE
+)
+```
+
+```{r, echo=FALSE, warning=FALSE}
+dotplot(all_prots_gse)
+```
+
+### Over-representation analysis
+
+ORA tests whether the number of differentially expressed proteins in a pathway is larger than would be expected by chance. GSEA is a more robust analysis, but the advantage of ORA is that pathways can be separated into those that are upregulated and downregulated. A pathway can be both upregulated and downregulated, if some genes are upregulated and others are downregulated.
+
+```{r, include=FALSE}
+up <- rownames(res)[res$logFC > 0]
+up <- analytes$EntrezGeneID[match(up, analytes$AptName)]
+up <- up[up != ""]
+down <- rownames(res)[res$logFC < 0]
+down <- analytes$EntrezGeneID[match(down, analytes$AptName)]
+down <- down[down != ""]
+# Reactome enrichment
+upreact <- enrichPathway(up)
+upreact <- setReadable(upreact, "org.Hs.eg.db", "ENTREZID")
+downreact <- enrichPathway(down)
+downreact <- setReadable(downreact, "org.Hs.eg.db", "ENTREZID")
+```
+
+```{r, echo=FALSE, warning=FALSE}
+#| fig-width: 7
+#| fig-height: 10
+updot <- dotplot(upreact) + ggtitle("Upregulated") +
+  theme(plot.title = element_text(hjust = 0.5))
+downdot <- dotplot(downreact) + ggtitle("Downregulated") +
+  theme(plot.title = element_text(hjust = 0.5))
+updot 
+downdot
+```
+
+
+
+
+
+

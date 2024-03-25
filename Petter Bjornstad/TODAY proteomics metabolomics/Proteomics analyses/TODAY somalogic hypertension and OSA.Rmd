@@ -2,6 +2,7 @@
 title: "TODAY study - proteomics, hypertension, and OSA"
 author: "Laura Pyle"
 date: "`r format(Sys.time(), '%d %B %Y')`"
+knit: (function(rmdfile, ...) { rmarkdown::render(rmdfile, output_dir='/Users/pylell/Dropbox/TODAY HTN and DKD output/') })
 output:
   html_document:
     number_sections: yes
@@ -69,10 +70,10 @@ base <- soma %>% arrange(releaseid,Date.Drawn) %>% group_by(releaseid) %>% filte
 base <- base %>% filter(!releaseid %in% c("65-85903","65-47984","65-25901"))
 
 # merge in complication data
-base <- merge(base, comorb, by="releaseid",all.x=T, all.y=F)
+base <- left_join(base, comorb, by="releaseid")
 
 # merge in baseline risk factors
-base <- merge(base, baserisk, by="releaseid",all.x=T, all.y=F)
+base <- left_join(base, baserisk, by="releaseid")
 
 # identify columns corresponding to proteins
 #is_seq <- function(.x) grepl("^seq\\.[0-9]{4}", .x) # regex for analytes
@@ -93,7 +94,7 @@ base_log <- base %>% modify_if(is_seq(names(.)), log)
 base_log_scale <- base_log
 predictors <- colnames(base_log[seq])
 for (i in 1:length(predictors)) {
-  base_log_scale[predictors[i]] <- base_log_scale[predictors[i]]/sd(base_log[,paste0(predictors[i])])
+  base_log_scale[,paste0(predictors[i])] <- base_log_scale[,paste0(predictors[i])]/sd(unlist(base_log[,paste0(predictors[i])]))
 }
 
 # TODAY2 TME
@@ -109,8 +110,11 @@ psg$RELEASEID <- NULL
 psg <- psg %>% select(releaseid,CENTRAL_AHI, OSA_SEVERITY_LEVEL)
 
 # merge base_log (not scaled data) with PSG data
-analytes_keep <- analytes %>% filter(AptName %in% c("seq.13408.23","seq.19563.3","seq.7957.2","seq.2999.6","seq.18896.23","seq.5109.24",
-                                                    "seq.9211.19","seq.18339.207","seq.18376.19","seq.18935.14","seq.24948.79","seq.4330.4"))
+analytes_keep <- analytes %>% filter(AptName %in% c("seq.13408.23","seq.19563.3","seq.7957.2","seq.4330.4",
+                                                    "seq.2999.6","seq.18896.23","seq.3235.50","seq.8890.9",
+                                                    "seq.5109.24","seq.7735.17","seq.9211.19","seq.6478.2",
+                                                    "seq.18339.207","seq.18376.19","seq.9018.38","seq.5140.56",
+                                                    "seq.18935.14","seq.15539.15","seq.24948.79","seq.16307.22","seq.23569.53","seq.6252.62","seq.8245.27"))
 key <- analytes_keep[,c("AptName","UniProt","Target","TargetFullName")]
 base_log_keep <- base_log %>% select(c("releaseid",all_of(analytes_keep$AptName)))
 base_log_keep <- merge(base_log_keep,psg,by="releaseid",all.x = T, all.y = F)
@@ -139,6 +143,105 @@ t_osa <- corr
 corr <- corr %>% select(-c(OSA_SEVERITY_LEVEL,osa,TMETYPE,DAYSTOTME))
 
 
+```
+
+
+```{r, include=FALSE}
+corr_plot_modified_nodict <- function(data, X, Y, cor_method = "pearson", adj_var = NULL, 
+                               method = "color", insig = "pch", coef_col = NULL,
+                               pch = 4, pch.col = "black", pch.cex = 0) {
+  
+  n_cols = length(Y)
+  M <- cor(y = subset(data, select = Y),
+           x = subset(data, select = X),
+           use = "pairwise.complete.obs",
+           method = cor_method)
+  
+  if (!is.na(adj_var)){
+    x_vars <- rep(X, times = length(Y))
+    x_coord <- rep(seq(1,length(Y)), each = length(X))
+    y_vars <- rep(Y, each = length(X))
+    y_coord <- rep(seq(length(X),1), times = length(Y))
+    lm_extracted <- data.frame(yName = character(0),
+                               xName = character(0),
+                               x = numeric(0),
+                               y = numeric(0),
+                               adj_var = character(0),
+                               adj_x_coef = numeric(0),
+                               adj_x_pval = numeric(0))
+    for (i in 1:length(x_vars)) {
+      if(x_vars[i] != y_vars[i]) {
+        lm_formula <- as.formula(paste0(y_vars[i], "~", x_vars[i], "+", adj_var))
+        lm_model <- lm(lm_formula, data = data)
+        lm_summary <- summary(lm_model)
+        lm_coef <- lm_summary$coefficient[x_vars[i], "Estimate"]
+        lm_p_val <- lm_summary$coefficient[x_vars[i], "Pr(>|t|)"]
+        lm_extracted <- rbind(lm_extracted,
+                              data.frame(
+                                yName = y_vars[i],
+                                xName = x_vars[i],
+                                x = x_coord[i],
+                                y = y_coord[i],
+                                adj_var = adj_var,
+                                adj_x_coef = lm_coef,
+                                adj_x_pval = lm_p_val))
+      }
+    }
+  }
+  
+  correlation_p_value <- correlation_p_value_matrix(data, relevant_vars = c(Y, X), n_cols = n_cols, cor_method = cor_method)
+  
+  corrplot(M,
+           p.mat = correlation_p_value,
+           method = method,
+           tl.col = "black",
+           tl.srt = 45,
+           tl.cex = 1.2,
+           insig = insig,
+           addCoef.col = coef_col,
+           addgrid.col = 'lightgray',
+           number.digits = 2,
+           pch.col = pch.col, 
+           pch = pch,
+           pch.cex = pch.cex)$corrPos -> p1
+  p1_sub <- subset(p1, p.value <= 0.05)
+  p1_sub2 <- subset(p1, p.value <= 0.05 & abs(corr) >= 0.7)
+  
+  if (nrow(p1) > 0) {
+    graphics::text(p1$x, p1$y, sprintf("%.2f", p1$corr), adj = c(0.5, 0), cex=1.2)
+    if (nrow(p1_sub > 0)) {
+      graphics::text(p1_sub$x, p1_sub$y, stars.pval(p1_sub$p.value), adj = c(0.5, 2), cex=1.2)
+    }
+  }
+  if (nrow(p1_sub2) > 0) {
+    graphics::text(p1_sub2$x, p1_sub2$y, sprintf("%.2f", p1_sub2$corr), col = "white", adj = c(0.5, 0), cex=1.2)
+    graphics::text(p1_sub2$x, p1_sub2$y, stars.pval(p1_sub2$p.value), col = "white", adj = c(0.5, 2), cex=1.2)
+  }
+  if (!is.na(adj_var)) {
+    lm_extracted <- subset(lm_extracted, adj_x_pval <= 0.05)
+    if (nrow(lm_extracted) > 0){
+      graphics::rect(xleft = lm_extracted$x-.45, 
+                     ybottom = lm_extracted$y-.45,
+                     xright = lm_extracted$x+.45,
+                     ytop = lm_extracted$y+.45)
+    }
+  }
+}
+
+
+correlation_p_value_matrix <- function(data, relevant_vars, n_cols, cor_method = "pearson") {
+  # Filter relevant variables for the correlation matrix
+  dat_correlation <- data %>%
+    dplyr::select(all_of(relevant_vars))
+  
+  # Compute p-values 
+  res2 <- Hmisc::rcorr(as.matrix(dat_correlation),
+                       type = cor_method)
+  corr_pval <- as.data.frame(res2$P) %>%
+    dplyr::select(all_of(relevant_vars[1:n_cols]))
+  corr_pval = corr_pval[(n_cols + 1):nrow(corr_pval),]
+  return(as.matrix(corr_pval))
+}
 ```
 
 # Results
@@ -184,10 +287,16 @@ kable(t)
 ### Levels of proteins associated with hypertension, by OSA status
 
 ```{r, include=FALSE}
-t <- CreateTableOne(vars=c("seq.13408.23","seq.19563.3","seq.7957.2","seq.2999.6","seq.18896.23","seq.5109.24",
-                                                    "seq.9211.19","seq.18339.207","seq.18376.19","seq.18935.14","seq.24948.79","seq.4330.4"),data=t_osa, strata="OSA_SEVERITY_LEVEL")
-t <- print(t, minMax=T, nonnorm=c("seq.13408.23","seq.19563.3","seq.7957.2","seq.2999.6","seq.18896.23","seq.5109.24",
-                                                    "seq.9211.19","seq.18339.207","seq.18376.19","seq.18935.14","seq.24948.79","seq.4330.4"))
+t <- CreateTableOne(vars=c("seq.13408.23","seq.19563.3","seq.7957.2","seq.4330.4",
+                                                    "seq.2999.6","seq.18896.23","seq.3235.50","seq.8890.9",
+                                                    "seq.5109.24","seq.7735.17","seq.9211.19","seq.6478.2",
+                                                    "seq.18339.207","seq.18376.19","seq.9018.38","seq.5140.56",
+                                                    "seq.18935.14","seq.15539.15","seq.24948.79","seq.16307.22","seq.23569.53","seq.6252.62","seq.8245.27"),data=t_osa, strata="OSA_SEVERITY_LEVEL")
+t <- print(t, minMax=T, nonnorm=c("seq.13408.23","seq.19563.3","seq.7957.2","seq.4330.4",
+                                                    "seq.2999.6","seq.18896.23","seq.3235.50","seq.8890.9",
+                                                    "seq.5109.24","seq.7735.17","seq.9211.19","seq.6478.2",
+                                                    "seq.18339.207","seq.18376.19","seq.9018.38","seq.5140.56",
+                                                    "seq.18935.14","seq.15539.15","seq.24948.79","seq.16307.22","seq.23569.53","seq.6252.62","seq.8245.27"))
 t <- print(t)
 ```
 
@@ -198,10 +307,16 @@ kable(t)
 ### Levels of proteins associated with hypertension, by OSA status, with all OSA groups combined
 
 ```{r, include=FALSE}
-t <- CreateTableOne(vars=c("seq.13408.23","seq.19563.3","seq.7957.2","seq.2999.6","seq.18896.23","seq.5109.24",
-                                                    "seq.9211.19","seq.18339.207","seq.18376.19","seq.18935.14","seq.24948.79","seq.4330.4"),data=t_osa, strata="osa")
-t <- print(t, minMax=T, nonnorm=c("seq.13408.23","seq.19563.3","seq.7957.2","seq.2999.6","seq.18896.23","seq.5109.24",
-                                                    "seq.9211.19","seq.18339.207","seq.18376.19","seq.18935.14","seq.24948.79","seq.4330.4"))
+t <- CreateTableOne(vars=c("seq.13408.23","seq.19563.3","seq.7957.2","seq.4330.4",
+                                                    "seq.2999.6","seq.18896.23","seq.3235.50","seq.8890.9",
+                                                    "seq.5109.24","seq.7735.17","seq.9211.19","seq.6478.2",
+                                                    "seq.18339.207","seq.18376.19","seq.9018.38","seq.5140.56",
+                                                    "seq.18935.14","seq.15539.15","seq.24948.79","seq.16307.22","seq.23569.53","seq.6252.62","seq.8245.27"),data=t_osa, strata="osa")
+t <- print(t, minMax=T, nonnorm=c("seq.13408.23","seq.19563.3","seq.7957.2","seq.4330.4",
+                                                    "seq.2999.6","seq.18896.23","seq.3235.50","seq.8890.9",
+                                                    "seq.5109.24","seq.7735.17","seq.9211.19","seq.6478.2",
+                                                    "seq.18339.207","seq.18376.19","seq.9018.38","seq.5140.56",
+                                                    "seq.18935.14","seq.15539.15","seq.24948.79","seq.16307.22","seq.23569.53","seq.6252.62","seq.8245.27"))
 t <- print(t)
 ```
 
@@ -214,6 +329,105 @@ kable(t)
 ```{r, include=F}
 HC <- hetcor(t_osa$seq.13408.23,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
 a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.13408.23 & OSA_SEVERITY_LEVEL")
+```
+
+```{r, include=T}
+kable(a[,1:6])
+```
+
+```{r, include=F}
+HC <- hetcor(t_osa$seq.19563.3,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.19563.3 & OSA_SEVERITY_LEVEL")
+```
+
+```{r, include=T}
+kable(a[,1:6])
+```
+
+```{r, include=F}
+HC <- hetcor(t_osa$seq.7957.2,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.7957.2 & OSA_SEVERITY_LEVEL")
+```
+
+```{r, include=T}
+kable(a[,1:6])
+```
+
+```{r, include=F}
+HC <- hetcor(t_osa$seq.4330.4,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.4330.4 & OSA_SEVERITY_LEVEL")
+```
+
+```{r, include=T}
+kable(a[,1:6])
+```
+
+```{r, include=F}
+HC <- hetcor(t_osa$seq.2999.6,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.2999.6 & OSA_SEVERITY_LEVEL")
+```
+
+```{r, include=T}
+kable(a[,1:6])
+```
+
+```{r, include=F}
+HC <- hetcor(t_osa$seq.18896.23,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.18896.23 & OSA_SEVERITY_LEVEL")
+```
+
+```{r, include=T}
+kable(a[,1:6])
+```
+
+```{r, include=F}
+HC <- hetcor(t_osa$seq.3235.50,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.3235.50 & OSA_SEVERITY_LEVEL")
+```
+
+```{r, include=T}
+kable(a[,1:6])
+```
+
+```{r, include=F}
+HC <- hetcor(t_osa$seq.8890.9,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.8890.9 & OSA_SEVERITY_LEVEL")
+```
+
+```{r, include=T}
+kable(a[,1:6])
+```
+
+```{r, include=F}
+HC <- hetcor(t_osa$seq.5109.24,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.5109.24 & OSA_SEVERITY_LEVEL")
+```
+
+```{r, include=T}
+kable(a[,1:6])
+```
+
+```{r, include=F}
+HC <- hetcor(t_osa$seq.7735.17,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.7735.17 & OSA_SEVERITY_LEVEL")
+```
+
+```{r, include=T}
+kable(a[,1:6])
+```
+
+```{r, include=F}
+HC <- hetcor(t_osa$seq.9211.19,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.9211.19 & OSA_SEVERITY_LEVEL")
+```
+
+```{r, include=T}
+kable(a[,1:6])
+```
+
+```{r, include=F}
+HC <- hetcor(t_osa$seq.6478.2,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.6478.2 & OSA_SEVERITY_LEVEL")
 ```
 
 ```{r, include=T}
@@ -239,8 +453,17 @@ kable(a[,1:6])
 ```
 
 ```{r, include=F}
-HC <- hetcor(t_osa$seq.18896.23,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
-a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.18896.23 & OSA_SEVERITY_LEVEL")
+HC <- hetcor(t_osa$seq.9018.38,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.9018.38 & OSA_SEVERITY_LEVEL")
+```
+
+```{r, include=T}
+kable(a[,1:6])
+```
+
+```{r, include=F}
+HC <- hetcor(t_osa$seq.5140.56,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.5140.56 & OSA_SEVERITY_LEVEL")
 ```
 
 ```{r, include=T}
@@ -257,8 +480,8 @@ kable(a[,1:6])
 ```
 
 ```{r, include=F}
-HC <- hetcor(t_osa$seq.19563.3,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
-a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.19563.3 & OSA_SEVERITY_LEVEL")
+HC <- hetcor(t_osa$seq.15539.15,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.15539.15 & OSA_SEVERITY_LEVEL")
 ```
 
 ```{r, include=T}
@@ -275,49 +498,38 @@ kable(a[,1:6])
 ```
 
 ```{r, include=F}
-HC <- hetcor(t_osa$seq.2999.6,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
-a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.2999.6 & OSA_SEVERITY_LEVEL")
+HC <- hetcor(t_osa$seq.16307.22,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.16307.22 & OSA_SEVERITY_LEVEL")
 ```
 
 ```{r, include=T}
 kable(a[,1:6])
 ```
-
 ```{r, include=F}
-HC <- hetcor(t_osa$seq.4330.4,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
-a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.4330.4 & OSA_SEVERITY_LEVEL")
+HC <- hetcor(t_osa$seq.23569.53,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.23569.53 & OSA_SEVERITY_LEVEL")
 ```
 
 ```{r, include=T}
 kable(a[,1:6])
 ```
-
 ```{r, include=F}
-HC <- hetcor(t_osa$seq.5109.24,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
-a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.5109.24 & OSA_SEVERITY_LEVEL")
+HC <- hetcor(t_osa$seq.6252.62,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.6252.62 & OSA_SEVERITY_LEVEL")
 ```
 
 ```{r, include=T}
 kable(a[,1:6])
 ```
-
 ```{r, include=F}
-HC <- hetcor(t_osa$seq.7957.2,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
-a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.7957.2 & OSA_SEVERITY_LEVEL")
+HC <- hetcor(t_osa$seq.8245.27,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
+a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.8245.27 & OSA_SEVERITY_LEVEL")
 ```
 
 ```{r, include=T}
 kable(a[,1:6])
 ```
 
-```{r, include=F}
-HC <- hetcor(t_osa$seq.9211.19,t_osa$OSA_SEVERITY_LEVEL, ML = TRUE)
-a <- ci.rpc(r = HC$correlations[2,1], se = HC$std.errors[2,1], rn = "seq.9211.19 & OSA_SEVERITY_LEVEL")
-```
-
-```{r, include=T}
-kable(a[,1:6])
-```
 
 ## All participants
 
@@ -335,10 +547,15 @@ kable(t)
 ### Levels of proteins associated with hypertension, by OSA status
 
 ```{r, include=FALSE}
-t <- CreateTableOne(vars=c("seq.13408.23","seq.19563.3","seq.7957.2","seq.2999.6","seq.18896.23","seq.5109.24",
-                                                    "seq.9211.19","seq.18339.207","seq.18376.19","seq.18935.14","seq.24948.79","seq.4330.4"),data=base_log_keep, strata="osa")
-t <- print(t, minMax=T, nonnorm=c("seq.13408.23","seq.19563.3","seq.7957.2","seq.2999.6","seq.18896.23","seq.5109.24",
-                                                    "seq.9211.19","seq.18339.207","seq.18376.19","seq.18935.14","seq.24948.79","seq.4330.4"))
+t <- CreateTableOne(vars=c("seq.13408.23","seq.19563.3","seq.7957.2","seq.4330.4",
+                                                    "seq.2999.6","seq.18896.23","seq.3235.50","seq.8890.9",
+                                                    "seq.5109.24","seq.7735.17","seq.9211.19","seq.6478.2",
+                                                    "seq.18339.207","seq.18376.19","seq.9018.38","seq.5140.56",                                       "seq.18935.14","seq.15539.15","seq.24948.79","seq.16307.22","seq.23569.53","seq.6252.62","seq.8245.27"),data=base_log_keep, strata="osa")
+t <- print(t, minMax=T, nonnorm=c("seq.13408.23","seq.19563.3","seq.7957.2","seq.4330.4",
+                                                    "seq.2999.6","seq.18896.23","seq.3235.50","seq.8890.9",
+                                                    "seq.5109.24","seq.7735.17","seq.9211.19","seq.6478.2",
+                                                    "seq.18339.207","seq.18376.19","seq.9018.38","seq.5140.56",
+                                                    "seq.18935.14","seq.15539.15","seq.24948.79","seq.16307.22","seq.23569.53","seq.6252.62","seq.8245.27"))
 ```
 
 ```{r, include=TRUE}

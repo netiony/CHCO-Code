@@ -41,8 +41,8 @@ def clean_improve():
     # Demographics
     # --------------------------------------------------------------------------
 
-    dem_cols = ["subject_id", "co_enroll_id", "dob", "diagnosis",
-                "gender", "race", "ethnicity", "sglt2i", "participation_status"]
+    dem_cols = ["subject_id", "co_enroll_id", "dob", "diagnosis", 
+                "gender", "race", "ethnicity", "sglt2i", "participation_status", "mr_number"]
     # Export
     demo = pd.DataFrame(proj.export_records(fields=dem_cols,
                                             events=["screening_arm_1"]))
@@ -50,11 +50,12 @@ def clean_improve():
     demo.replace(rep, np.nan, inplace=True)
     demo["group"] = "Type 2 Diabetes"
     demo.drop(redcap_cols, axis=1, inplace=True)
-    demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date"},
+    demo.rename({"gender": "sex", "diagnosis": "diabetes_dx_date", "mr_number": "mrn"},
                 inplace=True, axis=1)
     dem_cols[3] = "diabetes_dx_date"
     dem_cols[4] = "sex"
     dem_cols[7] = "sglt2i_ever"
+    dem_cols[9] = "mrn"
     # Race columns combined into one
     demo = combine_checkboxes(demo, base_name="race", levels=[
         "American Indian or Alaskan Native", "Asian",
