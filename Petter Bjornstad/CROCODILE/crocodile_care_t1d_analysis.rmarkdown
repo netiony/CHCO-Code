@@ -1,0 +1,296 @@
+---
+title: "crocodile_care_t1d_analysis"
+author: "Ye Ji Choi"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+editor: visual
+---
+
+```{r libraries}
+#| include: false
+library(Seurat)
+library(future)
+library(tidyverse)
+library(colorspace)
+library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggtree)
+library(ggpubr)
+library(rstatix)
+library(table1)
+library(GSVA)
+library(Biobase)
+library(ReactomeGSA)
+library(GSEABase)
+library(GSVAdata)
+library(msigdbr)
+library(kableExtra)
+library(knitr)
+```
+
+```{r scRNA data setup}
+#| include: false
+# Parallel processing
+plan(multicore, workers = 16)
+options(future.globals.maxSize=2e9)
+# Import
+# so <- readRDS("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean/seurat_data_no_computations.RDS")
+so <- readRDS("/run/user/1014/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/data_clean/seurat_data_no_computations.RDS")
+# CROCODILE only
+so <- so[, grepl("CRC", so$michigan_id)]
+# Exclude control with IgA
+so <- subset(so, T2D_HC_Phil != "HC_igA")
+so$Group <- so$T2D_HC_Phil
+# Normalize and scale
+so <- NormalizeData(so)
+so <- ScaleData(so)
+# PCA
+so <- RunPCA(so, features = VariableFeatures(object = so))
+# ElbowPlot(so)
+# Cluster cells
+so <- FindNeighbors(so)
+so <- FindClusters(so)
+# Perform UMAP and tSNE
+so <- RunUMAP(so, dims = 1:30)
+# so = RunTSNE(so,dim.embed = 3)
+# General cell types as identifiers
+so$generaltype <- sub("_.*", "", so$LR_clusters)
+Idents(so) <- so$LR_clusters
+```
+
+
+# Differential expression
+
+In the table below, T1D are group 1 and HC are group 2. Negative values indicate that the gene is more highly expressed in the second group (HC).
+
+
+```{r}
+# function for de.markers
+de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, extension){
+  m = FindMarkers(seurat_object, features = NULL, group.by = group.by,ident.1 = id1, 
+                  ident.2 = id2, subset.ident = celltype,verbose = F, logfc.threshold=0.01,
+                  min.pct = 0.1)
+  m$p_val_adj = p.adjust(m$p_val,method = "fdr")
+  m <- m %>% 
+    rownames_to_column('gene') %>%
+    arrange(p_val) %>%
+    column_to_rownames('gene') %>%
+    dplyr::select(avg_log2FC,pct.1,pct.2,p_val,p_val_adj)
+  
+  genes_subset <- rownames(m)[m$p_val <= 0.05]
+
+  if (length(genes_subset) > 0){
+    assign(paste0("genes_subset", extension), genes_subset, envir = .GlobalEnv)
+  }
+  assign(paste0("m", extension), m, envir = .GlobalEnv)
+  return(knitr::kable(m))
+}
+```
+
+```{r}
+de.markers(so, genes = NULL, "Group", id2 = "HC", id1 = "T1D", "PT", "_PT")
+de.markers(so, genes = NULL, "Group", id2 = "HC", id1 = "T1D", "EC", "_EC")
+de.markers(subset(so, celltype == "EC-AEA"), genes = NULL, "Group", id2 = "HC", id1 = "T1D", "EC", "_EC_AEA")
+de.markers(subset(so, celltype == "EC-GC"), genes = NULL, "Group", id2 = "HC", id1 = "T1D", "EC", "_EC_GC")
+de.markers(subset(so, celltype == "EC-LYM"), genes = NULL, "Group", id2 = "HC", id1 = "T1D", "EC", "_EC_LYM")
+de.markers(subset(so, celltype == "EC-PTC"), genes = NULL, "Group", id2 = "HC", id1 = "T1D", "EC", "_EC_PTC")
+de.markers(so, genes = NULL, "Group", id2 = "HC", id1 = "T1D", "MAC", "_MAC")
+de.markers(so, genes = NULL, "Group", id2 = "HC", id1 = "T1D", "MON", "_MON")
+```
+
+```{r}
+write.csv(m_PT, "/run/user/1014/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/CRC_care_t1d_PT_DEG_0.01.csv")
+write.csv(m_EC, "/run/user/1014/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/CRC_care_t1d_EC_DEG_0.01.csv")
+write.csv(m_EC_AEA, "/run/user/1014/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/CRC_care_t1d_EC_AEA_DEG_0.01.csv")
+write.csv(m_EC_GC, "/run/user/1014/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/CRC_care_t1d_EC_GC_DEG_0.01.csv")
+write.csv(m_EC_LYM, "/run/user/1014/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/CRC_care_t1d_EC_LYM_DEG_0.01.csv")
+write.csv(m_EC_PTC, "/run/user/1014/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/CRC_care_t1d_EC_PTC_DEG_0.01.csv")
+write.csv(m_MAC, "/run/user/1014/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/CRC_care_t1d_MAC_DEG_0.01.csv")
+write.csv(m_MON, "/run/user/1014/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/CRC_care_t1d_MON_DEG_0.01.csv")
+```
+
+
+## Bar plot
+
+```{r}
+de.markers(so, genes = NULL, "Group", id2 = "HC", id1 = "T1D", "T", "_tcell")
+```
+
+```{r}
+gene_list <- c("S100A4", "GZMA", "CCL5", "KLRC1", "LGALS3", "IL18R1", "GZMB", "CD8A", "CD8B")
+gene_list1 <- gene_list[1:3]
+gene_list2 <- gene_list[4:7]
+gene_list3 <- gene_list[8:9]
+direction_colors <- c("Upregulated" = "#d90429", "Downregulated" = "#83c5be", "NS" = "#eaeaea")
+
+m_tcell <- add_direction(m_tcell)
+m_tcell <- rownames_to_column(m_tcell, var = "gene")
+m_tcell$gene <- factor(m_tcell$gene, levels = gene_list)
+m_tcell <- m_tcell %>% filter(!is.na(gene))
+
+# Combined plot
+t.barplot.1 <- ggplot(m_tcell, aes(x = gene, y = avg_log2FC, fill = direction)) +
+  geom_col(show.legend = T) +
+  ggtitle("TCA Cycle") +
+  scale_fill_manual(values = direction_colors,
+                    labels = c("Downregulated    ",
+                               "Upregulated     ",
+                               "NS")) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 70, hjust = 1),
+        panel.grid = element_blank(),
+        strip.background = element_rect(fill = "white", color = "white"),
+        panel.spacing = unit(-1, 'lines'),
+        legend.position = "top",
+        aspect.ratio = 0.9/1,
+        text = element_text(size = 15)) +
+  scale_y_continuous(position = "right", limits = c(-0.5, 0.5),
+                     breaks = c(-0.25, 0, 0.25)) +
+  labs(x = NULL, y = "Avg Log2FC", fill = "Log2FC Direction  ") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.2) 
+rownames(m_tcell) <- m_tcell$gene
+t.table.1 <- m_tcell %>%
+    filter(p_val <= 0.05) %>%
+    dplyr::mutate(p_val_rounded = round(p_val, 4),
+                  p_val = p_format(p_val_rounded, trailing.zero = T, accuracy = 0.001, digits = 3),
+                  pct.1 = sprintf("%.3f", pct.1),
+                  pct.2 = sprintf("%.3f", pct.2),
+                  avg_log2FC = sprintf("%.3f", avg_log2FC)) %>%
+    dplyr::select(pct.1, pct.2, avg_log2FC, p_val)
+t.table.1 <- ggtexttable(t.table.1,
+      cols = c("T1D", "HC", "Log2FC", "p-value"),
+      theme = ttheme("blank", base_size = 13)
+    ) %>%
+      tab_add_hline(at.row = 1:2, row.side = "top", linewidth = 1) 
+
+
+# Plot 1
+m_tcell1 <- subset(m_tcell, gene %in% gene_list1)
+
+t.barplot.1 <- ggplot(m_tcell1, aes(x = gene, y = avg_log2FC, fill = direction)) +
+  geom_col(show.legend = T) +
+  scale_fill_manual(values = direction_colors,
+                    labels = c("Downregulated    ",
+                               "Upregulated     ",
+                               "NS")) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 70, hjust = 1),
+        panel.grid = element_blank(),
+        strip.background = element_rect(fill = "white", color = "white"),
+        panel.spacing = unit(-1, 'lines'),
+        legend.position = "top",
+        aspect.ratio = 0.9/1,
+        text = element_text(size = 15)) +
+  scale_y_continuous(position = "right", limits = c(-0.5, 0.5),
+                     breaks = c(-0.25, 0, 0.25)) +
+  labs(x = NULL, y = "Avg Log2FC", fill = "Log2FC Direction  ") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.2) 
+rownames(m_tcell1) <- m_tcell1$gene
+t.table.1 <- m_tcell1 %>%
+    filter(p_val <= 0.05) %>%
+    dplyr::mutate(p_val_rounded = round(p_val, 4),
+                  p_val = p_format(p_val_rounded, trailing.zero = T, accuracy = 0.001, digits = 3),
+                  pct.1 = sprintf("%.3f", pct.1),
+                  pct.2 = sprintf("%.3f", pct.2),
+                  avg_log2FC = sprintf("%.3f", avg_log2FC)) %>%
+    dplyr::select(pct.1, pct.2, avg_log2FC, p_val)
+t.table.1 <- ggtexttable(t.table.1,
+      cols = c("T1D", "HC", "Log2FC", "p-value"),
+      theme = ttheme("blank", base_size = 13)
+    ) %>%
+      tab_add_hline(at.row = 1:2, row.side = "top", linewidth = 1) 
+
+# Plot 2
+m_tcell2 <- subset(m_tcell, gene %in% gene_list2)
+
+t.barplot.2 <- ggplot(m_tcell2, aes(x = gene, y = avg_log2FC, fill = direction)) +
+  geom_col(show.legend = F, width = 0.7) +
+  scale_fill_manual(values = direction_colors,
+                    labels = c("Downregulated    ",
+                               "Upregulated     ",
+                               "NS")) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 70, hjust = 1),
+        panel.grid = element_blank(),
+        strip.background = element_rect(fill = "white", color = "white"),
+        panel.spacing = unit(-1, 'lines'),
+        legend.position = "top",
+        aspect.ratio = 0.9/1,
+        text = element_text(size = 15)) +
+  scale_y_continuous(position = "right", limits = c(-0.5, 0.5),
+                     breaks = c(-0.25, 0, 0.25)) +
+  labs(x = NULL, y = "Avg Log2FC", fill = "Log2FC Direction  ") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.2) 
+rownames(m_tcell2) <- m_tcell2$gene
+t.table.2 <- m_tcell2 %>%
+    filter(p_val <= 0.05) %>%
+    dplyr::mutate(p_val_rounded = round(p_val, 4),
+                  p_val = p_format(p_val_rounded, trailing.zero = T, accuracy = 0.001, digits = 3),
+                  pct.1 = sprintf("%.3f", pct.1),
+                  pct.2 = sprintf("%.3f", pct.2),
+                  avg_log2FC = sprintf("%.3f", avg_log2FC)) %>%
+    dplyr::select(pct.1, pct.2, avg_log2FC, p_val)
+t.table.2 <- ggtexttable(t.table.2,
+      cols = c("T1D", "HC", "Log2FC", "p-value"),
+      theme = ttheme("blank", base_size = 13)
+    ) %>%
+      tab_add_hline(at.row = 1:2, row.side = "top", linewidth = 1)
+
+# Plot 3
+m_tcell3 <- subset(m_tcell, gene %in% gene_list3)
+
+t.barplot.3 <- ggplot(m_tcell3, aes(x = gene, y = avg_log2FC, fill = direction)) +
+  geom_col(show.legend = F, width = 0.7) +
+  scale_fill_manual(values = direction_colors,
+                    labels = c("Downregulated    ",
+                               "Upregulated     ",
+                               "NS")) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 70, hjust = 1),
+        panel.grid = element_blank(),
+        strip.background = element_rect(fill = "white", color = "white"),
+        panel.spacing = unit(-1, 'lines'),
+        legend.position = "top",
+        aspect.ratio = 0.9/1,
+        text = element_text(size = 15)) +
+  scale_y_continuous(position = "right", limits = c(-0.5, 0.5),
+                     breaks = c(-0.25, 0, 0.25)) +
+  labs(x = NULL, y = "Avg Log2FC", fill = "Log2FC Direction  ") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.3) 
+rownames(m_tcell3) <- m_tcell3$gene
+t.table.3 <- m_tcell3 %>%
+    filter(p_val <= 0.05) %>%
+    dplyr::mutate(p_val_rounded = round(p_val, 4),
+                  p_val = p_format(p_val_rounded, trailing.zero = T, accuracy = 0.001, digits = 3),
+                  pct.1 = sprintf("%.3f", pct.1),
+                  pct.3 = sprintf("%.3f", pct.3),
+                  avg_log2FC = sprintf("%.3f", avg_log2FC)) %>%
+    dplyr::select(pct.1, pct.3, avg_log2FC, p_val)
+t.table.3 <- ggtexttable(t.table.3,
+      cols = c("T1D", "HC", "Log2FC", "p-value"),
+      theme = ttheme("blank", base_size = 13)
+    ) %>%
+      tab_add_hline(at.row = 1:2, row.side = "top", linewidth = 1)
+
+# Combined plot
+barplot_combined <- ggarrange(t.barplot.1, t.barplot.2, t.barplot.3,
+                              ncol = 1, common.legend = T)
+
+# Combined table
+barplot_table_combined <- ggarrange(t.table.1, t.table.2, t.table.3, ncol = 1,
+                                    heights = c(1,1), font.label = list(size = 10))
+
+combined.plot_table <- ggarrange(barplot_combined, NULL, barplot_table_combined,
+                                 nrow = 1, widths = c(1.5,0,1), common.legend = F)
+combined.plot_table
+
+ggsave(filename = "/home/yejichoi/Documents/lin_temp_folder/Bar_PT_combined.jpeg",
+       plot = combined.plot_table, scale = 3.5,
+       width = 900, height = 900,units = "px")
+```
