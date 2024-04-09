@@ -1,0 +1,222 @@
+---
+title: "CROCODILE Pseudotime"
+author: "Ye Ji Choi"
+date: "today"
+date-format: long
+execute: 
+  echo: false
+  warning: false
+  messages: false
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
+    code-fold: true
+    self-contained: true
+    fig-cap-location: top
+    page-layout: full
+editor: source
+---
+
+```{r libraries}
+#| include: false
+library(Seurat)
+library(future)
+library(tidyverse)
+library(colorspace)
+library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggtree)
+library(ggpubr)
+library(rstatix)
+library(table1)
+library(GSVA)
+library(Biobase)
+library(ReactomeGSA)
+library(GSEABase)
+library(GSVAdata)
+library(msigdbr)
+library(kableExtra)
+library(knitr)
+library(slingshot); library(SingleCellExperiment)
+library(RColorBrewer); library(scales)
+library(viridis); library(UpSetR)
+library(pheatmap)
+library(fgsea); library(tradeSeq)
+```
+
+```{r data-setup, echo = F, message=F}
+# Parallel processing
+plan(multicore, workers = 16)
+options(future.globals.maxSize=2e9)
+so <- readRDS("/home/yejichoi/Documents/seurat_data_CRC.RDS")
+source("/home/yejichoi/Documents/CHCO-Code/Petter Bjornstad/CROCODILE/crocodile_functions.R")
+load("/run/user/1014/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/croc_data.RData")
+dict <- read.csv("/run/user/1014/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv")
+source("/home/yejichoi/Documents/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/label_harmonized_function.R")
+
+## Incorporate some clinical variables to SO
+so_meta <- so@meta.data
+dat <- dat %>% dplyr::rename("michigan_id" = record_id) %>%
+  dplyr::select(michigan_id, gbm_thick_artmean, gbm_thick_harmmean, diabetes_duration)
+so_meta <- left_join(so_meta, dat)
+so$gbm_thick_art_mean <- so_meta$gbm_thick_artmean
+so$gbm_thick_harmmean <- so_meta$gbm_thick_harmmean
+so$diabetes_duration <- so_meta$diabetes_duration
+
+## Make SO into SCE object for pseudotime analysis
+sce <- as.SingleCellExperiment(so, assay = "RNA")
+```
+
+# Pseudotime trajectory
+
+```{r slingshot-comb, echo = F}
+shuffle <- sample(ncol(sce))
+sce <- slingshot(sce, reducedDim = 'PCA', clusterLabels = colData(sce)$Group,
+                 start.clus = 'HC')
+plot(reducedDims(sce)$PCA[shuffle, ], asp = 1, pch = 16, xlab = "PCA-1", ylab = "PCA-2",
+     col = hcl.colors(100, alpha = .5)[cut(sce$slingPseudotime_1, breaks = 100)][shuffle])
+lines(SlingshotDataSet(sce), type = "lineages")
+lines(SlingshotDataSet(sce))
+
+getLineages(reducedDim(sce, "PCA"), sce$LR_clusters)
+```
+
+
+```{r slingshot-comb-densities, echo = F}
+# Pseudotime densities
+ds <- list(HC = density(slingPseudotime(sce)[colData(sce)$Group ==  "HC", 1]),
+           T1D = density(slingPseudotime(sce)[colData(sce)$Group ==  "T1D", 1]))
+xlim <- range(c(ds$HC$x, ds$T1D$x))
+ylim <- range(c(ds$HC$y, ds$T1D$y))
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "")
+polygon(c(min(ds$HC$x),ds$HC$x,max(ds$HC$x)),
+		c(0,ds$HC$y,0), col = rgb(0,0,0,.5))
+polygon(c(min(ds$T1D$x),ds$HC$x,max(ds$HC$x)),
+		c(0,ds$T1D$y,0), col = alpha(brewer.pal(4,'Set1')[1], alpha = .5))
+legend("topright", legend = c("HC", "T1D"), 
+       fill = alpha(c(1, brewer.pal(3, "Set1")[1]), alpha = .5), bty = "n")
+ks.test(slingPseudotime(sce)[colData(sce)$Group == "HC", 1],
+        slingPseudotime(sce)[colData(sce)$Group == "T1D", 1])
+```
+
+```{r slingshot, echo = F}
+# Initialize an empty list to store Slingshot results
+slingshot_results <- list()
+
+# Run Slingshot for each cell type
+for (cell_type in levels(sce$LR_clusters)) {
+  # Subset the SingleCellExperiment object for the current cell type
+  sub_sce <- sce[, sce$LR_clusters == cell_type]
+  
+  # Run Slingshot
+  slingshot_output <- slingshot(sub_sce,
+                                reducedDim = "UMAP",
+                                clusterLabels = colData(sub_sce)$Group,
+                                start.clus = "HC")
+  
+  # Store the Slingshot output in the list with the cell type name as the key
+  slingshot_results[[cell_type]] <- slingshot_output
+}
+
+pseudotime_list <- list()
+
+# Iterate over each cell type in slingshot_results
+for (cell_type in names(slingshot_results)) {
+  # Extract the Slingshot output for the current cell type
+  slingshot_output <- slingshot_results[[cell_type]]
+  
+  # Extract the pseudotime values for the current cell type
+  pseudotime <- slingPseudotime(slingshot_output)
+  
+  # Save pseudotime values for the current cell type
+  pseudotime_list[[cell_type]] <- pseudotime
+}
+
+# Loop through each cell type in slingshot_results
+for (cell_type in names(slingshot_results)) {
+  # Extract the Slingshot output for the current cell type
+  slingshot_output <- slingshot_results[[cell_type]]
+  
+  # Extract the pseudotime values for the current cell type
+  pseudotime <- slingshot_output$reducedDim$Slingshot_pseudotime
+  
+}
+
+```
+
+```{r genes-of-interest, echo = F}
+tca_genes = c("ACO1", "ACO2", "IDH1", "IDH2", "IDH3A", "IDH3B", "IDH3G", "OGDH", "OGDHL",
+              "SUCLA2", "SUCLG1", "SUCLG2", "SDHA", "SDHB", "SDHC", "SDHD", "FH", "MDH1",
+              "MDH2", "FAS", "CS")
+oxy_phos_genes = c("NDUFS6",  "SDHB", "SDHC", "SDHD",
+                   "UQCRC1", "UQCRC2", "COX4I1", "COX4I2", "ATP5PF")
+```
+
+# Correlations with Pseudotime
+```{r label-setup, echo = F}
+source("/home/yejichoi/Documents/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/correlation_function.R")
+gene_dict <- c(tca_genes, oxy_phos_genes)
+gene_dict_values <- unique(gene_dict)
+for (gene_value in gene_dict_values) {
+  dict[[gene_value]] <- gene_value
+}
+```
+
+```{r correlation-tables, echo = F}
+# Get unique values of LR_clusters
+unique_LR_clusters <- unique(so$LR_clusters)
+
+# Loop through each unique value of LR_clusters
+for (cluster_value in unique_LR_clusters) {
+  subset_name <- paste("so_", cluster_value, sep = "")
+  assign(subset_name, subset(so, LR_clusters == cluster_value))
+  pseudotime <- pseudotime_list[[cluster_value]][,1]
+  meta <- get(subset_name)@meta.data
+  meta$pseudotime <- pseudotime
+  assign(subset_name, AddMetaData(get(subset_name), metadata = meta))
+  }
+
+so_PT@meta.data %>%
+  ggplot(aes(x = pseudotime, y = gbm_thick_art_mean, color = Group)) +
+  geom_point()
+
+# GBM width
+correlation_table_minimal(data = subset(so_PT@meta.data, !is.na(gbm_thick_harmmean) & !is.na(pseudotime)),
+                   relevant_vars = c(pseudotime, "gbm_thick_harmmean"),
+                   n_cols = 1,
+                   cor_method = "pearson",
+                   dict = dict)
+
+# Diabetes duration
+
+
+# Age
+
+
+# HbA1C
+
+
+```
+
+# Differential expression
+
+```{r fit-gam, echo = F}
+set.seed(3)
+icMat <- evaluateK(counts = as.matrix(assays(sce)$counts),
+                   pseudotime = colData(sce)$slingshot$pseudotime,
+                   cellWeights = colData(sce)$slingshot$cellWeights.V1,
+                   conditions = factor(colData(sce)$Group),
+                   nGenes = 300,
+                   k = 3:7)
+
+sce <- fitGAM(sce, conditions = factor(colData(sce)$Group),
+              nknots = 5,
+              genes = c(tca_genes, oxy_phos_genes))
+
+plotSmoothers(sce, assays(sce)$counts, gene = "ACO1", alpha = 1, border = TRUE) + ggtitle("ACO1")
+```
+
+
