@@ -6,8 +6,10 @@ library(REDCapR)
 
 dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = c(" ", "", "-9999",-9999))
 requested <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/Raji_sc_metadata_request.csv")
+tokens <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+attempt_token <- subset(tokens, Study == "ATTEMPT")$Token
 attempt <- redcap_read(redcap_uri = "https://redcap.ucdenver.edu/api/",
-                       token = "00D8A080D36CC8783F149BDE3F06BF31")$data %>%
+                       token = attempt_token)$data %>%
   filter(subject_id == 30051)
 
 dat <- dat %>%

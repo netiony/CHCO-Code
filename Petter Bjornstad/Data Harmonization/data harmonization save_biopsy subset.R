@@ -29,9 +29,11 @@ biopsy_dat <- dat %>%
                 kit_id,glut_id, form_id, rnalater_id, cryomold_id, cryostor_id, ln2_id) %>%
   arrange(desc(biopsy_yn), record_id)
 
+tokens <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+rpc2_token <- subset(tokens, Study == "RPC2")$Token
 
 rpc2 <- REDCapR::redcap_read(redcap_uri = "https://redcap.ucdenver.edu/api/",
-                     token = "D4044207395722E2CF1B7C458DA56C4B")$data
+                     token = rpc2_token)$data
 
 rpc2_biopsy <- rpc2 %>%
   mutate(bx_date = as.character(bx_date),
