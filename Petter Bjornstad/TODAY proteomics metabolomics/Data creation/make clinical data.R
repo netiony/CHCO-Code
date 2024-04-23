@@ -233,6 +233,7 @@ PAT$houseincdesc[PAT$houseinc==1]<- "<$24,999"
 PAT$houseincdesc[PAT$houseinc==2]<- "$25,000-$49,999"
 PAT$houseincdesc[PAT$houseinc==3]<- ">$50,000"
 keepPAT <- PAT %>% select(releaseid,age,sex,dxtime,race,houseinc,racedesc,houseincdesc)
+keepPAT$sex_char <- ifelse(keepPAT$sex == 1, "F", "M")
 
 # AGEBASE - uncollapsed age at baseline
 AGEBASE <- read.csv("./Clinical data/TODAY/AGEBASE.csv")
