@@ -6,7 +6,7 @@ if(Sys.info()["sysname"] == "Windows"){
 } else if (Sys.info()["sysname"] == "Linux"){
   home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
 } else if (Sys.info()["sysname"] == "Darwin"){
-  home_dir = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
+  home_dir = "/Volumes/PEDS/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
 }
 
 setwd(home_dir)
@@ -233,6 +233,7 @@ PAT$houseincdesc[PAT$houseinc==1]<- "<$24,999"
 PAT$houseincdesc[PAT$houseinc==2]<- "$25,000-$49,999"
 PAT$houseincdesc[PAT$houseinc==3]<- ">$50,000"
 keepPAT <- PAT %>% select(releaseid,age,sex,dxtime,race,houseinc,racedesc,houseincdesc)
+keepPAT$sex_char <- ifelse(keepPAT$sex == 1, "F", "M")
 
 # AGEBASE - uncollapsed age at baseline
 AGEBASE <- read.csv("./Clinical data/TODAY/AGEBASE.csv")
@@ -245,6 +246,9 @@ PRIMOUT$txdesc[PRIMOUT$tx==1]<- "Metformin only"
 PRIMOUT$txdesc[PRIMOUT$tx==2]<- "Metformin + rosiglitazone"
 PRIMOUT$txdesc[PRIMOUT$tx==3]<- "Metformin + lifestyle"
 keepPRIMOUT <- PRIMOUT %>% select(releaseid,tx,txdesc)
+
+# BIRTH WEIGHT 
+BW <- read.csv("./Clinical data/TODAY/Birthweight.csv")
 
 # create new dataset of baseline risk factors
 basecbl <- CBL %>% filter(mvisit=="M00")
@@ -260,6 +264,7 @@ baserisk <- merge(baserisk,keepPAT,by="releaseid",all.x = T,all.y = F)
 baserisk$age <- NULL
 baserisk <- merge(baserisk,AGEBASE,by="releaseid",all.x = T,all.y = F)
 baserisk <- merge(baserisk, keepPRIMOUT,by="releaseid",all.x = T,all.y = F)
+baserisk <- merge(baserisk, BW, by="releaseid", all.x = T, all.y = T)
 
 # Save
 save(baserisk,file = "./Clinical data/TODAY/baserisk.Rdata")
@@ -333,6 +338,23 @@ CBL_TODAY2$visit <- CBL_TODAY2$pvisit
 CBL_TODAY2$ins0min <- CBL_TODAY2$ins
 CBL_TODAY2_KEEP <- CBL_TODAY2 %>% select(releaseid, visit, ins0min, codi)
 
+# calculate length of follow-up for each person
+# we don't have visit dates, just visit numbers
+ALL_VISITS_TODAY <- VISIT %>% select(releaseid, visit)
+ALL_VISITS_TODAY2 <- VISIT_TODAY2 %>% select(releaseid, visit)
+ALL_VISITS <- rbind(ALL_VISITS_TODAY, ALL_VISITS_TODAY2)
+agebase <- baserisk %>% select(releaseid, AGEBASE)
+ALL_VISITS <- merge(ALL_VISITS, agebase, by = "releaseid", all.x = T, all.y = T)
+ALL_VISITS$visitnum <- stringr::str_remove(ALL_VISITS$visit, "P")
+ALL_VISITS$visitnum <- stringr::str_remove(ALL_VISITS$visitnum, "M")
+ALL_VISITS$visitnum <- as.numeric(ALL_VISITS$visitnum)
+ALL_VISITS <- arrange(ALL_VISITS, releaseid, desc(visitnum))
+ALL_VISITS <- ALL_VISITS %>% group_by(releaseid) %>% filter(row_number()==1)
+ALL_VISITS$fup_years <- ALL_VISITS$visitnum/12
+ALL_VISITS <- ALL_VISITS %>% mutate(age_last_visit = sum(AGEBASE, fup_years))
+ALL_VISITS$ge25yrs <- ifelse(ALL_VISITS$age_last_visit >= 25, 1, 0)
+fup_length <- ALL_VISITS %>% select(releaseid, fup_years, age_last_visit, ge25yrs)
+
 # merge all data
 long <- rbind(BASELINE_keep,VISIT_keep,VISIT_TODAY2_KEEP)
 labs <- merge(CBL_keep,ADDCBL_keep,by=c("releaseid","visit"),all.x = T, all.y = T)
@@ -342,6 +364,7 @@ long <- merge(long,labs,by=c("releaseid","visit"),all.x = T, all.y = T)
 long$visit_num <- as.numeric(str_sub(long$visit,2,length(long$visit)))
 # calculated variables - eIS
 long$si_1_ins0 <- 1/long$ins0min
+long <- merge(long, fup_length, by = "releaseid", all.x = T, all.y = T)
 
 # write file
 save(long,file = "./Clinical data/TODAY/clinical_data_long.Rdata")
