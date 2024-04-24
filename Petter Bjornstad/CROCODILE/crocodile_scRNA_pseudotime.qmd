@@ -28,7 +28,6 @@ library(colorspace)
 library(patchwork)
 library(ggdendro)
 library(cowplot)
-library(ggtree)
 library(ggpubr)
 library(rstatix)
 library(table1)
@@ -51,112 +50,1055 @@ library(fgsea); library(tradeSeq)
 # Parallel processing
 plan(multicore, workers = 16)
 options(future.globals.maxSize=2e9)
-so <- readRDS("/home/yejichoi/Documents/seurat_data_CRC.RDS")
-source("/home/yejichoi/Documents/CHCO-Code/Petter Bjornstad/CROCODILE/crocodile_functions.R")
-load("/run/user/1014/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/croc_data.RData")
-dict <- read.csv("/run/user/1014/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv")
-source("/home/yejichoi/Documents/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/label_harmonized_function.R")
+so <- readRDS("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/data_clean/seurat_data_CRC.RDS")
+source("/home/yejichoi2/Documents/CHCO-Code/Petter Bjornstad/CROCODILE/crocodile_functions.R")
+load("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/croc_data.RData")
+dict <- read.csv("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv")
+source("/home/yejichoi2/Documents/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/label_harmonized_function.R")
 
 ## Incorporate some clinical variables to SO
 so_meta <- so@meta.data
 dat <- dat %>% dplyr::rename("michigan_id" = record_id) %>%
-  dplyr::select(michigan_id, gbm_thick_artmean, gbm_thick_harmmean, diabetes_duration)
+  dplyr::mutate(gbm_thick_quartile = ntile(gbm_thick_artmean, 4),
+                gbm_thick_quartile = case_when(!is.na(gbm_thick_quartile) ~ paste0("q", gbm_thick_quartile)),
+                bmi_quartile = ntile(bmi, 4),
+                bmi_quartile = case_when(!is.na(bmi_quartile) ~ paste0("q", bmi_quartile)),
+                diabetes_duration_quartile = ntile(diabetes_duration, 4),
+                diabetes_duration_quartile = case_when(!is.na(diabetes_duration_quartile) ~ paste0("q", diabetes_duration_quartile)),
+                age_quartile = ntile(age, 4),
+                age_quartile = case_when(!is.na(age_quartile) ~ paste0("q", age_quartile)),
+                raw_m_quartile = ntile(p2_raw_m, 4),
+                raw_m_quartile = case_when(!is.na(raw_m_quartile) ~ paste0("q", raw_m_quartile)),
+                diabetes_duration_manual_cat = case_when(diabetes_duration < 5 ~ "<5",
+                                                         diabetes_duration < 10 ~ "5-10",
+                                                         diabetes_duration < 15 ~ "10-15",
+                                                         diabetes_duration < 20 ~ "15-20",
+                                                         diabetes_duration >= 20 ~ "20+",
+                                                         T ~ "NA"),
+                bmi_manual_cat = case_when(bmi < 20 ~ "<20",
+                                           bmi < 25 ~ "20-25",
+                                           bmi < 27 ~ "25-27",
+                                           bmi >= 27 ~ "27+", 
+                                           T ~ "NA")) %>%
+  dplyr::select(michigan_id, gbm_thick_artmean, diabetes_duration, p2_raw_m, ends_with("quartile"), ends_with("manual_cat"))
+dat$diabetes_duration_manual_cat <- factor(dat$diabetes_duration_manual_cat, 
+                                           levels = c("<5", "5-10", "10-15", "15-20", "20+", "NA"))
+dat$bmi_manual_cat <- factor(dat$bmi_manual_cat,
+                             levels = c("<20", "20-25", "25-27", "27+", "NA"), 
+                             exclude = NULL)
+
 so_meta <- left_join(so_meta, dat)
 so$gbm_thick_art_mean <- so_meta$gbm_thick_artmean
-so$gbm_thick_harmmean <- so_meta$gbm_thick_harmmean
+so$age <- so_meta$age
 so$diabetes_duration <- so_meta$diabetes_duration
+so$p2_raw_m <- so_meta$p2_raw_m
+so$gbm_thick_quartile <- so_meta$gbm_thick_quartile
+so$diabetes_duration <- so_meta$diabetes_duration
+so$bmi_quartile <- so_meta$bmi_quartile
+so$diabetes_duration_quartile <- so_meta$diabetes_duration_quartile
+so$age_quartile <- so_meta$age_quartile
+so$raw_m_quartile <- so_meta$raw_m_quartile
+so$diabetes_duration_manual_cat <- so_meta$diabetes_duration_manual_cat
+so$bmi_manual_cat <- so_meta$bmi_manual_cat
 
 ## Make SO into SCE object for pseudotime analysis
 sce <- as.SingleCellExperiment(so, assay = "RNA")
 ```
 
+```{r echo = F}
+n_HC <- nrow(so@meta.data %>% filter(generaltype == "PT" & celltype != "PT_lowQuality" & Group == "HC"))
+n_T1D <- nrow(so@meta.data %>% filter(generaltype == "PT" & celltype != "PT_lowQuality" & Group == "T1D"))
+
+# By PT subtypes (by celltype)
+cellcount<- so@meta.data %>% 
+  filter(generaltype == "PT" & celltype != "PT_lowQuality") %>%
+  dplyr::group_by(Group, celltype) %>%
+  dplyr::summarise(count = n()) %>%
+  dplyr::mutate(n = case_when(Group == "HC" ~ n_HC, Group == "T1D" ~ n_T1D),
+         ratio = count / n) %>% ungroup() %>%
+  group_by(celltype) %>%
+  dplyr::mutate(proportion = ratio/sum(ratio)) %>%
+  dplyr::select(proportion, Group, celltype) %>%
+  ggplot(aes(x= celltype, y= proportion, fill = Group)) + 
+  geom_bar(stat = "identity", position = "fill") +
+  theme_classic() +
+  labs(x = NULL,
+       y = "Proportion",
+       fill = "Group") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  theme(plot.title = element_text(hjust=0.5, face="bold"),
+        text = element_text(size = 20)) +
+  ggtitle("Proportion of cells") +
+  scale_fill_manual(values = c("#264653", "#2a9d8f"))
+
+cellcount
+```
+
+# PT cells (PT-1 thru -5)
+```{r, echo = F}
+# PT-3 to PT-4
+so_PT <- subset(so, generaltype == "PT" & celltype != "PT_lowQuality")
+so_PT <- NormalizeData(so_PT)
+so_PT <- ScaleData(so_PT)
+# ElbowPlot(so_PT)
+so_PT <- RunPCA(so_PT, ncomponents = 10, features = VariableFeatures(object = so_PT))
+so_PT <- FindNeighbors(so_PT)
+so_PT <- FindClusters(so_PT)
+so_PT <- RunUMAP(so_PT, dims = 1:30)
+so_PT <- RunTSNE(so_PT, dimred = "UMAP")
+DimPlot(object = so_PT, reduction = "umap", group.by = "Group")
+DimPlot(object = so_PT, reduction = "umap", group.by = "celltype")
+```
+
+```{r}
+sce_PT <- as.SingleCellExperiment(so_PT)
+sce_PT <- slingshot(sce_PT, reducedDim = 'UMAP', clusterLabels = colData(sce_PT)$celltype,
+                                   start.clus = 'PT-3', end.clus = 'PT-4')
+shuffle <- sample(ncol(sce_PT))
+plot(reducedDims(sce_PT)$UMAP[shuffle, ], asp = 1, pch = 16,
+     xlab = "UMAP-1", ylab = "UMAP-2",
+     col = hcl.colors(100, alpha = .5)[cut(sce_PT$slingPseudotime_1, breaks = 100)][shuffle])
+lines(SlingshotDataSet(sce_PT), type = "lineages")
+#lines(SlingshotDataSet(sce_PT))
+
+# plot(reducedDims(sce_PT)$UMAP[shuffle, ], asp = 1, pch = 16,
+#      xlab = "UMAP-1", ylab = "UMAP-2",
+#      col = sce_PT$Group)
+# 
+# lines(SlingshotDataSet(sce_PT), type = "lineages")
+# legend("topright", pch = 16, col = alpha(c("HC" = "#ffcb77", "T1D" = "#fe6d73"), 0.4), bty = "n", 
+#        legend = levels(factor(colData(sce)$Group)))
+# 
+# plotUMAP(sce_PT, colour_by="pseudotime", point_alpha=0.3) +
+#     geom_segment(data=grid.df, 
+#         mapping=aes(x=start.1, y=start.2, xend=end.1, yend=end.2), 
+#         arrow=arrow(length=unit(0.05, "inches"), type="closed"))
+```
+
+# GAM (Generalized additive model)
+```{r echo = F}
+# Function to plot all smooth after fitGAM
+plot_smooth <- function(sce, gene, title = gene) {
+  non_missing_cells <- (colData(sce)$tradeSeq$conditions != "NA")
+  non_missing_cells <- as.data.frame(non_missing_cells) %>% 
+    dplyr::mutate(non_missing_cells = case_when(non_missing_cells == T ~ 1))
+  cnt <- assays(sce)$counts[gene, , drop=F]
+  cnt <- as.data.frame(t(cnt))
+  cnt <- cnt*non_missing_cells
+  colnames(cnt) <- "exp"
+  cnt <- cnt %>% filter(!is.na(exp))
+  pseudotime <- (colData(sce)$crv$pseudotime.Lineage1 * non_missing_cells %>%
+    filter(!is.na(non_missing_cells)))$non_missing_cells
+  condition <- colData(sce)$tradeSeq$conditions
+  
+  if ("NA" %in% condition){
+    condition <- condition[condition != "NA"]
+  }
+  
+  ncondition <- length(unique(condition))
+  
+  if (ncondition == 2){
+    colors = c("#007e5d",  "#ff8989")
+  }
+  if (ncondition == 3){
+    colors = c("#ef767a", "#456990", "#49beaa")
+  }
+  if(ncondition == 4){
+    colors = c("#003049", "#d62828", "#f77f00", "#fcbf49")
+  }
+  if(ncondition == 5){
+    colors = c("#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51")
+  }
+  
+  cnt_smooth <- predictSmooth(sce, gene, nPoints=100) %>%
+    filter(lineage == 1) %>% dplyr::select(-lineage)
+  cnt_smooth <- cnt_smooth[, c("yhat", "time", "condition")]
+  colnames(cnt_smooth) <- c("exp", "pseudotime", "condition")
+  cnt_smooth <- cnt_smooth %>% filter(condition!="NA")
+  
+  p <- ggplot(NULL, aes(x=pseudotime, y=log1p(exp), color=condition)) + 
+    geom_point(data=cnt, size=1, alpha = 0.3) +
+    geom_line(data=cnt_smooth, linewidth=1.5) +
+    labs(x = "Pseudotime",
+         y = "Log(expression + 1)", 
+         title = title,
+         color = "Group") +
+    theme_minimal() +
+    theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+    scale_color_manual(values = colors)
+  return(p)
+}
+```
+
+## Differential expression of genes
+### By group
+```{r echo = F, warning = F, message=F}
+genes = unique(c(genes, oxy_phos_genes))
+
+sce_PT<-fitGAM(sce_PT, 
+       conditions = factor(colData(sce_PT)$Group), 
+       nknots = 5, 
+       genes = genes)
+
+# sce_PT<-fitGAM(sce_PT,
+#        nknots = 5, 
+#        genes = genes)
+DimPlot(object = so_PT, reduction = "umap", group.by = "Group")
+# Conditioned by group; plots for each transcript
+for (i in 1:length(genes)){
+  plot <- plot_smooth(sce_PT, genes[i])
+  gene_expression <- plotGeneCount(sce_PT, counts, gene = genes[i],
+                        title = genes[i])
+  print(plot + gene_expression)
+}
+```
+
+### By GBM width (quartiles)
+```{r echo = F, warning = F, message=F}
+sce_PT$gbm_thick_quartile[is.na(sce_PT$gbm_thick_quartile)] <- "NA"
+sce_PT_gbm_thick_quartile <- fitGAM(sce_PT, 
+       conditions = factor(colData(sce_PT)$gbm_thick_quartile), 
+       nknots = 5, 
+       genes = genes)
+
+DimPlot(object = so_PT, reduction = "umap", group.by = "gbm_thick_quartile")
+for (i in 1:length(genes)){
+  plot <- plot_smooth(sce_PT_gbm_thick_quartile, genes[i])
+  gene_expression <- plotGeneCount(sce_PT_gbm_thick_quartile, counts, gene = genes[i],
+                        title = genes[i])
+  print(plot + gene_expression)
+}
+```
+
+### By BMI (quartiles)
+```{r echo = F, warning = F, message=F}
+sce_PT$bmi_quartile[is.na(sce_PT$bmi_quartile)] <- "NA"
+sce_PT_bmi_quartile <- fitGAM(sce_PT, 
+       conditions = factor(colData(sce_PT)$bmi_quartile), 
+       nknots = 5, 
+       genes = genes)
+
+DimPlot(object = so_PT, reduction = "umap", group.by = "bmi_quartile")
+for (i in 1:length(genes)){
+  plot <- plot_smooth(sce_PT_bmi_quartile, genes[i])
+  gene_expression <- plotGeneCount(sce_PT_bmi_quartile, counts, gene = genes[i],
+                        title = genes[i])
+  print(plot + gene_expression)
+}
+```
+
+### By BMI (manual)
+```{r echo = F, warning = F, message=F}
+sce_PT$bmi_manual_cat[is.na(sce_PT$bmi_manual_cat)] <- "NA"
+sce_PT_bmi_manual_cat <- fitGAM(sce_PT, 
+       conditions = factor(colData(sce_PT)$bmi_manual_cat), 
+       nknots = 5, 
+       genes = genes)
+
+DimPlot(object = so_PT, reduction = "umap", group.by = "bmi_manual_cat")
+for (i in 1:length(genes)){
+  plot <- plot_smooth(sce_PT_bmi_manual_cat, genes[i])
+  gene_expression <- plotGeneCount(sce_PT_bmi_manual_cat, counts, gene = genes[i],
+                        title = genes[i])
+  print(plot + gene_expression)
+}
+```
+
+### By diabetes duration (quartile)
+```{r echo = F, warning = F, message=F}
+sce_PT$diabetes_duration_quartile[is.na(sce_PT$diabetes_duration_quartile)] <- "NA"
+sce_PT_diabetes_duration_quartile <- fitGAM(sce_PT, 
+       conditions = factor(colData(sce_PT)$diabetes_duration_quartile), 
+       nknots = 5, 
+       genes = genes)
+
+DimPlot(object = so_PT, reduction = "umap", group.by = "diabetes_duration_quartile")
+for (i in 1:length(genes)){
+  plot <- plot_smooth(sce_PT_diabetes_duration_quartile, genes[i])
+  gene_expression <- plotGeneCount(sce_PT_diabetes_duration_quartile, counts, gene = genes[i],
+                        title = genes[i])
+  print(plot + gene_expression)
+}
+```
+
+### By diabetes duration (manual)
+```{r echo = F, warning = F, message=F}
+sce_PT_diabetes_duration_manual_cat <- 
+  fitGAM(sce_PT, 
+       conditions = factor(colData(sce_PT)$diabetes_duration_manual_cat), 
+       nknots = 5, 
+       genes = genes)
+
+DimPlot(object = so_PT, reduction = "umap", group.by = "diabetes_duration_manual_cat")
+for (i in 1:length(genes)){
+  plot <- plot_smooth(sce_PT_diabetes_duration_manual_cat, genes[i])
+  gene_expression <- plotGeneCount(sce_PT_diabetes_duration_manual_cat, counts, gene = genes[i],
+                        title = genes[i])
+  print(plot + gene_expression)
+}
+```
+
+### By age (quartile)
+```{r echo = F, warning = F, message=F}
+sce_PT <- as.SingleCellExperiment(so_PT)
+sce_PT <- slingshot(sce_PT, reducedDim = 'UMAP', clusterLabels = colData(sce_PT)$celltype,
+                                   start.clus = 'PT-3', end.clus = 'PT-4')
+sce_PT_age_quartile <- fitGAM(sce_PT, 
+       conditions = factor(colData(sce_PT)$age_quartile), 
+       nknots = 5, 
+       genes = genes)
+
+DimPlot(object = so_PT, reduction = "umap", group.by = "age_quartile")
+for (i in 1:length(genes)){
+  plot <- plot_smooth(sce_PT_age_quartile, genes[i])
+  gene_expression <- plotGeneCount(sce_PT_age_quartile, counts, gene = genes[i],
+                        title = genes[i])
+  print(plot + gene_expression)
+}
+```
+
+### By M-value (quartile)
+```{r echo = F, warning = F, message=F}
+sce_PT$raw_m_quartile[is.na(sce_PT$raw_m_quartile)] <- "NA"
+sce_PT_raw_m_quartile <- fitGAM(sce_PT, 
+       conditions = factor(colData(sce_PT)$raw_m_quartile), 
+       nknots = 5, 
+       genes = genes)
+
+DimPlot(object = so_PT, reduction = "umap", group.by = "raw_m_quartile")
+
+for (i in 1:length(genes)){
+  plot <- plot_smooth(sce_PT_raw_m_quartile, genes[i])
+  gene_expression <- plotGeneCount(sce_PT_raw_m_quartile, counts, gene = genes[i],
+                        title = genes[i])
+  print(plot + gene_expression)
+}
+```
+
 # Pseudotime trajectory
+(Muted output for now)
+```{r subset-by-celltype, echo = F, eval = F}
+# Get unique values of LR_clusters
+unique_LR_clusters <- unique(so$LR_clusters)
+unique_LR_clusters <- unique_LR_clusters[!(unique_LR_clusters %in% c("TAL_highUMI", "PT_lowQuality", "IC-A_lowQuality", "B"))]
 
-```{r slingshot-comb, echo = F}
-shuffle <- sample(ncol(sce))
-sce <- slingshot(sce, reducedDim = 'PCA', clusterLabels = colData(sce)$Group,
-                 start.clus = 'HC')
-plot(reducedDims(sce)$PCA[shuffle, ], asp = 1, pch = 16, xlab = "PCA-1", ylab = "PCA-2",
-     col = hcl.colors(100, alpha = .5)[cut(sce$slingPseudotime_1, breaks = 100)][shuffle])
-lines(SlingshotDataSet(sce), type = "lineages")
-lines(SlingshotDataSet(sce))
+# Initialize an empty list to store UMAP plots
+umap_plots <- list()
 
-getLineages(reducedDim(sce, "PCA"), sce$LR_clusters)
-```
-
-
-```{r slingshot-comb-densities, echo = F}
-# Pseudotime densities
-ds <- list(HC = density(slingPseudotime(sce)[colData(sce)$Group ==  "HC", 1]),
-           T1D = density(slingPseudotime(sce)[colData(sce)$Group ==  "T1D", 1]))
-xlim <- range(c(ds$HC$x, ds$T1D$x))
-ylim <- range(c(ds$HC$y, ds$T1D$y))
-plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "")
-polygon(c(min(ds$HC$x),ds$HC$x,max(ds$HC$x)),
-		c(0,ds$HC$y,0), col = rgb(0,0,0,.5))
-polygon(c(min(ds$T1D$x),ds$HC$x,max(ds$HC$x)),
-		c(0,ds$T1D$y,0), col = alpha(brewer.pal(4,'Set1')[1], alpha = .5))
-legend("topright", legend = c("HC", "T1D"), 
-       fill = alpha(c(1, brewer.pal(3, "Set1")[1]), alpha = .5), bty = "n")
-ks.test(slingPseudotime(sce)[colData(sce)$Group == "HC", 1],
-        slingPseudotime(sce)[colData(sce)$Group == "T1D", 1])
-```
-
-```{r slingshot, echo = F}
-# Initialize an empty list to store Slingshot results
-slingshot_results <- list()
-
-# Run Slingshot for each cell type
-for (cell_type in levels(sce$LR_clusters)) {
-  # Subset the SingleCellExperiment object for the current cell type
-  sub_sce <- sce[, sce$LR_clusters == cell_type]
-  
-  # Run Slingshot
-  slingshot_output <- slingshot(sub_sce,
-                                reducedDim = "UMAP",
-                                clusterLabels = colData(sub_sce)$Group,
-                                start.clus = "HC")
-  
-  # Store the Slingshot output in the list with the cell type name as the key
-  slingshot_results[[cell_type]] <- slingshot_output
+# Loop through each unique value of LR_clusters and create UMAP for each cell type
+for (cluster_value in unique_LR_clusters) {
+  subset_name <- paste0("so_", cluster_value)
+  print(subset_name)
+  assign(subset_name, subset(so, LR_clusters == cluster_value))
+  assign(subset_name, NormalizeData(get(subset_name)))
+  assign(subset_name, ScaleData(get(subset_name)))
+  assign(subset_name, RunPCA(get(subset_name), features = VariableFeatures(object = get(subset_name))))
+  assign(subset_name, FindNeighbors(get(subset_name)))
+  assign(subset_name, FindClusters(get(subset_name)))
+  if (dim(get(subset_name))[2] > 5000) {
+    assign(subset_name, RunUMAP(get(subset_name), dims = 1:30))
+    umap_plot <- DimPlot(object = get(subset_name), reduction = "umap")
+    umap_plots[[length(umap_plots) + 1]] <- umap_plot
+  }
+  if (dim(get(subset_name))[2] <= 5000 && dim(get(subset_name))[2] > 1000) {
+    assign(subset_name, RunUMAP(get(subset_name), dims = 1:4))
+    umap_plot <- DimPlot(object = get(subset_name), reduction = "umap")
+    umap_plots[[length(umap_plots) + 1]] <- umap_plot
+  }
+  if (dim(get(subset_name))[2] <= 1000 && dim(get(subset_name))[2] > 500) {
+    assign(subset_name, RunUMAP(get(subset_name), dims = 1:5))
+    umap_plot <- DimPlot(object = get(subset_name), reduction = "umap")
+    umap_plots[[length(umap_plots) + 1]] <- umap_plot
+  }
 }
 
-pseudotime_list <- list()
-
-# Iterate over each cell type in slingshot_results
-for (cell_type in names(slingshot_results)) {
-  # Extract the Slingshot output for the current cell type
-  slingshot_output <- slingshot_results[[cell_type]]
-  
-  # Extract the pseudotime values for the current cell type
-  pseudotime <- slingPseudotime(slingshot_output)
-  
-  # Save pseudotime values for the current cell type
-  pseudotime_list[[cell_type]] <- pseudotime
-}
-
-# Loop through each cell type in slingshot_results
-for (cell_type in names(slingshot_results)) {
-  # Extract the Slingshot output for the current cell type
-  slingshot_output <- slingshot_results[[cell_type]]
-  
-  # Extract the pseudotime values for the current cell type
-  pseudotime <- slingshot_output$reducedDim$Slingshot_pseudotime
-  
-}
-
+wrap_plots(umap_plots[1:4], nrow = 2)
+wrap_plots(umap_plots[5:8], nrow = 2)
+wrap_plots(umap_plots[9:12], nrow = 2)
+wrap_plots(umap_plots[13:16], nrow = 2)
 ```
 
-```{r genes-of-interest, echo = F}
-tca_genes = c("ACO1", "ACO2", "IDH1", "IDH2", "IDH3A", "IDH3B", "IDH3G", "OGDH", "OGDHL",
-              "SUCLA2", "SUCLG1", "SUCLG2", "SDHA", "SDHB", "SDHC", "SDHD", "FH", "MDH1",
-              "MDH2", "FAS", "CS")
-oxy_phos_genes = c("NDUFS6",  "SDHB", "SDHC", "SDHD",
-                   "UQCRC1", "UQCRC2", "COX4I1", "COX4I2", "ATP5PF")
+## By group
+```{r echo = F, warning=F, eval=F}
+# Initialize an empty list to store results
+results_grp <- list()
+
+# Loop through each unique LR cluster
+for (cluster_value in unique_LR_clusters) {
+  subset_name <- paste0("sce_", cluster_value)
+  
+  # Check if the object exists and if its dimensionality is greater than 500
+  if (exists(subset_name) && ncol(get(subset_name)) > 500) {
+    print(paste("Processing", subset_name))
+    
+    # Perform Slingshot analysis
+    assign(paste0("sce_", cluster_value), slingshot(get(subset_name), reducedDim = 'UMAP', clusterLabels = colData(get(subset_name))$Group,
+                                   start.clus = 'HC', end.clus = 'T1D'))
+    results_grp[[subset_name]]$sce <- get(subset_name)
+    
+    # Plot UMAP
+    shuffle <- sample(ncol(get(subset_name)))
+    umap_plot <- plot(reducedDims(get(subset_name))$UMAP[shuffle, ], asp = 1, pch = 16,
+                      xlab = "UMAP-1", ylab = "UMAP-2",
+                      col = hcl.colors(100, alpha = .5)[cut(get(paste0("sce_", cluster_value))$slingPseudotime_1, breaks = 100)][shuffle])
+    lines(SlingshotDataSet(get(subset_name)), type = "lineages")
+    lines(SlingshotDataSet(get(subset_name)))
+    results_grp[[subset_name]]$umap_plot <- umap_plot
+      
+    # Plot UMAP with colored groups
+    umap_colored_plot <- plot(reducedDims(get(subset_name))$UMAP[shuffle, ], asp = 1, pch = 16,
+                              xlab = "UMAP-1", ylab = "UMAP-2",
+                              col = alpha(c("HC" = "#ffcb77", "T1D" = "#fe6d73"), 0.4))
+    lines(SlingshotDataSet(get(subset_name)), type = "lineages")
+    lines(SlingshotDataSet(get(subset_name)))
+    legend("topright", pch = 16, col = alpha(c("HC" = "#ffcb77", "T1D" = "#fe6d73"), 0.4), bty = "n", 
+           legend = levels(factor(colData(sce)$Group)))
+
+    results_grp[[subset_name]]$umap_colored_plot <- umap_colored_plot
+      
+    # Plot pseudotime densities
+    ds <- data.frame(pseudotime = c(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$Group ==  "HC"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$Group ==  "T1D"]),
+                     group = c(rep("HC", sum(colData(get(subset_name))$Group ==  "HC")),
+                               rep("T1D", sum(colData(get(subset_name))$Group ==  "T1D")))) %>%
+      filter(!is.na(pseudotime))
+    density_plot <- ggplot(ds, aes(x = pseudotime, fill = group)) +
+      geom_density(alpha = 0.5) +
+      theme_bw() +
+      labs(fill = "Group", x = "Pseudotime", y = "Density", title = cluster_value)
+    print(density_plot)
+    results_grp[[subset_name]]$density_plot <- density_plot
+      
+    # Perform Kolmogorov-Smirnov test
+    ks_result <- ks.test(get(paste0("sce_", cluster_value))$slingPseudotime_1[colData(get(subset_name))$Group == "HC"],
+                         get(paste0("sce_", cluster_value))$slingPseudotime_1[colData(get(subset_name))$Group == "T1D"])
+    results_grp[[subset_name]]$ks_test <- ks_result
+    
+  } else {
+    print(paste("Skipping", subset_name, "as it does not meet the criteria (dimension <= 500)."))
+  }
+}
+
+slingshot_results_grp <- list()
+pseudotime_list_grp <- list()
+
+for (cluster_value in gsub("sce_","", names(results_grp))) {
+    # Access the results for the current cluster type and store it in the list
+    slingshot_results_grp[[cluster_value]] <- results_grp[[paste0("sce_", cluster_value)]]$sce
+    pseudotime <- slingPseudotime(slingshot_results_grp[[cluster_value]])
+    pseudotime_list_grp[[cluster_value]] <- pseudotime
+    
+    subset_name <- paste0("so_", cluster_value)
+    meta <- get(subset_name)@meta.data
+    meta$pseudotime_grp <- pseudotime
+    assign(subset_name, AddMetaData(get(subset_name), metadata = meta))
+}
 ```
+
+## By GBM width (quartile)
+```{r echo = F, warning=F, eval=F}
+# Initialize an empty list to store results
+results_gbm_quartile <- list()
+
+# Loop through each unique LR cluster
+for (cluster_value in unique_LR_clusters) {
+  subset_name <- paste0("sce_", cluster_value)
+  
+  # Check if the object exists and if its dimensionality is greater than 500
+  if (exists(subset_name) && ncol(get(subset_name)) > 500) {
+    print(paste("Processing", subset_name))
+    
+    # Perform Slingshot analysis
+    assign(paste0("sce_", cluster_value), 
+           slingshot(get(subset_name), 
+                     reducedDim = 'UMAP', 
+                     clusterLabels = colData(get(subset_name))$gbm_thick_quartile,
+                     start.clus = 'q1', end.clus = 'q4'))
+    results_gbm_quartile[[subset_name]]$sce <- get(subset_name)
+    
+    # Plot UMAP
+    shuffle <- sample(ncol(get(subset_name)))
+    umap_plot <- plot(reducedDims(get(subset_name))$UMAP[shuffle, ], asp = 1, pch = 16,
+                      xlab = "UMAP-1", ylab = "UMAP-2",
+                      col = hcl.colors(100, alpha = .5)[cut(get(paste0("sce_", cluster_value))$slingPseudotime_1, breaks = 100)][shuffle])
+    lines(SlingshotDataSet(get(subset_name)), type = "lineages")
+    lines(SlingshotDataSet(get(subset_name)))
+    results_gbm_quartile[[subset_name]]$umap_plot <- umap_plot
+      
+    # Plot UMAP with colored groups
+    umap_colored_plot <- plot(reducedDims(get(subset_name))$UMAP[shuffle, ], asp = 1, pch = 16,
+                              xlab = "UMAP-1", ylab = "UMAP-2",
+                              col = alpha(c("q1" = "#ffcb77", "q2" = "#fe6d73",
+                                            "q3" = "skyblue" , "q4" = "pink"), 0.4))
+    lines(SlingshotDataSet(get(subset_name)), type = "lineages")
+    lines(SlingshotDataSet(get(subset_name)))
+    legend("topright", pch = 16, col = alpha(c("q1" = "#ffcb77", "q2" = "#fe6d73",
+                                            "q3" = "skyblue" , "q4" = "pink"), 0.4), bty = "n", 
+           legend = levels(factor(colData(sce)$gbm_thick_quartile)))
+    results_gbm_quartile[[subset_name]]$umap_colored_plot <- umap_colored_plot
+      
+    # Plot pseudotime densities
+    ds <- data.frame(pseudotime = c(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$gbm_thick_quartile ==  "q1"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$gbm_thick_quartile ==  "q2"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$gbm_thick_quartile ==  "q3"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$gbm_thick_quartile ==  "q4"]),
+                     gbm_thick_quartile = c(rep("q1", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$gbm_thick_quartile ==  "q1"])),
+                                            rep("q2", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$gbm_thick_quartile ==  "q2"])),
+                                            rep("q3", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$gbm_thick_quartile ==  "q3"])),
+                                            rep("q4", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$gbm_thick_quartile ==  "q4"])))) %>%
+      filter(!is.na(pseudotime))
+    density_plot <- ggplot(ds, aes(x = pseudotime, fill = gbm_thick_quartile)) +
+      geom_density(alpha = 0.5) +
+      theme_bw() +
+      labs(fill = "GBM thickness (quartile)", x = "Pseudotime", y = "Density", title = cluster_value)
+    print(density_plot)
+    results_gbm_quartile[[subset_name]]$density_plot <- density_plot
+      
+    # # Perform Kolmogorov-Smirnov test
+    # ks_result <- ks.test(get(paste0("sce_", cluster_value))$slingPseudotime_1[colData(get(subset_name))$gbm_thick_quartile == "q1"],
+    #                      get(paste0("sce_", cluster_value))$slingPseudotime_1[colData(get(subset_name))$gbm_thick_quartile == "q2"])
+    # results_gbm_quartile[[subset_name]]$ks_test <- ks_result
+    # 
+  } else {
+    print(paste("Skipping", subset_name, "as it does not meet the criteria (dimension <= 500)."))
+  }
+}
+
+slingshot_results_gbm_quartile <- list()
+pseudotime_list_gbm_quartile <- list()
+
+for (cluster_value in gsub("sce_","", names(results_gbm_quartile))) {
+    # Access the results for the current cluster type and store it in the list
+    slingshot_results_gbm_quartile[[cluster_value]] <- results_gbm_quartile[[paste0("sce_", cluster_value)]]$sce
+    pseudotime <- slingPseudotime(slingshot_results_gbm_quartile[[cluster_value]])
+    pseudotime_list_gbm_quartile[[cluster_value]] <- pseudotime
+    
+    subset_name <- paste0("so_", cluster_value)
+    meta <- get(subset_name)@meta.data
+    meta$pseudotime_gbm_quartile <- pseudotime
+    assign(subset_name, AddMetaData(get(subset_name), metadata = meta))
+}
+```
+
+## By BMI (quartile)
+```{r echo = F, warning=F, eval=F}
+# Initialize an empty list to store results
+results_bmi_quartile <- list()
+
+# Loop through each unique LR cluster
+for (cluster_value in unique_LR_clusters) {
+  subset_name <- paste0("sce_", cluster_value)
+  
+  # Check if the object exists and if its dimensionality is greater than 500
+  if (exists(subset_name) && ncol(get(subset_name)) > 500) {
+    print(paste("Processing", subset_name))
+    
+    # Perform Slingshot analysis
+    assign(paste0("sce_", cluster_value), 
+           slingshot(get(subset_name), 
+                     reducedDim = 'UMAP', 
+                     clusterLabels = colData(get(subset_name))$bmi_quartile,
+                     start.clus = 'q1', end.clus = 'q4'))
+    results_bmi_quartile[[subset_name]]$sce <- get(subset_name)
+    
+    # Plot UMAP
+    shuffle <- sample(ncol(get(subset_name)))
+    umap_plot <- plot(reducedDims(get(subset_name))$UMAP[shuffle, ], asp = 1, pch = 16,
+                      xlab = "UMAP-1", ylab = "UMAP-2",
+                      col = hcl.colors(100, alpha = .5)[cut(get(paste0("sce_", cluster_value))$slingPseudotime_1, breaks = 100)][shuffle])
+    lines(SlingshotDataSet(get(subset_name)), type = "lineages")
+    lines(SlingshotDataSet(get(subset_name)))
+    results_bmi_quartile[[subset_name]]$umap_plot <- umap_plot
+      
+    # Plot UMAP with colored groups
+    umap_colored_plot <- plot(reducedDims(get(subset_name))$UMAP[shuffle, ], asp = 1, pch = 16,
+                              xlab = "UMAP-1", ylab = "UMAP-2",
+                              col = alpha(c("q1" = "#ffcb77", "q2" = "#fe6d73",
+                                            "q3" = "skyblue" , "q4" = "pink"), 0.4))
+    lines(SlingshotDataSet(get(subset_name)), type = "lineages")
+    lines(SlingshotDataSet(get(subset_name)))
+    legend("topright", pch = 16, col = alpha(c("q1" = "#ffcb77", "q2" = "#fe6d73",
+                                               "q3" = "skyblue" , "q4" = "pink"), 0.4), bty = "n", 
+           legend = levels(factor(colData(sce)$bmi_quartile)))
+    results_bmi_quartile[[subset_name]]$umap_colored_plot <- umap_colored_plot
+      
+    # Plot pseudotime densities
+    ds <- data.frame(pseudotime = c(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$bmi_quartile ==  "q1"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$bmi_quartile ==  "q2"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$bmi_quartile ==  "q3"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$bmi_quartile ==  "q4"]),
+                     bmi_quartile = c(rep("q1", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$bmi_quartile ==  "q1"])),
+                                            rep("q2", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$bmi_quartile ==  "q2"])),
+                                            rep("q3", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$bmi_quartile ==  "q3"])),
+                                            rep("q4", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$bmi_quartile ==  "q4"])))) %>%
+      filter(!is.na(pseudotime))
+    density_plot <- ggplot(ds, aes(x = pseudotime, fill = bmi_quartile)) +
+      geom_density(alpha = 0.5) +
+      theme_bw() +
+      labs(fill = "BMI (quartile)", x = "Pseudotime", y = "Density", title = cluster_value)
+    print(density_plot)
+    results_bmi_quartile[[subset_name]]$density_plot <- density_plot
+      
+    # # Perform Kolmogorov-Smirnov test
+    # ks_result <- ks.test(get(paste0("sce_", cluster_value))$slingPseudotime_1[colData(get(subset_name))$bmi_quartile == "q1"],
+    #                      get(paste0("sce_", cluster_value))$slingPseudotime_1[colData(get(subset_name))$bmi_quartile == "q2"])
+    # results_bmi_quartile[[subset_name]]$ks_test <- ks_result
+    # 
+  } else {
+    print(paste("Skipping", subset_name, "as it does not meet the criteria (dimension <= 500)."))
+  }
+}
+
+slingshot_results_bmi_quartile <- list()
+pseudotime_list_bmi_quartile <- list()
+
+for (cluster_value in gsub("sce_","", names(results_bmi_quartile))) {
+    # Access the results for the current cluster type and store it in the list
+    slingshot_results_bmi_quartile[[cluster_value]] <- results_bmi_quartile[[paste0("sce_", cluster_value)]]$sce
+    pseudotime <- slingPseudotime(slingshot_results_bmi_quartile[[cluster_value]])
+    pseudotime_list_bmi_quartile[[cluster_value]] <- pseudotime
+    
+    subset_name <- paste0("so_", cluster_value)
+    meta <- get(subset_name)@meta.data
+    meta$pseudotime_bmi_quartile <- pseudotime
+    assign(subset_name, AddMetaData(get(subset_name), metadata = meta))
+}
+```
+
+## By BMI (manually categorized)
+```{r echo = F, warning=F, eval=F}
+# Initialize an empty list to store results
+results_bmi_manual_cat <- list()
+
+# Loop through each unique LR cluster
+for (cluster_value in unique_LR_clusters) {
+  subset_name <- paste0("sce_", cluster_value)
+  
+  # Check if the object exists and if its dimensionality is greater than 500
+  if (exists(subset_name) && ncol(get(subset_name)) > 500) {
+    print(paste("Processing", subset_name))
+    
+    # Perform Slingshot analysis
+    assign(paste0("sce_", cluster_value), 
+           slingshot(get(subset_name), 
+                     reducedDim = 'UMAP', 
+                     clusterLabels = colData(get(subset_name))$bmi_manual_cat,
+                     start.clus = '<20', end.clus = '27+'))
+    results_bmi_manual_cat[[subset_name]]$sce <- get(subset_name)
+    
+    # Plot UMAP
+    shuffle <- sample(ncol(get(subset_name)))
+    umap_plot <- plot(reducedDims(get(subset_name))$UMAP[shuffle, ], asp = 1, pch = 16,
+                      xlab = "UMAP-1", ylab = "UMAP-2",
+                      col = hcl.colors(100, alpha = .5)[cut(get(paste0("sce_", cluster_value))$slingPseudotime_1, breaks = 100)][shuffle])
+    lines(SlingshotDataSet(get(subset_name)), type = "lineages")
+    lines(SlingshotDataSet(get(subset_name)))
+    results_bmi_manual_cat[[subset_name]]$umap_plot <- umap_plot
+      
+    # Plot UMAP with colored groups
+    umap_colored_plot <- plot(reducedDims(get(subset_name))$UMAP[shuffle, ], asp = 1, pch = 16,
+                              xlab = "UMAP-1", ylab = "UMAP-2",
+                              col = alpha(c("<20" = "#ffcb77", "20-25" = "#fe6d73",
+                                            "25-27" = "skyblue" , "27+" = "pink"), 0.4))
+    lines(SlingshotDataSet(get(subset_name)), type = "lineages")
+    lines(SlingshotDataSet(get(subset_name)))
+    legend("topright", pch = 16, col = alpha(c("<20" = "#ffcb77", "20-25" = "#fe6d73",
+                                            "25-27" = "skyblue" , "27+" = "pink"), 0.4), bty = "n", 
+           legend = levels(factor(colData(sce)$bmi_manual_cat)))
+    results_bmi_manual_cat[[subset_name]]$umap_colored_plot <- umap_colored_plot
+      
+    # Plot pseudotime densities
+    ds <- data.frame(pseudotime = c(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$bmi_manual_cat ==  "<20"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$bmi_manual_cat ==  "20-25"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$bmi_manual_cat ==  "25-27"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$bmi_manual_cat ==  "27+"]),
+                     bmi_manual_cat = c(rep("<20", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$bmi_manual_cat ==  "<20"])),
+                                                      rep("20-25", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$bmi_manual_cat ==  "20-25"])),
+                                                      rep("25-27", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$bmi_manual_cat ==  "25-27"])),
+                                                      rep("27+", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$bmi_manual_cat ==  "27+"])))) %>%
+      filter(!is.na(pseudotime))
+    density_plot <- ggplot(ds, aes(x = pseudotime, fill = bmi_manual_cat)) +
+      geom_density(alpha = 0.5) +
+      theme_bw() +
+      labs(fill = "BMI (manual)", x = "Pseudotime", y = "Density", title = cluster_value)
+    print(density_plot)
+    results_bmi_manual_cat[[subset_name]]$density_plot <- density_plot
+      
+    # # Perform Kolmogorov-Smirnov test
+    # ks_result <- ks.test(get(paste0("sce_", cluster_value))$slingPseudotime_1[colData(get(subset_name))$bmi_manual_cat == "q1"],
+    #                      get(paste0("sce_", cluster_value))$slingPseudotime_1[colData(get(subset_name))$bmi_manual_cat == "q2"])
+    # results_diabetes_duration_manual_cat[[subset_name]]$ks_test <- ks_result
+    # 
+  } else {
+    print(paste("Skipping", subset_name, "as it does not meet the criteria (dimension <= 500)."))
+  }
+}
+
+slingshot_results_bmi_manual_cat <- list()
+pseudotime_list_bmi_manual_cat <- list()
+
+for (cluster_value in gsub("sce_","", names(results_bmi_manual_cat))) {
+    # Access the results for the current cluster type and store it in the list
+    slingshot_results_bmi_manual_cat[[cluster_value]] <- results_bmi_manual_cat[[paste0("sce_", cluster_value)]]$sce
+    pseudotime <- slingPseudotime(slingshot_results_bmi_manual_cat[[cluster_value]])
+    pseudotime_list_bmi_manual_cat[[cluster_value]] <- pseudotime
+    
+    subset_name <- paste0("so_", cluster_value)
+    meta <- get(subset_name)@meta.data
+    meta$pseudotime_bmi_manual_cat <- pseudotime
+    assign(subset_name, AddMetaData(get(subset_name), metadata = meta))
+}
+```
+
+## By diabetes duration (quartile)
+```{r echo = F, warning=F, eval=F}
+# Initialize an empty list to store results
+results_diabetes_duration_quartile <- list()
+
+# Loop through each unique LR cluster
+for (cluster_value in unique_LR_clusters) {
+  subset_name <- paste0("sce_", cluster_value)
+  
+  # Check if the object exists and if its dimensionality is greater than 500
+  if (exists(subset_name) && ncol(get(subset_name)) > 500) {
+    print(paste("Processing", subset_name))
+    
+    # Perform Slingshot analysis
+    assign(paste0("sce_", cluster_value), 
+           slingshot(get(subset_name), 
+                     reducedDim = 'UMAP', 
+                     clusterLabels = colData(get(subset_name))$diabetes_duration_quartile,
+                     start.clus = 'q1', end.clus = 'q4'))
+    results_diabetes_duration_quartile[[subset_name]]$sce <- get(subset_name)
+
+    # Plot UMAP
+    shuffle <- sample(ncol(get(subset_name)))
+    umap_plot <- plot(reducedDims(get(subset_name))$UMAP[shuffle, ], asp = 1, pch = 16,
+                      xlab = "UMAP-1", ylab = "UMAP-2",
+                      col = hcl.colors(100, alpha = .5)[cut(get(paste0("sce_", cluster_value))$slingPseudotime_1, breaks = 100)][shuffle])
+    lines(SlingshotDataSet(get(subset_name)), type = "lineages")
+    lines(SlingshotDataSet(get(subset_name)))
+    results_diabetes_duration_quartile[[subset_name]]$umap_plot <- umap_plot
+      
+    # Plot UMAP with colored groups
+    umap_colored_plot <- plot(reducedDims(get(subset_name))$UMAP[shuffle, ], asp = 1, pch = 16,
+                              xlab = "UMAP-1", ylab = "UMAP-2",
+                              col = alpha(c("q1" = "#ffcb77", "q2" = "#fe6d73",
+                                            "q3" = "skyblue" , "q4" = "pink"), 0.4))
+    lines(SlingshotDataSet(get(subset_name)), type = "lineages")
+    lines(SlingshotDataSet(get(subset_name)))
+    legend("topright", pch = 16, col = alpha(c("q1" = "#ffcb77", "q2" = "#fe6d73",
+                                               "q3" = "skyblue" , "q4" = "pink"), 0.4), bty = "n", 
+           legend = levels(factor(colData(sce)$diabetes_duration_quartile)))
+    results_diabetes_duration_quartile[[subset_name]]$umap_colored_plot <- umap_colored_plot
+      
+    # Plot pseudotime densities
+    ds <- data.frame(pseudotime = c(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_quartile ==  "q1"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_quartile ==  "q2"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_quartile ==  "q3"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_quartile ==  "q4"]),
+                     diabetes_duration_quartile = c(rep("q1", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_quartile ==  "q1"])),
+                                            rep("q2", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_quartile ==  "q2"])),
+                                            rep("q3", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_quartile ==  "q3"])),
+                                            rep("q4", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_quartile ==  "q4"])))) %>%
+      filter(!is.na(pseudotime))
+    density_plot <- ggplot(ds, aes(x = pseudotime, fill = diabetes_duration_quartile)) +
+      geom_density(alpha = 0.5) +
+      theme_bw() +
+      labs(fill = "Diabetes duration (quartile)", x = "Pseudotime", y = "Density", title = cluster_value)
+    print(density_plot)
+    results_diabetes_duration_quartile[[subset_name]]$density_plot <- density_plot
+      
+    # # Perform Kolmogorov-Smirnov test
+    # ks_result <- ks.test(get(paste0("sce_", cluster_value))$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_quartile == "q1"],
+    #                      get(paste0("sce_", cluster_value))$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_quartile == "q2"])
+    # results_diabetes_duration_quartile[[subset_name]]$ks_test <- ks_result
+    # 
+  } else {
+    print(paste("Skipping", subset_name, "as it does not meet the criteria (dimension <= 500)."))
+  }
+}
+
+slingshot_results_diabetes_duration_quartile <- list()
+pseudotime_list_diabetes_duration_quartile <- list()
+
+for (cluster_value in gsub("sce_","", names(results_diabetes_duration_quartile))) {
+    # Access the results for the current cluster type and store it in the list
+    slingshot_results_diabetes_duration_quartile[[cluster_value]] <- results_diabetes_duration_quartile[[paste0("sce_", cluster_value)]]$sce
+    pseudotime <- slingPseudotime(slingshot_results_diabetes_duration_quartile[[cluster_value]])
+    pseudotime_list_diabetes_duration_quartile[[cluster_value]] <- pseudotime
+    
+    subset_name <- paste0("so_", cluster_value)
+    meta <- get(subset_name)@meta.data
+    meta$pseudotime_diabetes_duration_quartile <- pseudotime
+    assign(subset_name, AddMetaData(get(subset_name), metadata = meta))
+}
+```
+
+## By diabetes duration (manually categorized)
+```{r echo = F, warning=F, eval=F}
+# Initialize an empty list to store results
+results_diabetes_duration_manual_cat <- list()
+
+# Loop through each unique LR cluster
+for (cluster_value in unique_LR_clusters) {
+  subset_name <- paste0("sce_", cluster_value)
+  
+  # Check if the object exists and if its dimensionality is greater than 500
+  if (exists(subset_name) && ncol(get(subset_name)) > 500) {
+    print(paste("Processing", subset_name))
+    
+    # Perform Slingshot analysis
+    assign(paste0("sce_", cluster_value), 
+           slingshot(get(subset_name), 
+                     reducedDim = 'UMAP', 
+                     clusterLabels = colData(get(subset_name))$diabetes_duration_manual_cat,
+                     start.clus = '<5', end.clus = '20+'))
+    results_diabetes_duration_manual_cat[[subset_name]]$sce <- get(subset_name)
+    
+    # Plot UMAP
+    shuffle <- sample(ncol(get(subset_name)))
+    umap_plot <- plot(reducedDims(get(subset_name))$UMAP[shuffle, ], asp = 1, pch = 16,
+                      xlab = "UMAP-1", ylab = "UMAP-2",
+                      col = hcl.colors(100, alpha = .5)[cut(get(paste0("sce_", cluster_value))$slingPseudotime_1, breaks = 100)][shuffle])
+    lines(SlingshotDataSet(get(subset_name)), type = "lineages")
+    lines(SlingshotDataSet(get(subset_name)))
+    results_diabetes_duration_manual_cat[[subset_name]]$umap_plot <- umap_plot
+      
+    # Plot UMAP with colored groups
+    umap_colored_plot <- plot(reducedDims(get(subset_name))$UMAP[shuffle, ], asp = 1, pch = 16,
+                              xlab = "UMAP-1", ylab = "UMAP-2",
+                              col = alpha(c("<5" = "#ffcb77", "q2" = "5-10",
+                                            "10-15" = "skyblue" , "15-20" = "pink",
+                                            "20+" = "purple"), 0.4))
+    lines(SlingshotDataSet(get(subset_name)), type = "lineages")
+    lines(SlingshotDataSet(get(subset_name)))
+    legend("topright", pch = 16, col = alpha(c("<5" = "#ffcb77", "q2" = "5-10",
+                                            "10-15" = "skyblue" , "15-20" = "pink",
+                                            "20+" = "purple"), 0.4), bty = "n", 
+           legend = levels(factor(colData(sce)$diabetes_duration_manual_cat)))
+    results_diabetes_duration_manual_cat[[subset_name]]$umap_colored_plot <- umap_colored_plot
+      
+    # Plot pseudotime densities
+    ds <- data.frame(pseudotime = c(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_manual_cat ==  "<5"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_manual_cat ==  "5-10"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_manual_cat ==  "10-15"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_manual_cat ==  "15-20"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_manual_cat ==  "20+"]),
+                     diabetes_duration_manual_cat = c(rep("<5", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_manual_cat ==  "<5"])),
+                                                      rep("5-10", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_manual_cat ==  "5-10"])),
+                                                      rep("10-15", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_manual_cat ==  "10-15"])),
+                                                      rep("15-20", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_manual_cat ==  "15-20"])),
+                                                      rep("20+", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_manual_cat ==  "20+"])))) %>%
+      filter(!is.na(pseudotime))
+    density_plot <- ggplot(ds, aes(x = pseudotime, fill = diabetes_duration_manual_cat)) +
+      geom_density(alpha = 0.5) +
+      theme_bw() +
+      labs(fill = "Diabetes duration (manual)", x = "Pseudotime", y = "Density", title = cluster_value)
+    print(density_plot)
+    results_diabetes_duration_manual_cat[[subset_name]]$density_plot <- density_plot
+      
+    # # Perform Kolmogorov-Smirnov test
+    # ks_result <- ks.test(get(paste0("sce_", cluster_value))$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_manual_cat == "q1"],
+    #                      get(paste0("sce_", cluster_value))$slingPseudotime_1[colData(get(subset_name))$diabetes_duration_manual_cat == "q2"])
+    # results_diabetes_duration_manual_cat[[subset_name]]$ks_test <- ks_result
+    # 
+  } else {
+    print(paste("Skipping", subset_name, "as it does not meet the criteria (dimension <= 500)."))
+  }
+}
+
+slingshot_results_diabetes_duration_manual_cat <- list()
+pseudotime_list_diabetes_duration_manual_cat <- list()
+
+for (cluster_value in gsub("sce_","", names(results_diabetes_duration_manual_cat))) {
+    # Access the results for the current cluster type and store it in the list
+    slingshot_results_diabetes_duration_manual_cat[[cluster_value]] <- results_diabetes_duration_manual_cat[[paste0("sce_", cluster_value)]]$sce
+    pseudotime <- slingPseudotime(slingshot_results_diabetes_duration_manual_cat[[cluster_value]])
+    pseudotime_list_diabetes_duration_manual_cat[[cluster_value]] <- pseudotime
+    
+    subset_name <- paste0("so_", cluster_value)
+    meta <- get(subset_name)@meta.data
+    meta$pseudotime_diabetes_duration_manual_cat <- pseudotime
+    assign(subset_name, AddMetaData(get(subset_name), metadata = meta))
+}
+```
+
+## By age (quartile)
+```{r echo = F, warning=F, eval=F}
+# Initialize an empty list to store results
+results_age_quartile <- list()
+
+# Loop through each unique LR cluster
+for (cluster_value in unique_LR_clusters) {
+  subset_name <- paste0("sce_", cluster_value)
+  
+  # Check if the object exists and if its dimensionality is greater than 500
+  if (exists(subset_name) && ncol(get(subset_name)) > 500) {
+    print(paste("Processing", subset_name))
+    
+    # Perform Slingshot analysis
+    assign(paste0("sce_", cluster_value), 
+           slingshot(get(subset_name), 
+                     reducedDim = 'UMAP', 
+                     clusterLabels = colData(get(subset_name))$age_quartile,
+                     start.clus = 'q1', end.clus = 'q4'))
+    results_age_quartile[[subset_name]]$sce <- get(subset_name)
+    
+    # Plot UMAP
+    shuffle <- sample(ncol(get(subset_name)))
+    umap_plot <- plot(reducedDims(get(subset_name))$UMAP[shuffle, ], asp = 1, pch = 16,
+                      xlab = "UMAP-1", ylab = "UMAP-2",
+                      col = hcl.colors(100, alpha = .5)[cut(get(paste0("sce_", cluster_value))$slingPseudotime_1, breaks = 100)][shuffle])
+    lines(SlingshotDataSet(get(subset_name)), type = "lineages")
+    lines(SlingshotDataSet(get(subset_name)))
+    results_age_quartile[[subset_name]]$umap_plot <- umap_plot
+      
+    # Plot UMAP with colored groups
+    umap_colored_plot <- plot(reducedDims(get(subset_name))$UMAP[shuffle, ], asp = 1, pch = 16,
+                              xlab = "UMAP-1", ylab = "UMAP-2",
+                              col = alpha(c("q1" = "#ffcb77", "q2" = "#fe6d73",
+                                            "q3" = "skyblue" , "q4" = "pink"), 0.4))
+    lines(SlingshotDataSet(get(subset_name)), type = "lineages")
+    lines(SlingshotDataSet(get(subset_name)))
+    legend("topright", pch = 16, col = alpha(c("q1" = "#ffcb77", "q2" = "#fe6d73",
+                                               "q3" = "skyblue" , "q4" = "pink"), 0.4), bty = "n", 
+           legend = levels(factor(colData(sce)$age_quartile)))
+    results_age_quartile[[subset_name]]$umap_colored_plot <- umap_colored_plot
+      
+    # Plot pseudotime densities
+    ds <- data.frame(pseudotime = c(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$age_quartile ==  "q1"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$age_quartile ==  "q2"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$age_quartile ==  "q3"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$age_quartile ==  "q4"]),
+                     age_quartile = c(rep("q1", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$age_quartile ==  "q1"])),
+                                            rep("q2", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$age_quartile ==  "q2"])),
+                                            rep("q3", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$age_quartile ==  "q3"])),
+                                            rep("q4", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$age_quartile ==  "q4"])))) %>%
+      filter(!is.na(pseudotime))
+    density_plot <- ggplot(ds, aes(x = pseudotime, fill = age_quartile)) +
+      geom_density(alpha = 0.5) +
+      theme_bw() +
+      labs(fill = "Age (quartile)", x = "Pseudotime", y = "Density", title = cluster_value)
+    print(density_plot)
+    results_age_quartile[[subset_name]]$density_plot <- density_plot
+      
+    # # Perform Kolmogorov-Smirnov test
+    # ks_result <- ks.test(get(paste0("sce_", cluster_value))$slingPseudotime_1[colData(get(subset_name))$age_quartile == "q1"],
+    #                      get(paste0("sce_", cluster_value))$slingPseudotime_1[colData(get(subset_name))$age_quartile == "q2"])
+    # results_age_quartile[[subset_name]]$ks_test <- ks_result
+    # 
+  } else {
+    print(paste("Skipping", subset_name, "as it does not meet the criteria (dimension <= 500)."))
+  }
+}
+
+slingshot_results_age_quartile <- list()
+pseudotime_list_age_quartile <- list()
+
+for (cluster_value in gsub("sce_","", names(results_age_quartile))) {
+    # Access the results for the current cluster type and store it in the list
+    slingshot_results_age_quartile[[cluster_value]] <- results_age_quartile[[paste0("sce_", cluster_value)]]$sce
+    pseudotime <- slingPseudotime(slingshot_results_age_quartile[[cluster_value]])
+    pseudotime_list_age_quartile[[cluster_value]] <- pseudotime
+    
+    subset_name <- paste0("so_", cluster_value)
+    meta <- get(subset_name)@meta.data
+    meta$pseudotime_age_quartile <- pseudotime
+    assign(subset_name, AddMetaData(get(subset_name), metadata = meta))
+}
+```
+
+## By M-value (quartile)
+```{r echo = F, warning=F, eval=F}
+# Initialize an empty list to store results
+results_raw_m_quartile <- list()
+
+# Loop through each unique LR cluster
+for (cluster_value in unique_LR_clusters) {
+  subset_name <- paste0("sce_", cluster_value)
+  
+  # Check if the object exists and if its dimensionality is greater than 500
+  if (exists(subset_name) && ncol(get(subset_name)) > 500) {
+    print(paste("Processing", subset_name))
+    
+    # Perform Slingshot analysis
+    assign(paste0("sce_", cluster_value), 
+           slingshot(get(subset_name), 
+                     reducedDim = 'UMAP', 
+                     clusterLabels = colData(get(subset_name))$raw_m_quartile,
+                     start.clus = 'q1', end.clus = 'q4'))
+    results_raw_m_quartile[[subset_name]]$sce <- get(subset_name)
+    
+    # Plot UMAP
+    shuffle <- sample(ncol(get(subset_name)))
+    umap_plot <- plot(reducedDims(get(subset_name))$UMAP[shuffle, ], asp = 1, pch = 16,
+                      xlab = "UMAP-1", ylab = "UMAP-2",
+                      col = hcl.colors(100, alpha = .5)[cut(get(paste0("sce_", cluster_value))$slingPseudotime_1, breaks = 100)][shuffle])
+    lines(SlingshotDataSet(get(subset_name)), type = "lineages")
+    lines(SlingshotDataSet(get(subset_name)))
+    results_raw_m_quartile[[subset_name]]$umap_plot <- umap_plot
+      
+    # Plot UMAP with colored groups
+    umap_colored_plot <- plot(reducedDims(get(subset_name))$UMAP[shuffle, ], asp = 1, pch = 16,
+                              xlab = "UMAP-1", ylab = "UMAP-2",
+                              col = alpha(c("q1" = "#ffcb77", "q2" = "#fe6d73",
+                                            "q3" = "skyblue" , "q4" = "pink"), 0.4))
+    lines(SlingshotDataSet(get(subset_name)), type = "lineages")
+    lines(SlingshotDataSet(get(subset_name)))
+    legend("topright", pch = 16, col = alpha(c("q1" = "#ffcb77", "q2" = "#fe6d73",
+                                               "q3" = "skyblue" , "q4" = "pink"), 0.4), bty = "n", 
+           legend = levels(factor(colData(sce)$raw_m_quartile)))
+    results_raw_m_quartile[[subset_name]]$umap_colored_plot <- umap_colored_plot
+      
+    # Plot pseudotime densities
+    ds <- data.frame(pseudotime = c(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$raw_m_quartile ==  "q1"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$raw_m_quartile ==  "q2"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$raw_m_quartile ==  "q3"],
+                                    get(subset_name)$slingPseudotime_1[colData(get(subset_name))$raw_m_quartile ==  "q4"]),
+                     raw_m_quartile = c(rep("q1", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$raw_m_quartile ==  "q1"])),
+                                            rep("q2", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$raw_m_quartile ==  "q2"])),
+                                            rep("q3", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$raw_m_quartile ==  "q3"])),
+                                            rep("q4", length(get(subset_name)$slingPseudotime_1[colData(get(subset_name))$raw_m_quartile ==  "q4"])))) %>%
+      filter(!is.na(pseudotime))
+    density_plot <- ggplot(ds, aes(x = pseudotime, fill = raw_m_quartile)) +
+      geom_density(alpha = 0.5) +
+      theme_bw() +
+      labs(fill = "M-value (quartile)", x = "Pseudotime", y = "Density", title = cluster_value)
+    print(density_plot)
+    results_raw_m_quartile[[subset_name]]$density_plot <- density_plot
+      
+    # # Perform Kolmogorov-Smirnov test
+    # ks_result <- ks.test(get(paste0("sce_", cluster_value))$slingPseudotime_1[colData(get(subset_name))$raw_m_quartile == "q1"],
+    #                      get(paste0("sce_", cluster_value))$slingPseudotime_1[colData(get(subset_name))$raw_m_quartile == "q2"])
+    # results_raw_m_quartile[[subset_name]]$ks_test <- ks_result
+    # 
+  } else {
+    print(paste("Skipping", subset_name, "as it does not meet the criteria (dimension <= 500)."))
+  }
+}
+
+slingshot_results_raw_m_quartile <- list()
+pseudotime_list_raw_m_quartile <- list()
+
+for (cluster_value in gsub("sce_","", names(results_raw_m_quartile))) {
+    # Access the results for the current cluster type and store it in the list
+    slingshot_results_raw_m_quartile[[cluster_value]] <- results_raw_m_quartile[[paste0("sce_", cluster_value)]]$sce
+    pseudotime <- slingPseudotime(slingshot_results_raw_m_quartile[[cluster_value]])
+    pseudotime_list_raw_m_quartile[[cluster_value]] <- pseudotime
+    
+    subset_name <- paste0("so_", cluster_value)
+    meta <- get(subset_name)@meta.data
+    meta$pseudotime_raw_m_quartile <- pseudotime
+    assign(subset_name, AddMetaData(get(subset_name), metadata = meta))
+}
+```
+
+
 
 # Correlations with Pseudotime
-```{r label-setup, echo = F}
+```{r label-setup, echo = F, eval=F}
 source("/home/yejichoi/Documents/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/correlation_function.R")
 gene_dict <- c(tca_genes, oxy_phos_genes)
 gene_dict_values <- unique(gene_dict)
@@ -165,96 +1107,175 @@ for (gene_value in gene_dict_values) {
 }
 ```
 
-```{r subset-by-celltype, echo = F}
-# Get unique values of LR_clusters
-unique_LR_clusters <- unique(so$LR_clusters)
-
-# Loop through each unique value of LR_clusters
-for (cluster_value in unique_LR_clusters) {
-  subset_name <- paste("so_", cluster_value, sep = "")
-  assign(subset_name, subset(so, LR_clusters == cluster_value))
-  pseudotime <- pseudotime_list[[cluster_value]][,1]
-  meta <- get(subset_name)@meta.data
-  meta$pseudotime <- pseudotime
-  assign(subset_name, AddMetaData(get(subset_name), metadata = meta))
-  }
+```{r association-plots, echo = F, warning = F, message=F, eval=F}
+plot_celltype_clinical_var <- function(celltype, x, y, title = celltype, trajectory_var, xlab = "Pseudotime", ylab = NULL, colorlab = "Group") {
+  subset_name <- paste0("so_", celltype)
+  data <- get(subset_name)@meta.data
+  x <- data[[x]]
+  y <- data[[y]]
+  trajectory_var <- data[[trajectory_var]]
+  data %>%
+    ggplot(aes(x = x, y = y, color = trajectory_var)) +
+    geom_point(alpha = 0.1) +
+    geom_smooth(se = TRUE, method = "gam") +
+    labs(title = title,
+         x = xlab,
+         y = ylab,
+         color = colorlab) +
+    theme_minimal() +
+   scale_color_manual(values = c("#F78E69", "#7EB77F"))
+}
 ```
 
-```{r association-plots, echo = F}
+```{r warning=F, message=F, eval=F}
+grp_celltypes <- gsub("sce_", "", names(results_grp))
+grp_celltypes <- grp_celltypes[!(grp_celltypes %in% c("TAL_highUMI", "PT_lowQuality", "IC-A_lowQuality"))]
 # GBM width
-so_PT@meta.data %>%
-  ggplot(aes(x = pseudotime, y = gbm_thick_art_mean, color = Group)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth(se = T) +
-  theme_bw()
-so_EC@meta.data %>%
-  ggplot(aes(x = pseudotime, y = gbm_thick_art_mean, color = Group)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth(se = T) +
-  theme_bw()
+gbm_width_plots <- list()
+for (cluster_value in grp_celltypes) {
+  plot <- plot_celltype_clinical_var(celltype = cluster_value,
+                                     x = "pseudotime_grp",
+                                     y = "gbm_thick_art_mean",
+                                     trajectory_var = "Group",
+                                     ylab = "GBM thickness")
+  gbm_width_plots[[cluster_value]] <- plot  
+}
+
+combined_gbm_plots <- gbm_width_plots[[1]]
+for (i in 2:length(gbm_width_plots)) {
+  combined_gbm_plots <- combined_gbm_plots + gbm_width_plots[[i]]
+}
+combined_gbm_plots + 
+  plot_layout(ncol = 3)  +
+  guides(color = guide_legend(override.aes = list(alpha = 1))) 
+
 
 # Diabetes duration
-so_PT@meta.data %>%
-  ggplot(aes(x = pseudotime, y = diabetes_duration, color = Group)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth(se = T) +
-  theme_bw()
+diabetes_duration_plots <- list()
+for (cluster_value in grp_celltypes) {
+  plot <- plot_celltype_clinical_var(celltype = cluster_value,
+                                     x = "pseudotime_grp",
+                                     y = "diabetes_duration",
+                                     trajectory_var = "Group",
+                                     ylab = "Diabetes duration")
+  diabetes_duration_plots[[cluster_value]] <- plot  
+}
 
-so_EC@meta.data %>%
-  ggplot(aes(x = pseudotime, y = diabetes_duration, color = Group)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth(se = T) +
-  theme_bw()
+combined_diabetes_duration_plots <- diabetes_duration_plots[[1]]
+for (i in 2:length(diabetes_duration_plots)) {
+  combined_diabetes_duration_plots <- combined_diabetes_duration_plots + diabetes_duration_plots[[i]]
+}
+combined_diabetes_duration_plots + 
+  plot_layout(ncol = 3)  +
+  guides(color = guide_legend(override.aes = list(alpha = 1))) 
 
 # Age
-so_PT@meta.data %>%
-  ggplot(aes(x = pseudotime, y = age, color = Group)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth(se = T) +
-  theme_bw()
-so_EC@meta.data %>%
-  ggplot(aes(x = pseudotime, y = age, color = Group)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth(se = T) +
-  theme_bw()
+age_plots <- list()
+for (cluster_value in grp_celltypes) {
+  plot <- plot_celltype_clinical_var(celltype = cluster_value,
+                                     x = "pseudotime_grp",
+                                     y = "age",
+                                     trajectory_var = "Group",
+                                     ylab = "Age")
+  age_plots[[cluster_value]] <- plot  
+}
+
+combined_age_plots <- age_plots[[1]]
+for (i in 2:length(age_plots)) {
+  combined_age_plots <- combined_age_plots + age_plots[[i]]
+}
+combined_age_plots + 
+  plot_layout(ncol = 3)  +
+  guides(color = guide_legend(override.aes = list(alpha = 1))) 
 
 # HbA1C
-so_PT@meta.data %>%
-  ggplot(aes(x = pseudotime, y = hba1c, color = Group)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth(se = T) +
-  theme_bw()
-so_EC@meta.data %>%
-  ggplot(aes(x = pseudotime, y = hba1c, color = Group)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth(se = T) +
-  theme_bw()
+hba1c_plots <- list()
+for (cluster_value in grp_celltypes) {
+  plot <- plot_celltype_clinical_var(celltype = cluster_value,
+                                     x = "pseudotime_grp",
+                                     y = "hba1c",
+                                     trajectory_var = "Group",
+                                     ylab = "HbA1c")
+  hba1c_plots[[cluster_value]] <- plot  
+}
+
+combined_hba1c_plots <- hba1c_plots[[1]]
+for (i in 2:length(hba1c_plots)) {
+  combined_hba1c_plots <- combined_hba1c_plots + hba1c_plots[[i]]
+}
+combined_hba1c_plots + 
+  plot_layout(ncol = 3)  +
+  guides(color = guide_legend(override.aes = list(alpha = 1))) 
+
+# M-value
+p2_raw_m_plots <- list()
+for (cluster_value in grp_celltypes) {
+  plot <- plot_celltype_clinical_var(celltype = cluster_value,
+                                     x = "pseudotime_grp",
+                                     y = "p2_raw_m",
+                                     trajectory_var = "Group",
+                                     ylab = "Raw M-value")
+  p2_raw_m_plots[[cluster_value]] <- plot  
+}
+
+combined_p2_raw_m_plots <- p2_raw_m_plots[[1]]
+for (i in 2:length(p2_raw_m_plots)) {
+  combined_p2_raw_m_plots <- combined_p2_raw_m_plots + p2_raw_m_plots[[i]]
+}
+combined_p2_raw_m_plots + 
+  plot_layout(ncol = 3)  +
+  guides(color = guide_legend(override.aes = list(alpha = 1))) 
 ```
 
-```{r pseudotime-correlations echo = F}
+```{r pseudotime-correlations, echo = F, eval=F}
 correlation_table_minimal(data = so_EC@meta.data,
                    relevant_vars = c("pseudotime", "gbm_thick_art_mean", "diabetes_duration", "age", "hba1c"),
                    n_cols = 1,
                    cor_method = "spearman")
-
 ```
 
 # Differential expression
+## Trajectory by group (HC -> T1D)
+```{r fit-gam-grp, echo = F, eval=F}
+# plotGeneCount(sce_PT, counts, gene = genes[[1]])
 
-```{r fit-gam, echo = F}
-set.seed(3)
-icMat <- evaluateK(counts = as.matrix(assays(sce)$counts),
-                   pseudotime = colData(sce)$slingshot$pseudotime,
-                   cellWeights = colData(sce)$slingshot$cellWeights.V1,
-                   conditions = factor(colData(sce)$Group),
-                   nGenes = 300,
-                   k = 3:7)
+for (i in 1:length(results_grp)) {
+  grp_celltypes <- gsub("sce_", "", names(results_grp))
+  sce_object <- results_grp[[i]]$sce
+  assign(paste0("results_grp$sce_", grp_celltypes[i], "$sce"), 
+         fitGAM(sce_object, 
+                          conditions = factor(colData(sce_object)$Group), 
+                          nknots = 5, 
+                          genes = c(genes, oxy_phos_genes)))
+}
 
-sce <- fitGAM(sce, conditions = factor(colData(sce)$Group),
-              nknots = 5,
-              genes = c(tca_genes, oxy_phos_genes))
-
-plotSmoothers(sce, assays(sce)$counts, gene = "ACO1", alpha = 1, border = TRUE) + ggtitle("ACO1")
+plotSmoothers(results_grp$sce_EC$sce, assays(results_grp$sce_EC$sce)$counts, gene = "ACO1", alpha = 1, border = TRUE) + ggtitle("ACO1")
+plotSmoothers(results_grp$sce_PC$sce, assays(results_grp$sce_PC$sce)$counts, gene = "ACO2", alpha = 1, border = TRUE) + ggtitle("ACO2")
+plotSmoothers(results_grp$sce_DCT$sce, assays(results_grp$sce_DCT$sce)$counts, gene = "CS", alpha = 1, border = TRUE) + ggtitle("CS")
+plotSmoothers(results_grp$sce_PT$sce, assays(results_grp$sce_PT$sce)$counts, gene = "FH", alpha = 1, border = TRUE) + ggtitle("FH")
+plotSmoothers(results_grp$sce_PT$sce, assays(results_grp$sce_PT$sce)$counts, gene = "IDH1", alpha = 1, border = TRUE) + ggtitle("IDH1")
+plotSmoothers(results_grp$sce_PT$sce, assays(results_grp$sce_PT$sce)$counts, gene = "IDH2", alpha = 1, border = TRUE) + ggtitle("IDH2")
+plotSmoothers(results_grp$sce_PT$sce, assays(results_grp$sce_PT$sce)$counts, gene = "IDH3A", alpha = 1, border = TRUE) + ggtitle("IDH3A")
+plotSmoothers(results_grp$sce_PT$sce, assays(results_grp$sce_PT$sce)$counts, gene = "IDH3B", alpha = 1, border = TRUE) + ggtitle("IDH3B")
 ```
 
+## Trajectory by GBM width quartiles (q1 -> q4)
+```{r, eval=F}
+results_gbm_quartile$sce_PT$sce <- fitGAM(counts = results_gbm_quartile$sce_PT$sce,
+              conditions = factor(colData(results_gbm_quartile$sce_PT$sce)$gbm_thick_quartile),
+              nknots = 5,
+              genes = c(genes, oxy_phos_genes))
+```
+## Trajectory by BMI quartiles (q1 -> q4)
 
+
+## Trajectory by BMI manual (<20 -> 27+)
+
+
+## Trajectory by diabetes duration quartiles (q1 -> q4)
+
+## Trajectory by diabetes duration manual (<5 -> 20+)
+
+## Trajectory by age quartiles (q1 -> q4)
+
+## Trajectory by M-value quartiles (q1 -> q4)
