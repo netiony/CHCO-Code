@@ -140,7 +140,7 @@ def clean_renal_heiritage():
     rct = pd.DataFrame(proj.export_records(fields=var))
     numeric_cols = [col for col in rct.columns if col not in ['record_id', 'redcap_event_name'] 
                     and not col.startswith('tm_') and not col.endswith(('_date', '_com', '_start'))]
-    rct[numeric_cols] = rct[numeric_cols].apply(pd.to_numeric)
+    rct[numeric_cols] = rct[numeric_cols].apply(pd.to_numeric, errors = 'ignore')
     rct = rct.groupby('record_id', as_index=False).max()
     rct.drop(["redcap_event_name"], inplace=True, axis=1)
     # Replace missing values
