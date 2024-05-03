@@ -3,6 +3,7 @@ library(readxl)
 library(Seurat)
 library(pedbp)
 # Import top proteins for MIC, MAC, etc. at baseline
+load("/Volumes/PEDS/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Combined SomaScan/analytes.Rdata")
 top_mic_df <- read_excel("/Volumes/PEDS/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted new covariates.xlsx", sheet = "MIC CPH")
 de_genes_mic <- top_mic_df[top_mic_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_mic <- setNames(de_genes_mic$estimate, de_genes_mic$EntrezGeneID)
@@ -99,6 +100,6 @@ top_glyc_a1c <- top_glyc_a1c_df %>%
 # Save
 save(top_mac, top_mic, top_mic.or.mac, top_hyp, top_rapid, top_htn, top_htn_sbp, top_htn_uacr, top_htn_egfr, 
   top_mac_df, top_mic_df, top_mic.or.mac_df, top_hyp_df, top_rapid_df, top_htn_df, top_htn_sbp_df, top_htn_uacr_df, top_htn_egfr_df,
-  de_genes_mac, de_genes_mic, de_genes_mic.or.mac, de_genes_hyp, de_genes_rapid, de_genes_htn, de_genes_htn_sbp, de_genes_htn_uacr, de_genes_htn_egfr,
+  de_genes_mac, de_genes_mic, de_genes_mic.or.mac, de_genes_hyp, de_genes_rapid, de_genes_htn, de_genes_htn_sbp, de_genes_htn_uacr, de_genes_htn_egfr,analytes,
   file = "/Volumes/PEDS/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Data_Cleaned/TODAY_top_proteins_new_covariates.RData"
 )
