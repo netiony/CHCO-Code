@@ -249,6 +249,7 @@ keepPRIMOUT <- PRIMOUT %>% select(releaseid,tx,txdesc)
 
 # BIRTH WEIGHT 
 BW <- read.csv("./Clinical data/TODAY/Birthweight.csv")
+BW[,2:6] <- apply(BW[,2:6], 2, as.numeric)
 
 # create new dataset of baseline risk factors
 basecbl <- CBL %>% filter(mvisit=="M00")
