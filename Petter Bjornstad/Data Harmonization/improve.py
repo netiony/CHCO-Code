@@ -123,7 +123,7 @@ def clean_improve():
     # Physical exam
     # --------------------------------------------------------------------------
 
-    var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
+    var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                                == "physical_exam", "field_name"]]
     phys = pd.DataFrame(proj.export_records(
         fields=var, events=["screening_arm_1"]))
@@ -143,7 +143,7 @@ def clean_improve():
     # Screening labs
     # --------------------------------------------------------------------------
 
-    var = ["subject_id", "study_visit"] + [v for v in meta.loc[meta["form_name"]
+    var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                                == "screening_labs", "field_name"]]
     screen = pd.DataFrame(proj.export_records(fields=var,
                                               events=["screening_arm_1"]))
@@ -325,7 +325,7 @@ def clean_improve():
     hematocrit_vars = ["hematocrit_90", "hematocrit_120"]
     clamp[hematocrit_vars] = clamp[hematocrit_vars].apply(
         pd.to_numeric, errors='coerce')
-    clamp["hematocrit_avg"] = clamp[["hematocrit_90", "hematocrit_120"]].mean(axis=1)
+    clamp["hct"] = clamp[["hematocrit_90", "hematocrit_120"]].mean(axis=1)
 
     # --------------------------------------------------------------------------
     # Outcomes
@@ -355,7 +355,7 @@ def clean_improve():
     out_vars = ["gfr_raw_plasma", "erpf_raw_plasma", "total_protein", "map", "clamp_map", "hematocrit_90", "hematocrit_120"]
     out[out_vars] = out[out_vars].apply(pd.to_numeric, errors='coerce')
     out["map"] = out[["map", "clamp_map"]].mean(axis=1)
-    out["hematocrit_avg"] = out[["hematocrit_90", "hematocrit_120"]].mean(axis=1)
+    out["hct"] = out[["hematocrit_90", "hematocrit_120"]].mean(axis=1)
     out["erpf_raw_plasma_seconds"] = out["erpf_raw_plasma"]/60
     out["gfr_raw_plasma_seconds"] = out["gfr_raw_plasma"]/60
     # Filtration Fraction
@@ -371,8 +371,8 @@ def clean_improve():
     # Glomerular Pressure
     out["glomerular_pressure"] = out["pg"] + out["deltapf"] + 10
     # Renal Blood Flow
-    out["rbf"] = (out["erpf_raw_plasma"]) / (1 - out["hematocrit_avg"]/100)
-    out["rbf_seconds"] = (out["erpf_raw_plasma_seconds"]) / (1 - out["hematocrit_avg"]/100)
+    out["rbf"] = (out["erpf_raw_plasma"]) / (1 - out["hct"]/100)
+    out["rbf_seconds"] = (out["erpf_raw_plasma_seconds"]) / (1 - out["hct"]/100)
     # Renal Vascular Resistance (mmHg*l^-1*min^-1)
     out["rvr"] = out["map"] / out["rbf"]
     # Efferent Arteriolar Resistance 
@@ -381,9 +381,9 @@ def clean_improve():
     out["ra"] = ((out["map"] - out["glomerular_pressure"]) / out["rbf_seconds"]) * 1328    
     out.loc[~(out['ra'] > 0), 'ra']=np.nan    
     out.drop(["gfr_raw_plasma_seconds", "rbf_seconds", "erpf_raw_plasma_seconds",
-              "hematocrit_90" , "hematocrit_120" , "map" , "clamp_map" , "total_protein" , "hematocrit_avg"],
+              "hematocrit_90" , "hematocrit_120" , "map" , "clamp_map" , "total_protein" , "hct"],
              axis=1, inplace=True)
-    out["date"] = clamp["date"]
+    out.rename({"mri_date": "date"}, axis=1, inplace=True)
     out["procedure"] = "clamp"
     bold_mri["procedure"] = "bold_mri"
 
@@ -413,20 +413,33 @@ def clean_improve():
     biopsy["procedure"] = "kidney_biopsy"
 
     # --------------------------------------------------------------------------
+    # Astrazeneca urine metabolomics
+    # --------------------------------------------------------------------------
+    
+    var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
+                                                  == "astrazeneca_urine_metabolomics", "field_name"]]
+    az_u_metab = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    az_u_metab.replace(rep, np.nan, inplace=True)
+    az_u_metab["procedure"] = "az_u_metab"
+    az_u_metab["date"] = clamp["date"]
+    
+    # --------------------------------------------------------------------------
     # Missingness
     # --------------------------------------------------------------------------
 
-    med.dropna(thresh=3, axis=0, inplace=True)
+    med.dropna(thresh=9, axis=0, inplace=True)
     phys.dropna(thresh=3, axis=0, inplace=True)
     screen.dropna(thresh=3, axis=0, inplace=True)
-    accel.dropna(thresh=4, axis=0, inplace=True)
+    accel.dropna(thresh=6, axis=0, inplace=True)
     mri.dropna(thresh=4, axis=0, inplace=True)
-    mmtt.dropna(thresh=5, axis=0, inplace=True)
+    mmtt.dropna(thresh=10, axis=0, inplace=True)
     dxa.dropna(thresh=4, axis=0, inplace=True)
-    clamp.dropna(thresh=5, axis=0, inplace=True)
-    out.dropna(thresh=4, axis=0, inplace=True)
+    clamp.dropna(thresh=12, axis=0, inplace=True)
+    out.dropna(thresh=10, axis=0, inplace=True)
     bold_mri.dropna(thresh=4, axis=0, inplace=True)
-    biopsy.dropna(thresh=4, axis=0, inplace=True)
+    biopsy.dropna(thresh=12, axis=0, inplace=True)
+    az_u_metab.dropna(thresh=10, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Merge
@@ -442,7 +455,9 @@ def clean_improve():
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
     df = pd.concat([df, screen], join='outer', ignore_index=True)
     df = pd.concat([df, phys], join='outer', ignore_index=True)
+    df = pd.concat([df, az_u_metab], join='outer', ignore_index=True)
     df = pd.merge(df, demo, how="outer")
+    df = df.loc[:, ~df.columns.str.startswith('redcap_')]
     df = df.copy()
 
     # --------------------------------------------------------------------------

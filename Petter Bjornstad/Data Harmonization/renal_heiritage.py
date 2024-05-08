@@ -182,9 +182,10 @@ def clean_renal_heiritage():
     rct["ra"] = ((rct["map"] - rct["glomerular_pressure"]) / rct["rbf_seconds"]) * 1328  
     rct.loc[~(rct['ra'] > 0), 'ra']=np.nan    
     # Reduce rct dataset
-    rct.drop(["rbf_seconds", "erpf_raw_plasma_seconds", "redcap_repeat_instrument"], axis=1, inplace=True)
+    rct.drop(["rbf_seconds", "erpf_raw_plasma_seconds", "redcap_repeat_instrument", "map", "group_rh2"], axis=1, inplace=True)
     rct["procedure"] = "renal_clearance_testing"
     rct["visit"] = "baseline"
+    rct = rct[rct['date'].notna()]
     
     # --------------------------------------------------------------------------
     # Dextran
@@ -220,10 +221,11 @@ def clean_renal_heiritage():
     out.rename(rename, axis=1, inplace=True)
     out["procedure"] = "clamp"
     out["visit"] = "baseline"
+    out = out[out['date'].notna()]
     bold_mri["procedure"] = "bold_mri"
     bold_mri["visit"] = "baseline"
     bold_mri["date"] = out["date"]
-
+  
     # --------------------------------------------------------------------------
     # PET scan
     # --------------------------------------------------------------------------
@@ -254,7 +256,6 @@ def clean_renal_heiritage():
                  "art_media", "pod_nuc_density", "pod_cell_volume"]
     biopsy = pd.DataFrame(proj.export_records(fields=var))
     biopsy = biopsy.loc[biopsy["redcap_event_name"].str.startswith("kidney_bio", na=False)]
-    biopsy.drop(["redcap_event_name"], axis=1, inplace=True)
     # Replace missing values
     biopsy.replace(rep, np.nan, inplace=True)
     biopsy.drop([col for col in biopsy.columns if '_yn' in col] +
@@ -294,6 +295,23 @@ def clean_renal_heiritage():
     neuro.replace(rep, np.nan, inplace=True)
     neuro["procedure"] = "neurocognitive_tracking"
     neuro["visit"] = "baseline"
+    neuro = neuro.loc[neuro.filter(regex='^procedr_').sum(axis=1) != 0]
+    
+    # --------------------------------------------------------------------------
+    # Astrazeneca urine metabolomics
+    # --------------------------------------------------------------------------
+    
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                                  == "astrazeneca_urine_metabolomics", "field_name"]]
+    az_u_metab = pd.DataFrame(proj.export_records(fields=var))
+    az_u_metab.drop(["redcap_event_name"], axis=1, inplace=True)
+    az_u_metab.drop(["redcap_repeat_instance"], axis=1, inplace=True)
+    az_u_metab.drop(["redcap_repeat_instrument"], axis=1, inplace=True)
+    # Replace missing values
+    az_u_metab.replace(rep, np.nan, inplace=True)
+    az_u_metab["procedure"] = "az_u_metab"
+    az_u_metab["visit"] = "baseline"
+    az_u_metab["date"] = annual_labs["date"]
 
     # --------------------------------------------------------------------------
     # Missingness
@@ -302,14 +320,15 @@ def clean_renal_heiritage():
     med.dropna(thresh=4, axis=0, inplace=True)
     phys.dropna(thresh=4, axis=0, inplace=True)
     annual_labs.dropna(thresh=4, axis=0, inplace=True)
-    rct.dropna(thresh=3, axis=0, inplace=True)
+    rct.dropna(thresh=4, axis=0, inplace=True)
     dextran.dropna(thresh=4, axis=0, inplace=True)
     out.dropna(thresh=4, axis=0, inplace=True)
     bold_mri.dropna(thresh=4, axis=0, inplace=True)
-    pet.dropna(thresh=4, axis=0, inplace=True)
-    biopsy.dropna(thresh=4, axis=0, inplace=True)
+    pet.dropna(thresh=6, axis=0, inplace=True)
+    biopsy.dropna(thresh=7, axis=0, inplace=True)
     neuro.dropna(thresh=4, axis=0, inplace=True)
     voxelwise.dropna(thresh=4, axis=0, inplace=True)
+    az_u_metab.dropna(thresh=5, axis=0, inplace=True)
     
     # --------------------------------------------------------------------------
     # Merge
@@ -325,7 +344,9 @@ def clean_renal_heiritage():
     df = pd.concat([df, pet], join='outer', ignore_index=True)
     df = pd.concat([df, neuro], join='outer', ignore_index=True)
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
+    df = pd.concat([df, az_u_metab], join='outer', ignore_index=True)
     df = pd.merge(df, demo, on='record_id', how="outer")
+    df = df.loc[:, ~df.columns.str.startswith('redcap_')]
     df = df.copy()
 
     # --------------------------------------------------------------------------

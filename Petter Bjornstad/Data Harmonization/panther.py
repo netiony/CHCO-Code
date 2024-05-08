@@ -279,7 +279,6 @@ def clean_panther():
     rct["ra"] = ((rct["map"] - rct["glomerular_pressure"]) / rct["rbf_seconds"]) * 1328    
     rct.loc[~(rct['ra'] > 0), 'ra']=np.nan    
     # Reduce rct dataset
-    rename = {"hct": "hematocrit"}
     rct.rename(rename, axis=1, inplace=True)
     rct.drop(["rbf_seconds", "erpf_raw_plasma_seconds", "group", "rc_labs", "map", "kfg", 
               "gfr_raw_plasma_seconds"], axis=1, inplace=True)

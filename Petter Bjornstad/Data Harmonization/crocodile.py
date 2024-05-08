@@ -195,7 +195,7 @@ def clean_crocodile():
                 "trunkmass": "trunk_mass", "fatmass_kg": "fat_kg",
                 "leanmass_kg": "lean_kg", "trunkmass_kg": "trunk_kg",
                 "bmd": "bone_mineral_density"}, axis=1, inplace=True)
-    dxa_cols = dxa.columns[2:].to_list()
+    dxa_cols = dxa.columns[4:].to_list()
     dxa.rename(dict(zip(dxa_cols, ["dexa_" + d for d in dxa_cols])),
                axis=1, inplace=True)
     dxa["procedure"] = "dxa"
@@ -405,6 +405,19 @@ def clean_crocodile():
     metabolomics_tissue["visit"] = "baseline"
     
     # --------------------------------------------------------------------------
+    # Astrazeneca urine metabolomics
+    # --------------------------------------------------------------------------
+    
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                                  == "astrazeneca_urine_metabolomics", "field_name"]]
+    az_u_metab = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    az_u_metab.replace(rep, np.nan, inplace=True)
+    az_u_metab["procedure"] = "az_u_metab"
+    az_u_metab["visit"] = "baseline"
+    az_u_metab["date"] = labs["date"]
+    
+    # --------------------------------------------------------------------------
     # Missingness
     # --------------------------------------------------------------------------
 
@@ -422,10 +435,12 @@ def clean_crocodile():
     voxelwise.dropna(thresh=4, axis=0, inplace=True)
     metabolomics_blood.dropna(thresh=4, axis=0, inplace=True)
     metabolomics_tissue.dropna(thresh=2, axis=0, inplace=True)
+    az_u_metab.dropna(thresh=5, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Merge
     # --------------------------------------------------------------------------
+    
     # Procedure = clamp
     clamp_merge = pd.merge(clamp, labs, how="outer")
     clamp_merge = pd.merge(clamp_merge, rct, how="outer")
@@ -441,9 +456,9 @@ def clean_crocodile():
     df = pd.concat([df, neuro], join='outer', ignore_index=True)
     df = pd.concat([df, metabolomics_blood], join='outer', ignore_index=True)
     df = pd.concat([df, metabolomics_tissue], join='outer', ignore_index=True)
+    df = pd.concat([df, az_u_metab], join='outer', ignore_index=True)
     df = pd.merge(df, demo, on='record_id', how="outer")
-    df.drop(["redcap_repeat_instance_x"], axis=1, inplace=True)
-    df.drop(["redcap_repeat_instrument_x"], axis=1, inplace=True)
+    df = df.loc[:, ~df.columns.str.startswith('redcap_')]
     df = df.copy()
 
     # --------------------------------------------------------------------------
