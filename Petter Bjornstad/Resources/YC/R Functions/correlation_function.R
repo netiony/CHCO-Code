@@ -18,12 +18,22 @@ correlation_table_minimal <- function(data, relevant_vars, n_cols, cor_method = 
     dplyr::select(all_of(relevant_vars))
   
   # Compute the correlation matrix
-  M_table <- cor(y = dat_correlation[, 1:n_cols],
-                 x = dat_correlation[, (n_cols + 1):ncol(dat_correlation)], 
-                 use = "pairwise.complete.obs",
-                 method = cor_method) %>%
-    as.data.frame() %>%
-    dplyr::mutate_all(round, digits = 3)
+  if (n_cols > 1) {
+    M_table <- cor(y = dat_correlation[, 1:n_cols],
+                   x = dat_correlation[, (n_cols + 1):ncol(dat_correlation)], 
+                   use = "pairwise.complete.obs",
+                   method = cor_method) %>%
+      as.data.frame() %>%
+      dplyr::mutate_all(round, digits = 3)
+  }
+  if (n_cols == 1) {
+    M_table <- cor(y = dat_correlation[1],
+                   x = dat_correlation[, (n_cols + 1):ncol(dat_correlation)], 
+                   use = "pairwise.complete.obs",
+                   method = cor_method) %>%
+      as.data.frame() %>%
+      dplyr::mutate_all(round, digits = 3)
+  }
   
   # Compute p-values 
   res2 <- Hmisc::rcorr(as.matrix(dat_correlation),
@@ -180,7 +190,7 @@ correlation_p_value_matrix <- function(data, relevant_vars, n_cols, cor_method =
   return(as.matrix(corr_pval))
 }
 
-corr_plot_modified <- function(data, X, Y, cor_method = "pearson", adj_var = NA, dict = dict,
+corr_plot_modified <- function(data, X, Y, cor_method = "pearson", adj_var = NULL, dict = dict,
                                method = "color", insig = "pch", coef_col = NULL,
                                pch = 4, pch.col = "black", pch.cex = 0) {
   n_cols <- length(Y)
@@ -191,7 +201,7 @@ corr_plot_modified <- function(data, X, Y, cor_method = "pearson", adj_var = NA,
   colnames(M) <- as.list(dict[match(colnames(M), names(dict))])
   rownames(M) <- as.list(dict[match(rownames(M), names(dict))])
   
-  if (!is.na(adj_var)) {
+  if (!is.null(adj_var)) {
     x_vars <- rep(X, times = length(Y))
     x_coord <- rep(seq(1, length(Y)), each = length(X))
     y_vars <- rep(Y, each = length(X))
@@ -251,7 +261,7 @@ corr_plot_modified <- function(data, X, Y, cor_method = "pearson", adj_var = NA,
     graphics::text(p1_sub2$x, p1_sub2$y, sprintf("%.2f", p1_sub2$corr), col = "white", adj = c(0.5, 0))
     graphics::text(p1_sub2$x, p1_sub2$y, stars.pval(p1_sub2$p.value), col = "white", adj = c(0.5, 2))
   }
-  if (!is.na(adj_var)) {
+  if (!is.null(adj_var)) {
     lm_extracted <- subset(lm_extracted, adj_x_pval <= 0.05)
     if (nrow(lm_extracted) > 0){
       graphics::rect(xleft = lm_extracted$x - 0.45, 
@@ -274,7 +284,7 @@ corr_plot_ver2 <- function(data, X, Y, cor_method = "pearson", adj_var = NULL, d
   colnames(M) = as.list(dict[match(colnames(M), names(dict))])
   rownames(M) = as.list(dict[match(rownames(M), names(dict))])
   
-  if (!is.na(adj_var)){
+  if (!is.null(adj_var)){
     x_vars <- rep(X, times = length(Y))
     x_coord <- rep(seq(1,length(Y)), each = length(X))
     y_vars <- rep(Y, each = length(X))
@@ -330,7 +340,7 @@ corr_plot_ver2 <- function(data, X, Y, cor_method = "pearson", adj_var = NULL, d
   if (nrow(p1_sub2) > 0) {
     graphics::points(p1_sub2$x, p1_sub2$y+0.15, pch = 8, col = "white")
   }  
-  if (!is.na(adj_var)) {
+  if (!is.null(adj_var)) {
     lm_combined <- left_join(p1, lm_extracted, by = c("x","y"))
     lm_combined <- subset(lm_combined, adj_x_pval <= 0.05)
     lm_subset <- subset(lm_combined, adj_x_pval <= 0.05 & abs(corr) >= 0.7)
