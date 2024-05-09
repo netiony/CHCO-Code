@@ -4,13 +4,25 @@ library(dplyr)
 library(forcats)
 library(ggpubr)
 
-# make it a function
+color_table <- tibble(
+  up_down = c(-1, 0, 1),
+  color = c("indianred", "gray", "steelblue")
+)
+
 ipa_plot <- function(data){
-  p <- ggplot(data, aes(reorder(`Ingenuity Canonical Pathways`, `-log(p-value)`), `-log(p-value)`))+
+  data <- data %>% mutate(up_down = case_when(
+    abs(`z-score`) < 0.0001 | is.na(`z-score`) ~ 0,
+    `z-score` <= -0.0001 ~ -1,
+    `z-score` >= 0.0001 ~ 1,
+    .default = 0
+  ))
+  data$up_down <- factor(data$up_down, levels = unique(data$up_down))
+  p <- ggplot(data, aes(reorder(`Ingenuity Canonical Pathways`, `-log(p-value)`), `-log(p-value)`, fill = up_down))+
     geom_col() +
     scale_y_continuous(limits = c(0, 6)) +
     ylab("-log(p-value)") +
-    xlab("Pathway")
+    xlab("Pathway") + theme(legend.position="none") +
+    scale_fill_manual(values = c("-1" = "steelblue", "0" = "grey", "1" = "indianred")) 
   p <- p + coord_flip()
 }
 
