@@ -259,7 +259,7 @@ baserisk <- merge(baserisk, baseaddcbl, by="releaseid", all.x=T, ally=T)
 baserisk$si_1_ins0 <- 1/baserisk$ins0min
 baserisk$log_trig <- log(baserisk$Trig)
 baserisk <- baserisk %>% select(releaseid, HbA1c, log_trig, sbp, dbp, uacid, si_1_ins0, UAlbCreat, bmi, HDL, codi,
-                                EstCreatClear,SerumCreat)
+                                EstCreatClear,SerumCreat,serumcystc)
 baserisk$map <- baserisk$dbp + ((1/3)*(baserisk$sbp - baserisk$dbp))
 baserisk <- merge(baserisk,keepPAT,by="releaseid",all.x = T,all.y = F)
 baserisk$age <- NULL
