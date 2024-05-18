@@ -1,0 +1,258 @@
+---
+title: "MANGO MMTT Mixed Models <br>(Preliminary Results)"
+author: "Callie Rountree-Jablin"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(nlme)
+library(emmeans)
+library(kableExtra)
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+options(scipen=999)
+```
+
+
+```{r read, include=FALSE}
+raw_dat <- read_csv("Mango-MangoPreandPostAsses_DATA_2024-04-12_1037.csv")
+```
+
+
+```{r data cleaning and formatting, include=FALSE}
+## create dfs for each assay
+glucose <- raw_dat %>% select(pid, preop_glucose_neg10:preop_glucose_240, postop_glucose_neg10:postop_glucose_240) # checked
+insulin <- raw_dat %>% select(pid, preop_i_neg10:preop_i_240, postop_i_neg10:postop_i_240)
+ffa <- raw_dat %>% select(pid, preop_ffa_neg_10:preop_faa_240, postop_ffa_neg_10:postop_faa_240) %>% 
+  rename(c('preop_faa_neg10' = preop_ffa_neg_10, 'postop_faa_neg10' = postop_ffa_neg_10))
+glp1 <- raw_dat %>% select(pid, preop_glp_neg10:preop_glp_120, postop_glp_neg10:postop_glp_120)
+glucagon <- raw_dat %>% select(pid, preop_glucagon_neg10:preop_glucagon_240, postop_glucagon_neg10:postop_glucagon_240)
+triglycerides <- raw_dat %>%  select(pid, preop_trig_0:preop_trig_120, postop_trig_0:postop_trig_120)
+cpep <- raw_dat %>% select(pid, preop_cpep_neg10:preop_cpep_240, postop_cpep_neg10:postop_cpep_240)
+
+## switch to doubly long format
+######################################################################################################################
+# test code for converting to doubly long (used for creating pivot_doubly_long function)
+#
+# glucose_long <- glucose %>%  pivot_longer(cols = starts_with("preop_glucose") | starts_with("postop_glucose"), 
+#                          names_to = c("study_visit", ".value", "time"), 
+#                          names_sep = "_",
+#                          values_to = "glucose")
+#
+######################################################################################################################
+
+# define function for converting from wide to doubly long format
+# .value specifies that the assay readings should be used as values in the resulting df instead of the assay name (for example, the word "glucose")
+pivot_doubly_long <- function(df, assay_name){
+  df %>% pivot_longer(cols = starts_with(paste0("preop_", assay_name))| starts_with(paste0("postop_", assay_name)),
+                      names_to = c("study_visit", ".value", "time"),
+                      names_sep = "_",
+                      values_to = assay_name)
+}
+
+glucose_long <- pivot_doubly_long(glucose, "glucose")
+insulin_long <- pivot_doubly_long(insulin, "i")
+ffa_long <- pivot_doubly_long(ffa, "faa")
+glp1_long <- pivot_doubly_long(glp1, "glp")
+glucagon_long <- pivot_doubly_long(glucagon, "glucagon")
+triglycerides_long <- pivot_doubly_long(triglycerides, "trig")
+cpep_long <- pivot_doubly_long(cpep, "cpep")
+
+## clean up variables
+# define function for cleaning up each of the doubly long dfs
+clean_DL_dfs <- function(df_name){
+  df <- get(df_name)
+  
+  df <- df %>%
+    mutate(time = recode(time, 'neg10' = '-10')) %>% 
+    mutate(time = as.factor(as.numeric(time)),
+           study_visit = factor(study_visit, levels = c('preop', 'postop')))
+  
+  assign(df_name, df, envir = .GlobalEnv)
+}
+
+dfs_to_clean <- c("glucose_long", "insulin_long", "ffa_long", "glp1_long", "glucagon_long", "triglycerides_long", "cpep_long")
+invisible(lapply(dfs_to_clean, clean_DL_dfs))
+```
+
+
+# Methods
+
+Mixed effects models were used to evaluate differences in MMTT labs before and after VSG bariatric surgery, while adjusting for the correlation of repeated measures within a participant. Estimated marginal means were calculated for each timepoint of the MMTT within a visit, and pairwise comparisons were used to test whether each timepoint differed across visits. 
+
+Analyses for each of the MMTT labs were based on the following timepoints:
+
+* Glucose, Insulin: -10, 0, 10, 20, 30, 45, 60, 90, 120, 150, 180, 210, 240 min
+* FFA: -10, 0, 30, 60, 120, 180, 240 min
+* GLP-1: -10,0, 10, 30, 45, 60, 120 min
+* Glucagon: -10, 0, 10, 30, 45, 60, 120, 240 min
+* Triglycerides: 0, 30, 60, 120 min
+* C-Peptide: -10, 0, 10, 20, 30, 60, 90, 120, 180, 240 min
+
+
+```{r mixed function, include=FALSE}
+# define function that fits LMM then outputs a list of the ANOVA, marginal mean, and pairwise comparisons results
+# inputted dat is the doubly long df for the assay of interest
+mixed <- function(dat, outcome){
+  form = as.formula(paste0(outcome,"~ study_visit * time"))
+  mod <- lme(as.formula(form), random = ~1|pid, data = dat, na.action = na.omit,
+             correlation = corCompSymm(form = ~1 | pid)) # specifies within-subject variability as exchangeable
+  anova <- anova.lme(mod, type="marginal") # use ANOVA to obtain significance of interaction
+  m <- emmeans(mod,c("study_visit","time")) # compute estimated marginal means
+  prs <-  pairs(m,adjust="tukey",by="time") # perform pairwise comparisons by timepoint
+  
+  return(list(anova, m, prs))
+}
+```
+
+
+# Results
+How to interpret the output:
+
+* ANOVA Results: This table provides the parameter estimates for each term in the model. The `study_visit:time` term tests whether the pattern of change of the lab measure throughout the duration of the MMTT differed between the pre-op and post-op visits. For example, based on the insulin results, we can see that the trajectory of insulin during the MMTT did differ between visits (p < 0.05). In instances where the `study_visit:time` term has a p-value of $\ge0.05$, the estimated marginal means and pairwise comparisons tables are omitted from the report. 
+
+* Estimated Marginal Means: This table reports the estimated marginal means for each visit and timepoint. `lower.CL` and `upper.CL` respectively describe the lower and upper bounds of the 95% confidence interval.
+
+* Pairwise Comparisons: This table provides p-values for comparing whether there is a notable difference in the MMTT measure between the pre-op and post-op visits at each timepoint. For example, looking at the first row of the glucose pairwise comparisons table, glucose at the -10 min timepoint was not significantly different between the two study visits (p=0.284). 
+
+## Glucose
+```{r glucose analysis, echo=FALSE}
+glucose_results <- mixed(dat = glucose_long, outcome = "glucose")
+
+glucose_results[[1]] %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+glucose_results[[2]] %>% 
+  kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+glucose_results[[3]] %>%
+  kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+```
+
+## Insulin
+
+```{r insulin analysis, echo=FALSE}
+insulin_results <- mixed(dat = insulin_long, outcome = "i")
+
+insulin_results[[1]] %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+insulin_results[[2]] %>% 
+  kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+insulin_results[[3]] %>% 
+  kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+```
+
+## FFA
+
+```{r ffa analysis, echo=FALSE}
+ffa_results <- mixed(dat = ffa_long, outcome = "faa")
+
+ffa_results[[1]] %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+ffa_results[[2]] %>% 
+  kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+ffa_results[[3]] %>% 
+  kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+```
+
+## GLP-1
+
+```{r glp1 analysis, echo=FALSE}
+glp1_results <- mixed(dat = glp1_long, outcome = "glp")
+
+glp1_results[[1]] %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+glp1_results[[2]] %>% 
+  kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+glp1_results[[3]] %>% 
+  kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+```
+
+## Glucagon
+<span style="color: blue;">Estimated marginal means and pairwise comparisons were not computed due to non-significant findings.</span>
+```{r glucagon analysis, echo=FALSE}
+glucagon_results <- mixed(dat = glucagon_long, outcome = "glucagon")
+
+glucagon_results[[1]] %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+# glucagon_results[[2]] %>% 
+#   kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>% 
+#   kable_styling(latex_options='basic', html_font='Arial') %>% 
+#       htmltools::HTML()
+# glucagon_results[[3]] %>% 
+#   kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>% 
+#   kable_styling(latex_options='basic', html_font='Arial') %>% 
+#       htmltools::HTML()
+```
+
+## Triglycerides
+<span style="color: blue;">Estimated marginal means and pairwise comparisons were not computed due to non-significant findings.</span>
+```{r triglycerides analysis, echo=FALSE}
+triglycerides_results <- mixed(dat = triglycerides_long, outcome = "trig")
+
+triglycerides_results[[1]] %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+# triglycerides_results[[2]] %>% 
+#   kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>% 
+#   kable_styling(latex_options='basic', html_font='Arial') %>% 
+#       htmltools::HTML()
+# triglycerides_results[[3]] %>% 
+#   kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>% 
+#   kable_styling(latex_options='basic', html_font='Arial') %>% 
+#       htmltools::HTML()
+```
+
+## C-Peptide
+<span style="color: blue;">Estimated marginal means and pairwise comparisons were not computed due to non-significant findings.</span>
+```{r cpep analysis, echo=FALSE}
+cpep_results <- mixed(dat = cpep_long, outcome = "cpep")
+
+cpep_results[[1]] %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+# cpep_results[[2]] %>% 
+#   kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>% 
+#   kable_styling(latex_options='basic', html_font='Arial') %>% 
+#       htmltools::HTML()
+# cpep_results[[3]] %>% 
+#   kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>% 
+#   kable_styling(latex_options='basic', html_font='Arial') %>% 
+#       htmltools::HTML()
+```
+
+# Questions
+* Are the glucagon analyses based on the correct timepoints?
