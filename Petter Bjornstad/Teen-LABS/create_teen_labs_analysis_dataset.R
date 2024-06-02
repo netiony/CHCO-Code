@@ -6,9 +6,9 @@ library(Hmisc)
 library(sas7bdat)
 library(dplyr)
 # Clinical Data
-clinical <- read.sas7bdat("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/bjornstad_03_15_2023.sas7bdat")
+clinical <- read.sas7bdat("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/bjornstad_03_15_2023.sas7bdat")
 # Proteomics data
-soma <- read_adat("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Raw/WUS_22_007_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
+soma <- read_adat("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Raw/WUS_22_007_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
 soma <- soma %>%
   # Remove flagged rows, QC samples, and excluded samples
   filter(
@@ -103,8 +103,33 @@ df$diab_resolved <- factor(df$diab_resolved,
   levels = 0:2,
   labels = c("No", "Yes", "Non-diabetic")
 )
+
+# read in NAFLD data
+nafld <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/Pyle NAFLD 02_06_24.csv")
+nafld <- unique(nafld)
+nafld <- nafld %>%
+  mutate(visit = case_when(
+    visit == 1 ~ "Month 1",
+    visit == 6 ~ "Month 6",
+    visit == 12 ~ "Year 1",
+    visit == 36 ~ "Year 3"
+  )) 
+df <- left_join(df, nafld, by = c("ID", "visit"))
+
+# read in Olink data
+olink <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Olink data/TL_baseline_proteomics_processed_wide.csv")
+linking_file <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Olink data/Pyle 01_19_24.csv")
+linking_file <- linking_file %>% filter(visit == 1)
+# drop NIH ID because we don't have that information in the Olink file
+linking_file <- linking_file %>% select(key, visit, TLID)
+linking_file <- unique(linking_file)
+olink <- left_join(olink, linking_file, by = "key")
+olink$ID <- olink$TLID
+olink$visit <- ifelse(olink$visit == 1, "Month 1", olink$visit)
+df <- left_join(df, olink, by = c("ID", "visit"))
+
 # Labels
-dict <- read_excel("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/DataDictionary.xlsx")
+dict <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/DataDictionary.xlsx")
 analytes <- getAnalytes(soma)
 analyte_info <- getAnalyteInfo(soma)
 labels <- dict$Description[match(names(df), dict$Name)]
@@ -116,7 +141,8 @@ label(df$diab_resolved) <- "Diabetes resolved?"
 label(df$albuminuria) <- "Albuminuria level"
 label(df$months) <- "Months"
 label(df$diab_baseline) = "Diabetes at Baseline"
+
 # As regular dataframe
 df <- as.data.frame(df)
 # Save
-save(df,analyte_info, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/analysis_dataset.RData")
+save(df,analyte_info, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/analysis_dataset.RData")
