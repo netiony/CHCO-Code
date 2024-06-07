@@ -1,0 +1,828 @@
+---
+title: "TODAY Somalogic baseline analyses - elastic net Cox models - CJASN response"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+knit: (function(rmdfile, ...) { rmarkdown::render(rmdfile, output_dir='/Users/pylell/Dropbox/TODAY HTN and DKD output/') })
+output: rtf_document
+---
+
+```{r setup, include=FALSE}
+library(SomaDataIO)
+library(limma)
+library(dplyr)
+library(caret)
+library(purrr)
+library(multtest)
+library(openxlsx)
+library(tableone)
+library(EnhancedVolcano)
+library(knitr)
+library(survival)
+library(broom)
+library(plsRcox)
+library(forestmodel)
+library(survC1)
+library(naniar)
+library(rms)
+library(readxl)
+library(forester)
+library(grid)
+library(forestploter)
+
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+
+knitr::opts_chunk$set(echo = FALSE)
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "E:/Petter Bjornstad/TODAY subaward"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  home_dir = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
+}
+knitr::opts_knit$set(root.dir = home_dir)
+
+```
+
+```{r, include=FALSE}
+setwd(home_dir)
+# load somalogic data, with QC samples already excluded
+load("./Somalogic data raw/soma.Rdata")
+
+# load analyte info
+load("./Somalogic data raw/analytes.Rdata")
+
+# load comorbidity data
+load("./Clinical data/comorb.Rdata")
+
+# load baseline risk factors
+load("./Clinical data/TODAY/baserisk.Rdata")
+
+# take only the baseline soma samples
+# can we just take the earliest or is it possible someone would have a follow-up sample but not baseline?
+# probably can take the first and then check the years to make sure compatible with TODAY
+base <- soma %>% arrange(releaseid,Date.Drawn) %>% group_by(releaseid) %>% filter(row_number()==1)
+
+# these 3 release IDs have first sample after end of recruitment, so they must be missing the baseline visit
+base <- base %>% filter(!releaseid %in% c("65-85903","65-47984","65-25901"))
+
+# merge in complication data
+base <- left_join(base, comorb, by="releaseid")
+
+# merge in baseline risk factors
+base <- left_join(base, baserisk, by="releaseid")
+
+# identify columns corresponding to proteins
+#is_seq <- function(.x) grepl("^seq\\.[0-9]{4}", .x) # regex for analytes
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(base))
+
+# convert to numeric
+base[,seq] <- apply(base[,seq],2,as.numeric)
+
+# are there proteins with low variability?
+no_var = caret::nearZeroVar(base[,seq])
+# none
+
+# log transform
+base_log <- base %>% modify_if(is_seq(names(.)), log)
+
+# scale by SD
+base_log_scale <- base_log
+predictors <- colnames(base_log[seq])
+for (i in 1:length(predictors)) {
+  base_log_scale[,paste0(predictors[i])] <- base_log_scale[,paste0(predictors[i])]/sd(unlist(base_log[,paste0(predictors[i])]))
+}
+
+# filter to top 100 proteins by effect size
+f = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection.xlsx"
+
+# HYPERTENSION
+htn_keep = read_excel(f,sheet = "HTN CPH base")
+htn_keep <- arrange(htn_keep,adj.p.value)
+htn_drop <- htn_keep[101:nrow(htn_keep),"AptName"]
+rownames(htn_drop) <- htn_drop$AptName
+htn_drop <- as.data.frame(t(htn_drop))
+htn <- base_log_scale %>% select(-colnames(htn_drop))
+# HYPERTENSION WITH BMI
+htn.with.bmi_keep = read_excel(f,sheet = "HTN CPH base+BMI")
+htn.with.bmi_keep <- arrange(htn.with.bmi_keep,adj.p.value)
+htn.with.bmi_drop <- htn.with.bmi_keep[101:nrow(htn.with.bmi_keep),"AptName"]
+rownames(htn.with.bmi_drop) <- htn.with.bmi_drop$AptName
+htn.with.bmi_drop <- as.data.frame(t(htn.with.bmi_drop))
+htn.with.bmi <- base_log_scale %>% select(-colnames(htn.with.bmi_drop))
+# HYPERTENSION WITH eGFR
+htn.with.egfr_keep = read_excel(f,sheet = "HTN CPH base+eGFR")
+htn.with.egfr_keep <- arrange(htn.with.egfr_keep,adj.p.value)
+htn.with.egfr_drop <- htn.with.egfr_keep[101:nrow(htn.with.egfr_keep),"AptName"]
+rownames(htn.with.egfr_drop) <- htn.with.egfr_drop$AptName
+htn.with.egfr_drop <- as.data.frame(t(htn.with.egfr_drop))
+htn.with.egfr <- base_log_scale %>% select(-colnames(htn.with.egfr_drop))
+# HYPERTENSION WITH UACR
+htn.with.uacr_keep = read_excel(f,sheet = "HTN CPH base+UACR")
+htn.with.uacr_keep <- arrange(htn.with.uacr_keep,adj.p.value)
+htn.with.uacr_drop <- htn.with.uacr_keep[101:nrow(htn.with.uacr_keep),"AptName"]
+rownames(htn.with.uacr_drop) <- htn.with.uacr_drop$AptName
+htn.with.uacr_drop <- as.data.frame(t(htn.with.uacr_drop))
+htn.with.uacr <- base_log_scale %>% select(-colnames(htn.with.uacr_drop))
+# HYPERTENSION WITH eIS
+htn.with.eis_keep = read_excel(f,sheet = "HTN CPH base+eIS")
+htn.with.eis_keep <- arrange(htn.with.eis_keep,adj.p.value)
+htn.with.eis_drop <- htn.with.eis_keep[101:nrow(htn.with.eis_keep),"AptName"]
+rownames(htn.with.eis_drop) <- htn.with.eis_drop$AptName
+htn.with.eis_drop <- as.data.frame(t(htn.with.eis_drop))
+htn.with.eis <- base_log_scale %>% select(-colnames(htn.with.eis_drop))
+# HYPERTENSION WITH TG
+htn.with.tg_keep = read_excel(f,sheet = "HTN CPH base+TG")
+htn.with.tg_keep <- arrange(htn.with.tg_keep,adj.p.value)
+htn.with.tg_drop <- htn.with.tg_keep[101:nrow(htn.with.tg_keep),"AptName"]
+rownames(htn.with.tg_drop) <- htn.with.tg_drop$AptName
+htn.with.tg_drop <- as.data.frame(t(htn.with.tg_drop))
+htn.with.tg <- base_log_scale %>% select(-colnames(htn.with.tg_drop))
+
+set.seed(3654)
+source("~/Documents/Github/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/easy_elasticnet.R")
+
+concordance_df_htn <- NULL
+
+```
+
+# HTN without SBP
+
+## Elastic net with 10-fold cross-validation
+
+```{r, include=FALSE, comment=""}
+htn_nozero <- htn[!htn$DAYSTOHTN == 0,]
+seq <- is_seq(names(htn))
+
+htn_select = easy_elasticnet(data = htn_nozero,outcome = "HTN",
+                           predictors = htn_nozero[,seq], out = "min.error",
+                           model_type = "cox",time = "DAYSTOHTN", cv_method="kfold", folds = 10)
+retained_vars = analytes[analytes$AptName %in% htn_select, c("Target","TargetFullName")]
+
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn_select,collapse = "+")))
+mod = coxph(formula = form,data = htn_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Proteins",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Model with proteins selected by elastic net and covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn_select,collapse = "+"),paste0("+AGEBASE+sex_char+racedesc+HbA1c")))
+mod = coxph(formula = form,data = htn_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf[1:(nrow(moddf)-6),]$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Proteins + covariates (age, sex, race, HbA1c)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Model with only covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~AGEBASE+sex_char+racedesc+HbA1c"))
+mod = coxph(formula = form,data = htn_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Covariates (age, sex, race, HbA1c)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+# HTN with UACR
+
+## Elastic net with 10-fold cross-validation
+
+```{r, include=FALSE, comment=""}
+htn.with.uacr_nozero <- htn.with.uacr[!htn.with.uacr$DAYSTOHTN == 0,]
+seq <- is_seq(names(htn.with.uacr))
+
+htn.with.uacr_select = easy_elasticnet(data = htn.with.uacr_nozero,outcome = "HTN",
+                           predictors = htn.with.uacr_nozero[,seq], out = "min.error",
+                           model_type = "cox",time = "DAYSTOHTN", cv_method="kfold", folds = 10)
+retained_vars = analytes[analytes$AptName %in% htn.with.uacr_select, c("Target","TargetFullName")]
+
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn.with.uacr_select,collapse = "+")))
+mod = coxph(formula = form,data = htn.with.uacr_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+#concordance_df_htn <- as.data.frame(cbind("Hypertension","Proteins",mod$concordance[[6]], mod$concordance[[7]]))
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Model with proteins selected by elastic net and covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn.with.uacr_select,collapse = "+"),paste0("+AGEBASE+sex_char+racedesc+HbA1c+UAlbCreat")))
+mod = coxph(formula = form,data = htn.with.uacr_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf[1:(nrow(moddf)-7),]$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Proteins + covariates (age, sex, race, HbA1c, UACR)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Model with only covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~AGEBASE+sex_char+racedesc+HbA1c+UAlbCreat"))
+mod = coxph(formula = form,data = htn.with.uacr_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Covariates (age, sex, race, HbA1c, UACR)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+# HTN with eGFR
+
+## Elastic net with 10-fold cross-validation
+
+```{r, include=FALSE, comment=""}
+htn.with.egfr_nozero <- htn.with.egfr[!htn.with.egfr$DAYSTOHTN == 0,]
+seq <- is_seq(names(htn.with.egfr))
+
+htn.with.egfr_select = easy_elasticnet(data = htn.with.egfr_nozero,outcome = "HTN",
+                           predictors = htn.with.egfr_nozero[,seq], out = "min.error",
+                           model_type = "cox",time = "DAYSTOHTN", cv_method="kfold", folds = 10)
+retained_vars = analytes[analytes$AptName %in% htn.with.egfr_select, c("Target","TargetFullName")]
+
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn.with.egfr_select,collapse = "+")))
+mod = coxph(formula = form,data = htn.with.egfr_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+#concordance_df_htn <- as.data.frame(cbind("Hypertension","Proteins",mod$concordance[[6]], mod$concordance[[7]]))
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Model with proteins selected by elastic net and covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn.with.egfr_select,collapse = "+"),paste0("+AGEBASE+sex_char+racedesc+HbA1c+EstCreatClear")))
+mod = coxph(formula = form,data = htn.with.egfr_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf[1:(nrow(moddf)-7),]$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Proteins + covariates (age, sex, race, HbA1c, eGFR)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Model with only covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~AGEBASE+sex_char+racedesc+HbA1c+EstCreatClear"))
+mod = coxph(formula = form,data = htn.with.egfr_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Covariates (age, sex, race, HbA1c, eGFR)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+# HTN with BMI
+
+## Elastic net with 10-fold cross-validation
+
+```{r, include=FALSE, comment=""}
+htn.with.bmi_nozero <- htn.with.bmi[!htn.with.bmi$DAYSTOHTN == 0,]
+seq <- is_seq(names(htn.with.bmi))
+
+htn.with.bmi_select = easy_elasticnet(data = htn.with.bmi_nozero,outcome = "HTN",
+                           predictors = htn.with.bmi_nozero[,seq], out = "min.error",
+                           model_type = "cox",time = "DAYSTOHTN", cv_method="kfold", folds = 10)
+retained_vars = analytes[analytes$AptName %in% htn.with.bmi_select, c("Target","TargetFullName")]
+
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn.with.bmi_select,collapse = "+")))
+mod = coxph(formula = form,data = htn.with.bmi_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+#concordance_df_htn <- as.data.frame(cbind("Hypertension","Proteins",mod$concordance[[6]], mod$concordance[[7]]))
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Model with proteins selected by elastic net and covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn.with.bmi_select,collapse = "+"),paste0("+AGEBASE+sex_char+racedesc+HbA1c+bmi")))
+mod = coxph(formula = form,data = htn.with.bmi_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf[1:(nrow(moddf)-7),]$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Proteins + covariates (age, sex, race, HbA1c, bmi)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Model with only covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~AGEBASE+sex_char+racedesc+HbA1c+bmi"))
+mod = coxph(formula = form,data = htn.with.bmi_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Covariates (age, sex, race, HbA1c, bmi)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+# HTN with eIS
+
+## Elastic net with 10-fold cross-validation
+
+```{r, include=FALSE, comment=""}
+htn.with.eIS_nozero <- htn.with.eis[!htn.with.eis$DAYSTOHTN == 0,]
+seq <- is_seq(names(htn.with.eis))
+
+htn.with.eIS_select = easy_elasticnet(data = htn.with.eIS_nozero,outcome = "HTN",
+                           predictors = htn.with.eIS_nozero[,seq], out = "min.error",
+                           model_type = "cox",time = "DAYSTOHTN", cv_method="kfold", folds = 10)
+retained_vars = analytes[analytes$AptName %in% htn.with.eIS_select, c("Target","TargetFullName")]
+
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn.with.eIS_select,collapse = "+")))
+mod = coxph(formula = form,data = htn.with.eIS_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+#concordance_df_htn <- as.data.frame(cbind("Hypertension","Proteins",mod$concordance[[6]], mod$concordance[[7]]))
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Model with proteins selected by elastic net and covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn.with.eIS_select,collapse = "+"),paste0("+AGEBASE+sex_char+racedesc+HbA1c+si_1_ins0")))
+mod = coxph(formula = form,data = htn.with.eIS_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf[1:(nrow(moddf)-7),]$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Proteins + covariates (age, sex, race, HbA1c, eIS)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Model with only covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~AGEBASE+sex_char+racedesc+HbA1c+si_1_ins0"))
+mod = coxph(formula = form,data = htn.with.eIS_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Covariates (age, sex, race, HbA1c, eIS)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+# HTN with TG
+
+## Elastic net with 10-fold cross-validation
+
+```{r, include=FALSE, comment=""}
+htn.with.tg_nozero <- htn.with.tg[!htn.with.tg$DAYSTOHTN == 0,]
+seq <- is_seq(names(htn.with.tg))
+
+htn.with.tg_select = easy_elasticnet(data = htn.with.tg_nozero,outcome = "HTN",
+                           predictors = htn.with.tg_nozero[,seq], out = "min.error",
+                           model_type = "cox",time = "DAYSTOHTN", cv_method="kfold", folds = 10)
+retained_vars = analytes[analytes$AptName %in% htn.with.tg_select, c("Target","TargetFullName")]
+
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn.with.tg_select,collapse = "+")))
+mod = coxph(formula = form,data = htn.with.tg_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+#concordance_df_htn <- as.data.frame(cbind("Hypertension","Proteins",mod$concordance[[6]], mod$concordance[[7]]))
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Model with proteins selected by elastic net and covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn.with.tg_select,collapse = "+"),paste0("+AGEBASE+sex_char+racedesc+HbA1c+log_trig")))
+mod = coxph(formula = form,data = htn.with.tg_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf[1:(nrow(moddf)-7),]$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Proteins + covariates (age, sex, race, HbA1c, log_trig)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Model with only covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~AGEBASE+sex_char+racedesc+HbA1c+log_trig"))
+mod = coxph(formula = form,data = htn.with.tg_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Covariates (age, sex, race, HbA1c, log_trig)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+# Fully adjusted model
+
+## Elastic net with 10-fold cross-validation
+
+```{r, include=FALSE, comment=""}
+htn.with.tg_nozero <- htn.with.tg[!htn.with.tg$DAYSTOHTN == 0,]
+seq <- is_seq(names(htn.with.tg))
+
+htn.with.tg_select = easy_elasticnet(data = htn.with.tg_nozero,outcome = "HTN",
+                           predictors = htn.with.tg_nozero[,seq], out = "min.error",
+                           model_type = "cox",time = "DAYSTOHTN", cv_method="kfold", folds = 10)
+retained_vars = analytes[analytes$AptName %in% htn.with.tg_select, c("Target","TargetFullName")]
+
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn.with.tg_select,collapse = "+")))
+mod = coxph(formula = form,data = htn.with.tg_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+#concordance_df_htn <- as.data.frame(cbind("Hypertension","Proteins",mod$concordance[[6]], mod$concordance[[7]]))
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Model with proteins selected by elastic net and covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~",paste0(htn.with.tg_select,collapse = "+"),paste0("+AGEBASE+sex_char+racedesc+HbA1c+UAlbCreat+EstCreatClear+bmi+si_1_ins0+log_trig")))
+mod = coxph(formula = form,data = htn.with.tg_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf[1:(nrow(moddf)-11),]$term <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Proteins + covariates (Fully adjusted model)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Model with only covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOHTN, HTN)~AGEBASE+sex_char+racedesc+HbA1c+UAlbCreat+EstCreatClear+bmi+si_1_ins0+log_trig"))
+mod = coxph(formula = form,data = htn.with.tg_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Hypertension","Covariates (Fully adjusted model)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_htn <- rbind(concordance_df_htn, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+
+
+# Summary tables and plots
+
+# STOPPED HERE: NEED TO CHECK CODE ABOVE AND MODIFY TABLE CODE BELOW
+
+```{r, include=FALSE, comment=""}
+colnames(concordance_df) <- c("Outcome","Model","Concordance","SE")
+concordance_df$Concordance <- as.numeric(concordance_df$Concordance)
+concordance_df$SE <- as.numeric(concordance_df$SE)
+concordance_df$ci_low <- concordance_df$Concordance - (1.96*concordance_df$SE)
+concordance_df$ci_high <- concordance_df$Concordance + (1.96*concordance_df$SE)
+concordance_df[,c("Concordance","SE","ci_low", "ci_high")] <- round(concordance_df[,c("Concordance","SE","ci_low", "ci_high")],2)
+colnames(concordance_df) <- c("Outcome","Model","Concordance","SE","Lower bound 95% CI","Upper bound 95% CI")
+concordance_df <- rbind(concordance_df[3,],concordance_df[1,],concordance_df[2,],
+                        concordance_df[6,],concordance_df[4,],concordance_df[5,],
+                        concordance_df[9,],concordance_df[7,],concordance_df[8,])
+
+colnames(concordance_df_htn) <- c("Outcome","Model","Concordance","SE")
+concordance_df_htn$Concordance <- as.numeric(concordance_df_htn$Concordance)
+concordance_df_htn$SE <- as.numeric(concordance_df_htn$SE)
+concordance_df_htn$ci_low <- concordance_df_htn$Concordance - (1.96*concordance_df_htn$SE)
+concordance_df_htn$ci_high <- concordance_df_htn$Concordance + (1.96*concordance_df_htn$SE)
+concordance_df_htn[,c("Concordance","SE","ci_low", "ci_high")] <- round(concordance_df_htn[,c("Concordance","SE","ci_low", "ci_high")],2)
+colnames(concordance_df_htn) <- c("Outcome","Model","Concordance","SE","Lower bound 95% CI","Upper bound 95% CI")
+concordance_df_htn <- rbind(concordance_df_htn[5,],concordance_df_htn[7,],
+                            concordance_df_htn[1,],
+                            concordance_df_htn[4,],concordance_df_htn[6,])
+concordance_df_htn <- concordance_df_htn[,-1]
+colnames(concordance_df_htn) <- c("Model","Concordance","SE","Lower bound 95% CI","Upper bound 95% CI")
+```
+
+```{r, include=TRUE, comment=""}
+#forester(left_side_data = concordance_df, estimate = concordance_df$Concordance, 
+#         ci_low = concordance_df$`Lower bound 95% CI`, ci_high = concordance_df$`Upper bound 95% CI`, xlim=c(0,1),
+#         file_path = "/Volumes/PEDS/PEDS/RI Biostatistics Core/Shared/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/forest_plot_elastic_net.png")
+
+#forester(left_side_data = concordance_df_htn, estimate = concordance_df_htn$Concordance, 
+#         ci_low = concordance_df_htn$`Lower bound 95% CI`, ci_high = concordance_df_htn$`Upper bound 95% CI`, xlim=c(0,1),
+#         add_plot_width = 1.5,
+#         file_path = "/Volumes/PEDS/PEDS/RI Biostatistics Core/Shared/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/forest_plot_elastic_net_htn.png")
+
+# use forestploter package which is more customizable
+
+# DKD forest plot
+concordance_df_for_plot <- concordance_df
+concordance_df_for_plot$` ` <- paste(rep(" ", 40), collapse = " ")
+concordance_df_for_plot$`Concordance (95% CI)` <- sprintf("%.2f (%.2f to %.2f)",
+                                     concordance_df_for_plot$Concordance, concordance_df_for_plot$`Lower bound 95% CI`, concordance_df_for_plot$`Upper bound 95% CI`)
+p <- forest(concordance_df_for_plot[, c(1:2, 7:8)], est = concordance_df_for_plot$Concordance, lower = concordance_df_for_plot$`Lower bound 95% CI`,
+       upper = concordance_df_for_plot$`Upper bound 95% CI`, ci_column = 3, xlim = c(0,1))
+#p$widths <- unit(c(1,100,50,50), "mm")
+png('/Volumes/PEDS/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/forest_plot_elastic_net_DKD_sex_BMI.png', res = 300, width = 9, height = 3, units = "in")
+p
+dev.off()
+png('/Users/pylell/Dropbox/TODAY HTN and DKD output/forest_plot_elastic_net_DKD_sex_BMI.png', res = 300, width = 9, height = 3, units = "in")
+p
+dev.off()
+
+
+# HTN forest plot
+concordance_df_htn_for_plot <- concordance_df_htn
+concordance_df_htn_for_plot$` ` <- paste(rep(" ", 40), collapse = " ")
+concordance_df_htn_for_plot$`Concordance (95% CI)` <- sprintf("%.2f (%.2f to %.2f)",
+                                     concordance_df_htn_for_plot$Concordance, concordance_df_htn_for_plot$`Lower bound 95% CI`, concordance_df_htn_for_plot$`Upper bound 95% CI`)
+p <- forest(concordance_df_htn_for_plot[, c(1, 6:7)], est = concordance_df_htn_for_plot$Concordance, lower = concordance_df_htn_for_plot$`Lower bound 95% CI`,
+       upper = concordance_df_htn_for_plot$`Upper bound 95% CI`, ci_column = 2, xlim = c(0,1))
+p$widths <- unit(c(1,100,50,50), "mm")
+png('/Volumes/PEDS/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/forest_plot_elastic_net_htn_sex_BMI.png', res = 300, width = 9, height = 3, units = "in")
+p
+dev.off()
+png('/Users/pylell/Dropbox/TODAY HTN and DKD output/forest_plot_elastic_net_htn_sex_BMI.png', res = 300, width = 9, height = 3, units = "in")
+p
+dev.off()
+```
+
+
