@@ -38,7 +38,7 @@ top_rapid <- top_rapid_df %>%
   filter(adj.p.value <= 0.05) %>%
   slice_max(abs(log(estimate)), n = 5) %>%
   pull(AptName)
-top_htn_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection without A1c.xlsx", sheet = "HTN CPH base")
+top_htn_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection.xlsx", sheet = "HTN CPH base")
 de_genes_htn <- top_htn_df[top_htn_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_htn <- setNames(de_genes_htn$estimate, de_genes_htn$EntrezGeneID)
 top_htn <- top_htn_df %>%
@@ -47,35 +47,35 @@ top_htn <- top_htn_df %>%
                        "STA10","Secretoglobin family 3A member 1","sICAM-5")) %>%
   slice_max(abs(log(estimate)), n = 20) %>%
   pull(AptName)
-top_htn_uacr_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection without A1c.xlsx", sheet = "HTN CPH base+UACR")
+top_htn_uacr_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection.xlsx", sheet = "HTN CPH base+UACR")
 de_genes_htn_uacr <- top_htn_uacr_df[top_htn_uacr_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_htn_uacr <- setNames(de_genes_htn_uacr$estimate, de_genes_htn_uacr$EntrezGeneID)
 top_htn_uacr <- top_htn_uacr_df %>%
   filter(adj.p.value <= 0.05) %>%
   slice_max(abs(log(estimate)), n = 5) %>%
   pull(AptName)
-top_htn_egfr_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection without A1c.xlsx", sheet = "HTN CPH base+eGFR")
+top_htn_egfr_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection.xlsx", sheet = "HTN CPH base+eGFR")
 de_genes_htn_egfr <- top_htn_egfr_df[top_htn_egfr_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_htn_egfr <- setNames(de_genes_htn_egfr$estimate, de_genes_htn_egfr$EntrezGeneID)
 top_htn_egfr <- top_htn_egfr_df %>%
   filter(adj.p.value <= 0.05) %>%
   slice_max(abs(log(estimate)), n = 5) %>%
   pull(AptName)
-top_htn_bmi_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection without A1c.xlsx", sheet = "HTN CPH base+eIS")
+top_htn_bmi_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection.xlsx", sheet = "HTN CPH base+eIS")
 de_genes_htn_bmi <- top_htn_bmi_df[top_htn_bmi_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_htn_bmi <- setNames(de_genes_htn_bmi$estimate, de_genes_htn_bmi$EntrezGeneID)
 top_htn_bmi <- top_htn_bmi_df %>%
   filter(adj.p.value <= 0.05) %>%
   slice_max(abs(log(estimate)), n = 5) %>%
   pull(AptName)
-top_htn_eis_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection without A1c.xlsx", sheet = "HTN CPH base+eGFR")
+top_htn_eis_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection.xlsx", sheet = "HTN CPH base+eGFR")
 de_genes_htn_eis <- top_htn_eis_df[top_htn_eis_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_htn_eis <- setNames(de_genes_htn_eis$estimate, de_genes_htn_eis$EntrezGeneID)
 top_htn_eis <- top_htn_eis_df %>%
   filter(adj.p.value <= 0.05) %>%
   slice_max(abs(log(estimate)), n = 5) %>%
   pull(AptName)
-top_htn_tg_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection without A1c.xlsx", sheet = "HTN CPH base+eGFR")
+top_htn_tg_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection.xlsx", sheet = "HTN CPH base+eGFR")
 de_genes_htn_tg <- top_htn_tg_df[top_htn_tg_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_htn_tg <- setNames(de_genes_htn_tg$estimate, de_genes_htn_tg$EntrezGeneID)
 top_htn_tg <- top_htn_tg_df %>%
