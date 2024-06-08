@@ -1,0 +1,224 @@
+---
+title: "Proteomics and DKD - TODAY Pathway Analyses"
+author: "Laura Pyle, Ye Ji Choi & Tim Vigers"
+date: "today"
+date-format: long
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
+    code-fold: true
+    self-contained: true
+    fig-cap-location: top
+    page-layout: full
+editor: source
+execute:
+  echo: false
+  message: false
+---
+
+```{r libraries}
+#| include: false
+library(tidyverse)
+library(ggrepel)
+library(clusterProfiler)
+library(ReactomePA)
+library(patchwork)
+library(FDRestimation)
+```
+
+```{r data import}
+#| include: false
+# source("~/GitHub/CHCO-Code/Petter Bjornstad/Proteomics and DKD/create_today_dkd_analysis_dataset.R")
+load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Data_Cleaned/analysis_dataset.RData")
+
+```
+
+```{r functions}
+# Volcano plot
+volcano <- function(data, lab = "Target", xcol = "estimate", ycol = "p.value",
+                    top = 11,
+                    xlimit = c(-1, 1), ylimit = c(0, -log10(10e-7)),
+                    xlabel = "HR", pCutoff = 0.05, overlaps = 50,
+                    log_t = F) {
+  data <- as.data.frame(data)
+  t <- data[data[, "adj.p.value"] <= pCutoff, ]
+  if (log_t) {
+    t <- t[order(abs(log(t[, ycol])), decreasing = F), ]
+  } else {
+    t <- t[order(abs(t[, ycol]), decreasing = F), ]
+  }
+  data$top <- data[, "AptName"] %in% t[1:top, "AptName"]
+  #data$top <- data[, "AptName"] %in% t[t$Target %in% top, "AptName"]
+  data$logp <- -log10(data[, ycol])
+  data$fc <- data[, xcol]
+  data$sig <- data[, ycol] <= pCutoff
+  p <- ggplot(data = data, aes(x = fc, y = logp, color = sig)) +
+    geom_hline(yintercept = -log10(pCutoff), linetype = "dashed") +
+    geom_point(size = 2) +
+    geom_label_repel(
+      data = data[data$top, ], aes(label = Target), color = "black",
+      max.overlaps = overlaps
+    ) +
+    scale_color_manual(values = c("grey", "#3e6dbf")) +
+    xlab(xlabel) +
+    ylab(bquote(~ -Log[10] ~ italic(P))) +
+    theme_bw() +
+    theme(legend.position = "none")
+  return(p)
+}
+
+volcano_htn <- function(data, lab = "Target", xcol = "estimate", ycol = "p.value",
+                    top = c("WFKN2","SEZ6L","SCG3","PSA","LSAMP","H6ST3","T132B","Nr-CAM","PEDF","IGLO5",
+                            "PSB3","Myosin light chain 1","PCD10:ECD","UNC5H4","TLR5","SLIK1","PSPC1",
+                            "STA10","Secretoglobin family 3A member 1","sICAM-5"),
+                    xlimit = c(-1, 1), ylimit = c(0, -log10(10e-7)),
+                    xlabel = "HR", pCutoff = 0.05, overlaps = 20,
+                    log_t = F) {
+  data <- as.data.frame(data)
+  t <- data[data[, "adj.p.value"] <= pCutoff, ]
+  if (log_t) {
+    t <- t[order(abs(log(t[, xcol])), decreasing = T), ]
+  } else {
+    t <- t[order(abs(t[, xcol]), decreasing = T), ]
+  }
+#  data$top <- data[, "AptName"] %in% t[top %in% t$Target, "AptName"]
+  data$top <- data[, "AptName"] %in% t[t$Target %in% top, "AptName"]
+  data$logp <- -log10(data[, ycol])
+  data$fc <- data[, xcol]
+  data$sig <- data[, ycol] <= pCutoff
+  p <- ggplot(data = data, aes(x = fc, y = logp, color = sig)) +
+   # geom_hline(yintercept = -log10(pCutoff), linetype = "dashed") +
+    geom_point(size = 2) +
+    geom_label_repel(
+      data = data[data$top, ], aes(label = Target), color = "black",
+      max.overlaps = Inf,
+      position = position_nudge_repel(x = 0.0, y = 0.3)
+    ) +
+    scale_color_manual(values = c("grey", "#3e6dbf")) +
+    xlab(xlabel) +
+    ylab(bquote(~ -Log[10] ~ italic(P))) +
+    theme_bw() +
+    theme(legend.position = "none") + theme(plot.margin = unit(c(1,1,1,1), "cm"))
+  return(p)
+}
+# GSEA
+pathway_analysis <- function(de_genes) {
+  # Log transform if necessary
+  if (!any(de_genes < 0)) {
+    de_genes <- log(de_genes)
+  }
+  de_genes <- sort(de_genes, decreasing = T)
+  de_genes <- de_genes[!duplicated(names(de_genes))]
+  gsea <- gsePathway(de_genes, pvalueCutoff = 1, minGSSize = 4)
+  dot <- dotplot(gsea)
+  # Return
+  return(dot)
+}
+# Function for comparing two gene lists
+# de_gene_list is a named list of multiple gene sets
+pathway_comparison <- function(de_gene_list) {
+  # Log transform if necessary
+  de_gene_list <- lapply(de_gene_list, function(l) {
+    if (!any(l < 0)) {
+      l <- log(l)
+    }
+    return(l)
+  })
+  de_gene_list <- lapply(names(de_gene_list), function(t) {
+    d <- de_gene_list[[t]]
+    d <- d[!is.na(names(d))]
+    d <- d[!duplicated(names(d))]
+    d <- sort(d, decreasing = T)
+    return(d)
+  })
+  baseline <- gsePathway(de_gene_list[[1]], pvalueCutoff = 1, nPermSimple = 10000, minGSSize = 4)
+  followup <- gsePathway(de_gene_list[[2]], pvalueCutoff = 1, nPermSimple = 10000, minGSSize = 4)
+  # Just put the two plots side by side since the compareCluster() function isn't
+  # working
+  b_plot <- dotplot(baseline) + ggtitle("Baseline") + theme(plot.title = element_text(hjust = 0.5))
+  f_plot <- dotplot(followup) + ggtitle("Year 10 Followup") + theme(plot.title = element_text(hjust = 0.5))
+  p <- b_plot + f_plot
+  # Return
+  return(p)
+}
+```
+
+# TODAY pathway analysis
+
+## HTN
+
+The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension were: `r toString(analytes$TargetFullName[match(top_htn,analytes$AptName)])` (associated with genes `r toString(analytes$EntrezGeneSymbol[match(top_htn,analytes$AptName)])`, respectively).
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+# determine q-value cutoff for hypertension
+#v_htn <- volcano_htn(top_htn_df, pCutoff =  0.000361568)
+v_htn <- volcano_htn(top_htn_df, pCutoff = 0.001310012)
+# can remove hline and force a line to be drawn but it overlaps a text box
+v_htn <- v_htn + geom_hline(yintercept = -log10(0.001310012), linetype = "dashed")
+v_htn <- v_htn +
+  ggtitle("Hypertension") +
+  theme(plot.title = element_text(hjust = 0.5))
+v_htn
+ggsave(
+  filename = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Figures/HTN_volcano_new_covariates_1600x900.jpeg", plot = v_htn,
+  width = 1600, height = 900, units = "px", scale = 2
+)
+ggsave(
+  filename = "/Users/pylell/Dropbox/TODAY HTN and DKD output/HTN_volcano_new_covariates_1600x900.jpeg", plot = v_htn,
+  width = 1600, height = 900, units = "px", scale = 2
+)
+
+```
+
+## HTN with UACR
+
+The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension (with UACR) were: `r toString(analytes$TargetFullName[match(top_htn_uacr,analytes$AptName)])` (associated with genes `r toString(analytes$EntrezGeneSymbol[match(top_htn_uacr,analytes$AptName)])`, respectively).
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+v_htn_uacr <- volcano(top_htn_uacr_df, pCutoff = 0.0000642962597594498)
+v_htn_uacr <- v_htn_uacr + geom_hline(yintercept = -log10(0.0000642962597594498), linetype = "dashed")
+v_htn_uacr <- v_htn_uacr +
+  ggtitle("Hypertension (with UACR)") +
+  theme(plot.title = element_text(hjust = 0.5))
+v_htn_uacr
+ggsave(
+  filename = "/Users/pylell/Dropbox/TODAY HTN and DKD output/HTN_with_uacr_volcano_new_covariates_1600x900.jpeg", plot = v_htn_uacr,
+  width = 1600, height = 900, units = "px", scale = 2
+)
+```
+
+## HTN with eGFR
+
+The proteins with the largest absolute effect size and adjusted p value $\leq 0.05$ for hypertension (with eGFR) were: `r toString(analytes$TargetFullName[match(top_htn_egfr,analytes$AptName)])` (associated with genes `r toString(analytes$EntrezGeneSymbol[match(top_htn_egfr,analytes$AptName)])`, respectively).
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+v_htn_egfr <- volcano(top_htn_egfr_df, pCutoff = 0.0000059632)
+v_htn_egfr <- v_htn_egfr + geom_hline(yintercept = -log10(0.0000059632), linetype = "dashed")
+v_htn_egfr <- v_htn_egfr +
+  ggtitle("Hypertension (with eGFR)") +
+  theme(plot.title = element_text(hjust = 0.5))
+v_htn_egfr
+ggsave(
+  filename = "/Users/pylell/Dropbox/TODAY HTN and DKD output/HTN_with_eGFR_volcano_new_covariates_1600x900.jpeg", plot = v_htn_egfr,
+  width = 1600, height = 900, units = "px", scale = 2
+)
+```
+
+# Figure 2
+
+```{r message=FALSE,warning=FALSE,dpi=1200}
+#fig1 <- (v_mic + v_mac ) / (v_rapid + v_hyp + plot_spacer())
+#fig1 <- (v_mic.or.mac + v_rapid ) / (plot_spacer() + v_hyp + plot_spacer())
+layout <- "
+AABB
+#CC#
+"
+#fig1 <- v_mic.or.mac + v_hyp + v_rapid + plot_layout(design=layout)
+#ggsave("/Users/pylell/Dropbox/TODAY HTN and DKD output/Figure_2_new_covariates_1200x900.jpeg",
+#  units = "px",
+#  width = 1600, height = 1200, scale = 2, plot = fig1, device = "jpeg"
+#)
+#fig1
+```
