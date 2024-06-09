@@ -52,3 +52,13 @@ png('/Volumes/PEDS/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds 
 p
 dev.off()
 
+htn <- read_xls("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/IPA/Output from IPA/HTN.xls",
+                  skip = 1)
+htn <- htn %>% arrange(desc("-log(p-value)")) 
+#htn_keep <- htn[htn$`-log(p-value)` > 1.3,]
+htn_keep <- htn[1:20,]
+htn_plot <- ipa_plot(htn_keep)
+png('/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/IPA/Output from IPA/TODAY_HTN_IPA_pathway.png', 
+    res = 600, width = 15, height = 6, units = "in")
+htn_plot
+dev.off()
