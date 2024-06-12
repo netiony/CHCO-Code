@@ -142,7 +142,7 @@ de_genes_glyc_a1c_10 <- setNames(de_genes_glyc_a1c_10$logFC, de_genes_glyc_a1c_1
 df <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/soma_harmonized_dataset.csv", na.strings = "")
 df <- df %>%
   filter(
-    study %in% c("IMPROVE", "RENAL-HEIR"),
+    study %in% c("IMPROVE", "RENAL-HEIR","RENAL-HEIRitage"),
     !grepl("IT2D", co_enroll_id), participation_status == "Participated"
   ) %>%
 #%>%
