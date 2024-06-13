@@ -41,6 +41,9 @@ if(Sys.info()["sysname"] == "Windows"){
   home_dir = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
 }
 knitr::opts_knit$set(root.dir = home_dir)
+
+set.seed(3654)
+source("~/Documents/Github/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/easy_elasticnet.R")
 ```
 
 ```{r, include=FALSE}
@@ -95,13 +98,22 @@ no_var = caret::nearZeroVar(base[,seq])
 # log transform
 base_log <- base %>% modify_if(is_seq(names(.)), log)
 
-# will log transform but not scale - there is a scale option in the mixOmics function
 # scale by SD
-#base_log_scale <- base_log
-#predictors <- colnames(base_log[seq])
-#for (i in 1:length(predictors)) {
-#  base_log_scale[,paste0(predictors[i])] <- base_log_scale[,paste0(predictors[i])]/sd(unlist(base_log[,paste0(predictors[i])]))
-#}
+base_log_scale <- base_log
+predictors <- colnames(base_log[seq])
+for (i in 1:length(predictors)) {
+  base_log_scale[,paste0(predictors[i])] <- base_log_scale[,paste0(predictors[i])]/sd(unlist(base_log[,paste0(predictors[i])]))
+}
+
+# filter to top 100 proteins by effect size
+f = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx"
+# MIC.OR.MIC
+mic.or.mac_keep = read_excel(f,sheet = "MIC.OR.MAC CPH")
+mic.or.mac_keep <- arrange(mic.or.mac_keep,adj.p.value)
+mic.or.mac_drop <- mic.or.mac_keep[101:nrow(mic.or.mac_keep),"AptName"]
+rownames(mic.or.mac_drop) <- mic.or.mac_drop$AptName
+mic.or.mac_drop <- as.data.frame(t(mic.or.mac_drop))
+mic.or.mac <- base_log_scale %>% select(-colnames(mic.or.mac_drop))
 
 # read in urine metabolomics
 load("./Metabolomic data/urine.Rdata")
@@ -133,15 +145,22 @@ plasma_final <- plasma_final %>% arrange(releaseid)
 comorb <- comorb %>% arrange(releaseid)
 proteins <- base_log %>% arrange(releaseid)
 proteins <- cbind(base_log$releaseid, base_log[,seq])
+colnames(proteins) <- c("releaseid",colnames(proteins[,2:ncol(proteins)]))
+
+# make df with all omics variables for elastic net
+df_elastic_net <- left_join(comorb, proteins, by = "releaseid")
+df_elastic_net <- left_join(df_elastic_net, urine_final, by = "releaseid")
+df_elastic_net <- left_join(df_elastic_net, plasma_final, by = "releaseid")
 urine_final$releaseid <- NULL
 plasma_final$releaseid <- NULL
-proteins$`base_log$releaseid` <- NULL
+proteins$releaseid <- NULL
 
 # store predictor data in lists
 X <- list(proteins = proteins, urine_metabolites = urine_final, plasma_metabolites = plasma_final)
 # store outcome data as Y
 Y_albuminuria <- comorb$MIC.OR.MAC
 Y_glycemia <- comorb$GLYC
+
 
 ```
 
@@ -175,7 +194,7 @@ diag(design) <- 0
 diablo.albuminuria.comp <- block.plsda(X, Y_albuminuria, near.zero.var = TRUE, ncomp = 5, design = design)
 perf.diablo.albuminuria.comp <- perf(diablo.albuminuria.comp, validation = "Mfold", folds = 5, nrepeat = 5)
 plot(perf.diablo.albuminuria.comp)
-# 2 components seems sufficient
+# 2 components seems sufficient, although 3 is better
 
 # output optimal number of components according to prediction distance and type of error rate
 perf.diablo.albuminuria.comp$choice.ncomp$WeightedVote
@@ -271,7 +290,6 @@ perf.diablo.glycemia.comp$choice.ncomp$WeightedVote
 ncomp <- perf.diablo.glycemia.comp$choice.ncomp$WeightedVote["Overall.ER", "mahalanobis.dist"]
 
 # choose optimal number of variables in each dataset
-set.seed(3654)
 test.keepX <- list(proteins = c(1:9, seq(10, 100, 5)),
                    urine_metabolites = c(1:9, seq(10, 25, 5)),
                     urine_metabolites = c(1:9, seq(10, 25, 5)))
@@ -419,11 +437,36 @@ mod_alb <- coxph(data = factors_mat,
                Factor12+Factor13+Factor14+Factor15)
 tidymod_alb <- tidy(mod_alb, exponentiate=TRUE, conf.int = TRUE)
 
-# turn factors_df into wide df
-# add survival outcomes to the df and perform Cox model and get C-statistic
-# do we need actual patient IDs in factors df or is it sufficient they are in the same order?
 # can we relabel the variables as the target names?
 
 ```
 
 # Elastic net on combined dataset
+
+# Albuminuria
+
+```{r}
+alb_nozero <- df_elastic_net[!df_elastic_net$DAYSTOMIC.OR.MAC == 0,]
+preds <- c(colnames(proteins), colnames(urine_final), colnames(plasma_final))
+
+alb_select = easy_elasticnet(data = alb_nozero,outcome = "MIC.OR.MAC",
+                           predictors = alb_nozero[,preds], out = "min.error",
+                           model_type = "cox",time = "DAYSTOMIC.OR.MAC", cv_method="kfold", folds = 10)
+# this won't work for metabolites
+retained_vars = analytes[analytes$AptName %in% alb_select, c("Target","TargetFullName")]
+
+# testing
+alb_select = easy_elasticnet(data = alb_nozero,outcome = "MIC.OR.MAC",
+                           predictors = alb_nozero[colnames(alb_nozero) %in% preds], out = "1se.error",
+                           model_type = "cox",time = "DAYSTOMIC.OR.MAC", cv_method="kfold", folds = 10)
+# this won't work for metabolites
+retained_vars = analytes[analytes$AptName %in% alb_select, c("Target","TargetFullName")]
+
+# maybe need to do some kind of filtering within each layer???
+```
+
+# Glycemia
+
+```{r}
+
+```
