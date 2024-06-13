@@ -66,7 +66,7 @@ dev.off()
 glyc <- read_xls("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/IPA/Output from IPA/GLYC.xls",
                 skip = 1)
 glyc <- glyc %>% arrange(desc("-log(p-value)")) 
-glyc_keep <- glyc[1:25,]
+glyc_keep <- glyc[1:30,]
 glyc_plot <- ipa_plot(glyc_keep)
 png('/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/IPA/Output from IPA/TODAY_GLYC_IPA_pathway.png', 
     res = 600, width = 15, height = 6, units = "in")
