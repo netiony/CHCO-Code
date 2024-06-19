@@ -30,6 +30,7 @@ library(mixOmics)
 library(data.table)
 library(MOFA2)
 library(readxl)
+library(stringr)
 
 knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
 
@@ -42,6 +43,8 @@ if(Sys.info()["sysname"] == "Windows"){
   home_dir = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
 }
 knitr::opts_knit$set(root.dir = home_dir)
+
+home_dir = "/Users/pylell/Documents/Downtime/TODAY/Data"
 
 set.seed(3654)
 source("~/Documents/Github/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/easy_elasticnet.R")
@@ -108,7 +111,9 @@ for (i in 1:length(predictors)) {
 
 # filter to top 100 proteins by effect size
 # first, will try without doing any filtering on metabolites
-f = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx"
+#f = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY #subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx"
+f = "/Users/pylell/Documents/Downtime/TODAY/Data/TODAY somalogic Cox models scaled baseline adjusted.xlsx"
+
 # MIC.OR.MIC
 mic.or.mac_keep = read_excel(f,sheet = "MIC.OR.MAC CPH")
 mic.or.mac_keep <- arrange(mic.or.mac_keep,adj.p.value)
@@ -151,6 +156,18 @@ plasma_final <- cbind(plasma$releaseid, plasma[plasma_keep])
 plasma_final[,2:ncol(plasma_final)] <- log(plasma_final[,2:ncol(plasma_final)]) 
 colnames(plasma_final) <- c("releaseid",colnames(plasma_final[,2:ncol(plasma_final)]))
 
+# rename proteins
+palb_temp <- colnames(proteins_alb)
+palb_temp_analytes <- analytes[analytes$AptName %in% palb_temp, c("AptName","Target","TargetFullName")]
+palb_temp_target <- palb_temp_analytes$Target
+palb_temp_target <- make.unique(palb_temp_target)
+colnames(proteins_alb) <- palb_temp_target
+pglyc_temp <- colnames(proteins_glyc)
+pglyc_temp_analytes <- analytes[analytes$AptName %in% pglyc_temp, c("AptName","Target","TargetFullName")]
+pglyc_temp_target <- pglyc_temp_analytes$Target
+pglyc_temp_target <- make.unique(pglyc_temp_target)
+colnames(proteins_glyc) <- pglyc_temp_target
+
 # keep those with complete data
 # there are a few people with metabolomics but not proteomics
 urine_final <- urine_final %>% filter(releaseid %in% base_log$releaseid)
@@ -158,6 +175,8 @@ plasma_final <- plasma_final %>% filter(releaseid %in% base_log$releaseid)
 comorb <- comorb %>% filter(releaseid %in% base_log$releaseid)
 urine_final <- urine_final %>% arrange(releaseid)
 plasma_final <- plasma_final %>% arrange(releaseid)
+colnames(urine_final) <- word(colnames(urine_final),1,sep = "\\.")
+colnames(plasma_final) <- word(colnames(plasma_final),1,sep = "\\.")
 comorb <- comorb %>% arrange(releaseid)
 proteins_alb <- cbind(base_log$releaseid, proteins_alb)
 colnames(proteins_alb) <- c("releaseid",colnames(proteins_alb[,2:ncol(proteins_alb)]))
@@ -184,9 +203,10 @@ proteins_glyc$releaseid <- NULL
 X_albuminuria <- list(proteins = proteins_alb, urine_metabolites = urine_final, plasma_metabolites = plasma_final)
 X_glycemia <- list(proteins = proteins_glyc, urine_metabolites = urine_final, plasma_metabolites = plasma_final)
 # store outcome data as Y
-Y_albuminuria <- comorb$MIC.OR.MAC
-Y_glycemia <- comorb$GLYC
-
+#Y_albuminuria <- comorb$MIC.OR.MAC
+#Y_glycemia <- comorb$GLYC
+Y_albuminuria <- ifelse(comorb$MIC.OR.MAC==1, "Albuminuria", "No albuminuria")
+Y_glycemia <- ifelse(comorb$GLYC==1, "Loss of glycemic control", "No loss of glycemic control")
 
 ```
 
@@ -209,39 +229,39 @@ plotVar(diablo.albuminuria.quick)
 #### Examine number of components to retain
 
 ```{r}
+set.seed(3654)
+
 # Create design matrix - weights of 1 favor extraction of correlation structure,
 # while weights closer to 0 favor prediction
 design_alb <- matrix(0.1, ncol = length(X_albuminuria), nrow = length(X_albuminuria),
                  dimnames = list(names(X_albuminuria), names(X_albuminuria)))
 diag(design_alb) <- 0
-design_glyc <- matrix(0.1, ncol = length(X_glycemia), nrow = length(X_glycemia),
-                 dimnames = list(names(X_glycemia), names(X_glycemia)))
-diag(design_glyc) <- 0
 
 # examine the number of components
 # first fit a model without variable selection
 diablo.albuminuria.comp <- block.plsda(X_albuminuria, Y_albuminuria, near.zero.var = TRUE, ncomp = 5, design = design_alb)
 perf.diablo.albuminuria.comp <- perf(diablo.albuminuria.comp, validation = "Mfold", folds = 5, nrepeat = 5)
 plot(perf.diablo.albuminuria.comp)
-# 2 components seems sufficient, although 3 is better
 
 # output optimal number of components according to prediction distance and type of error rate
 perf.diablo.albuminuria.comp$choice.ncomp$WeightedVote
 ncomp <- perf.diablo.albuminuria.comp$choice.ncomp$WeightedVote["Overall.ER", "max.dist"]
 
 # choose optimal number of variables in each dataset
-set.seed(3654)
 test.keepX <- list(proteins = c(1:9, seq(10, 100, 5)),
-                   urine_metabolites = c(1:9, seq(10, 25, 5)),
-                    urine_metabolites = c(1:9, seq(10, 25, 5)))
-#tune.diablo.albuminuria <- tune.block.splsda(X_albuminuria, Y_albuminuria, ncomp = 2,
+                   urine_metabolites = c(seq(10, 25, 5)),
+                    plasma_metabolites = c(seq(10, 25, 5)))
+#tune.diablo.albuminuria <- tune.block.splsda(X_albuminuria, Y_albuminuria, ncomp = ncomp,
 #                                             test.keepX = test.keepX, design = design_alb,
 #                                             validation = "Mfold", folds = 5, nrepeat = 1,
 #                                             dist = "max.dist", near.zero.var = TRUE)
 #list.keepX <- tune.diablo.albuminuria$choice.keepX
-list.keepX <- list(proteins = c(100,25),
-                   urine_metabolites = c(2,2),
-                    plasma_metabolites = c(1,3))
+list.keepX <- list(proteins = c(95, 45, 20, 10),
+                   urine_metabolites = c(10, 15, 10, 10),
+                    plasma_metabolites = c(10, 15, 20, 10))
+#list.keepX <- list(proteins = c(100),
+#                   urine_metabolites = c(8),
+#                    plasma_metabolites = c(4))
 list.keepX
 
 # final model
@@ -251,25 +271,51 @@ vars.albuminuria.proteins1 <- as.data.frame(selectVar(diablo.albuminuria, block 
 vars.albuminuria.proteins1$AptName <- vars.albuminuria.proteins1$proteins.name
 vars.albuminuria.proteins2 <- as.data.frame(selectVar(diablo.albuminuria, block = "proteins", comp = 2))
 vars.albuminuria.proteins2$AptName <- vars.albuminuria.proteins2$proteins.name
+vars.albuminuria.proteins3 <- as.data.frame(selectVar(diablo.albuminuria, block = "proteins", comp = 3))
+vars.albuminuria.proteins3$AptName <- vars.albuminuria.proteins3$proteins.name
+vars.albuminuria.proteins4 <- as.data.frame(selectVar(diablo.albuminuria, block = "proteins", comp = 4))
+vars.albuminuria.proteins4$AptName <- vars.albuminuria.proteins4$proteins.name
+vars.albuminuria.proteins <- c(vars.albuminuria.proteins1$proteins.name, vars.albuminuria.proteins2$proteins.name, vars.albuminuria.proteins3$proteins.name, vars.albuminuria.proteins4$proteins.name)
+vars.albuminuria.proteins <- unique(vars.albuminuria.proteins)
 seq.to.prot <- analytes %>% dplyr::select(AptName,TargetFullName,Target)
 vars.albuminuria.proteins1 <- merge(vars.albuminuria.proteins1, seq.to.prot, by = "AptName")
 vars.albuminuria.proteins2 <- merge(vars.albuminuria.proteins2, seq.to.prot, by = "AptName")
 vars.albuminuria.urine1 <- as.data.frame(selectVar(diablo.albuminuria, block = "urine_metabolites", comp = 1))
 vars.albuminuria.urine2 <- as.data.frame(selectVar(diablo.albuminuria, block = "urine_metabolites", comp = 2))
+vars.albuminuria.urine3 <- as.data.frame(selectVar(diablo.albuminuria, block = "urine_metabolites", comp = 3))
+vars.albuminuria.urine4 <- as.data.frame(selectVar(diablo.albuminuria, block = "urine_metabolites", comp = 4))
+vars.albuminuria.urine <- c(vars.albuminuria.urine1$urine_metabolites.name, vars.albuminuria.urine2$urine_metabolites.name,
+                            vars.albuminuria.urine3$urine_metabolites.name, vars.albuminuria.urine4$urine_metabolites.name)
+vars.albuminuria.urine <- unique(vars.albuminuria.urine)
 vars.albuminuria.plasma1 <- as.data.frame(selectVar(diablo.albuminuria, block = "plasma_metabolites", comp = 1))
 vars.albuminuria.plasma2 <- as.data.frame(selectVar(diablo.albuminuria, block = "plasma_metabolites", comp = 2))
+vars.albuminuria.plasma3 <- as.data.frame(selectVar(diablo.albuminuria, block = "plasma_metabolites", comp = 3))
+vars.albuminuria.plasma4 <- as.data.frame(selectVar(diablo.albuminuria, block = "plasma_metabolites", comp = 4))
+vars.albuminuria.plasma <- c(vars.albuminuria.plasma1$plasma_metabolites.name, vars.albuminuria.plasma2$plasma_metabolites.name,
+                             vars.albuminuria.plasma3$plasma_metabolites.name, vars.albuminuria.plasma4$plasma_metabolites.name)
+vars.albuminuria.plasma <- unique(vars.albuminuria.plasma)
 
 plotDiablo(diablo.albuminuria, ncomp = 1)
 plotDiablo(diablo.albuminuria, ncomp = 2)
 plotDiablo(diablo.albuminuria, ncomp = 3)
-plotDiablo(diablo.albuminuria, ncomp = 4)
+#plotDiablo(diablo.albuminuria, ncomp = 4)
 plotIndiv(diablo.albuminuria, legend = TRUE, ind.names = FALSE)
 plotVar(diablo.albuminuria, var.names= FALSE, style= 'graphics', 
         legend = TRUE, pch = c(16, 17, 15), cex = c(2,2,2), 
         col= c('darkorchid', 'brown1', 'lightgreen'), title= 'TCGA, DIABLO comp 1 - 2')
-circosPlot(diablo.albuminuria, cutoff = 0.4, line = TRUE, 
-           color.blocks = c('darkorchid','brown1','lightgreen'),
-           color.cor = c("chocolate3",'grey20'), size.labels = 1.5, size.variables = 0.3)
+
+#p <- circosPlot(diablo.albuminuria, comp = 1:4, cutoff = 0.4, line = TRUE, 
+#           color.blocks = c('steelblue','indianred','plum1'),
+#           color.cor = c("violetred",'slategrey'), size.labels = 1.2, size.variables = 0.4,
+#           block.labels.adj = 1)
+#png('/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Multiomics integration/DIABLO/Plots/cim_albuminuria.png')
+#png('./circos_albuminuria.png')
+circosPlot(diablo.albuminuria, comp = 1:4, cutoff = 0.6, line = TRUE, 
+           color.blocks = c('steelblue','indianred','plum1'),
+           color.cor = c("violetred",'slategrey'), size.labels = 1.2, size.variables = 0.4, linkWidth = c(1, 5),
+           block.labels.adj = 1)
+#dev.off()
+
 #network(diablo.albuminuria, blocks = c(1,2,3), cutoff = 0.3,
 #        color.node = c('darkorchid','brown1','lightgreen'),
 #        save = "pdf", name.save = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY #subaward/Multiomics integration/DIABLO/Plots/network_albuminuria.pdf")
@@ -323,16 +369,16 @@ ncomp <- perf.diablo.glycemia.comp$choice.ncomp$WeightedVote["Overall.ER", "maha
 
 # choose optimal number of variables in each dataset
 test.keepX <- list(proteins = c(1:9, seq(10, 100, 5)),
-                   urine_metabolites = c(1:9, seq(10, 25, 5)),
-                    urine_metabolites = c(1:9, seq(10, 25, 5)))
+                   urine_metabolites = c(seq(10, 25, 5)),
+                    plasma_metabolites = c(seq(10, 25, 5)))
 #tune.diablo.glycemia <- tune.block.splsda(X_glycemia, Y_glycemia, ncomp = 2,
 #                                             test.keepX = test.keepX, design = design_glyc,
 #                                             validation = "Mfold", folds = 5, nrepeat = 1,
 #                                             dist = "max.dist", near.zero.var = TRUE)
 #list.keepX <- tune.diablo.glycemia$choice.keepX
-list.keepX <- list(proteins = c(3,25),
-                   urine_metabolites = c(4,3),
-                   plasma_metabolites = c(25,20))
+list.keepX <- list(proteins = c(5,30),
+                   urine_metabolites = c(10,15),
+                   plasma_metabolites = c(20,10))
 list.keepX
 
 # final model
@@ -342,13 +388,19 @@ vars.glycemia.proteins1 <- as.data.frame(selectVar(diablo.glycemia, block = "pro
 vars.glycemia.proteins1$AptName <- vars.glycemia.proteins1$proteins.name
 vars.glycemia.proteins2 <- as.data.frame(selectVar(diablo.glycemia, block = "proteins", comp = 2))
 vars.glycemia.proteins2$AptName <- vars.glycemia.proteins2$proteins.name
+vars.glycemia.proteins <- c(vars.glycemia.proteins1$proteins.name, vars.glycemia.proteins2$proteins.name)
+vars.glycemia.proteins <- unique(vars.glycemia.proteins)
 seq.to.prot <- analytes %>% dplyr::select(AptName,TargetFullName,Target)
 vars.glycemia.proteins1 <- merge(vars.glycemia.proteins1, seq.to.prot, by = "AptName")
 vars.glycemia.proteins2 <- merge(vars.glycemia.proteins2, seq.to.prot, by = "AptName")
 vars.glycemia.urine1 <- as.data.frame(selectVar(diablo.glycemia, block = "urine_metabolites", comp = 1))
 vars.glycemia.urine2 <- as.data.frame(selectVar(diablo.glycemia, block = "urine_metabolites", comp = 2))
+vars.glycemia.urine <- c(vars.glycemia.urine1$urine_metabolites.name, vars.glycemia.urine2$urine_metabolites.name)
+vars.glycemia.urine <- unique(vars.glycemia.urine)
 vars.glycemia.plasma1 <- as.data.frame(selectVar(diablo.glycemia, block = "plasma_metabolites", comp = 1))
 vars.glycemia.plasma2 <- as.data.frame(selectVar(diablo.glycemia, block = "plasma_metabolites", comp = 2))
+vars.glycemia.plasma3 <- as.data.frame(selectVar(diablo.glycemia, block = "plasma_metabolites", comp = 3))
+
 
 plotDiablo(diablo.glycemia, ncomp = 1)
 plotDiablo(diablo.glycemia, ncomp = 2)
@@ -356,9 +408,10 @@ plotIndiv(diablo.glycemia, legend = TRUE, ind.names = FALSE)
 plotVar(diablo.glycemia, var.names= FALSE, style= 'graphics', 
         legend = TRUE, pch = c(16, 17, 15), cex = c(2,2,2), 
         col= c('darkorchid', 'brown1', 'lightgreen'), title= 'TCGA, DIABLO comp 1 - 2')
-circosPlot(diablo.glycemia, cutoff = 0.4, line = TRUE, 
-           color.blocks = c('darkorchid','brown1','lightgreen'),
-           color.cor = c("chocolate3",'grey20'), size.labels = 1.5, size.variables = 0.3)
+circosPlot(diablo.glycemia, comp = 1:2, cutoff = 0.4, line = TRUE, 
+           color.blocks = c('steelblue','indianred','plum1'),
+           color.cor = c("violetred",'slategrey'), size.labels = 1.2, size.variables = 0.4, linkWidth = c(1, 5),
+           block.labels.adj = 1)
 #network(diablo.glycemia, blocks = c(1,2,3), cutoff = 0.3,
 #        color.node = c('darkorchid','brown1','lightgreen'),
 #        save = "pdf", name.save = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY #subaward/Multiomics integration/DIABLO/Plots/network_glycemia.pdf")
