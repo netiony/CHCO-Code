@@ -81,13 +81,13 @@ def clean_improve():
     # --------------------------------------------------------------------------
 
     var = ["subject_id", "study_visit", "med_date", "diabetes_med",
-           "diabetes_med_other", "htn_med_type", "addl_hld_meds"]
+           "diabetes_med_other", "htn_med_type", "addl_hld_meds", "hypertension"]
     med = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
     med.replace(rep, np.nan, inplace=True)
     # SGLT2i (diabetes_med_other___4), RAASi (htn_med_type___1, htn_med_type___2), Metformin (diabetes_med_other___1)
     med = med[["subject_id", "study_visit", "med_date", "diabetes_med_other___3", "htn_med_type___1",
-               "htn_med_type___2", "diabetes_med___1", "diabetes_med___2", "addl_hld_meds___1"]]
+               "htn_med_type___2", "htn_med_type___3", "htn_med_type___5", "diabetes_med___1", "diabetes_med___2", "addl_hld_meds___1", "hypertension"]]
     # SGLT2i
     med["diabetes_med_other___3"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
@@ -96,8 +96,6 @@ def clean_improve():
     # RAASi
     med = med.assign(raasi_timepoint=np.maximum(pd.to_numeric(
         med["htn_med_type___1"]), pd.to_numeric(med["htn_med_type___2"])))
-    med.drop(med[['htn_med_type___1', 'htn_med_type___2']],
-             axis=1, inplace=True)
     med["raasi_timepoint"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     # Metformin
@@ -110,6 +108,22 @@ def clean_improve():
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
     med.rename({"diabetes_med___2": "insulin_med_timepoint"},
                axis=1, inplace=True)
+    # Hypertension Y/N
+    med["hypertension"].replace(
+        {2: "No", "2": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med["htn_med_type___1"].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med.rename({"htn_med_type___1": "ace_inhibitor"},
+               axis=1, inplace=True)
+    med["htn_med_type___3"].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med.rename({"htn_med_type___3": "beta_blocker"},
+               axis=1, inplace=True)
+    med["htn_med_type___5"].replace(
+        {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
+    med.rename({"htn_med_type___5": "diuretic"},
+               axis=1, inplace=True)
+
     # Statin
     med["addl_hld_meds___1"].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"}, inplace=True)
@@ -118,6 +132,7 @@ def clean_improve():
     med.rename({"med_date": "date"},
            axis=1, inplace=True)
     med["procedure"] = "medications"
+    
 
     # --------------------------------------------------------------------------
     # Physical exam
@@ -425,6 +440,18 @@ def clean_improve():
     az_u_metab["date"] = clamp["date"]
     
     # --------------------------------------------------------------------------
+    # Plasma metabolomics
+    # --------------------------------------------------------------------------
+    
+    var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
+                                                  == "metabolomics_blood_raw", "field_name"]]
+    plasma_metab = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    plasma_metab.replace(rep, np.nan, inplace=True)
+    plasma_metab["procedure"] = "plasma_metab"
+    plasma_metab["date"] = clamp["date"]
+    
+    # --------------------------------------------------------------------------
     # Missingness
     # --------------------------------------------------------------------------
 
@@ -435,11 +462,12 @@ def clean_improve():
     mri.dropna(thresh=4, axis=0, inplace=True)
     mmtt.dropna(thresh=10, axis=0, inplace=True)
     dxa.dropna(thresh=4, axis=0, inplace=True)
-    clamp.dropna(thresh=12, axis=0, inplace=True)
+    clamp.dropna(thresh=5, axis=0, inplace=True)
     out.dropna(thresh=10, axis=0, inplace=True)
     bold_mri.dropna(thresh=4, axis=0, inplace=True)
     biopsy.dropna(thresh=12, axis=0, inplace=True)
     az_u_metab.dropna(thresh=10, axis=0, inplace=True)
+    plasma_metab.dropna(thresh=10, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Merge
@@ -456,6 +484,7 @@ def clean_improve():
     df = pd.concat([df, screen], join='outer', ignore_index=True)
     df = pd.concat([df, phys], join='outer', ignore_index=True)
     df = pd.concat([df, az_u_metab], join='outer', ignore_index=True)
+    df = pd.concat([df, plasma_metab], join='outer', ignore_index=True)
     df = pd.merge(df, demo, how="outer")
     df = df.loc[:, ~df.columns.str.startswith('redcap_')]
     df = df.copy()

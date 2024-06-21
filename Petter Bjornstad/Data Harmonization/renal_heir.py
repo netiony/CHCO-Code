@@ -351,7 +351,18 @@ def clean_renal_heir():
     az_u_metab["visit"] = "baseline"
     az_u_metab["date"] = phys["date"]
 
-
+    # --------------------------------------------------------------------------
+    # Plasma metabolomics
+    # --------------------------------------------------------------------------
+    
+    var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
+                                                  == "metabolomics_blood_raw", "field_name"]]
+    plasma_metab = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    plasma_metab.replace(rep, np.nan, inplace=True)
+    plasma_metab["procedure"] = "plasma_metab"
+    plasma_metab["date"] = clamp["date"]
+    
     # --------------------------------------------------------------------------
     # Missingness
     # --------------------------------------------------------------------------
@@ -365,7 +376,7 @@ def clean_renal_heir():
     bold_mri.dropna(thresh=4, axis=0, inplace=True)
     biopsy.dropna(thresh=4, axis=0, inplace=True)
     az_u_metab.dropna(thresh=5, axis=0, inplace=True)
-
+    plasma_metab.dropna(thresh=10, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Merge
@@ -380,6 +391,7 @@ def clean_renal_heir():
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
     df = pd.merge(df, demo, how="outer")
     df = pd.concat([df, az_u_metab], join='outer', ignore_index=True)
+    df = pd.concat([df, plasma_metab], join='outer', ignore_index=True)
     df = df.loc[:, ~df.columns.str.startswith('redcap_')]
     df = df.copy()
 
