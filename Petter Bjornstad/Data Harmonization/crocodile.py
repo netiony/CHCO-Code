@@ -211,14 +211,15 @@ def clean_crocodile():
     # Replace missing values
     clamp.replace(rep, np.nan, inplace=True)
     # Format
-    clamp.drop(["clamp_yn", "clamp_d20", "clamp_ffa",
+    clamp.drop(["clamp_yn", "clamp_ffa",
                 "clamp_insulin", "hct_yn", "clamp_bg"], axis=1, inplace=True)
     clamp.rename({"clamp_wt": "weight",
                   "clamp_ht": "height",
                   "cystatin_c": "cystatin_c_s",
                   "hct_210": "hematocrit_210",
                   "acr_baseline": "acr_u",
-                  "acr_250": "acr_u_pm"},
+                  "acr_250": "acr_u_pm",
+                  "clamp_d20": "d20_infusion"},
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
     clamp.columns = clamp.columns.str.replace(
@@ -231,6 +232,14 @@ def clean_crocodile():
     clamp["procedure"] = "clamp"
     clamp["visit"] = "baseline"
     clamp["insulin_sensitivity_method"] = "hyperinsulinemic_euglycemic_clamp"
+    
+    num_vars = ["d20_infusion", "weight"]
+    clamp[num_vars] = clamp[num_vars].apply(
+        pd.to_numeric, errors='coerce')
+    
+    clamp["gir_190"] = (clamp["d20_infusion"] * 190 / 60) / clamp["weight"] # previously M-value
+    clamp["gir_200"] = (clamp["d20_infusion"] * 200 / 60) / clamp["weight"]
+
     # FFA
     ffa = [c for c in clamp.columns if "ffa_" in c]
     clamp[ffa] = clamp[ffa].apply(
@@ -257,7 +266,7 @@ def clean_crocodile():
     clamp["p2_steady_state_insulin"] = \
         clamp[['insulin_250', 'insulin_260', 'insulin_270']].mean(axis=1)
     clamp["ffa_method"] = "hyperinsulinemic_euglycemic_clamp"
-
+    
     # --------------------------------------------------------------------------
     # Renal Clearance Testing
     # --------------------------------------------------------------------------
