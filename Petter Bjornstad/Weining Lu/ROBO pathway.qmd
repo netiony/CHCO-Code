@@ -1,0 +1,174 @@
+---
+title: "BU ROBO Pathways"
+author: "Ye Ji Choi"
+date: "today"
+date-format: long
+execute: 
+  echo: false
+  warning: false
+  messages: false
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
+    code-fold: true
+    self-contained: true
+    fig-cap-location: top
+    page-layout: full
+editor: source
+---
+
+```{r libraries}
+#| include: false
+library(Seurat)
+library(future)
+library(tidyverse)
+library(colorspace)
+library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggpubr)
+library(rstatix)
+library(table1)
+library(Biobase)
+library(ReactomeGSA)
+library(GSEABase)
+library(msigdbr)
+library(kableExtra)
+library(knitr)
+library(Hmisc)
+library(pushoverr)
+library(pheatmap)
+set_pushover_user(user = "uv4fkwcjfp88sprou64rboojje4xvm")
+set_pushover_app(token = "avi88qsjeunh4xmvz3mbgp2fzpmkey")
+```
+
+```{r scRNA data setup}
+#| include: false
+# Parallel processing
+plan(multicore, workers = 16)
+options(future.globals.maxSize=6e9)
+# Import
+so <- readRDS("/home/yejichoi2/Documents/seurat_data_compiled.RDS")
+```
+
+```{r include = F}
+harm_dat <- read.csv("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = "")
+
+dat <- harm_dat %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+                   .by = c(mrn, screen_date)) %>%
+  # filter(participation_status!="Removed"|is.na(participation_status)) %>%
+  dplyr::mutate(race_ethnicity_condensed = case_when(race == "White" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino White",
+                                              race == "Black or African American" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino Black",
+                                              ethnicity == "Hispanic or Latino" ~ "Hispanic or Latino",
+                                              T ~ "Not Hispanic or Latino Other"),
+         combined_tkv = coalesce(total_kidney_volume_ml, total_kidney_volume_ml_manual),
+         combined_ht_tkv = coalesce(ht_adj_tkv, ht_adj_tkv_manual)) %>%
+  arrange(record_id)
+```
+
+# Pathway level expression
+## ROBO related pathway activity score
+```{r include = F}
+gc()
+gsva_result_t1d <- analyse_sc_clusters(subset(so, Group == "T1D"))
+pathways_full_t1d <- gsva_result_t1d@results$Seurat$pathways
+pathways_robo_t1d <- pathways_full_t1d %>% filter(grepl("ROBO|SLIT|SRGAP|NELL", Name, ignore.case = T))
+gc()
+gsva_result_t2d <- analyse_sc_clusters(subset(so, Group == "T2D"))
+pathways_full_t2d <- gsva_result_t2d@results$Seurat$pathways
+pathways_robo_t2d <- pathways_full_t2d %>% filter(grepl("ROBO|SLIT|SRGAP|NELL", Name, ignore.case = T))
+gc()
+gsva_result_hc <- analyse_sc_clusters(subset(so, Group == "HC"))
+pathways_full_hc <- gsva_result_hc@results$Seurat$pathways
+pathways_robo_hc <- pathways_full_hc %>% filter(grepl("ROBO|SLIT|SRGAP|NELL", Name, ignore.case = T))
+gc()
+
+pathways_robo_t1d
+pathways_robo_t2d
+pathways_robo_hc
+```
+
+```{r echo = F}
+# Healthy controls
+pathways_robo_hc_mat <- pathways_robo_hc %>%
+  column_to_rownames("Name") %>%
+  dplyr::select(-c("Pathway", ends_with("Quality"), ends_with("UMI")))
+pheatmap(pathways_robo_hc_mat,
+         cluster_cols = F, cluster_rows = F, border_color = NA,
+         main = "HC")
+
+# T1D
+pathways_robo_t1d_mat <- pathways_robo_t1d %>%
+  column_to_rownames("Name") %>%
+  dplyr::select(-c("Pathway", ends_with("Quality"), ends_with("UMI")))
+pheatmap(pathways_robo_t1d_mat,
+         cluster_cols = F, cluster_rows = F, border_color = NA,
+         main = "T1D")
+
+# T2D
+pathways_robo_t2d_mat <- pathways_robo_t2d %>%
+  column_to_rownames("Name") %>%
+  dplyr::select(-c("Pathway", ends_with("Quality"), ends_with("UMI")))
+pheatmap(pathways_robo_t2d_mat,
+         cluster_cols = F, cluster_rows = F, border_color = NA,
+         main = "T2D")
+```
+# Gene set variation analysis (GSVA) enrichment scores
+```{r echo = F, results = 'asis'}
+genesets <- msigdbr::msigdbr(subcategory = "CP:REACTOME") %>%
+  filter(gs_exact_source %in% pathways_robo_t1d$Pathway)
+pathway_list <- split(
+  genesets$gene_symbol,
+  genesets$gs_name
+)
+
+genes_robo <- unique(c(pathway_list[[1]],
+                       pathway_list[[2]],
+                       pathway_list[[3]],
+                       pathway_list[[4]]))
+
+var_list <- c("sample", "ident", "michigan_id", genes_robo)
+
+so_fetch <- FetchData(so, vars = var_list) 
+so_fetch_grped <- so_fetch %>%
+  group_by(michigan_id) %>%
+  dplyr::summarise(across(where(is.numeric), ~ mean(.x > 0, na.rm = TRUE)))
+
+mapped_df <- so_fetch_grped %>% data.table::transpose(make.names = "michigan_id")
+
+gene_means <- rowMeans(mapped_df)
+mapped_df <- mapped_df %>%
+  dplyr::mutate(gene_means) %>%
+  arrange(desc(gene_means)) %>%
+  dplyr::select(-gene_means) %>%
+  as.matrix()
+
+exclude_genes_robo <- c("LHX3", "PSMB11", "RPS4Y2", "PRKACG")
+rownames(mapped_df) <- genes_robo[genes_robo %nin% exclude_genes_robo]
+
+gsva_results <- gsva(
+  mapped_df,
+  pathway_list,
+  method = "ssgsea",
+  verbose = F
+) %>% t() %>% as.data.frame() %>%
+  rownames_to_column(var = "record_id")
+
+gsva_annotated <- gsva_results %>%
+  left_join(dat)
+
+summary(arsenal::tableby(group ~ 
+                           REACTOME_REGULATION_OF_COMMISSURAL_AXON_PATHFINDING_BY_SLIT_AND_ROBO +
+                           REACTOME_REGULATION_OF_EXPRESSION_OF_SLITS_AND_ROBOS +
+                           REACTOME_ROBO_RECEPTORS_BIND_AKAP5 + REACTOME_ROLE_OF_ABL_IN_ROBO_SLIT_SIGNALING,
+                         data = gsva_annotated, total = F))
+```
+
+I think it might be good to subset across cell types based on their activity level based on heat maps
+
