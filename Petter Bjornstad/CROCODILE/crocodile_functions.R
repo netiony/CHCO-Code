@@ -142,10 +142,10 @@ split.vp <- function(seurat_object, genes, filepath, color1 = "#6c9a8b", color2 
   }
 }
 
-split.vp.combined <- function(seurat_object, genes, filepath, color1 = "#6c9a8b", color2 = "#e8998d") {
+split.vp.combined <- function(seurat_object, genes, filepath, color1 = "#6c9a8b", color2 = "#e8998d", idents = NULL) {
   compiled_d = data.frame()
   for (i in 1:length(genes)){
-    d = VlnPlot(seurat_object, features = genes[i], split.by = "Group", idents = "PT", split.plot = F, pt.size = 0) 
+    d = VlnPlot(seurat_object, features = genes[i], split.by = "Group", idents = idents, split.plot = F, pt.size = 0) 
     d = d$data
     d$genename = colnames(d)[1]
     colnames(d)[1] <- "expression"
@@ -160,8 +160,7 @@ split.vp.combined <- function(seurat_object, genes, filepath, color1 = "#6c9a8b"
     theme(legend.title = element_blank(),
           axis.title.x = element_blank(), 
           plot.title = element_text()) +
-    labs(title = "PT Cells",
-         y = "Expression") +
+    labs(y = "Expression") +
     scale_fill_manual(values=c(color1, color2)) + 
     scale_color_manual(values=c(color1, color2))
   print(p)
@@ -175,8 +174,8 @@ split.vp.combined <- function(seurat_object, genes, filepath, color1 = "#6c9a8b"
 # Formatted dot plot function
 # colorlow = "#8ecae6", colormid = "#fcbf49", colorhigh = "#d90429"
 dp.formatted <- function(seurat_object, genes, celltype, group.by, m,
-                         colorlow = "#83c5be", colormid = "#f4f1bb", colorhigh = "#d90429"
-){
+                         colorlow = "#83c5be", colormid = "#f4f1bb", colorhigh = "#d90429")
+{
   pt.combined <- DotPlot(seurat_object,
                          features = genes,idents = celltype, group.by = group.by,
                          scale = F, cols = "RdYlBu"
@@ -189,7 +188,8 @@ dp.formatted <- function(seurat_object, genes, celltype, group.by, m,
     scale_color_gradient2(low = colorlow, mid = colormid, high = colorhigh, midpoint = 2,
                           guide = guide_colorbar(label.vjust = 0.8, ticks = F, draw.ulim = T, draw.llim = T),
                           limits = c(0,4)) +
-    scale_size(range = c(0,15), limits = c(1,80)) +
+    scale_size(range = c(0,4), 
+               limits = c(1,80)) +
     theme(panel.grid = element_blank(),
           axis.title.x = element_blank(),
           axis.title.y = element_blank(),

@@ -1,0 +1,888 @@
+---
+title: "Pseudotime on T2D (for comparison w/ T1D in CROCODILE)"
+author: "Ye Ji Choi"
+date: "today"
+date-format: long
+execute: 
+  echo: false
+  warning: false
+  messages: false
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
+    code-fold: true
+    self-contained: true
+    fig-cap-location: top
+    page-layout: full
+editor: source
+---
+
+```{r libraries}
+#| include: false
+library(Seurat)
+library(future)
+library(tidyverse)
+library(colorspace)
+library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggpubr)
+library(rstatix)
+library(table1)
+library(GSVA)
+library(Biobase)
+library(ReactomeGSA)
+library(GSEABase)
+library(GSVAdata)
+library(msigdbr)
+library(kableExtra)
+library(knitr)
+library(slingshot); library(SingleCellExperiment)
+library(RColorBrewer); library(scales)
+library(viridis); library(UpSetR)
+library(pheatmap)
+library(fgsea); library(tradeSeq)
+library(DescTools)
+```
+
+```{r data-setup, echo = F, message=F}
+# Parallel processing
+plan(multicore, workers = 16)
+options(future.globals.maxSize=2e9)
+so <- readRDS("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/data_clean/seurat_data_no_computations.RDS")
+source("/home/yejichoi2/Documents/CHCO-Code/Petter Bjornstad/CROCODILE/crocodile_functions.R")
+dict <- read.csv("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv")
+source("/home/yejichoi2/Documents/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/label_harmonized_function.R")
+dat <- read.csv("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv")
+
+## Subset SO and dat to T2D and HC
+so <- subset(so, T2D_HC_Phil == "HC" | T2D_HC_Phil == "T2D")
+so$Group <- so$T2D_HC_Phil
+
+dat <- dat %>%
+  mutate(record_id = case_when(study == "IMPROVE" & visit == "baseline" ~ paste0(record_id, "_BL"),
+                               T ~ record_id)) %>%
+  filter(record_id %in% unique(so$michigan_id))
+
+## Incorporate some clinical variables to SO
+so_meta <- so@meta.data
+dat <- dat %>% 
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+            across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+            .by = record_id) %>%
+  mutate(race_ethnicity_condensed = case_when(race == "White" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino White",
+                                              race == "Black or African American" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino Black",
+                                              ethnicity == "Hispanic or Latino" ~ "Hispanic or Latino",
+                                              T ~ "Not Hispanic or Latino Other")) %>%
+  mutate(elevated_albuminuria = case_when(elevated_albuminuria == "Yes" ~ "Elevated albuminuria",
+                                          elevated_albuminuria == "No" ~ "Normoalbuminuria")) %>% 
+  dplyr::rename("michigan_id" = record_id) %>%
+  dplyr::mutate(gbm_thick_quartile = ntile(gbm_thick_artmean, 4),
+                gbm_thick_quartile = case_when(!is.na(gbm_thick_quartile) ~ paste0("q", gbm_thick_quartile)),
+                bmi_quartile = ntile(bmi, 4),
+                bmi_quartile = case_when(!is.na(bmi_quartile) ~ paste0("q", bmi_quartile)),
+                diabetes_duration_quartile = ntile(diabetes_duration, 4),
+                diabetes_duration_quartile = case_when(!is.na(diabetes_duration_quartile) ~ paste0("q", diabetes_duration_quartile)),
+                age_quartile = ntile(age, 4),
+                age_quartile = case_when(!is.na(age_quartile) ~ paste0("q", age_quartile)),
+                raw_m_quartile = ntile(p2_raw_m, 4),
+                raw_m_quartile = case_when(!is.na(raw_m_quartile) ~ paste0("q", raw_m_quartile)),
+                diabetes_duration_manual_cat = case_when(diabetes_duration < 5 ~ "<5",
+                                                         diabetes_duration < 10 ~ "5-10",
+                                                         diabetes_duration < 15 ~ "10-15",
+                                                         diabetes_duration < 20 ~ "15-20",
+                                                         diabetes_duration >= 20 ~ "20+",
+                                                         T ~ "NA"),
+                bmi_manual_cat = case_when(bmi < 20 ~ "<20",
+                                           bmi < 25 ~ "20-25",
+                                           bmi < 27 ~ "25-27",
+                                           bmi >= 27 ~ "27+", 
+                                           T ~ "NA")) 
+dat$diabetes_duration_manual_cat <- factor(dat$diabetes_duration_manual_cat, 
+                                           levels = c("<5", "5-10", "10-15", "15-20", "20+", "NA"))
+dat$bmi_manual_cat <- factor(dat$bmi_manual_cat,
+                             levels = c("<20", "20-25", "25-27", "27+", "NA"), 
+                             exclude = NULL)
+
+dat_subset <- dat %>%
+  dplyr::select(michigan_id, gbm_thick_artmean, diabetes_duration, p2_raw_m, ends_with("quartile"), ends_with("manual_cat"))
+
+so_meta <- left_join(so_meta, dat_subset)
+so$gbm_thick_art_mean <- so_meta$gbm_thick_artmean
+so$age <- so_meta$age
+so$diabetes_duration <- so_meta$diabetes_duration
+so$p2_raw_m <- so_meta$p2_raw_m
+so$gbm_thick_quartile <- so_meta$gbm_thick_quartile
+so$diabetes_duration <- so_meta$diabetes_duration
+so$bmi_quartile <- so_meta$bmi_quartile
+so$diabetes_duration_quartile <- so_meta$diabetes_duration_quartile
+so$age_quartile <- so_meta$age_quartile
+so$raw_m_quartile <- so_meta$raw_m_quartile
+so$diabetes_duration_manual_cat <- so_meta$diabetes_duration_manual_cat
+so$bmi_manual_cat <- so_meta$bmi_manual_cat
+
+so$generaltype <- sub("_.*", "", so$LR_clusters)
+Idents(so) <- so$LR_clusters
+
+## Make SO into SCE object for pseudotime analysis
+sce <- as.SingleCellExperiment(so, assay = "RNA")
+```
+
+```{r echo =F, include = F}
+# function for de.markers
+de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, extension){
+  m = FindMarkers(seurat_object, features = genes,group.by = group.by,ident.1 = id1, 
+                  ident.2 = id2, subset.ident = celltype,verbose = F, logfc.threshold=0.001,
+                  min.pct = 0.001)
+  m$p_val_adj = p.adjust(m$p_val,method = "bonferroni")
+  m <- m %>% 
+    rownames_to_column('gene') %>%
+    arrange(p_val) %>%
+    column_to_rownames('gene') %>%
+    dplyr::select(avg_log2FC,pct.1,pct.2,p_val,p_val_adj) %>%
+    filter(!is.na(p_val))
+  
+  genes_subset <- rownames(m)[m$p_val <= 0.05]
+
+  if (length(genes_subset) > 0){
+    assign(paste0("genes_subset", extension), genes_subset, envir = .GlobalEnv)
+  }
+  assign(paste0("m", extension), m, envir = .GlobalEnv)
+  return(knitr::kable(m, digits = 3
+                      ))
+}
+
+## Top 2000 genes
+de.markers(so, NULL, "Group", id1 = "T2D", id2 = "HC", "PT", "_top")
+m_top <- m_top %>% head(2000)
+```
+
+```{r echo = F}
+n_HC <- nrow(so@meta.data %>% filter(generaltype == "PT" & celltype != "PT_lowQuality" & Group == "HC"))
+n_T2D <- nrow(so@meta.data %>% filter(generaltype == "PT" & celltype != "PT_lowQuality" & Group == "T2D"))
+
+# By PT subtypes (by celltype)
+cellcount<- so@meta.data %>% 
+  filter(generaltype == "PT" & celltype != "PT_lowQuality") %>%
+  dplyr::group_by(Group, celltype) %>%
+  dplyr::summarise(count = n()) %>%
+  dplyr::mutate(n = case_when(Group == "HC" ~ n_HC, Group == "T2D" ~ n_T2D),
+         ratio = count / n) %>% ungroup() %>%
+  group_by(celltype) %>%
+  dplyr::mutate(proportion = ratio/sum(ratio)) %>%
+  dplyr::select(proportion, Group, celltype) %>%
+  ggplot(aes(x= celltype, y= proportion, fill = Group)) + 
+  geom_bar(stat = "identity", position = "fill") +
+  theme_classic() +
+  labs(x = NULL,
+       y = "Proportion",
+       fill = "Group") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  theme(plot.title = element_text(hjust=0.5, face="bold"),
+        text = element_text(size = 20)) +
+  ggtitle("Proportion of cells") +
+  scale_fill_manual(values = c("#264653", "#2a9d8f"))
+
+cellcount
+```
+
+# PT cells (PT-1 thru -5)
+
+Removed outlier clusters that slingshot was overfitting.
+
+```{r, echo = F}
+so_PT <- subset(so, generaltype == "PT" & celltype != "PT_lowQuality")
+so_PT <- NormalizeData(so_PT)
+so_PT <- ScaleData(so_PT)
+# ElbowPlot(so_PT)
+so_PT <- RunPCA(so_PT, ncomponents = 10, features = VariableFeatures(object = so_PT))
+so_PT <- FindNeighbors(so_PT)
+so_PT <- FindClusters(so_PT)
+so_PT <- RunUMAP(so_PT, dims = 1:30)
+so_PT <- RunTSNE(so_PT, dimred = "UMAP")
+
+# DimPlot(object = so_PT, reduction = "umap")
+# DimPlot(object = so_PT, reduction = "umap", group.by = "Group")
+# DimPlot(object = so_PT, reduction = "umap", group.by = "celltype")
+umap_keep <- rownames(as.data.frame(so_PT@reductions$umap@cell.embeddings) %>%
+  filter(umap_1 < 10))
+
+so_PT <- so_PT[, umap_keep]
+DimPlot(object = so_PT, reduction = "umap")
+DimPlot(object = so_PT, reduction = "umap", group.by = "Group")
+DimPlot(object = so_PT, reduction = "umap", group.by = "celltype")
+```
+
+After visualizing UMAP by cell type clusters, we fit slingshot two ways: 
+  i) setting start cluster as PT-5, ending cluster as PT-4 (PT-5 having the most "healthy" cells, PT-1 having the most "diseased" cells),
+  ii) unsupervised.
+
+```{r echo = F}
+# PT-5 to PT-1
+sce_PT <- as.SingleCellExperiment(so_PT)
+sce_PT <- slingshot(sce_PT, reducedDim = 'UMAP', clusterLabels = colData(sce_PT)$celltype)
+shuffle <- sample(ncol(sce_PT))
+plot(reducedDims(sce_PT)$UMAP[shuffle, ], asp = 1, pch = 16,
+     xlab = "UMAP-1", ylab = "UMAP-2",
+     col = hcl.colors(100, alpha = 0.5, palette = "PinkYl")[cut(sce_PT$slingPseudotime_1, breaks = 100)][shuffle])
+lines(SlingshotDataSet(sce_PT), type = "lineages")
+lines(SlingshotDataSet(sce_PT))
+SlingshotDataSet(sce_PT)
+
+plot_df <- as.data.frame(slingPseudotime(sce_PT)) %>%
+  dplyr::mutate(Group = colData(sce_PT)$Group,
+                gbm_thick_quartile = colData(sce_PT)$gbm_thick_quartile,
+                bmi_quartile = colData(sce_PT)$bmi_quartile,
+                bmi_manual_cat = colData(sce_PT)$bmi_manual_cat,
+                diabetes_duration_quartile = colData(sce_PT)$diabetes_duration_quartile,
+                diabetes_duration_manual_cat = colData(sce_PT)$diabetes_duration_manual_cat,
+                age_quartile = colData(sce_PT)$age_quartile,
+                raw_m_quartile = colData(sce_PT)$raw_m_quartile)
+#lines(SlingshotDataSet(sce_PT))
+
+# plot(reducedDims(sce_PT)$UMAP[shuffle, ], asp = 1, pch = 16,
+#      xlab = "UMAP-1", ylab = "UMAP-2",
+#      col = sce_PT$Group)
+# 
+# lines(SlingshotDataSet(sce_PT), type = "lineages")
+# legend("topright", pch = 16, col = alpha(c("HC" = "#ffcb77", "T2D" = "#fe6d73"), 0.4), bty = "n", 
+#        legend = levels(factor(colData(sce)$Group)))
+# 
+# plotUMAP(sce_PT, colour_by="pseudotime", point_alpha=0.3) +
+#     geom_segment(data=grid.df, 
+#         mapping=aes(x=start.1, y=start.2, xend=end.1, yend=end.2), 
+#         arrow=arrow(length=unit(0.05, "inches"), type="closed"))
+```
+
+```{r echo = F}
+# Function to plot all smooth after fitGAM
+plot_smooth <- function(sce, gene, title = gene) {
+  non_missing_cells <- (colData(sce)$tradeSeq$conditions != "NA")
+  non_missing_cells <- as.data.frame(non_missing_cells) %>% 
+    dplyr::mutate(non_missing_cells = case_when(non_missing_cells == T ~ 1))
+  cnt <- assays(sce)$counts[gene, , drop=F]
+  cnt <- as.data.frame(t(cnt))
+  cnt <- cnt*non_missing_cells
+  colnames(cnt) <- "exp"
+  cnt <- cnt %>% filter(!is.na(exp))
+  pseudotime <- (colData(sce)$crv$pseudotime.Lineage1 * non_missing_cells %>%
+    filter(!is.na(non_missing_cells)))$non_missing_cells
+  condition <- colData(sce)$tradeSeq$conditions
+  
+  if ("NA" %in% condition){
+    condition <- condition[condition != "NA"]
+  }
+  
+  ncondition <- length(unique(condition))
+  
+  if (ncondition == 2){
+    colors = c("#007e5d",  "#ff8989")
+  }
+  if (ncondition == 3){
+    colors = c("#ef767a", "#456990", "#49beaa")
+  }
+  if(ncondition == 4){
+    colors = c("#003049", "#d62828", "#f77f00", "#fcbf49")
+  }
+  if(ncondition == 5){
+    colors = c("#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51")
+  }
+  
+  cnt_smooth <- predictSmooth(sce, gene, nPoints=100) %>%
+    filter(lineage == 1) %>% dplyr::select(-lineage)
+  cnt_smooth <- cnt_smooth[, c("yhat", "time", "condition")]
+  colnames(cnt_smooth) <- c("exp", "pseudotime", "condition")
+  cnt_smooth <- cnt_smooth %>% filter(condition!="NA")
+  
+  p <- ggplot(NULL, aes(x=pseudotime, y=log1p(exp), color=condition)) + 
+    geom_point(data=cnt, size=1, alpha = 0.3) +
+    geom_line(data=cnt_smooth, linewidth=1.5) +
+    labs(x = "Pseudotime",
+         y = "Log(expression + 1)", 
+         title = title,
+         color = "Group") +
+    theme_minimal() +
+    theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+    scale_color_manual(values = colors)
+  return(p)
+}
+```
+
+## Trajectory inference
+### By group
+#### Differential progression (shown by density plot)
+
+The density plots on the trajectory of both lineage 1 and 2 show later pseudotime values in the T2D group. The Kolmogorov-Smirnov test was used to assess whether the two groups of pseudotime values were derived from the same distribution. Both lineages resulted in highly significant tests, concluding that there are differences between the distrbutions of HC and T2D in both lineages.
+
+```{r echo = F, warning = F, message=F}
+DimPlot(object = so_PT, reduction = "umap", group.by = "Group")
+
+# Lineage 1 density plot
+ggdensity(plot_df, x = "Lineage1", fill = "Group",
+          color = "Group", palette = c("#f08080", "#1282a2")) +
+  labs(x = "Pseudotime", y = "Density")
+ks.test(slingPseudotime(sce_PT)[colData(sce_PT)$Group == "T2D", 1],
+        slingPseudotime(sce_PT)[colData(sce_PT)$Group == "HC", 1])
+```
+
+
+#### Differential expression
+##### FitGAM
+```{r echo = F}
+genes = unique(c(genes, oxy_phos_genes))
+tca_genes_top <- genes[genes %in% row.names(m_top)]
+
+sce_PT <- fitGAM(sce_PT, 
+                 conditions = factor(colData(sce_PT)$Group), 
+                 nknots = 5, 
+                 genes = unique(c(rownames(m_top), genes)))
+```
+
+##### Association test
+
+The association test was done to assess significant changes in gene expression as a function of pseudotime within each lineage. The null hypothesis of this test is that gene expression is not a function of time (i.e., testing whether the estimated smoothers are significantly varying as a function of pseudotime within each lineage). 
+
+
+The top 2000 genes that were most differentially expressed between HC and T2D were included in the analysis. Genes involved in the TCA cycle and oxphos were also included regardless of DE. 
+
+###### Lineage 1
+```{r echo = F}
+at <- associationTest(sce_PT, lineages = T) %>%
+  rownames_to_column(var = "gene")
+rownames(at) <- at$gene
+
+# TCA/oxphos HC lineage 1 genes
+at_hc_tca1 <- subset(at, rownames(at) %in% genes)
+at_hc_tca1 <- rownames(at_hc_tca1)[at_hc_tca1$pvalue_lineage1_conditionHC <= 0.05]
+at_hc_tca1 <- at_hc_tca1[!is.na(at_hc_tca1)]
+length(at_hc_tca1)
+kable(head(arrange(subset(at, rownames(at) %in% at_hc_tca1), by = pvalue_lineage1_conditionHC), n = 10))
+
+# TCA/oxphos T2D lineage 1 genes
+at_T2D_tca1 <- subset(at, rownames(at) %in% genes)
+at_T2D_tca1 <- rownames(at_T2D_tca1)[at_T2D_tca1$pvalue_lineage1_conditionT2D <= 0.05]
+at_T2D_tca1 <- at_T2D_tca1[!is.na(at_T2D_tca1)]
+length(at_T2D_tca1)
+kable(head(arrange(subset(at, rownames(at) %in% at_T2D_tca1), by = pvalue_lineage1_conditionT2D), n = 10))
+UpSetR::upset(fromList(list(HC_1 = at_hc_tca1, T2D_1 = at_T2D_tca1)))
+
+# significant HC lineage 1 genes
+at_hc1 <- rownames(at)[at$pvalue_lineage1_conditionHC <= 0.05]
+at_hc1 <- at_hc1[!is.na(at_hc1)]
+length(at_hc1)
+kable(head(arrange(subset(at, rownames(at) %in% at_hc1), by = pvalue_lineage1_conditionHC), n = 10))
+
+# significant T2D lineage 1 genes
+at_T2D1 <- rownames(at)[at$pvalue_lineage1_conditionT2D <= 0.05]
+at_T2D1 <- at_T2D1[!is.na(at_T2D1)]
+length(at_T2D1)
+kable(head(dplyr::arrange(subset(at, rownames(at) %in% at_T2D1), by = pvalue_lineage1_conditionT2D), n = 10))
+UpSetR::upset(fromList(list(HC_1 = at_hc1, T2D_1 = at_T2D1)))
+```
+
+##### Condition test
+```{r echo = F}
+# conditions test
+ct <- conditionTest(sce_PT, pairwise = T, lineages = T)
+```
+
+###### Lineage 1
+
+```{r echo = F}
+subset(ct, rownames(ct) %in% genes)
+sum(ct$pvalue <= 0.05, na.rm = TRUE)
+conditionGenes1 <- rownames(ct)[ct$pvalue <= 0.05]
+conditionGenes1 <- conditionGenes1[!is.na(conditionGenes1)]
+length(conditionGenes1)
+kable(head(dplyr::arrange(subset(ct, rownames(ct) %in% conditionGenes1), by = pvalue), n = 20))
+```
+
+*Top 20 highly DE genes*
+
+```{r echo = F}
+ct <- ct %>%
+  rownames_to_column(var = "gene")
+rownames(ct) <- ct$gene
+
+de_genes1 <- (head(arrange(ct, by = pvalue), n = 20))$gene
+
+for (i in 1:length(de_genes1)){
+  plot <- plot_smooth(sce_PT, de_genes1[i])
+  gene_expression <- plotGeneCount(sce_PT, counts, gene = de_genes1[i],
+                        title = de_genes1[i])
+  print(plot + gene_expression)
+}
+```
+
+```{r echo = F}
+smooth <- predictSmooth(sce_PT, conditionGenes1, tidy = F, nPoints = 100)
+smooth_scaled <- t(scale(t(smooth)))
+breaksList = seq(-1.1, 2.5, by = 0.01)
+
+# Lineage 1
+## HC
+heat_hc <- pheatmap(smooth_scaled[conditionGenes1, 1:100],
+  cluster_cols = FALSE,cluster_rows = FALSE,
+  show_rownames = F, show_colnames = FALSE, main = "HC", legend = TRUE,
+  silent = TRUE,
+        color = colorRampPalette(rev(brewer.pal(n = 7, 
+                                                name = "RdYlBu")))(length(breaksList)),
+  breaks = breaksList,
+  border_color = F)
+
+## T2D
+heat_T2D <- pheatmap(smooth_scaled[conditionGenes1, 101:200],
+  cluster_cols = FALSE,cluster_rows = FALSE,
+  show_rownames = F, show_colnames = FALSE, main = "T2D", legend = TRUE,
+  silent = TRUE,
+        color = colorRampPalette(rev(brewer.pal(n = 7, 
+                                                name = "RdYlBu")))(length(breaksList)),
+  breaks = breaksList,
+  border_color = F)
+
+ggarrange(heat_hc[[4]], heat_T2D[[4]])
+```
+
+```{r echo = F}
+conditionGenes1 <- genes[genes %in% conditionGenes1]
+smooth <- predictSmooth(sce_PT, conditionGenes1, tidy = F, nPoints = 100)
+smooth_scaled <- t(scale(t(smooth)))
+breaksList = seq(-1.1, 2.5, by = 0.01)
+
+# Lineage 1
+## HC
+heat_hc <- pheatmap(smooth_scaled[conditionGenes1, 1:100],
+  cluster_cols = FALSE,cluster_rows = FALSE,
+  show_rownames = TRUE, show_colnames = FALSE, main = "HC", legend = TRUE,
+  silent = TRUE,
+        color = colorRampPalette(rev(brewer.pal(n = 7, 
+                                                name = "RdYlBu")))(length(breaksList)),
+  breaks = breaksList,
+  border_color = F)
+
+## T2D
+heat_T2D <- pheatmap(smooth_scaled[conditionGenes1, 101:200],
+  cluster_cols = FALSE,cluster_rows = FALSE,
+  show_rownames = TRUE, show_colnames = FALSE, main = "T2D", legend = TRUE,
+  silent = TRUE,
+        color = colorRampPalette(rev(brewer.pal(n = 7, 
+                                                name = "RdYlBu")))(length(breaksList)),
+  breaks = breaksList,
+  border_color = F)
+
+ggarrange(heat_hc[[4]], heat_T2D[[4]])
+```
+
+```{r echo = F}
+# Conditioned by group; plots for each transcript
+for (i in 1:length(genes)){
+  plot <- plot_smooth(sce_PT, genes[i])
+  gene_expression <- plotGeneCount(sce_PT, counts, gene = genes[i],
+                        title = genes[i])
+  print(plot + gene_expression)
+}
+```
+
+#### Gene set enrichment analysis
+```{r echo = F}
+## C2 category is according to canonical pathways: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
+geneSets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG")
+### filter background to only include genes that we assessed
+geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
+geneSets <- geneSets[geneSets$gene_symbol %in% names(sce_PT),]
+m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
+stats <- at$pvalue_lineage1_conditionT2D
+names(stats) <- rownames(at)
+eaRes <- fgsea(pathways = m_list, stats = na.omit(stats))
+ooEA <- order(eaRes$pval, decreasing = FALSE)
+kable(head(eaRes[ooEA, 1:3], n = 20))
+
+statsCond <- ct$pvalue
+names(statsCond) <- rownames(ct)
+eaRes <- fgsea(pathways = m_list, stats = na.omit(statsCond))
+ooEA <- order(eaRes$pval, decreasing = FALSE)
+kable(head(eaRes[ooEA, 1:3], n = 20))
+```
+
+
+##### Correlations with Pseudotime
+
+```{r label-setup, echo = F}
+source("/home/yejichoi/Documents/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/correlation_function.R")
+for (gene_value in genes) {
+  dict[[gene_value]] <- gene_value
+}
+```
+
+```{r warning=F, message=F}
+# transform to df to plot and calculate weighted means of pseudotime
+sce_PT_df <- as.data.frame(cbind(colData(sce_PT)[1:40], sce_PT$slingPseudotime_1))
+sce_PT_df_weight <- sce_PT_df %>%
+  dplyr::summarise(weight = n(), .by = c(michigan_id, celltype))
+sce_PT_df_mean_weighted <- sce_PT_df %>%
+  dplyr::summarise(mean.pseudotime = mean(sce_PT.slingPseudotime_1, na.rm = T), .by = c(michigan_id, celltype)) %>%
+  left_join(sce_PT_df_weight) %>%
+  dplyr::group_by(michigan_id) %>%
+  dplyr::summarise(weighted_mean = sum(weight * mean.pseudotime, na.rm = T) / sum(weight, na.rm = T)) %>%
+  ungroup() 
+sce_PT_df_mean <- sce_PT_df %>%
+  dplyr::summarise(mean.pseudotime = mean(sce_PT.slingPseudotime_1, na.rm = T), .by = c(michigan_id)) 
+
+dat_mean_pseudotime <- dat %>%
+  left_join(sce_PT_df_mean_weighted) %>%
+  left_join(sce_PT_df_mean)
+
+sce_PT_df_scaled <- scale(as.numeric(sce_PT_df$sce_PT.slingPseudotime_1)) 
+sce_PT_df_scaled <- data.frame(pseudotime_scaled = sce_PT_df_scaled)
+sce_PT_df <- cbind(sce_PT_df, sce_PT_df_scaled)
+```
+
+###### Pseudo-R^2
+```{r echo = F, eval = F}
+library(lme4)
+# GBM width
+gbm_mod <- lmer(gbm_thick_art_mean ~ pseudotime_scaled + (1 | michigan_id), data = subset(sce_PT_df, Group == "T2D")) 
+summary(gbm_mod)
+PseudoR2(gbm_mod)
+
+# Diabetes duration
+dibetes_duration_mod <- glm(diabetes_duration ~ sce_PT.slingPseudotime_1, data = subset(sce_PT_df, Group == "T2D")) 
+summary(dibetes_duration_mod)
+PseudoR2(dibetes_duration_mod)
+
+# Age
+age_mod <- glm(age ~ sce_PT.slingPseudotime_1, data = subset(sce_PT_df, Group == "T2D")) 
+summary(age_mod)
+PseudoR2(age_mod)
+
+# HbA1C
+age_mod <- glm(hba1c ~ sce_PT.slingPseudotime_1, data = subset(sce_PT_df, Group == "T2D")) 
+summary(age_mod)
+PseudoR2(age_mod)
+
+# M-value
+m_mod <- glm(p2_raw_m ~ sce_PT.slingPseudotime_1, data = subset(sce_PT_df, Group == "T2D")) 
+summary(m_mod)
+PseudoR2(m_mod)
+
+# BMI
+bmi_mod <- glm(bmi ~ sce_PT.slingPseudotime_1, data = subset(sce_PT_df, Group == "T2D")) 
+summary(bmi_mod)
+PseudoR2(bmi_mod)
+```
+
+###### Weighted means
+```{r echo = F, warning = F, message = F}
+# GBM width
+subset(dat_mean_pseudotime, group == "Type 2 Diabetes") %>%
+  ggplot(aes(x = weighted_mean, y = log(gbm_thick_artmean), color = group)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(se = T, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "GBM thickness",
+       x = "Weighted-average pseudotime",
+       y = "Log(GBM thickness)",
+       color = "Group") +
+  theme_minimal() +
+  scale_color_manual(values = c("#7EB77F"))
+
+# Diabetes duration
+subset(dat_mean_pseudotime, group == "Type 2 Diabetes") %>%
+  ggplot(aes(x = weighted_mean, y = diabetes_duration, color = group)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(se = T, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "Diabetes duration",
+       x = "Weighted-average pseudotime",
+       y = "Diabetes duration",
+       color = "Group") +
+  theme_minimal() +
+  scale_color_manual(values = c("#7EB77F"))
+
+# Age
+subset(dat_mean_pseudotime, group == "Type 2 Diabetes") %>%
+  ggplot(aes(x = weighted_mean, y = age, color = group)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(se = T, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "Age",
+       x = "Weighted-average pseudotime",
+       y = "Age",
+       color = "Group") +
+  theme_minimal() +
+  scale_color_manual(values = c("#7EB77F"))
+
+# HbA1C
+subset(dat_mean_pseudotime, group == "Type 2 Diabetes") %>%
+  ggplot(aes(x = weighted_mean, y = hba1c, color = group)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(se = T, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "HbA1c",
+       x = "Weighted-average pseudotime",
+       y = "HbA1c",
+       color = "Group") +
+  theme_minimal() +
+  scale_color_manual(values = c("#7EB77F"))
+
+# M-value
+subset(dat_mean_pseudotime, group == "Type 2 Diabetes") %>%
+  ggplot(aes(x = weighted_mean, y = p2_raw_m, color = group)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(se = T, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "M-value",
+       x = "Weighted-average pseudotime",
+       y = "M-value",
+       color = "Group") +
+  theme_minimal() +
+  scale_color_manual(values = c("#7EB77F"))
+
+# BMI
+subset(dat_mean_pseudotime, group == "Type 2 Diabetes") %>%
+  ggplot(aes(x = weighted_mean, y = bmi, color = group)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(se = T, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "BMI",
+       x = "Weighted-average pseudotime",
+       y = "BMI",
+       color = "Group") +
+  theme_minimal() +
+  scale_color_manual(values = c("#7EB77F"))
+
+# Pglo
+subset(dat_mean_pseudotime, group == "Type 2 Diabetes") %>%
+  ggplot(aes(x = weighted_mean, y = glomerular_pressure, color = group)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(se = T, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "PGLO",
+       x = "Weighted-average pseudotime",
+       y = "PGLO",
+       color = "Group") +
+  theme_minimal() +
+  scale_color_manual(values = c("#7EB77F"))
+```
+
+```{r pseudotime-correlations-weighted-means, echo = F}
+correlation_table_minimal(data = subset(dat_mean_pseudotime, group == "Lean Control"),
+                   relevant_vars = c("weighted_mean", "gbm_thick_artmean", "diabetes_duration", "age", "hba1c", "p2_raw_m", "bmi", "glomerular_pressure"),
+                   n_cols = 1,
+                   cor_method = "spearman")
+correlation_table_minimal(data = subset(dat_mean_pseudotime, group == "Type 2 Diabetes"),
+                   relevant_vars = c("weighted_mean", "gbm_thick_artmean", "diabetes_duration", "age", "hba1c", "p2_raw_m", "bmi", "glomerular_pressure"),
+                   n_cols = 1,
+                   cor_method = "spearman")
+correlation_table_minimal(data = dat_mean_pseudotime,
+                   relevant_vars = c("weighted_mean", "gbm_thick_artmean", "diabetes_duration", "age", "hba1c", "p2_raw_m", "bmi", "glomerular_pressure"),
+                   n_cols = 1,
+                   cor_method = "spearman")
+```
+
+###### Raw (T2D only)
+```{r echo = F, warning = F, message = F}
+# GBM width
+subset(sce_PT_df, Group == "T2D") %>%
+  ggplot(aes(x = sce_PT.slingPseudotime_1, y = log(gbm_thick_art_mean), color = Group)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(se = T, method = "gam") +
+  geom_smooth(se = T, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "GBM thickness",
+       x = "Pseudotime",
+       y = "Log(GBM thickness)",
+       color = "Group") +
+  theme_minimal() +
+  scale_color_manual(values = c("#7EB77F"))
+
+# Diabetes duration
+subset(sce_PT_df, Group == "T2D") %>%
+  ggplot(aes(x = sce_PT.slingPseudotime_1, y = diabetes_duration, color = Group)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(se = T, method = "gam") +
+  geom_smooth(se = T, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "Diabetes duration",
+       x = "Pseudotime",
+       y = "Diabetes duration",
+       color = "Group") +
+  theme_minimal() +
+  scale_color_manual(values = c("#7EB77F"))
+
+# Age
+subset(sce_PT_df, Group == "T2D") %>%
+  ggplot(aes(x = sce_PT.slingPseudotime_1, y = age, color = Group)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(se = T, method = "gam") +
+  geom_smooth(se = T, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "Age",
+       x = "Pseudotime",
+       y = "Age",
+       color = "Group") +
+  theme_minimal() +
+  scale_color_manual(values = c("#7EB77F"))
+
+# HbA1C
+subset(sce_PT_df, Group == "T2D") %>%
+  ggplot(aes(x = sce_PT.slingPseudotime_1, y = hba1c, color = Group)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(se = T, method = "gam") +
+  geom_smooth(se = T, method = "lm", linetype = "dashed", color = "black") + 
+  labs(title = "HbA1c",
+       x = "Pseudotime",
+       y = "HbA1c",
+       color = "Group") +
+  theme_minimal() +
+  scale_color_manual(values = c("#7EB77F"))
+
+# M-value
+subset(sce_PT_df, Group == "T2D") %>%
+  ggplot(aes(x = sce_PT.slingPseudotime_1, y = p2_raw_m, color = Group)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(se = T, method = "gam") +
+  geom_smooth(se = T, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "M-value",
+       x = "Pseudotime",
+       y = "M-value",
+       color = "Group") +
+  theme_minimal() +
+  scale_color_manual(values = c("#7EB77F"))
+
+# BMI
+subset(sce_PT_df, Group == "T2D") %>%
+  ggplot(aes(x = sce_PT.slingPseudotime_1, y = bmi, color = Group)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(se = T, method = "gam") +
+  geom_smooth(se = T, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "BMI",
+       x = "Pseudotime",
+       y = "BMI",
+       color = "Group") +
+  theme_minimal() +
+  scale_color_manual(values = c("#7EB77F"))
+
+```
+
+```{r pseudotime-correlations, echo = F}
+correlation_table_minimal(data = subset(sce_PT_df, Group == "HC"),
+                   relevant_vars = c("sce_PT.slingPseudotime_1", "gbm_thick_art_mean", "diabetes_duration", "age", "hba1c", "p2_raw_m", "bmi"),
+                   n_cols = 1,
+                   cor_method = "spearman")
+correlation_table_minimal(data = subset(sce_PT_df, Group == "T2D"),
+                   relevant_vars = c("sce_PT.slingPseudotime_1", "gbm_thick_art_mean", "diabetes_duration", "age", "hba1c", "p2_raw_m", "bmi"),
+                   n_cols = 1,
+                   cor_method = "spearman")
+correlation_table_minimal(data = sce_PT_df,
+                   relevant_vars = c("sce_PT.slingPseudotime_1", "gbm_thick_art_mean", "diabetes_duration", "age", "hba1c", "p2_raw_m", "bmi"),
+                   n_cols = 1,
+                   cor_method = "spearman")
+```
+
+
+###### Raw (colored by PT subtypes)
+```{r echo = F, warning=F, message = F}
+# GBM width
+subset(sce_PT_df, Group == "T2D") %>%
+  ggplot(aes(x = sce_PT.slingPseudotime_1, y = log(gbm_thick_art_mean), color = celltype)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(se = F, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "GBM thickness",
+       x = "Pseudotime",
+       y = "Log(GBM thickness)",
+       color = "Cell type") +
+  theme_minimal() 
+
+# Diabetes duration
+subset(sce_PT_df, Group == "T2D") %>%
+  ggplot(aes(x = sce_PT.slingPseudotime_1, y = diabetes_duration, color = celltype)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(se = F, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "Diabetes duration",
+       x = "Pseudotime",
+       y = "Diabetes duration",
+       color = "Cell type") +
+  theme_minimal() 
+
+# Age
+subset(sce_PT_df, Group == "T2D") %>%
+  ggplot(aes(x = sce_PT.slingPseudotime_1, y = age, color = celltype)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(se = F, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "Age",
+       x = "Pseudotime",
+       y = "Age",
+       color = "Cell type") +
+  theme_minimal() 
+
+# HbA1C
+subset(sce_PT_df, Group == "T2D") %>%
+  ggplot(aes(x = sce_PT.slingPseudotime_1, y = hba1c, color = celltype)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(se = F, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "HbA1c",
+       x = "Pseudotime",
+       y = "HbA1c",
+       color = "Cell type") +
+  theme_minimal() 
+
+# M-value
+subset(sce_PT_df, Group == "T2D") %>%
+  ggplot(aes(x = sce_PT.slingPseudotime_1, y = p2_raw_m, color = celltype)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(se = F, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "M-value",
+       x = "Pseudotime",
+       y = "M-value",
+       color = "Cell type") +
+  theme_minimal() 
+
+# BMI
+subset(sce_PT_df, Group == "T2D") %>%
+  ggplot(aes(x = sce_PT.slingPseudotime_1, y = bmi, color = celltype)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(se = F, method = "lm", linetype = "dashed", color = "black") +
+  labs(title = "BMI",
+       x = "Pseudotime",
+       y = "BMI",
+       color = "Cell type") +
+  theme_minimal() 
+```
+
+
+###### Mixed models
+```{r eval = F}
+library(lme4)
+library(MuMIn)
+# GBM width
+gbm_mod <- lmer(gbm_thick_art_mean ~ sce_PT.slingPseudotime_1 + (1|michigan_id), data = sce_PT_df)
+summary(gbm_mod)
+r.squaredGLMM(gbm_mod)
+
+# Diabetes duration
+diabetes_duration_mod <- lmer(diabetes_duration ~ sce_PT.slingPseudotime_1 + 
+                                (1|michigan_id), data = sce_PT_df)
+summary(diabetes_duration_mod)
+r.squaredGLMM(diabetes_duration_mod)
+
+# Age
+age_mod <- lmer(age ~ sce_PT.slingPseudotime_1 + 
+                  (1|michigan_id), data = sce_PT_df)
+summary(age_mod)
+r.squaredGLMM(age_mod)
+
+# HbA1C
+hba1c_mod <- lmer(hba1c ~ sce_PT.slingPseudotime_1 + 
+                    (1|michigan_id), data = sce_PT_df)
+summary(hba1c_mod)
+r.squaredGLMM(hba1c_mod)
+
+# M-value
+mvalue_mod <- lmer(p2_raw_m ~ sce_PT.slingPseudotime_1 + 
+                     (1|michigan_id), data = sce_PT_df)
+summary(mvalue_mod)
+r.squaredGLMM(mvalue_mod)
+
+# BMI
+bmi_mod <- lmer(bmi ~ sce_PT.slingPseudotime_1 + 
+                  (1|michigan_id), data = sce_PT_df)
+summary(bmi_mod)
+r.squaredGLMM(bmi_mod)
+
+```
