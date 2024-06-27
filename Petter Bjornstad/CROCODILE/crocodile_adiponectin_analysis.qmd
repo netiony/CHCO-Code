@@ -1,0 +1,310 @@
+---
+title: "CROCODILE Adiponectin receptor"
+author: "Ye Ji Choi"
+date: "today"
+date-format: long
+execute: 
+  echo: false
+  warning: false
+  messages: false
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
+    code-fold: true
+    self-contained: true
+    fig-cap-location: top
+    page-layout: full
+editor: source
+---
+
+```{r libraries}
+#| include: false
+library(Seurat)
+library(future)
+library(tidyverse)
+library(colorspace)
+library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggpubr)
+library(rstatix)
+library(table1)
+library(GSVA)
+library(Biobase)
+library(ReactomeGSA)
+library(GSEABase)
+library(GSVAdata)
+library(msigdbr)
+library(kableExtra)
+library(knitr)
+library(slingshot); library(SingleCellExperiment)
+library(RColorBrewer); library(scales)
+library(viridis); library(UpSetR)
+library(pheatmap)
+library(fgsea); library(tradeSeq)
+library(DescTools)
+```
+
+```{r data-setup, echo = F, message=F}
+# Parallel processing
+plan(multicore, workers = 16)
+options(future.globals.maxSize=2e9)
+so <- readRDS("/home/yejichoi2/Documents/Local data/seurat_data_CRC.RDS")
+source("/home/yejichoi2/Documents/CHCO-Code/Petter Bjornstad/CROCODILE/crocodile_functions.R")
+load("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/CROCODILE/Data_Cleaned/croc_data.RData")
+dict <- read.csv("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv")
+source("/home/yejichoi2/Documents/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/label_harmonized_function.R")
+source("/home/yejichoi2/Documents/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/correlation_function.R")
+
+
+so_meta <- so@meta.data
+dat <- dat %>% dplyr::rename("michigan_id" = record_id) %>%
+  dplyr::mutate(gbm_thick_quartile = ntile(gbm_thick_artmean, 4),
+                gbm_thick_quartile = case_when(!is.na(gbm_thick_quartile) ~ paste0("q", gbm_thick_quartile)),
+                bmi_quartile = ntile(bmi, 4),
+                bmi_quartile = case_when(!is.na(bmi_quartile) ~ paste0("q", bmi_quartile)),
+                diabetes_duration_quartile = ntile(diabetes_duration, 4),
+                diabetes_duration_quartile = case_when(!is.na(diabetes_duration_quartile) ~ paste0("q", diabetes_duration_quartile)),
+                age_quartile = ntile(age, 4),
+                age_quartile = case_when(!is.na(age_quartile) ~ paste0("q", age_quartile)),
+                raw_m_quartile = ntile(p2_raw_m, 4),
+                raw_m_quartile = case_when(!is.na(raw_m_quartile) ~ paste0("q", raw_m_quartile)),
+                diabetes_duration_manual_cat = case_when(diabetes_duration < 5 ~ "<5",
+                                                         diabetes_duration < 10 ~ "5-10",
+                                                         diabetes_duration < 15 ~ "10-15",
+                                                         diabetes_duration < 20 ~ "15-20",
+                                                         diabetes_duration >= 20 ~ "20+",
+                                                         T ~ "NA"),
+                bmi_manual_cat = case_when(bmi < 20 ~ "<20",
+                                           bmi < 25 ~ "20-25",
+                                           bmi < 27 ~ "25-27",
+                                           bmi >= 27 ~ "27+", 
+                                           T ~ "NA")) 
+dat$diabetes_duration_manual_cat <- factor(dat$diabetes_duration_manual_cat, 
+                                           levels = c("<5", "5-10", "10-15", "15-20", "20+", "NA"))
+dat$bmi_manual_cat <- factor(dat$bmi_manual_cat,
+                             levels = c("<20", "20-25", "25-27", "27+", "NA"), 
+                             exclude = NULL)
+
+dat_subset <- dat %>%
+  dplyr::select(michigan_id, gbm_thick_artmean, diabetes_duration, p2_raw_m, ends_with("quartile"), ends_with("manual_cat"))
+
+so_meta <- left_join(so_meta, dat_subset)
+so$gbm_thick_art_mean <- so_meta$gbm_thick_artmean
+so$age <- so_meta$age
+so$diabetes_duration <- so_meta$diabetes_duration
+so$p2_raw_m <- so_meta$p2_raw_m
+so$gbm_thick_quartile <- so_meta$gbm_thick_quartile
+so$diabetes_duration <- so_meta$diabetes_duration
+so$bmi_quartile <- so_meta$bmi_quartile
+so$diabetes_duration_quartile <- so_meta$diabetes_duration_quartile
+so$age_quartile <- so_meta$age_quartile
+so$raw_m_quartile <- so_meta$raw_m_quartile
+so$diabetes_duration_manual_cat <- so_meta$diabetes_duration_manual_cat
+so$bmi_manual_cat <- so_meta$bmi_manual_cat
+
+adipo_genes <- c("ADIPOR1", "ADIPOR2", "CDH13")
+de.markers(subset(so, celltype %in% c("EC-AEA")),
+           adipo_genes, "Group", id2 = "HC", id1 = "T1D", "EC", "")
+```
+
+```{r include = F}
+dp.formatted <- function(seurat_object, genes, celltype, group.by, m,
+                         colorlow = "#83c5be", colormid = "#f4f1bb", colorhigh = "#d90429"
+){
+  pt.combined <- DotPlot(seurat_object,
+                         features = genes,idents = celltype, group.by = group.by,
+                         scale = F, cols = "RdYlBu"
+  )$data 
+  
+  pt.plot <- pt.combined %>% 
+    ggplot(aes(x=features.plot, y = id, color = avg.exp.scaled, size = pct.exp)) + 
+    geom_point() +
+    theme_bw() +
+    scale_color_gradient2(low = colorlow, mid = colormid, high = colorhigh, midpoint = 0.3,
+                          guide = guide_colorbar(label.vjust = 0.8, ticks = F, draw.ulim = T, draw.llim = T),
+                          limits = c(.2,.4)) +
+    scale_size(range = c(0,10), 
+               limits = c(1,20)) +
+    theme(panel.grid = element_blank(),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank(),
+          axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+          legend.text = element_text(size = 8),
+          legend.title = element_text(size = 8, vjust = 0.5),
+          legend.spacing.x = unit(.1, "cm"),
+          legend.direction = "horizontal") +
+    guides(size = guide_legend(label.position = "bottom",
+                               title.position = "top"),
+           color = guide_colorbar(label.position = "bottom",
+                                  title.position = "top")) +
+    labs(color = "Scaled average expression",
+         size = "Expression (%) ") + 
+    scale_y_discrete(limits=rev)
+  
+  pt.table <- m %>%
+    filter(rownames(m) %in% genes) %>%
+    dplyr::mutate(p_val_rounded = round(p_val, 4),
+                  p_val = p_format(p_val_rounded, trailing.zero = T, accuracy = 0.001, digits = 3),
+                  p_val_adj_rounded = round(p_val_adj, 4),
+                  p_val_adj = p_format(p_val_adj_rounded, trailing.zero = T, accuracy = 0.001, digits = 3),
+                  pct.1 = sprintf("%.3f", pct.1),
+                  pct.2 = sprintf("%.3f", pct.2),
+                  avg_log2FC = sprintf("%.3f", avg_log2FC)) %>% 
+    dplyr::select(avg_log2FC, p_val, p_val_adj) %>%
+    rownames_to_column("gene") %>%
+    arrange(by = gene) %>%
+    column_to_rownames("gene")
+  
+  gg.pt.table <- ggtexttable(pt.table,
+                             cols = c("Log2FC", "p-value", "q-value"),
+                             theme = ttheme("blank")) %>%
+    tab_add_hline(at.row = 1:2, row.side = "top", linewidth = 1) %>%
+    tab_add_title("Differential Expression")
+  
+  pt.plot_table <- ggarrange(pt.plot, NULL, gg.pt.table,
+                             nrow = 1, widths = c(1,-0.1,1), common.legend = F,
+                             legend = "top")
+  
+}
+```
+# Insulin sensitivity (T1D vs HC)
+```{r warning = F, message=F}
+boxplot <- dat %>%
+  ggplot(aes(x=group, y=p2_raw_m, fill=group)) +
+  geom_boxplot(alpha = 0.7, outliers = F, 
+               aes(color = group),
+               lwd = 1.5,
+               width = .8) +
+  geom_jitter(aes(color = group, size = 5), width = 0.1) +
+  scale_color_manual(values = (c("#465775", "#ef6f6c"))) + 
+  scale_fill_manual(values = (c("#465775", "#ef6f6c"))) + 
+  ylab("M-value") +
+  xlab("") +
+  stat_compare_means(method = "t.test",   
+                     label.x.npc = "center", 
+                     bracket.size = 1,
+                     size = 10,
+                     label = "p.format") +
+  theme_bw() +
+  theme(legend.position="none",
+        axis.title.y = element_text(size=20, hjust=0.5),
+        axis.text.x = element_text(size=25),
+        text = element_text(size = 25),
+        panel.grid = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.border = element_rect(color = "grey", linewidth = 0.5)) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.15)))
+
+ggsave(filename = "/home/yejichoi2/Documents/lin_temp_folder/KT_box_plot.jpeg",
+       plot = boxplot, scale = 1.5,
+       width = 1500, height = 1500,units = "px")
+```
+
+# ADIPOR1, ADIPOR2, CDH13 expression (T1D vs HC)
+
+```{r}
+plot_table <- dp.formatted(seurat_object = so, 
+                                       genes = adipo_genes, 
+                                       group.by = "Group",
+                                       celltype = NULL, 
+                                       m = m)
+plot_table
+
+ggsave(filename = "/home/yejichoi2/Documents/lin_temp_folder/KT_dot_plot.jpeg",
+       plot = plot_table, scale = 1.5,
+       width = 1500, height = 600,units = "px")
+
+```
+
+
+```{r}
+m <- add_direction(m)
+m <- rownames_to_column(m, var = "gene")
+
+direction_colors <- c("Upregulated" = "#d90429", "Downregulated" = "#83c5be", "NS" = "#eaeaea")
+m$gene <- factor(m$gene, levels = adipo_genes)
+
+pt.barplot.subset <-
+  ggplot(m, aes(x = gene, y = avg_log2FC, fill = direction)) +
+  geom_col(width = 0.5) +
+  scale_fill_manual(values = direction_colors,
+                    labels = c("Downregulated    ",
+                               "Upregulated     ",
+                               "NS")) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 70, hjust = 1),
+        panel.grid = element_blank(),
+        strip.background = element_rect(fill = "white", color = "white"),
+        panel.spacing = unit(-1, 'lines'),
+        legend.position = "top",
+        aspect.ratio = 0.5/1) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey") +
+  scale_y_continuous(position = "right", limits = c(-0.85, 0.85),
+                     breaks = c(-0.8, -.4, 0, .4, 0.8)) +
+  labs(x = NULL, y = "Avg Log2FC", fill = "Log2FC Direction  ")
+
+  pt.table <- m %>%
+    dplyr::mutate(p_val_rounded = round(p_val, 4),
+                  p_val = p_format(p_val_rounded, trailing.zero = T, accuracy = 0.001, digits = 3),
+                  p_val_adj_rounded = round(p_val_adj, 4),
+                  p_val_adj = p_format(p_val_adj_rounded, trailing.zero = T, accuracy = 0.001, digits = 3),
+                  pct.1 = sprintf("%.3f", pct.1),
+                  pct.2 = sprintf("%.3f", pct.2),
+                  avg_log2FC = sprintf("%.3f", avg_log2FC)) %>% 
+    dplyr::select(gene, avg_log2FC, p_val, p_val_adj) %>%
+    arrange(by = gene) %>%
+    column_to_rownames("gene")
+  
+  gg.pt.table <- ggtexttable(pt.table,
+                             cols = c("Log2FC", "p-value", "q-value"),
+                             theme = ttheme("blank")) %>%
+    tab_add_hline(at.row = 1:2, row.side = "top", linewidth = 1) %>%
+    tab_add_title("Differential Expression")
+
+
+ptsub.barplot_table <- ggarrange(pt.barplot.subset, NULL, gg.pt.table,
+          nrow = 1, widths = c(1.5,-.1,1), common.legend = T)
+ptsub.barplot_table
+
+ggsave(filename = "/home/yejichoi2/Documents/lin_temp_folder/KT_bar_plot.jpeg",
+       plot = ptsub.barplot_table, scale = 1.5,
+       width = 1700, height = 600,units = "px")
+
+```
+
+```{r include=F, eval = F}
+dict <- label_harmonized_dict(dat, dict)
+# Modify some labels
+gene_dict_values <- unique(adipo_genes)
+
+for (gene_value in gene_dict_values) {
+  dict[[gene_value]] <- gene_value
+}
+
+meta_features <- so[["RNA"]]@meta.features
+var_list <- c("sample", "ident", "michigan_id", adipo_genes)
+md <- FetchData(so, vars = var_list)  %>%
+  filter(ident == "PT")
+
+md <- md %>%
+  group_by(michigan_id) %>%
+  dplyr::summarise(across(where(is.numeric), ~ sum(.x > 0, na.rm = TRUE))) %>%
+  right_join(dat)
+
+# M-value vs. ADIPOR1, 2, and CDH13
+correlation_table_minimal(data = subset(md, group == "Type 1 Diabetes"),
+                   relevant_vars = c("p2_raw_m", adipo_genes),
+                   n_cols = 1,
+                   dict = dict)
+
+#png(height = 2000, width = 1200, file = "/home/yejichoi2/Documents/lin_temp_folder/KT_correlations_heatmap.png", res = 170)
+corr_plot_modified(subset(md, group == "Type 1 Diabetes"),
+                   X = "p2_raw_m",
+                   Y = adipo_genes,
+                   adj_var = NA,
+                   dict = dict)
+#dev.off()
+```
