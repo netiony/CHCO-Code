@@ -6,7 +6,7 @@ if(Sys.info()["sysname"] == "Windows"){
 } else if (Sys.info()["sysname"] == "Linux"){
   home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
 } else if (Sys.info()["sysname"] == "Darwin"){
-  home_dir = "/Volumes/PEDS/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
+  home_dir = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
 }
 
 setwd(home_dir)
@@ -249,6 +249,7 @@ keepPRIMOUT <- PRIMOUT %>% select(releaseid,tx,txdesc)
 
 # BIRTH WEIGHT 
 BW <- read.csv("./Clinical data/TODAY/Birthweight.csv")
+BW[,2:6] <- apply(BW[,2:6], 2, as.numeric)
 
 # create new dataset of baseline risk factors
 basecbl <- CBL %>% filter(mvisit=="M00")
@@ -258,7 +259,7 @@ baserisk <- merge(baserisk, baseaddcbl, by="releaseid", all.x=T, ally=T)
 baserisk$si_1_ins0 <- 1/baserisk$ins0min
 baserisk$log_trig <- log(baserisk$Trig)
 baserisk <- baserisk %>% select(releaseid, HbA1c, log_trig, sbp, dbp, uacid, si_1_ins0, UAlbCreat, bmi, HDL, codi,
-                                EstCreatClear,SerumCreat)
+                                EstCreatClear,SerumCreat,serumcystc,glu0min,ins0min)
 baserisk$map <- baserisk$dbp + ((1/3)*(baserisk$sbp - baserisk$dbp))
 baserisk <- merge(baserisk,keepPAT,by="releaseid",all.x = T,all.y = F)
 baserisk$age <- NULL

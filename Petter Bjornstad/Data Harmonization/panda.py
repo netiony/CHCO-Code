@@ -162,7 +162,7 @@ def clean_panda():
     # Replace missing values
     labs.replace(rep, np.nan, inplace=True)
     labs.columns = labs.columns.str.replace(
-        r"visit_|bl_", "", regex=True)
+        r"visit_|bl_|_yr|yr_", "", regex=True)
     labs.rename({"uacr": "acr_u", "a1c": "hba1c",
                 "na_u": "sodium_u", "na_s": "sodium_s"}, axis=1, inplace=True)
     labs["procedure"] = "clamp"
@@ -347,6 +347,19 @@ def clean_panda():
     rct["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
+    # Astrazeneca urine metabolomics
+    # --------------------------------------------------------------------------
+    
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                                  == "astrazeneca_urine_metabolomics", "field_name"]]
+    az_u_metab = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    az_u_metab.replace(rep, np.nan, inplace=True)
+    az_u_metab["procedure"] = "az_u_metab"
+    az_u_metab["visit"] = "baseline"
+    az_u_metab["date"] = labs["date"]
+    
+    # --------------------------------------------------------------------------
     # Missingness
     # --------------------------------------------------------------------------
 
@@ -359,6 +372,7 @@ def clean_panda():
     clamp.dropna(thresh=7, axis=0, inplace=True)
     rct.dropna(thresh=5, axis=0, inplace=True)
     biopsy.dropna(thresh=5, axis=0, inplace=True)
+    az_u_metab.dropna(thresh=6, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Merge
@@ -373,7 +387,9 @@ def clean_panda():
     df = pd.concat([df, clamp_merge], join='outer', ignore_index=True)
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
     df = pd.concat([df, med], join='outer', ignore_index=True)
+    df = pd.concat([df, az_u_metab], join='outer', ignore_index=True)
     df = pd.merge(df, demo, on='record_id', how="outer")
+    df = df.loc[:, ~df.columns.str.startswith('redcap_')]
     df = df.copy()
 
     # --------------------------------------------------------------------------

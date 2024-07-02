@@ -195,7 +195,7 @@ def clean_crocodile():
                 "trunkmass": "trunk_mass", "fatmass_kg": "fat_kg",
                 "leanmass_kg": "lean_kg", "trunkmass_kg": "trunk_kg",
                 "bmd": "bone_mineral_density"}, axis=1, inplace=True)
-    dxa_cols = dxa.columns[2:].to_list()
+    dxa_cols = dxa.columns[4:].to_list()
     dxa.rename(dict(zip(dxa_cols, ["dexa_" + d for d in dxa_cols])),
                axis=1, inplace=True)
     dxa["procedure"] = "dxa"
@@ -211,14 +211,15 @@ def clean_crocodile():
     # Replace missing values
     clamp.replace(rep, np.nan, inplace=True)
     # Format
-    clamp.drop(["clamp_yn", "clamp_d20", "clamp_ffa",
+    clamp.drop(["clamp_yn", "clamp_ffa",
                 "clamp_insulin", "hct_yn", "clamp_bg"], axis=1, inplace=True)
     clamp.rename({"clamp_wt": "weight",
                   "clamp_ht": "height",
                   "cystatin_c": "cystatin_c_s",
                   "hct_210": "hematocrit_210",
                   "acr_baseline": "acr_u",
-                  "acr_250": "acr_u_pm"},
+                  "acr_250": "acr_u_pm",
+                  "clamp_d20": "d20_infusion"},
                  inplace=True, axis=1)
     clamp.columns = clamp.columns.str.replace(r"clamp_", "", regex=True)
     clamp.columns = clamp.columns.str.replace(
@@ -231,6 +232,14 @@ def clean_crocodile():
     clamp["procedure"] = "clamp"
     clamp["visit"] = "baseline"
     clamp["insulin_sensitivity_method"] = "hyperinsulinemic_euglycemic_clamp"
+    
+    num_vars = ["d20_infusion", "weight"]
+    clamp[num_vars] = clamp[num_vars].apply(
+        pd.to_numeric, errors='coerce')
+    
+    clamp["gir_190"] = (clamp["d20_infusion"] * 190 / 60) / clamp["weight"] # previously M-value
+    clamp["gir_200"] = (clamp["d20_infusion"] * 200 / 60) / clamp["weight"]
+
     # FFA
     ffa = [c for c in clamp.columns if "ffa_" in c]
     clamp[ffa] = clamp[ffa].apply(
@@ -257,7 +266,7 @@ def clean_crocodile():
     clamp["p2_steady_state_insulin"] = \
         clamp[['insulin_250', 'insulin_260', 'insulin_270']].mean(axis=1)
     clamp["ffa_method"] = "hyperinsulinemic_euglycemic_clamp"
-
+    
     # --------------------------------------------------------------------------
     # Renal Clearance Testing
     # --------------------------------------------------------------------------
@@ -405,6 +414,19 @@ def clean_crocodile():
     metabolomics_tissue["visit"] = "baseline"
     
     # --------------------------------------------------------------------------
+    # Astrazeneca urine metabolomics
+    # --------------------------------------------------------------------------
+    
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                                  == "astrazeneca_urine_metabolomics", "field_name"]]
+    az_u_metab = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    az_u_metab.replace(rep, np.nan, inplace=True)
+    az_u_metab["procedure"] = "az_u_metab"
+    az_u_metab["visit"] = "baseline"
+    az_u_metab["date"] = labs["date"]
+    
+    # --------------------------------------------------------------------------
     # Missingness
     # --------------------------------------------------------------------------
 
@@ -422,10 +444,12 @@ def clean_crocodile():
     voxelwise.dropna(thresh=4, axis=0, inplace=True)
     metabolomics_blood.dropna(thresh=4, axis=0, inplace=True)
     metabolomics_tissue.dropna(thresh=2, axis=0, inplace=True)
+    az_u_metab.dropna(thresh=5, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Merge
     # --------------------------------------------------------------------------
+    
     # Procedure = clamp
     clamp_merge = pd.merge(clamp, labs, how="outer")
     clamp_merge = pd.merge(clamp_merge, rct, how="outer")
@@ -441,9 +465,9 @@ def clean_crocodile():
     df = pd.concat([df, neuro], join='outer', ignore_index=True)
     df = pd.concat([df, metabolomics_blood], join='outer', ignore_index=True)
     df = pd.concat([df, metabolomics_tissue], join='outer', ignore_index=True)
+    df = pd.concat([df, az_u_metab], join='outer', ignore_index=True)
     df = pd.merge(df, demo, on='record_id', how="outer")
-    df.drop(["redcap_repeat_instance_x"], axis=1, inplace=True)
-    df.drop(["redcap_repeat_instrument_x"], axis=1, inplace=True)
+    df = df.loc[:, ~df.columns.str.startswith('redcap_')]
     df = df.copy()
 
     # --------------------------------------------------------------------------

@@ -11,10 +11,10 @@ clean[clean == ""] <- NA
 
 # Create screen_date (screening date for each participant or earliest date available)
 clean <- clean %>%
-  group_by(record_id, visit) %>% 
-  mutate(screen_date = case_when(procedure == "screening" ~ date)) %>%
+  dplyr::group_by(record_id, visit) %>% 
+  dplyr::mutate(screen_date = case_when(procedure == "screening" ~ date)) %>%
   fill(screen_date, .direction = "updown") %>%
-  mutate(screen_date = case_when(is.na(screen_date) ~ min(date, na.rm = T), 
+  dplyr::mutate(screen_date = case_when(is.na(screen_date) ~ min(date, na.rm = T), 
                                  T ~ screen_date)) %>%
   fill(screen_date, .direction = "updown") %>% ungroup() %>%
   dplyr::select(record_id, casper_id, coffee_id, croc_id, improve_id, penguin_id, 

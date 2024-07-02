@@ -178,7 +178,7 @@ def clean_penguin():
     # Replace missing values
     clamp.replace(rep, np.nan, inplace=True)
     # Format
-    clamp.drop(["clamp_yn", "clamp_d20", "clamp_ffa",
+    clamp.drop(["clamp_yn", "clamp_ffa",
                 "clamp_insulin", "hct_yn", "clamp_bg"], axis=1, inplace=True)
     clamp.rename({"clamp_wt": "weight", "clamp_ht": "height", "hct_210": "hematocrit_avg"},
                  inplace=True, axis=1)
@@ -190,6 +190,15 @@ def clean_penguin():
     clamp.columns = clamp.columns.str.replace(r"bg_", "glucose_", regex=True)
     clamp.columns = clamp.columns.str.replace(
         r"glucose_minus", "glucose_minus_", regex=True)
+    clamp.rename({"d20": "d20_infusion"},
+                 inplace=True, axis=1)  
+    num_vars = ["d20_infusion", "weight"]
+    clamp[num_vars] = clamp[num_vars].apply(
+        pd.to_numeric, errors='coerce')
+    
+    clamp["gir_190"] = (clamp["d20_infusion"] * 190 / 60) / clamp["weight"] # previously M-value
+    clamp["gir_200"] = (clamp["d20_infusion"] * 200 / 60) / clamp["weight"]
+    
     clamp["procedure"] = "clamp"
     clamp["visit"] = "baseline"
     clamp["insulin_sensitivity_method"] = "hyperinsulinemic_euglycemic_clamp"
