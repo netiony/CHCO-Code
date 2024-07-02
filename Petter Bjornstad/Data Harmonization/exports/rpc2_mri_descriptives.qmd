@@ -1,0 +1,101 @@
+---
+title: "RPC2 descriptives & MRI descriptives"
+author: Ye Ji Choi
+date: 6/26/24
+format: html
+---
+
+```{r}
+library(arsenal)
+library(lubridate)
+dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = "")
+
+token <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+rpc2 <- REDCapR::redcap_read(redcap_uri = "https://redcap.ucdenver.edu/api/",
+                     token = token[12,2],
+                     guess_type =  F)
+
+rpc2_mri <- rpc2$data %>%
+  dplyr::group_by(subject_id) %>%
+  fill(mr_number, .direction = "down") %>% ungroup() %>%
+  dplyr::filter(grepl("mri", redcap_event_name)) %>%
+  dplyr::rename("record_id" = "subject_id",
+                "date" = "mri_date",
+                "mrn" = "mr_number") %>%
+  rowwise() %>%
+  dplyr::mutate(mri_yn = case_when(sum(c(bold_l_bl_cortex, bold_r_bl_cortex,
+                                         asl_left, asl_right), na.rm = T) > 0 ~ "Yes", T ~ "No")) %>%
+  dplyr::select(record_id, redcap_event_name, bold_l_bl_cortex, bold_r_bl_cortex, asl_left, asl_right, mri_yn) %>%
+  ungroup() %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, last(na.omit(.x)))),
+                   .by = c(record_id, redcap_event_name)) 
+nrow(rpc2_mri)
+
+rpc2_dat <- rpc2$data %>%
+  dplyr::rename("record_id" = "subject_id") %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, last(na.omit(.x)))),
+                   .by = c(record_id))
+
+```
+
+
+```{r}
+biopsy_dat <- dat %>%
+  dplyr::filter(procedure == "kidney_biopsy") %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, last(na.omit(.x)))),
+                   .by = c(mrn, date)) %>%
+  dplyr::select(mrn, visit, group, record_id, date, kidney_side, kit_id) %>%
+  dplyr::filter(!is.na(date)) %>%
+  dplyr::mutate(bx_yn = "Yes")
+
+summary(arsenal::tableby(group ~ bx_yn, data = biopsy_dat, test = F))
+
+mri_dat <- dat %>%
+ # dplyr::filter(procedure %in% c("bold_mri", "mri", "pc_mri_2d")) %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, last(na.omit(.x)))),
+                   .by = c(mrn, date)) %>%
+  dplyr::filter(!is.na(date)) %>%
+  rowwise() %>%
+  dplyr::mutate(mri_yn = case_when(sum(c(bold_l_bl_cortex, bold_r_bl_cortex,
+                                         pasl2d_left, pasl2d_right, 
+                                         pcasl3d_left, pcasl3d_right,
+                                         total_cyst_volume_ml), na.rm = T) > 0 ~ "Yes", T ~ "No")) %>%
+  dplyr::select(mrn, mri_yn, visit, group, record_id, date, procedure, bold_l_bl_cortex, bold_r_bl_cortex, total_cyst_volume_ml, study) %>%
+  filter(mri_yn == "Yes")
+
+summary(arsenal::tableby(group ~ mri_yn, data = mri_dat, test = F))
+
+```
+
+age, sex, eGFR, UACR, bmi, sbp, dbp 
+
+```{r}
+rpc2_dat <-
+  rpc2_dat %>%
+  dplyr::mutate(age_current = as.numeric(age_current),
+                screen_egfr = as.numeric(screen_egfr),
+                screen_urine_acr = as.numeric(screen_urine_acr),
+                bmi = as.numeric(bmi),
+                sys_bp = as.numeric(sys_bp),
+                dys_bp = as.numeric(dys_bp),
+                gender = case_when(gender == "0" ~ "Female",
+                                   gender == "1" ~ "Male")) %>%
+  rowwise() %>%
+  dplyr::mutate(avg_asl = mean(c(as.numeric(asl_right), as.numeric(asl_left))),
+                avg_adc = mean(c(as.numeric(adc_right), as.numeric(adc_left))),
+                avg_volume = mean(c(as.numeric(volume_right), as.numeric(volume_left))),
+                avg_bl_cortex = mean(c(as.numeric(bold_r_bl_cortex), as.numeric(bold_l_bl_cortex))),
+                avg_bl_kidney = mean(c(as.numeric(bold_r_bl_kidney), as.numeric(bold_r_bl_kidney)))) %>% ungroup()
+
+summary(arsenal::tableby(~ age_current + gender + screen_egfr + 
+                           kwt(screen_urine_acr, "Nmiss", "median", "q1q3", "range") + bmi + sys_bp + dys_bp +
+                           inclusion4+ inclusion5, 
+                         data = rpc2_dat))
+
+summary(arsenal::tableby(~ avg_asl + avg_adc + avg_volume + avg_bl_cortex + avg_bl_kidney, 
+                         data = rpc2_dat))
+```
