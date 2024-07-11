@@ -242,8 +242,8 @@ df <- df %>% filter(visit == "baseline")
 plasma <- left_join(df, olink_plasma, by = c("record_id", "visit"))
 urine <- left_join(df, olink_urine, by = c("record_id", "visit"))
 # Limit df to those with all data
-ids <- intersect(soma$record_id, olink_plasma$record_id)
-df <- df %>% filter(record_id %in% ids)
+#ids <- intersect(soma$record_id, olink_plasma$record_id)
+#df <- df %>% filter(record_id %in% ids)
 # Save
 save(df, plasma, urine, analytes, olink_map,
   top_mac, top_mic, top_mic.or.mac, top_hyp, top_rapid, top_glyc,
