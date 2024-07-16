@@ -1,0 +1,167 @@
+---
+title: "TODAY proteomics and metabolomics integration"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(SomaDataIO)
+library(limma)
+library(dplyr)
+library(caret)
+library(purrr)
+library(multtest)
+library(openxlsx)
+library(tableone)
+library(EnhancedVolcano)
+library(knitr)
+library(survival)
+library(broom)
+library(emmeans)
+library(ggvenn)
+library(mixOmics)
+library(data.table)
+library(MOFA2)
+library(readxl)
+library(stringr)
+library(IntegratedLearner)
+
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+
+knitr::opts_chunk$set(echo = FALSE)
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "E:/Petter Bjornstad/TODAY subaward"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  home_dir = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
+}
+knitr::opts_knit$set(root.dir = home_dir)
+
+home_dir = "/Users/pylell/Documents/Downtime/TODAY/Data"
+
+set.seed(3654)
+source("~/Documents/Github/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/easy_elasticnet.R")
+```
+
+```{r, include=FALSE}
+setwd(home_dir)
+# load somalogic data, with QC samples already excluded
+load("./Somalogic data raw/soma.Rdata")
+
+# load analyte info
+load("./Somalogic data raw/analytes.Rdata")
+
+# load comorbidity data
+load("./Clinical data/comorb.Rdata")
+
+# load baseline risk factors
+load("./Clinical data/TODAY/baserisk.Rdata")
+
+# take only the baseline soma samples
+# can we just take the earliest or is it possible someone would have a follow-up sample but not baseline?
+# probably can take the first and then check the years to make sure compatible with TODAY
+base <- soma %>% arrange(releaseid,Date.Drawn) %>% dplyr::group_by(releaseid) %>% dplyr::filter(row_number()==1)
+# these 3 release IDs have first sample after end of recruitment, so they must be missing the baseline visit
+base <- base %>% filter(!releaseid %in% c("65-85903","65-47984","65-25901"))
+
+# the above section of code used to work but seems to have broken....this should accomplish the same thing?
+#base <- soma %>% filter(visit==1)
+
+# merge in complication data
+base <- left_join(base, comorb, by="releaseid")
+# this was previously:
+# base <- merge(base, comorb, by="releaseid",all.x=T, all.y=F)
+
+# merge in baseline risk factors
+base <- left_join(base, baserisk, by="releaseid")
+# this was previously:
+#base <- merge(base, baserisk, by="releaseid",all.x=T, all.y=F)
+
+# log transform UAlbCreat
+base$log_UAlbCreat <- log(base$UAlbCreat + 0.0000001)
+
+# identify columns corresponding to proteins
+#is_seq <- function(.x) grepl("^seq\\.[0-9]{4}", .x) # regex for analytes
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(base))
+
+# convert to numeric
+base[,seq] <- apply(base[,seq],2,as.numeric)
+
+# are there proteins with low variability?
+no_var = caret::nearZeroVar(base[,seq])
+# none
+
+# log transform
+base_log <- base %>% modify_if(is_seq(names(.)), log)
+
+# scale by SD
+base_log_scale <- base_log
+predictors <- colnames(base_log[seq])
+for (i in 1:length(predictors)) {
+  base_log_scale[,paste0(predictors[i])] <- base_log_scale[,paste0(predictors[i])]/sd(unlist(base_log[,paste0(predictors[i])]))
+}
+base_log_scale_keep <- base_log_scale %>% dplyr::select(releaseid,predictors)
+
+# read in urine metabolomics
+load("./Metabolomic data/urine.Rdata")
+urine$Date.Drawn <- as.Date(urine$Date.Drawn,format = "%m/%d/%Y")
+urine <- urine %>% arrange(releaseid,Date.Drawn) %>% group_by(releaseid) %>% filter(row_number()==1)
+check_urine_vars <- function(.x) grepl("nM/mM", .x)
+urine_keep <- check_urine_vars(names(urine))
+urine_final <- cbind(urine$releaseid, urine[urine_keep])
+urine_final[,2:ncol(urine_final)] <- log(urine_final[,2:ncol(urine_final)]) 
+colnames(urine_final) <- c("releaseid",colnames(urine_final[,2:ncol(urine_final)]))
+
+# read in plasma metabolomics
+load("./Metabolomic data/plasma.Rdata")
+plasma$Date.Drawn <- as.Date(plasma$Date.Drawn,format = "%m/%d/%Y")
+plasma <- plasma %>% arrange(releaseid,Date.Drawn) %>% group_by(releaseid) %>% filter(row_number()==1)
+check_plasma_vars <- function(.x) grepl("uM", .x)
+plasma_keep <- check_plasma_vars(names(plasma))
+plasma_final <- cbind(plasma$releaseid, plasma[plasma_keep])
+plasma_final[,2:ncol(plasma_final)] <- log(plasma_final[,2:ncol(plasma_final)]) 
+colnames(plasma_final) <- c("releaseid",colnames(plasma_final[,2:ncol(plasma_final)]))
+
+# create feature table with features in rows and samples in columns
+feature_table <- full_join(base_log_scale_keep, urine_final, by = "releaseid")
+feature_table <- full_join(feature_table, plasma_final, by = "releaseid")
+feature_table_temp <- colnames(feature_table)
+feature_table_temp <- feature_table_temp[2:length(feature_table_temp)]
+feature_table <- transpose(feature_table)
+colnames(feature_table) <- feature_table[1,]
+feature_table <- feature_table[2:nrow(feature_table),]
+rownames(feature_table) <- feature_table_temp
+
+# create sample metadata table with subjectID matching columns of feature table, Y for outcome
+sample_metadata <- base_log_scale %>% dplyr::select(releaseid, MIC.OR.MAC) %>% ungroup()
+sample_metadata$subjectID <- sample_metadata$releaseid
+sample_metadata$Y <- sample_metadata$MIC.OR.MAC
+sample_metadata <- sample_metadata %>% dplyr::select(subjectID, Y)
+rownames(sample_metadata) <- sample_metadata$subjectID
+
+# create feature metadata file with featureID column and featureType
+feature_metadata <- as.data.frame(rownames(feature_table))
+colnames(feature_metadata) <- "featureID"
+feature_metadata$featureType <- 
+  case_when(
+    str_sub(feature_metadata$featureID, 1, 3) == "seq" ~ "Protein",
+    str_detect(feature_metadata$featureID, "mM.Creatinine") ~ "Urine metabolite",
+     .default = "Plasma metabolite"
+  )
+rownames(feature_metadata) <- feature_metadata$featureID
+
+# Sanity check
+all(rownames(feature_table)==rownames(feature_metadata)) # TRUE
+all(colnames(feature_table)==rownames(sample_metadata)) 
+
+# sample metadata has 376 rows but feature table has 379 columns
+```
