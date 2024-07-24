@@ -13,7 +13,7 @@ output:
     toc_float: yes
 ---
 
-```{r libraries}
+```{r libraries, echo = F, warning = F}
 #| include: false
 library(limma)
 library(clusterProfiler)
@@ -38,6 +38,8 @@ library(correlation)
 library(psych)
 library(SomaPlotr)
 library(openxlsx)
+
+options(scipen = 999)
 ```
 
 ```{r functions, include=FALSE}
@@ -127,6 +129,7 @@ plotVolcano_mod <- function (data, FC, p.value, labels, identify = FALSE, fc.cut
 ```{r, include=F}
 # Load correlation function
 source("/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/correlation_function.R")
+source("~/Documents/Github/shared-resources/Machine Learning/Tim - ElasticNet CV/easy_elasticnet.R")
 
 load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Somalogic data/knight_soma.Rdata")
 load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Somalogic data/analytes.Rdata")
@@ -876,26 +879,98 @@ saveWorkbook(ipa,"/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Pe
 
 # Elastic net analysis
 
-## Male to female
+## MTF vs. FTM
 
-```{r, echo = F}
-# filter to top 100 proteins by effect size
-f = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Results/limma_MTF_results.csv"
-f_keep <- read.csv(f)
-f_keep <- arrange(f_keep,adj.P.Val)
-f_drop <- f_keep[101:nrow(f_keep),"AptName"]
-f_drop <- as.data.frame(f_drop)
-rownames(f_drop) <- f_keep[101:nrow(f_keep),"AptName"]
-f_drop <- as.data.frame(t(f_drop))
-mtf_keep <- df_diff %>%
-  filter(group == "MTF") %>%
-  dplyr::select(contains("seq")) 
-mtf_keep <- df_diff %>% select(-colnames(f_drop))  
+### Selected proteins
+
+```{r, echo = F, warning = F, message=FALSE}
+# First find top 100 proteins that distinguish MTF and FTM
+# Limma setup
+# Y needs "genes" in rows
+y <- df_diff %>%
+  dplyr::select(contains("seq")) %>%
+  t()
+# Design matrix
+design_mat <- ifelse(df_diff$group == "MTF", 1, 0)
+design_mat <- cbind(rep(1,nrow(df_diff)),design_mat)
+# Fit
+fit <- lmFit(y, design_mat)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$AptName <- row.names(res)
+res$Target <- analytes$Target[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+res$UniProt <- analytes$UniProt[match(rownames(res), analytes$AptName)]
+write.csv(res, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Results/limma_MTF_vs_FTM_results.csv", row.names = F)
+write.csv(res, file = "/Users/pylell/Dropbox/KNIGHT/limma_MTF_vs_FTM__results.csv", row.names = F)
+MTF_vs_FTM_keep = res
+MTF_vs_FTM_keep <- arrange(MTF_vs_FTM_keep,adj.P.Val)
+MTF_vs_FTM_drop <- MTF_vs_FTM_keep[101:nrow(MTF_vs_FTM_keep),"AptName"]
+MTF_vs_FTM_drop <- as.data.frame(MTF_vs_FTM_drop)
+rownames(MTF_vs_FTM_drop) <- MTF_vs_FTM_drop$MTF_vs_FTM_drop
+MTF_vs_FTM_drop <- as.data.frame(t(MTF_vs_FTM_drop))
+MTF_vs_FTM <- df_diff %>% dplyr::select(-colnames(MTF_vs_FTM_drop))  
+  
+MTF_vs_FTM$group01 <- ifelse(MTF_vs_FTM$group == "MTF", 1, 0)
+seq <- is_seq(names(MTF_vs_FTM))
+elasticnet1 <- easy_elasticnet(data = MTF_vs_FTM,outcome = "group01",
+                           predictors = colnames(MTF_vs_FTM[,seq]), out = "1se.error",
+                           model_type = "binomial", cv_method="loo")
+retained_vars = analytes[analytes$AptName %in% elasticnet1, c("AptName","Target","TargetFullName")]
+kable(retained_vars)
+```
+ 
+### Refit final model
+
+Model would not converge
+ 
+```{r, echo = F, warning = F, message=FALSE} 
+# logistic regression model will not converge   
+#form = as.formula(paste0("group01~",paste0(elasticnet1,collapse = "+")))
+#mod = glm(formula = form, data = MTF_vs_FTM, family = "binomial")
+#kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)    
+    
 ```
 
-## Female to male
+## GFR - MTF and FTM combined
 
-```{r, echo = F}
-# filter to top 100 proteins by effect size
-f = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Results/limma_FTM_results.csv"
+### Selected proteins
+
+```{r, echo = F, warning = F, message=FALSE}
+# Similar procedure for change in GFR with groups combined
+seq <- is_seq(names(df_diff))
+elasticnet2 <- easy_elasticnet(data = df_diff,outcome = "delta_GFR..mL.min.",
+                           predictors = colnames(df_diff[,seq]), out = "1se.error",
+                           model_type = "gaussian", cv_method="loo")
+retained_vars = analytes[analytes$AptName %in% elasticnet2, c("AptName","Target","TargetFullName")]
+kable(retained_vars)
 ```
+
+
+### Refit final model - with interaction
+  
+Note: 95% CIs on parameter estimates are quite wide, indicating insufficient power to estimate interaction terms.  
+  
+```{r, echo = F, warning = F, message=FALSE}      
+# Try adding interaction term
+seq <- is_seq(names(df_diff))
+elasticnet2 <- easy_elasticnet(data = df_diff,outcome = "delta_GFR..mL.min.",
+                           predictors = colnames(df_diff[,seq]), out = "1se.error",
+                           model_type = "gaussian", cv_method="loo")
+retained_vars = analytes[analytes$AptName %in% elasticnet2, c("AptName","Target","TargetFullName")]
+ 
+form = as.formula(paste0("delta_GFR..mL.min.~",paste0(elasticnet2,collapse = "+"), paste0("+ group*"),
+  paste0(elasticnet2, collapse = "+ group*")))
+mod = lm(formula = form, data = df_diff)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)    
+```
+
+### Refit final model - no interaction
+
+```{r, echo = F, warning = F, message=FALSE}
+form = as.formula(paste0("delta_GFR..mL.min.~",paste0(elasticnet2,collapse = "+")))
+mod = lm(formula = form, data = df_diff)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)   
+```
+
+
