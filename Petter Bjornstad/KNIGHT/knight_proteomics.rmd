@@ -38,6 +38,7 @@ library(correlation)
 library(psych)
 library(SomaPlotr)
 library(openxlsx)
+library(sjlabelled)
 
 options(scipen = 999)
 ```
@@ -231,6 +232,39 @@ df_diff <- knight_soma %>%
   reframe(across(contains("seq"), ~ diff(as.numeric(.x))))
 # Merge in changes in other variables
 df_diff <- full_join(df_diff, delta, by="Study.ID")
+
+# read in CRC data and create datasets for comparison of KNIGHT to CRC
+# follow-up MTF vs CRC F, follow-up FTM vs CRC M
+# baseline MTF vs CRC M, baseline FTM vs CRC F
+crc_soma <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/soma_harmonized_dataset.csv", na.strings = "")
+crc_soma <- crc_soma %>%
+  filter(
+    study %in% c("CROCODILE"), participation_status == "Participated", group == "Lean Control"
+  ) %>%
+group_by(record_id, visit) %>%
+  summarise(across(where(is.character), ~ last(na.omit(.x))),
+    across(where(is.factor), ~ last(na.omit(.x))),
+    across(where(is.numeric), ~ mean(.x, na.rm = T)),
+    .groups = "drop"
+  ) %>%
+  mutate_all(~ ifelse(is.nan(.), NA, .))
+# Import proteomics data for RH and IMPROVE
+load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Combined SomaScan/analytes.Rdata")
+crc_soma <- crc_soma %>% dplyr::select(record_id, visit, sex, contains("seq."))
+# Transform
+crc_soma[, 4:ncol(crc_soma)] <- lapply(crc_soma[, 4:ncol(crc_soma)], log)
+crc_soma$group <- ifelse(crc_soma$sex == "Female", "CRC_F", "CRC_M")
+crc_soma$Study.ID <- crc_soma$record_id
+crc_soma$record_id <- NULL
+crc_soma$sex <- NULL
+crc_soma$time <- NA
+crc_soma$visit <- NULL
+crc_soma <- remove_all_labels(crc_soma)
+# combine
+knight_crc <- knight_soma %>% select(Study.ID, group, time, contains("seq."))
+knight_crc <- remove_all_labels(knight_crc)
+knight_crc <- bind_rows(knight_crc,crc_soma)
+knight_crc <- knight_crc %>% filter(!is.na(seq.10000.28))
 ```
 
 ```{r, include=FALSE}
@@ -875,6 +909,115 @@ ipa <- createWorkbook()
 addWorksheet(ipa,"Change in ERPF")
 writeData(ipa,"Change in ERPF",corr_ERPF..mL.min._mat_save,rowNames = F)
 saveWorkbook(ipa,"/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Results/IPA/KNIGHT_correlations_ERPF.xlsx",overwrite = TRUE)
+```
+
+## Comparison to CROCODILE
+
+### Baseline KNIGHT MTF vs. CROCODILE M
+
+```{r, include=FALSE}
+kMTF_CRCM <- knight_crc %>% filter(
+  (is.na(time) | time == 1), group %in% c("MTF", "CRC_M")
+)  
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(kMTF_CRCM))
+  
+kMTF_CRCM_contrast <- ifelse(kMTF_CRCM$group=="MTF",1,0)
+kMTF_CRCM_contrast <- cbind(rep(1,nrow(kMTF_CRCM)),kMTF_CRCM_contrast)
+# moderated t-tests with and without FDR adjustment
+ymat <- t(kMTF_CRCM[,seq])
+fit <- lmFit(ymat,kMTF_CRCM_contrast)
+fit <- eBayes(fit)
+results_kMTF_CRCM <- topTable(fit,coef = 2,number = nrow(ymat))
+results_kMTF_CRCM$AptName <- row.names(results_kMTF_CRCM)
+results_kMTF_CRCM <- merge(results_kMTF_CRCM,analytes,by="AptName",all.x = T, all.y = F)
+results_kMTF_CRCM <- results_kMTF_CRCM[order(results_kMTF_CRCM$P.Value),] 
+ymat <- NULL
+fit <- NULL
+```
+
+### Baseline KNIGHT FTM vs. CROCODILE F
+
+```{r, include=FALSE}
+kFTM_CRCF <- knight_crc %>% filter(
+  (is.na(time) | time == 1), group %in% c("FTM", "CRC_F")
+)  
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(kFTM_CRCF))
+  
+kFTM_CRCF_contrast <- ifelse(kFTM_CRCF$group=="FTM",1,0)
+kFTM_CRCF_contrast <- cbind(rep(1,nrow(kFTM_CRCF)),kFTM_CRCF_contrast)
+# moderated t-tests with and without FDR adjustment
+ymat <- t(kFTM_CRCF[,seq])
+fit <- lmFit(ymat,kFTM_CRCF_contrast)
+fit <- eBayes(fit)
+results_kFTM_CRCF <- topTable(fit,coef = 2,number = nrow(ymat))
+results_kFTM_CRCF$AptName <- row.names(results_kFTM_CRCF)
+results_kFTM_CRCF <- merge(results_kFTM_CRCF,analytes,by="AptName",all.x = T, all.y = F)
+results_kFTM_CRCF <- results_kFTM_CRCF[order(results_kFTM_CRCF$P.Value),] 
+ymat <- NULL
+fit <- NULL
+```
+
+### Follow-up KNIGHT MTF vs. CROCODILE F
+
+```{r, include=FALSE}
+kMTF_CRCF <- knight_crc %>% filter(
+  (is.na(time) | time == 2), group %in% c("MTF", "CRC_F")
+)  
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(kMTF_CRCF))
+  
+kMTF_CRCF_contrast <- ifelse(kMTF_CRCF$group=="MTF",1,0)
+kMTF_CRCF_contrast <- cbind(rep(1,nrow(kMTF_CRCF)),kMTF_CRCF_contrast)
+# moderated t-tests with and without FDR adjustment
+ymat <- t(kMTF_CRCF[,seq])
+fit <- lmFit(ymat,kMTF_CRCF_contrast)
+fit <- eBayes(fit)
+results_kMTF_CRCF <- topTable(fit,coef = 2,number = nrow(ymat))
+results_kMTF_CRCF$AptName <- row.names(results_kMTF_CRCF)
+results_kMTF_CRCF <- merge(results_kMTF_CRCF,analytes,by="AptName",all.x = T, all.y = F)
+results_kMTF_CRCF <- results_kMTF_CRCF[order(results_kMTF_CRCF$P.Value),] 
+ymat <- NULL
+fit <- NULL
+```
+
+### Follow-up KNIGHT FTM vs. CROCODILE M
+
+```{r, include=FALSE}
+kFTM_CRCM <- knight_crc %>% filter(
+  (is.na(time) | time == 2), group %in% c("FTM", "CRC_M")
+)  
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(kFTM_CRCM))
+  
+kFTM_CRCM_contrast <- ifelse(kFTM_CRCM$group=="FTM",1,0)
+kFTM_CRCM_contrast <- cbind(rep(1,nrow(kFTM_CRCM)),kFTM_CRCM_contrast)
+# moderated t-tests with and without FDR adjustment
+ymat <- t(kFTM_CRCM[,seq])
+fit <- lmFit(ymat,kFTM_CRCM_contrast)
+fit <- eBayes(fit)
+results_kFTM_CRCM <- topTable(fit,coef = 2,number = nrow(ymat))
+results_kFTM_CRCM$AptName <- row.names(results_kFTM_CRCM)
+results_kFTM_CRCM <- merge(results_kFTM_CRCM,analytes,by="AptName",all.x = T, all.y = F)
+results_kFTM_CRCM <- results_kFTM_CRCM[order(results_kFTM_CRCM$P.Value),] 
+ymat <- NULL
+fit <- NULL
+```
+
+```{r, echo = F}
+# write CRC comparisons results to file
+wb <- createWorkbook()
+addWorksheet(wb,"Baseline MTF v CRC M")
+writeData(wb,"Baseline MTF v CRC M",results_kMTF_CRCM,rowNames = F)
+addWorksheet(wb,"Baseline FTM v CRC F")
+writeData(wb,"Baseline FTM v CRC F",results_kFTM_CRCF,rowNames = F)
+addWorksheet(wb,"FUP MTF v CRC F")
+writeData(wb,"FUP MTF v CRC F",results_kMTF_CRCF,rowNames = F)
+addWorksheet(wb,"FUP FTM v CRC M")
+writeData(wb,"FUP FTM v CRC M",results_kFTM_CRCM,rowNames = F)
+saveWorkbook(wb,"/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/KNIGHT/Results/KNIGHT_vs_CRC_comparisons.xlsx",overwrite = TRUE)
+saveWorkbook(wb,"/Users/pylell/Dropbox/KNIGHT/KNIGHT_vs_CRC_comparisons.xlsx",overwrite = TRUE)
 ```
 
 # Elastic net analysis
