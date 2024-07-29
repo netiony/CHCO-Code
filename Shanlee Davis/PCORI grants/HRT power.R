@@ -1,13 +1,16 @@
 library(nlme)
+library(stringr)
+library(dplyr)
 
 # read in simulated data
 data <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Davis/PCORI proposals/HRT/ald_sim_totN_300.csv")
 
 # check data
-table(data$sim)
-table(data$cohort)
-table(data$id)
-table(data$period)
+table(data$sim, useNA = "ifany")
+table(data$cohort, useNA = "ifany")
+table(data$id, useNA = "ifany")
+table(data$period, useNA = "ifany")
+table(data$group, useNA = "ifany")
 
 summary(data$y)
 
@@ -15,15 +18,26 @@ summary(data$y)
 # if 2 years on a drug, code 2
 # if 1 year on a drug, code 1
 # if not on a drug, code 0
-# WHY ARE THERE ONLY 2 GROUPS IN THE SIM DATA?
-data$OCP <- ifelse(data$group %in% c(""), 2,
-                   ifelse(data$group %in% c(""), 1, 0))
-data$transdermal <- ifelse(data$group %in% c(""), 2,
-                           ifelse(data$group %in% c(""), 1, 0))
-data$oral <- ifelse(data$group %in% c(""), 2,
-                           ifelse(data$group %in% c(""), 1, 0))
+data$OCP <- str_count(data$group, "OCP")
+data$transdermal <- str_count(toupper(data$group), "TRANSDERMAL")
+data$oral <- str_count(toupper(data$group), "ORAL")
+
+data <- data %>% group_by(sim, id) %>% filter(row_number() == 1)
+
+p_ocp <- NULL
+p_oral <- NULL
+p_transdermal <- NULL
 
 for (i in 1:1000) {
-  model <- lme(y ~ age * group, random = ~1 | id, data = data[data$sim == i,])
+  model_ocp <- lme(y ~ OCP , random = ~1 | id, data = data[data$sim == i,])
+  p_ocp <- c(p_ocp, summary(model_ocp)$tTable[2,5])
+  model_oral <- lme(y ~ oral , random = ~1 | id, data = data[data$sim == i,])
+  p_oral <- c(p_oral, summary(model_oral)$tTable[2,5])
+  model_transdermal <- lme(y ~ transdermal , random = ~1 | id, data = data[data$sim == i,])
+  p_transdermal <- c(p_transdermal, summary(model_transdermal)$tTable[2,5])
 }
-# does group need to be a time dependent covariate? how would I generate data like that?
+
+# power below is expressed as percent
+sum(p_ocp<0.05)/10
+sum(p_oral<0.05)/10
+sum(p_transdermal<0.05)/10
