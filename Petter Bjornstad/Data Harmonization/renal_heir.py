@@ -361,6 +361,7 @@ def clean_renal_heir():
     # Replace missing values
     plasma_metab.replace(rep, np.nan, inplace=True)
     plasma_metab["procedure"] = "plasma_metab"
+    plasma_metab["visit"] = "baseline"
     plasma_metab["date"] = clamp["date"]
     
     # --------------------------------------------------------------------------
@@ -389,9 +390,9 @@ def clean_renal_heir():
     df = pd.merge(df, out, how='outer')
     df = pd.concat([df, bold_mri], join='outer', ignore_index=True)
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
-    df = pd.merge(df, demo, how="outer")
     df = pd.concat([df, az_u_metab], join='outer', ignore_index=True)
     df = pd.concat([df, plasma_metab], join='outer', ignore_index=True)
+    df = pd.merge(df, demo, how="outer")
     df = df.loc[:, ~df.columns.str.startswith('redcap_')]
     df = df.copy()
 

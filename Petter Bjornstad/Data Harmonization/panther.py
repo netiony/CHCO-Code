@@ -168,7 +168,10 @@ def clean_panther():
                   "bl_ldl": "ldl_base", 
                   "bl_nonhdl": "nonhdl_base",
                   "bls_d25_st": "d25_bolus_time", 
-                  "bls_ins_st": "insulin_bolus_time"},
+                  "bls_ins_st": "insulin_bolus_time",
+                  "bl_estrad": "estrad",
+                  "bl_tot_test" : "tot_test",
+                  "bl_free_test" : "free_test"},
               axis=1, inplace=True)
     # Insulin
     ins=list(ivgtt.loc[:, ivgtt.columns.str.startswith("insulin_")].columns.values)

@@ -1,6 +1,7 @@
 library(reticulate)
 library(dplyr)
 library(tidyr)
+library(purrr)
 
 # Import python harmonization function & run
 source_python('/Users/choiyej/GitHub/CHCO-Code/Petter Bjornstad/Data Harmonization/data_harmonization.py')
