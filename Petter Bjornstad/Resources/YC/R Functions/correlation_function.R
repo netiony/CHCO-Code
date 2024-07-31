@@ -393,7 +393,7 @@ pcor.plot <- function(data, X, Y, Z, cor_method = "pearson", dict = dict,
     rownames(M) = as.list(dict_row)
     
     corrplot(as.matrix(M),
-             is.corr = F,
+             is.corr = T,
              p.mat = P,
              method = method,
              tl.col = "black",
@@ -408,12 +408,17 @@ pcor.plot <- function(data, X, Y, Z, cor_method = "pearson", dict = dict,
              pch.cex = pch.cex)$corrPos -> p1
     p1_sub <- subset(p1, p.value <= 0.05)
     p1_sub2 <- subset(p1, p.value <= 0.05 & abs(corr) >= 0.7)
+    
+    if (nrow(p1) > 0) {
+      graphics::text(p1$x, p1$y, sprintf("%.2f", p1$corr), adj = c(0.5, 0))
+    }
     if (nrow(p1_sub) > 0) {
-      graphics::text(p1_sub$x, p1_sub$y, sprintf("%.2f", p1_sub$corr))
+      graphics::text(p1_sub$x, p1_sub$y, stars.pval(p1_sub$p.value), adj = c(0.5, 2))
     }
     if (nrow(p1_sub2) > 0) {
-      graphics::text(p1_sub2$x, p1_sub2$y, sprintf("%.2f", p1_sub2$corr), col = "white")
+      graphics::text(p1_sub2$x, p1_sub2$y, sprintf("%.2f", p1_sub2$corr), col = "white", adj = c(0.5, 0))
+      graphics::text(p1_sub2$x, p1_sub2$y, stars.pval(p1_sub2$p.value), col = "white", adj = c(0.5, 2))
     }
-  }
+}
 
   
