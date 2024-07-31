@@ -1,0 +1,340 @@
+---
+title: "T1D vs. T2D"
+author: "Ye Ji Choi"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    embed-resources: true
+---
+
+```{r libraries, echo=F, include = F}
+library(tidyverse)
+library(arsenal)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+```
+
+```{r load-data, echo = F, include = F}
+# Load SOMAScan analytes data
+load("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Combined SomaScan/analytes.Rdata")
+
+# Load dictionary function and file
+source("/Users/choiyej/GitHub/YC_CHCO/R Functions/label_harmonized_function.R")
+
+# Load indicators
+ind <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/procedure_indicator.csv")
+
+so <- readRDS("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean/seurat_data_no_computations.RDS")
+so_meta <- so@meta.data
+so_record_id <- unique(so@meta.data$michigan_id)
+sum(endsWith(so_record_id, "BL"))
+
+so_record_id <- unique(gsub("_BL|_12M", "", so_record_id))
+length(so_record_id)
+sum(startsWith(so_record_id, "RH-"))
+
+```
+
+```{r prep-data, echo = F, include = F}
+# Load clinical data
+harm_dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/soma_harmonized_dataset.csv", na.strings = "")
+
+dat <- harm_dat %>% filter(study == "CROCODILE" | study == "RENAL-HEIR" | 
+                             (study == "IMPROVE" & visit == "baseline") | study == "RENAL-HEIRitage") %>%
+  filter(record_id %in% so_record_id) %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+                   .by = c(mrn)) %>%
+  filter(group != "Obese Control") %>%
+  dplyr::mutate(race_ethnicity_condensed = case_when(race == "White" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino White",
+                                              race == "Black or African American" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino Black",
+                                              ethnicity == "Hispanic or Latino" ~ "Hispanic or Latino",
+                                              T ~ "Not Hispanic or Latino Other"),
+         combined_tkv = coalesce(total_kidney_volume_ml, total_kidney_volume_ml_manual),
+         combined_ht_tkv = coalesce(ht_adj_tkv, ht_adj_tkv_manual),
+         avg_c_k2 = rowMeans(cbind(rc_k2, lc_k2), na.rm = T),
+         avg_m_k2 = rowMeans(cbind(rm_k2, lm_k2), na.rm = T),
+         avg_c_f = rowMeans(cbind(rc_f, lc_f), na.rm = T),
+         avg_m_f = rowMeans(cbind(rm_f, lm_f), na.rm = T),
+         avg_c_k1 = rowMeans(cbind(rc_k1, lc_k1), na.rm = T),
+         avg_m_k1 = rowMeans(cbind(rm_k1, lm_k1), na.rm = T),
+         m_value = coalesce(p2_raw_m, gir_190),
+         sglt2i = coalesce(sglt2i_ever, sglti_timepoint)) %>%
+  filter(sglt2i != "Yes") %>%
+  arrange(record_id) 
+
+# Send M-values to Viji
+dat_m_values <- subset(dat, select = c(record_id, group, m_value))
+write.csv(dat_m_values, "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/t1d_t2d_mvalues.csv", row.names = F, na = "")
+
+# Load and modify dictionary file
+dict <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv") 
+dict <- label_harmonized_dict(dat, dict) %>%
+  dplyr::mutate(m_value = "M-value")
+
+# Label data
+dat <- label_harmonized(dat, dict)
+```
+
+# Descriptive table
+```{r, results='asis'}
+tbl1 <- tableby(group ~ age + sex + bmi + weight + height + diabetes_duration + race + ethnicity + hba1c + eGFR_CKD_epi + sbp + dbp + map + kwt(acr_u, "Nmiss", "median", "q1q3", "range"), data = dat)
+
+summary(tbl1, test = F)
+```
+
+# Figure 2A
+
+```{r}
+dat %>%
+  ggplot(aes(x = group, y = m_value, color = group, fill = group)) +
+  geom_boxplot(alpha = 0.7, size = 1.3, outlier.shape = NA) + 
+  geom_jitter(shape = 21, alpha = 0.5, size = 2, width = 0.2) + 
+  scale_color_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  scale_fill_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 18),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_text(size = 14),
+        legend.position = "none") +
+  labs(x = NULL,
+       y = "M-value")
+ggsave("/Volumes/Peds Endo/Petter Bjornstad/T1D T2D/figures/m_value.png")
+```
+
+# Figure 2B
+
+```{r}
+dat %>%
+  ggplot(aes(x = group, y = bmi, color = group, fill = group)) +
+  geom_boxplot(alpha = 0.7, size = 1.3, outlier.shape = NA) + 
+  geom_jitter(shape = 21, alpha = 0.5, size = 2, width = 0.2) + 
+  scale_color_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  scale_fill_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 18),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_text(size = 14),
+        legend.position = "none") +
+  labs(x = NULL,
+       y = "BMI")
+ggsave("/Volumes/Peds Endo/Petter Bjornstad/T1D T2D/figures/bmi.png")
+
+
+dat %>%
+  ggplot(aes(x = group, y = dexa_body_fat, color = group, fill = group)) +
+  geom_boxplot(alpha = 0.7, size = 1.3, outlier.shape = NA) + 
+  geom_jitter(shape = 21, alpha = 0.5, size = 2, width = 0.2) + 
+  scale_color_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  scale_fill_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 18),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_text(size = 14),
+        legend.position = "none") +
+  labs(x = NULL,
+       y = "% Body Fat")
+ggsave("/Volumes/Peds Endo/Petter Bjornstad/T1D T2D/figures/bodyfat.png")
+
+
+dat %>%
+  filter(group != "Lean Control") %>%
+  ggplot(aes(x = group, y = diabetes_duration, color = group, fill = group)) +
+  geom_boxplot(alpha = 0.7, size = 1.3, outlier.shape = NA) + 
+  geom_jitter(shape = 21, alpha = 0.5, size = 2, width = 0.2) + 
+  scale_color_manual(values = c("#ef626c", "#57886c")) +
+  scale_fill_manual(values = c("#ef626c", "#57886c")) +
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 18),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_text(size = 14),
+        legend.position = "none") +
+  labs(x = NULL,
+       y = "Diabetes duration")
+ggsave("/Volumes/Peds Endo/Petter Bjornstad/T1D T2D/figures/diabetes_duration.png")
+
+```
+# Figure 2C
+
+```{r}
+dat %>%
+  ggplot(aes(x = group, y = glom_tuft_area, color = group, fill = group)) +
+  geom_boxplot(alpha = 0.7, size = 1.3, outlier.shape = NA) + 
+  geom_jitter(shape = 21, alpha = 0.5, size = 2, width = 0.2) + 
+  scale_color_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  scale_fill_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 18),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_text(size = 14),
+        legend.position = "none") +
+  labs(x = NULL,
+       y = "Glomerular tuft area")
+ggsave("/Volumes/Peds Endo/Petter Bjornstad/T1D T2D/figures/glom_tuft_area.png")
+
+```
+
+# Figure 2D
+
+```{r}
+dat %>%
+  ggplot(aes(x = group, y = glom_volume_con, color = group, fill = group)) +
+  geom_boxplot(alpha = 0.7, size = 1.3, outlier.shape = NA) + 
+  geom_jitter(shape = 21, alpha = 0.5, size = 2, width = 0.2) + 
+  scale_color_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  scale_fill_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 18),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_text(size = 14),
+        legend.position = "none") +
+  labs(x = NULL,
+       y = "Glomerular volume")
+ggsave("/Volumes/Peds Endo/Petter Bjornstad/T1D T2D/figures/glom_vol.png")
+
+```
+
+# Figure 2E
+
+```{r}
+dat %>%
+  ggplot(aes(x = group, y = mes_matrix_area, color = group, fill = group)) +
+  geom_boxplot(alpha = 0.7, size = 1.3, outlier.shape = NA) + 
+  geom_jitter(shape = 21, alpha = 0.5, size = 2, width = 0.2) + 
+  scale_color_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  scale_fill_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 18),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_text(size = 14),
+        legend.position = "none") +
+  labs(x = NULL,
+       y = "Mesangial matrix area")
+ggsave("/Volumes/Peds Endo/Petter Bjornstad/T1D T2D/figures/mes_matrix_area.png")
+
+```
+
+# Figure 2F
+
+```{r}
+dat %>%
+  ggplot(aes(x = group, y = mes_volume_con, color = group, fill = group)) +
+  geom_boxplot(alpha = 0.7, size = 1.3, outlier.shape = NA) + 
+  geom_jitter(shape = 21, alpha = 0.5, size = 2, width = 0.2) + 
+  scale_color_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  scale_fill_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 18),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_text(size = 14),
+        legend.position = "none") +
+  labs(x = NULL,
+       y = "Mesangial volume")
+ggsave("/Volumes/Peds Endo/Petter Bjornstad/T1D T2D/figures/mes_vol.png")
+
+```
+
+# Figure 4E
+
+```{r}
+dat <- harm_dat %>% filter(study == "CROCODILE" | study == "RENAL-HEIR" | 
+                             (study == "IMPROVE" & visit == "baseline") | study == "RENAL-HEIRitage") %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+                   .by = c(mrn)) %>%
+  filter(group != "Obese Control") %>%
+  filter(group == "Type 2 Diabetes" | record_id %in% so_record_id) %>%
+  dplyr::mutate(race_ethnicity_condensed = case_when(race == "White" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino White",
+                                              race == "Black or African American" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino Black",
+                                              ethnicity == "Hispanic or Latino" ~ "Hispanic or Latino",
+                                              T ~ "Not Hispanic or Latino Other"),
+         combined_tkv = coalesce(total_kidney_volume_ml, total_kidney_volume_ml_manual),
+         combined_ht_tkv = coalesce(ht_adj_tkv, ht_adj_tkv_manual),
+         avg_c_k2 = rowMeans(cbind(rc_k2, lc_k2), na.rm = T),
+         avg_m_k2 = rowMeans(cbind(rm_k2, lm_k2), na.rm = T),
+         avg_c_f = rowMeans(cbind(rc_f, lc_f), na.rm = T),
+         avg_m_f = rowMeans(cbind(rm_f, lm_f), na.rm = T),
+         avg_c_k1 = rowMeans(cbind(rc_k1, lc_k1), na.rm = T),
+         avg_m_k1 = rowMeans(cbind(rm_k1, lm_k1), na.rm = T),
+         m_value = coalesce(p2_raw_m, gir_190),
+         sglt2i = coalesce(sglt2i_ever, sglti_timepoint)) %>%
+  filter(sglt2i != "Yes") %>%
+  arrange(record_id) 
+```
+
+```{r}
+dat %>%
+  ggplot(aes(x = group, y = avg_c_k2, color = group, fill = group)) +
+  geom_boxplot(alpha = 0.7, size = 1.3, outlier.shape = NA) + 
+  geom_jitter(shape = 21, alpha = 0.5, size = 2, width = 0.2) + 
+  scale_color_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  scale_fill_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 18),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_text(size = 14),
+        legend.position = "none") +
+  labs(x = NULL,
+       y = "Avg cortical K2")
+ggsave("/Volumes/Peds Endo/Petter Bjornstad/T1D T2D/figures/avg_c_k2.png")
+
+```
+
+# Figure 4F
+
+```{r}
+dat %>%
+  ggplot(aes(x = group, y = avg_c_f, color = group, fill = group)) +
+  geom_boxplot(alpha = 0.7, size = 1.3, outlier.shape = NA) + 
+  geom_jitter(shape = 21, alpha = 0.5, size = 2, width = 0.2) + 
+  scale_color_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  scale_fill_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 18),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_text(size = 14),
+        legend.position = "none") +
+  labs(x = NULL,
+       y = "Avg cortical perfusion")
+ggsave("/Volumes/Peds Endo/Petter Bjornstad/T1D T2D/figures/avg_c_f.png")
+```
+
+# Figure 4F?
+
+```{r}
+dat %>%
+  ggplot(aes(x = group, y = avg_c_k1, color = group, fill = group)) +
+  geom_boxplot(alpha = 0.7, size = 1.3, outlier.shape = NA) + 
+  geom_jitter(shape = 21, alpha = 0.5, size = 2, width = 0.2) + 
+  scale_color_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  scale_fill_manual(values = c("#3d5a80", "#ef626c", "#57886c")) +
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 18),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_text(size = 14),
+        legend.position = "none") +
+  labs(x = NULL,
+       y = "Avg cortical k1")
+ggsave("/Volumes/Peds Endo/Petter Bjornstad/T1D T2D/figures/avg_c_k1.png")
+
+```
