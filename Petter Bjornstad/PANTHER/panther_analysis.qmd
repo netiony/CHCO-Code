@@ -9,7 +9,6 @@ format:
     toc-location: left
     code-fold: true
     embed-resources: true
-editor: visual
 ---
 
 Save related files for further analysis and descriptive table of PANTHER
@@ -20,6 +19,10 @@ library(tidyverse)
 library(growthcleanr)
 library(arsenal)
 library(dplyr)
+library(naniar)
+library(ggplot2)
+library(ggrepel)
+library(ggpubr)
 ```
 
 ```{r load-data, echo = F, include = F}
@@ -37,7 +40,7 @@ exclude <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/pa
 
 dat <- harm_dat %>% filter((study == "PANTHER" & visit == "baseline")|study == "RENAL-HEIR"|
                              study == "RENAL-HEIRitage" | (study == "IMPROVE" & visit == "baseline")) %>%
-  filter(record_id %nin% exclude) %>%
+  # filter(record_id %nin% exclude) %>% # Not removing anyone with proteomics data
   dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
                    across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
                    .by = c(mrn, screen_date)) %>%
@@ -48,7 +51,7 @@ dat <- harm_dat %>% filter((study == "PANTHER" & visit == "baseline")|study == "
                                                 ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino Black",
                                               ethnicity == "Hispanic or Latino" ~ "Hispanic or Latino",
                                               T ~ "Not Hispanic or Latino Other"),
-         tanner_stage_comp = coalesce(tan_fgd, tan_fph, tan_tveq, tan_mgd, tan_mph, breast_tanner, ceiling(testicular_volume)),
+         tanner_stage_comp = coalesce(tan_fgd, tan_fph, tan_tveq, tan_mgd, tan_mph, breast_tanner),
          tanner_stage_comp_panther = case_when(tanner_stage_comp > 3 ~ 4, T~ tanner_stage_comp),
          tanner_stage_cat = case_when(tanner_stage_comp <3 ~ "I_II",
                                       tanner_stage_comp >=3 ~ "III_V"),
@@ -66,7 +69,8 @@ dat <- harm_dat %>% filter((study == "PANTHER" & visit == "baseline")|study == "
                          sex == "Female" ~ "female"),
          combined_tkv = coalesce(total_kidney_volume_ml, total_kidney_volume_ml_manual),
          combined_ht_tkv = coalesce(ht_adj_tkv, ht_adj_tkv_manual)) %>%
-  arrange(record_id)
+  arrange(record_id) %>%
+  filter(!is.na(seq.10000.28))
 
 dat$tanner_stage_comp <- as.factor(dat$tanner_stage_comp)
 
@@ -78,7 +82,9 @@ bmi_percentile = ext_bmiz(data = subset(dat,
                           bmi = "bmi", 
                           adjust.integer.age = F) %>% 
   dplyr:: select(record_id, bmip)
-dat <- left_join(dat, bmi_percentile, by = "record_id")
+dat <- left_join(dat, bmi_percentile, by = "record_id") %>%
+  dplyr::mutate(group_risk = case_when(bmip >= 85 | hba1c >=6 | group == "Type 2 Diabetes" ~ "High",
+                                       T ~ "Low"))
 
 panther <- dat %>% filter(study == "PANTHER") %>%
   filter(!is.na(tanner_stage_comp))
@@ -86,16 +92,9 @@ sens_dat <- dat %>% filter(study == "PANTHER" | study == "RENAL-HEIR") %>%
   filter(!is.na(tanner_stage_comp))
 
 # Prepare SOMA data
-# center/scale
-cs <- function(.x) {    # .x = numeric vector
-  out <- .x - mean(.x)  # center
-  out / sd(out)         # scale
-}
-
 # prepare data set for analysis
 cleanData_comb <- dat |>
-  modify_at(getAnalytes(dat), log) |>
-  modify_at(getAnalytes(dat), cs)  
+  mutate_at(getAnalytes(dat), ~ as.numeric(scale(log(.))))
 
 cleanData_panther <- cleanData_comb %>%
   filter(study == "PANTHER") %>%
@@ -124,7 +123,14 @@ dict <- label_harmonized_dict(dat, dict) %>%
          total_kidney_volume_ml_manual = "Total Kidney Volume (mL; manual)",
          ht_adj_tkv_manual = "Height Adjusted Total Kidney Volume (mL/m; manual)",
          combined_tkv = "Collapsed Total Kidney Volume (mL)", 
-         combined_ht_tkv = "Collapsed Height Adjusted Total Kidney Volume (mL/m)") %>%
+         combined_ht_tkv = "Collapsed Height Adjusted Total Kidney Volume (mL/m)",
+         fsh = "FSH (mIU/mL)", 
+         lh = "LH (mIU/mL)", 
+         estrad = "Estradiol (pg/mL)",
+         tot_test = "Total testosterone (ng/dL)",
+         free_test = "Free testosterone (pg/mL)",
+         igf_1 = "IGF-1",
+         igf1_z_score = "IGF-1 Z-score") %>%
   dplyr::select(-starts_with("seq."))
 
 analytes_dict <- analytes %>%
@@ -139,25 +145,29 @@ dict <- cbind(dict, analytes_dict)
 dat <- label_harmonized(dat, dict)
 panther <- label_harmonized(panther, dict)
 sens_dat <- label_harmonized(sens_dat, dict)
+
+# panther_id <- as.character(panther$record_id)
+# panther2_id <- as.character(panther_2$record_id)
+# setdiff(panther_id, panther2_id)
 ```
 
 ```{r save-data, include = F}
-# save(analytes,
-#      file = "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_analytes.RData")
-# save(dict, 
-#         file = "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_dict.RData")
-# save(dat, 
-#         file = "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther+rh+rh2+imp_data.RData")
-# save(panther, 
-#         file = "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_data.RData")
-# save(sens_dat, 
-#         file = "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_rh_rh2_imp_data.RData")
-# save(cleanData_comb, 
-#         file = "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther+rh+rh2+imp_data_soma_std.RData")
-# save(cleanData_panther, 
-#         file = "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_data_soma_std.RData")
-# save(cleanData_sens, 
-#         file = "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_data_rh_rh2_imp_std.RData")
+save(analytes,
+     file = "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_analytes.RData")
+save(dict,
+        file = "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_dict.RData")
+save(dat,
+        file = "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther+rh+rh2+imp_data.RData")
+save(panther,
+        file = "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_data.RData")
+save(sens_dat,
+        file = "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_rh_rh2_imp_data.RData")
+save(cleanData_comb,
+        file = "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther+rh+rh2+imp_data_soma_std.RData")
+save(cleanData_panther,
+        file = "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_data_soma_std.RData")
+save(cleanData_sens,
+        file = "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_data_rh_rh2_imp_std.RData")
 ```
 
 # Descriptive table
@@ -165,24 +175,267 @@ sens_dat <- label_harmonized(sens_dat, dict)
 ## PANTHER only
 
 ### By risk
-
+ IGF-1 and IGF-BP3
 ```{r desc-risk, results = 'asis', echo = F}
 # Descriptive tables
 ## By risk
-summary(tableby(group_risk ~ age + sex + tanner_stage_comp + group + weight + height + bmi + bmip + hba1c + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + total_kidney_volume_ml + ht_adj_tkv + mm_airg + mm_bcell + mm_di + mm_ir + mm_si, data = panther, total = T, test = F))
+summary(tableby(group_risk ~ age + sex + tanner_stage_comp + group + weight + height + bmi + bmip + hba1c + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + total_kidney_volume_ml + ht_adj_tkv + pcasl3d_right + pcasl3d_left + pasl2d_right + pasl2d_left + adc_right + adc_left + bold_r_bl_cortex + bold_l_bl_cortex + mm_airg + mm_bcell + mm_di + mm_ir + mm_si + dexa_body_fat + dexa_fat_kg + dexa_lean_mass + dexa_lean_kg + dexa_trunk_mass + dexa_trunk_kg + dexa_bone_mineral_density + fsh + lh + estrad + tot_test + free_test + igf_1 + igf1_z_score , data = panther, total = T, test = F))
 ```
+
 ### By tanner stage
 
 ```{r desc-tanner-stage, results = 'asis', echo = F}
 # By tanner stage
-summary(tableby(tanner_stage_comp ~ age + sex + group + group_risk + weight + height + bmi + bmip + hba1c + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + total_kidney_volume_ml + ht_adj_tkv + mm_airg + mm_bcell + mm_di + mm_ir + mm_si, data = panther, total = T, test = F))
+summary(tableby(tanner_stage_comp ~ age + sex + group + group_risk + weight + height + bmi + bmip + hba1c + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + total_kidney_volume_ml + ht_adj_tkv + mm_airg + mm_bcell + mm_di + mm_ir + mm_si+ dexa_body_fat + dexa_fat_kg + dexa_lean_mass + dexa_lean_kg + dexa_trunk_mass + dexa_trunk_kg + dexa_bone_mineral_density + fsh + lh + estrad + tot_test + free_test, data = panther, total = T, test = F))
 ```
 
 ### By tanner stage (4 & 5 combined)
 
 ```{r desc-tanner-stage-45, results = 'asis', echo = F}
 # By tanner stage
-summary(tableby(tanner_stage_comp_panther_cat ~ age + sex + group + group_risk + weight + height + bmi + bmip + hba1c + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + total_kidney_volume_ml + ht_adj_tkv + mm_airg + mm_bcell + mm_di + mm_ir + mm_si, data = panther, total = T, test = F))
+summary(tableby(tanner_stage_comp_panther_cat ~ age + sex + group + group_risk + weight + height + bmi + bmip + hba1c + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + total_kidney_volume_ml + ht_adj_tkv + mm_airg + mm_bcell + mm_di + mm_ir + mm_si+ dexa_body_fat + dexa_fat_kg + dexa_lean_mass + dexa_lean_kg + dexa_trunk_mass + dexa_trunk_kg + dexa_bone_mineral_density + fsh + lh + estrad + tot_test + free_test, data = panther, total = T, test = F))
+```
+
+### IQR plots
+```{r echo = F, warning = F}
+iqr_plot <- function(data, x_var, y_var,
+                     x_var_lab, y_var_lab) {
+  ggplot(data = data, aes_string(x = x_var, y = y_var)) +
+    geom_jitter(width = 0.1, alpha = 0.5) +
+    stat_summary(
+      fun = median, 
+      geom = "crossbar", 
+      width = 0.2) + 
+    stat_summary(
+      fun.data = function(x) {
+        data.frame(
+          y = median(x),
+          ymin = quantile(x, 0.25),
+          ymax = quantile(x, 0.75))
+      },
+      geom = "errorbar", 
+      width = 0.2) + 
+    stat_summary(
+      fun = median, 
+      geom = "line",
+      group = 1) + 
+    labs(x = x_var_lab,
+         y = y_var_lab) +
+    theme(panel.background = element_blank(),
+          text = element_text(size = 12))
+}
+```
+
+#### Pooled
+```{r echo = F, warning = F}
+iqr_plot(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "total_kidney_volume_ml", 
+         x_var_lab = "Tanner stage", y_var_lab = "Total kidney volume")
+
+iqr_plot(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "ht_adj_tkv",
+         x_var_lab = "Tanner stage", y_var_lab = "Total kidney volume (Height adjusted)")
+
+iqr_plot(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "gfr_raw_plasma",
+         x_var_lab = "Tanner stage", y_var_lab = "GFR (Raw)")
+
+iqr_plot(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "gfr_bsa_plasma",
+         x_var_lab = "Tanner stage", y_var_lab = "GFR (BSA)")
+
+iqr_plot(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "erpf_raw_plasma",
+         x_var_lab = "Tanner stage", y_var_lab = "RPF (Raw)")
+
+iqr_plot(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "erpf_bsa_plasma",
+         x_var_lab = "Tanner stage", y_var_lab = "RPF (BSA)")
+
+iqr_plot(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "glomerular_pressure",
+         x_var_lab = "Tanner stage", y_var_lab = "PGLO")
+
+iqr_plot(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "mm_si",
+         x_var_lab = "Tanner stage", y_var_lab = "SI")
+
+iqr_plot(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "mm_airg",
+         x_var_lab = "Tanner stage", y_var_lab = "AIRg")
+
+iqr_plot(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "mm_bcell",
+         x_var_lab = "Tanner stage", y_var_lab = "Beta cell function")
+
+```
+```{r echo = F, warning = F}
+iqr_plot_grp <- function(data, x_var, y_var, group_var = NULL,
+                     x_var_lab, y_var_lab, group_lab = NULL) {
+  ggplot(data = data, aes_string(x = x_var, y = y_var, linetype = group_var, color = group_var)) +
+    geom_jitter(width = 0.1, alpha = 0.5) +
+    stat_summary(
+      fun = median, 
+      geom = "crossbar", 
+      width = 0.2) + 
+    stat_summary(
+      fun.data = function(x) {
+        data.frame(
+          y = median(x),
+          ymin = quantile(x, 0.25),
+          ymax = quantile(x, 0.75))
+      },
+      geom = "errorbar", 
+      width = 0.2) + 
+    stat_summary(
+      fun = median, 
+      geom = "line", 
+      aes_string(group = group_var)) + 
+    stat_compare_means(
+      method = "t.test",
+      aes(label = ..p.signif..),
+      label.x.npc = "center", 
+      label.y.npc = "top") +
+    labs(x = x_var_lab,
+         y = y_var_lab,
+         color = group_lab,
+         linetype = group_lab) +
+    theme(panel.background = element_blank(),
+          text = element_text(size = 12))
+}
+```
+
+#### Risk
+```{r echo = F, warning = F}
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "total_kidney_volume_ml",group_var = "group_risk", 
+         x_var_lab = "Tanner stage", y_var_lab = "Total kidney volume", group_lab = "Risk group")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "ht_adj_tkv",group_var = "group_risk", 
+         x_var_lab = "Tanner stage", y_var_lab = "Total kidney volume (Height adjusted)", group_lab = "Risk group")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "gfr_raw_plasma",group_var = "group_risk", 
+         x_var_lab = "Tanner stage", y_var_lab = "GFR (Raw)", group_lab = "Risk group")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "gfr_bsa_plasma",group_var = "group_risk", 
+         x_var_lab = "Tanner stage", y_var_lab = "GFR (BSA)", group_lab = "Risk group")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "erpf_raw_plasma",group_var = "group_risk", 
+         x_var_lab = "Tanner stage", y_var_lab = "RPF (Raw)", group_lab = "Risk group")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "erpf_bsa_plasma",group_var = "group_risk", 
+         x_var_lab = "Tanner stage", y_var_lab = "RPF (BSA)", group_lab = "Risk group")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "glomerular_pressure",group_var = "group_risk", 
+         x_var_lab = "Tanner stage", y_var_lab = "PGLO", group_lab = "Risk group")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "mm_si",group_var = "group_risk", 
+         x_var_lab = "Tanner stage", y_var_lab = "SI", group_lab = "Risk group")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "mm_airg",group_var = "group_risk", 
+         x_var_lab = "Tanner stage", y_var_lab = "AIRg", group_lab = "Risk group")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "mm_bcell",group_var = "group_risk", 
+         x_var_lab = "Tanner stage", y_var_lab = "Beta cell function", group_lab = "Risk group")
+
+```
+#### Sex
+```{r echo = F, warning = F}
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "total_kidney_volume_ml",group_var = "sex", 
+         x_var_lab = "Tanner stage", y_var_lab = "Total kidney volume", group_lab = "Sex")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "ht_adj_tkv",group_var = "sex", 
+         x_var_lab = "Tanner stage", y_var_lab = "Total kidney volume (Height adjusted)", group_lab = "Sex")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "gfr_raw_plasma",group_var = "sex", 
+         x_var_lab = "Tanner stage", y_var_lab = "GFR (Raw)", group_lab = "Sex")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "gfr_bsa_plasma",group_var = "sex", 
+         x_var_lab = "Tanner stage", y_var_lab = "GFR (BSA)", group_lab = "Sex")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "erpf_raw_plasma",group_var = "sex", 
+         x_var_lab = "Tanner stage", y_var_lab = "RPF (Raw)", group_lab = "Sex")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "erpf_bsa_plasma",group_var = "sex", 
+         x_var_lab = "Tanner stage", y_var_lab = "RPF (BSA)", group_lab = "Sex")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "glomerular_pressure",group_var = "sex", 
+         x_var_lab = "Tanner stage", y_var_lab = "PGLO", group_lab = "Sex")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "mm_si",group_var = "sex", 
+         x_var_lab = "Tanner stage", y_var_lab = "SI", group_lab = "Sex")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "mm_airg",group_var = "sex", 
+         x_var_lab = "Tanner stage", y_var_lab = "AIRg", group_lab = "Sex")
+
+iqr_plot_grp(data = panther, 
+         x_var = "tanner_stage_comp_panther_cat", y_var = "mm_bcell",group_var = "sex", 
+         x_var_lab = "Tanner stage", y_var_lab = "Beta cell function", group_lab = "Sex")
+
+```
+
+### Outliers and missingness
+```{r echo = F, warning = F}
+vis_miss(subset(panther, select=c(gfr_raw_plasma, gfr_bsa_plasma, erpf_raw_plasma, erpf_bsa_plasma, record_id)), facet = record_id)
+
+vis_miss(subset(panther, select=c(total_kidney_volume_ml, ht_adj_tkv, record_id)), facet = record_id)
+
+vis_miss(subset(panther, select=c(mm_airg, mm_bcell, mm_di, mm_ir, mm_si, record_id)), facet = record_id)
+
+vis_miss(subset(panther, select=c(dexa_body_fat, dexa_fat_kg, dexa_lean_mass, dexa_lean_kg, dexa_trunk_mass, dexa_trunk_kg, dexa_bone_mineral_density, record_id)), facet = record_id)
+
+vis_miss(subset(panther, select=c(fsh, lh, estrad, tot_test, free_test, record_id)), facet = record_id)
+
+# Function to generate boxplot
+create_boxplot <- function(data, variable) {
+  # Calculate IQR and quantiles while removing NA values
+  Q1 <- quantile(data[[variable]], 0.25, na.rm = TRUE)
+  Q3 <- quantile(data[[variable]], 0.75, na.rm = TRUE)
+  IQR_value <- IQR(data[[variable]], na.rm = TRUE)
+  
+  # Define outlier condition
+  outlier_condition <- data[[variable]] < (Q1 - 1.5 * IQR_value) | data[[variable]] > (Q3 + 1.5 * IQR_value)
+  
+  p <- ggplot(data = data, aes(x = "", y = !!sym(variable))) +
+    geom_boxplot(outlier.colour = "red", outlier.shape = 16) +
+    geom_text_repel(
+      data = data %>% filter(outlier_condition),
+      aes(label = paste0(record_id, ", ", !!sym(variable))),
+      nudge_x = 0.3, 
+      size = 3
+    ) +
+    labs(y = variable) +
+    theme_bw()
+}
+
+# List of variables to plot
+variables <- c("age", "weight", "height", "bmi", "bmip", "hba1c", "gfr_raw_plasma", "gfr_bsa_plasma", "erpf_raw_plasma", "erpf_bsa_plasma", "total_kidney_volume_ml", "ht_adj_tkv", "mm_airg", "mm_bcell", "mm_di", "mm_ir", "mm_si", "dexa_body_fat", "dexa_fat_kg", "dexa_lean_mass", "dexa_lean_kg", "dexa_trunk_mass", "dexa_trunk_kg", "dexa_bone_mineral_density", "fsh", "lh", "estrad", "tot_test", "free_test")
+
+# Create list of plots
+plots <- lapply(variables, create_boxplot, data = panther)
+
+# If you want to display the plots
+for (plot in plots) {
+  print(plot)
+}
 ```
 
 ## PANTHER + RH
@@ -192,14 +445,14 @@ summary(tableby(tanner_stage_comp_panther_cat ~ age + sex + group + group_risk +
 ```{r desc-risk-sens, results = 'asis', echo = F}
 # Descriptive tables
 ## By risk
-summary(tableby(group_risk ~ age + sex + tanner_stage_comp + group + weight + height + bmi + bmip + hba1c + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + total_kidney_volume_ml + total_kidney_volume_ml_manual + combined_tkv + ht_adj_tkv + ht_adj_tkv_manual + combined_ht_tkv, data = sens_dat, total = T, test = F))
+summary(tableby(group_risk ~ age + sex + tanner_stage_comp + group + weight + height + bmi + bmip + hba1c + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + total_kidney_volume_ml + total_kidney_volume_ml_manual + combined_tkv + ht_adj_tkv + ht_adj_tkv_manual + combined_ht_tkv+ dexa_body_fat + dexa_fat_kg + dexa_lean_mass + dexa_lean_kg + dexa_trunk_mass + dexa_trunk_kg + dexa_bone_mineral_density + fsh + lh + estrad + tot_test + free_test, data = sens_dat, total = T, test = F))
 ```
 
 ### By tanner stage
 
 ```{r desc-tanner-stage-sens, results = 'asis', echo = F}
 ## By tanner stage
-summary(tableby(tanner_stage_comp ~ age + sex + group + group_risk + weight + height + bmi + bmip + hba1c + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + total_kidney_volume_ml + total_kidney_volume_ml_manual + combined_tkv + ht_adj_tkv + ht_adj_tkv_manual + combined_ht_tkv, data = sens_dat, total = T, test = F))
+summary(tableby(tanner_stage_comp ~ age + sex + group + group_risk + weight + height + bmi + bmip + hba1c + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + total_kidney_volume_ml + total_kidney_volume_ml_manual + combined_tkv + ht_adj_tkv + ht_adj_tkv_manual + combined_ht_tkv+ dexa_body_fat + dexa_fat_kg + dexa_lean_mass + dexa_lean_kg + dexa_trunk_mass + dexa_trunk_kg + dexa_bone_mineral_density + fsh + lh + estrad + tot_test + free_test, data = sens_dat, total = T, test = F))
 ```
 
 ## PANTHER + RH + RH2 + IMPROVE
@@ -209,5 +462,5 @@ summary(tableby(tanner_stage_comp ~ age + sex + group + group_risk + weight + he
 ```{r desc-risk-comb, results = 'asis', echo = F}
 # Descriptive tables
 ## By risk
-summary(tableby(group ~ age + sex + tanner_stage_comp + weight + height + bmi + bmip + hba1c + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + total_kidney_volume_ml + total_kidney_volume_ml_manual + combined_tkv + ht_adj_tkv + ht_adj_tkv_manual + combined_ht_tkv, data = dat, total = T, test = F))
+summary(tableby(group ~ age + sex + tanner_stage_comp + weight + height + bmi + bmip + hba1c + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + total_kidney_volume_ml + total_kidney_volume_ml_manual + combined_tkv + ht_adj_tkv + ht_adj_tkv_manual + combined_ht_tkv + dexa_body_fat + dexa_fat_kg + dexa_lean_mass + dexa_lean_kg + dexa_trunk_mass + dexa_trunk_kg + dexa_bone_mineral_density + fsh + lh + estrad + tot_test + free_test, data = dat, total = T, test = F))
 ```
