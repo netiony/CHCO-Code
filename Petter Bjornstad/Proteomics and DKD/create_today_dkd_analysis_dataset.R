@@ -130,6 +130,8 @@ df$elevated_uacr <- factor(df$acr_u >= 30, labels = c("UACR < 30", "UACR >= 30")
 # Merge
 df <- df %>% select(-contains("seq."))
 df <- full_join(df, soma, by = c("record_id", "visit"))
+# only baseline
+df <- df %>% filter(visit == "baseline")
 
 # Import Olink data and combine
 olink_map <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Olink Data/Data_Clean/olink_id_map.csv")
@@ -162,7 +164,7 @@ olink_urine <- olink_urine %>%
     ),
     record_id = sub("_BL|_3M|_12M", "", record_id)
   )
-# Baseline visit only for IMPROVE
+# Baseline visit only 
 df <- df %>% filter(visit == "baseline")
 # Combine
 plasma <- left_join(df, olink_plasma, by = c("record_id", "visit"))
@@ -173,15 +175,9 @@ urine <- left_join(df, olink_urine, by = c("record_id", "visit"))
 # Save
 save(df, plasma, urine, analytes, olink_map,
   top_mac, top_mic, top_mic.or.mac, top_hyp, top_rapid, top_glyc,
-#  top_htn, top_htn_uacr, top_htn_egfr, top_htn_bmi, top_htn_eis, top_htn_tg,
   top_mac_df, top_mic_df, top_mic.or.mac_df, top_hyp_df, top_rapid_df, top_glyc_df,
-#  top_htn_df, top_htn_uacr_df, top_htn_egfr_df,
-#  top_htn_bmi_df, top_htn_eis_df, top_htn_tg_df,
   de_genes_mac, de_genes_mic, de_genes_mic.or.mac, de_genes_hyp, de_genes_rapid, de_genes_glyc,
-#  de_genes_htn, de_genes_htn_uacr, de_genes_htn_egfr,
-#  de_genes_htn_bmi, de_genes_htn_eis, de_genes_htn_tg,
   de_genes_mac_10, de_genes_mic_10, de_genes_hyp_10, de_genes_rapid_10, de_genes_glyc_10,
-#  de_genes_htn_10, 
   file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Data_Cleaned/analysis_dataset.RData"
 )
 
