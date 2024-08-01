@@ -38,50 +38,6 @@ top_rapid <- top_rapid_df %>%
   filter(adj.p.value <= 0.05) %>%
   slice_max(abs(log(estimate)), n = 5) %>%
   pull(AptName)
-#top_htn_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection.xlsx", sheet = "HTN CPH base")
-#de_genes_htn <- top_htn_df[top_htn_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
-#de_genes_htn <- setNames(de_genes_htn$estimate, de_genes_htn$EntrezGeneID)
-#top_htn <- top_htn_df %>%
-#  filter(Target %in% c("WFKN2","SEZ6L","SCG3","PSA","LSAMP","H6ST3","T132B","Nr-CAM","PEDF","IGLO5",
-#                       "PSB3","Myosin light chain 1","PCD10:ECD","UNC5H4","TLR5","SLIK1","PSPC1",
-#                       "STA10","Secretoglobin family 3A member 1","sICAM-5")) %>%
-#  slice_max(abs(log(estimate)), n = 20) %>%
-#   pull(AptName)
-# top_htn_uacr_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection.xlsx", sheet = "HTN CPH base+UACR")
-# de_genes_htn_uacr <- top_htn_uacr_df[top_htn_uacr_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
-# de_genes_htn_uacr <- setNames(de_genes_htn_uacr$estimate, de_genes_htn_uacr$EntrezGeneID)
-# top_htn_uacr <- top_htn_uacr_df %>%
-#   filter(adj.p.value <= 0.05) %>%
-#   slice_max(abs(log(estimate)), n = 5) %>%
-#   pull(AptName)
-# top_htn_egfr_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection.xlsx", sheet = "HTN CPH base+eGFR")
-# de_genes_htn_egfr <- top_htn_egfr_df[top_htn_egfr_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
-# de_genes_htn_egfr <- setNames(de_genes_htn_egfr$estimate, de_genes_htn_egfr$EntrezGeneID)
-# top_htn_egfr <- top_htn_egfr_df %>%
-#   filter(adj.p.value <= 0.05) %>%
-#   slice_max(abs(log(estimate)), n = 5) %>%
-#   pull(AptName)
-# top_htn_bmi_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection.xlsx", sheet = "HTN CPH base+eIS")
-# de_genes_htn_bmi <- top_htn_bmi_df[top_htn_bmi_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
-# de_genes_htn_bmi <- setNames(de_genes_htn_bmi$estimate, de_genes_htn_bmi$EntrezGeneID)
-# top_htn_bmi <- top_htn_bmi_df %>%
-#   filter(adj.p.value <= 0.05) %>%
-#   slice_max(abs(log(estimate)), n = 5) %>%
-#   pull(AptName)
-# top_htn_eis_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection.xlsx", sheet = "HTN CPH base+eGFR")
-# de_genes_htn_eis <- top_htn_eis_df[top_htn_eis_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
-# de_genes_htn_eis <- setNames(de_genes_htn_eis$estimate, de_genes_htn_eis$EntrezGeneID)
-# top_htn_eis <- top_htn_eis_df %>%
-#   filter(adj.p.value <= 0.05) %>%
-#   slice_max(abs(log(estimate)), n = 5) %>%
-#   pull(AptName)
-# top_htn_tg_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted HTN model selection.xlsx", sheet = "HTN CPH base+eGFR")
-# de_genes_htn_tg <- top_htn_tg_df[top_htn_tg_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
-# de_genes_htn_tg <- setNames(de_genes_htn_tg$estimate, de_genes_htn_tg$EntrezGeneID)
-# top_htn_tg <- top_htn_tg_df %>%
-#   filter(adj.p.value <= 0.05) %>%
-#   slice_max(abs(log(estimate)), n = 5) %>%
-#   pull(AptName)
 top_neuro_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "NEURO CPH")
 de_genes_neuro <- top_neuro_df[top_neuro_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_neuro <- setNames(de_genes_neuro$estimate, de_genes_neuro$EntrezGeneID)
@@ -123,12 +79,6 @@ de_genes_hyp_10 <- setNames(de_genes_hyp_10$logFC, de_genes_hyp_10$EntrezGeneID)
 top_rapid_df_10 <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "rapid_moderated_FDR")
 de_genes_rapid_10 <- top_rapid_df_10[top_rapid_df_10$P.Value <= 0.05, c("EntrezGeneID", "logFC")]
 de_genes_rapid_10 <- setNames(de_genes_rapid_10$logFC, de_genes_rapid_10$EntrezGeneID)
-# top_htn_sbp_df_10 <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "htn_with_SBP_moderated_FDR")
-# de_genes_htn_sbp_10 <- top_htn_sbp_df_10[top_htn_sbp_df_10$P.Value <= 0.05, c("EntrezGeneID", "logFC")]
-# de_genes_htn_sbp_10 <- setNames(de_genes_htn_sbp_10$logFC, de_genes_htn_sbp_10$EntrezGeneID)
-# top_htn_df_10 <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "htn_moderated_FDR")
-# de_genes_htn_10 <- top_htn_df_10[top_htn_df_10$P.Value <= 0.05, c("EntrezGeneID", "logFC")]
-# de_genes_htn_10 <- setNames(de_genes_htn_10$logFC, de_genes_htn_10$EntrezGeneID)
 top_neuro_df_10 <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "neuro_moderated_FDR")
 de_genes_neuro_10 <- top_neuro_df_10[top_neuro_df_10$P.Value <= 0.05, c("EntrezGeneID", "logFC")]
 de_genes_neuro_10 <- setNames(de_genes_neuro_10$logFC, de_genes_neuro_10$EntrezGeneID)
@@ -145,13 +95,6 @@ df <- df %>%
     study %in% c("IMPROVE", "RENAL-HEIR","RENAL-HEIRitage"),
     !grepl("IT2D", co_enroll_id), participation_status == "Participated"
   ) %>%
-#%>%
-#  select(
-#    record_id, co_enroll_id, visit, group, age, sex, race, ethnicity,
-#    diabetes_duration, sglti_timepoint, sglt2i_ever, elevated_albuminuria,
-#    bmi, hba1c, gfr_bsa_plasma, gfr_raw_plasma, gfr_bsa_plasma_urine,
-#    gfr_raw_plasma_urine, acr_u, map, sbp, dbp, height, eGFR_fas_cr
-#  ) 
   group_by(record_id, visit) %>%
   summarise(across(where(is.character), ~ last(na.omit(.x))),
     across(where(is.factor), ~ last(na.omit(.x))),
@@ -161,26 +104,9 @@ df <- df %>%
   mutate_all(~ ifelse(is.nan(.), NA, .))
 # Import proteomics data for RH and IMPROVE
 load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Combined SomaScan/analytes.Rdata")
-# below not needed now that we have combined soma and harmonized data
-#load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Renal HERITAGE/Somalogic data/rh_soma.Rdata")
-#load("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/IMPROVE T2D/Somalogic data/improve_soma.Rdata")
-# Format and combine
-#improve_soma <- improve_soma %>% select(SampleDescription, TimePoint, contains("seq."))
-#rh_soma <- rh_soma %>% select(SampleDescription, TimePoint, contains("seq."))
 soma <- df %>% select(record_id, visit, contains("seq."))
 # Transform
 soma[, 3:ncol(soma)] <- lapply(soma[, 3:ncol(soma)], log)
-# Merge clinical and SOMA data
-#soma <- soma %>%
- # rename(record_id = "SampleDescription", visit = "TimePoint") %>%
-#  mutate(
-#    record_id = sub("IT2D-", "IT_", record_id),
-#    visit = case_when(
-#      visit == "BL" ~ "baseline",
-#      visit == "3M" ~ "3_months_post_surgery",
-#      visit == "12M" ~ "12_months_post_surgery"
-#    )
-#  )
 # BP percentiles and HTN
 df$bp_age <- df$age * 12
 df$bp_age[df$bp_age >= 19 * 12] <- 19 * 12 - 1e-8
