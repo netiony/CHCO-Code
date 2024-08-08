@@ -15,12 +15,16 @@ output:
 <!-- This file includes analyses for the merged RED Netherlands and Colorado harmonized dataset. 
 Please reference the CO_RED_data_cleaning_merge rmd file for data cleaning used to combine the two datasets.-->
 
+This report describes analysis results investigating kidney hemodynamic function and insulin sensitivity measures among youth-onset (Colorado) and adult-onset (Netherlands) Type 2 diabetes patients.
+
 ```{r setup, include=FALSE}
 library(tidyverse)
-library(kableExtra)
 library(magrittr)
 library(Hmisc)
 library(emmeans)
+library(kableExtra)
+library(htmltools)
+library(stringr)
 
 if(Sys.info()["sysname"] == "Windows"){
   home_dir = "B:/Petter Bjornstad"
@@ -51,6 +55,7 @@ label(combined_clean$`Body_Fat_Percentage`) <- "Body Fat Percentage"
 label(combined_clean$cholesterol) <- "Cholesterol (mg/dL)"
 label(combined_clean$AER_sex_adjusted) <- "Sex-Adjusted Estimate of AER (mg/24 hr)"
 label(combined_clean$AER_covariate_adjusted) <- "Covariate-Adjusted Estimate of AER (mg/24 hr)"
+label(combined_clean$urine_microalb_quant_24hr) <- "24 hour urine microalbuminuria quantity (mg/24u)"
 label(combined_clean$NEFA_V2.1_Fasting) <- "Fasting NEFA level 100 minutes after iohexol/PAH"
 label(combined_clean$NEFA_delta) <- "Difference in NEFA level (fasting NEFA – NEFA during euglycemic clamp)"
 label(combined_clean$INUorIOH) <- "Inulin/Iohexol Indicator for GFR Measurement"
@@ -59,29 +64,64 @@ label(combined_clean$Med_calciumantagonist) <- "Calcium channel blocker use"
 label(combined_clean$Med_anticoagulant) <- "Anticoagulant use"
 label(combined_clean$Medication) <- "Current medication use and dose"
 label(combined_clean$bsa) <- "BSA (m^2)"
-
 ```
 
 
-```{r lm function, include=FALSE}
-# define function for outputting LM summary and diagnostic plots
-lm_summary_and_diagnostics <- function(mod){
-  print(summary(mod))
-  plot(x = predict(mod), y = rstudent(mod), xlab = 'Predicted Value', ylab = 'Jackknife Residual', 
-       main = 'Scatterplot of Residuals'); abline(h = 0, lty = 2)
-  plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), xlab='Observed Cumulative Probability', ylab='Expected Cumulative
-       Probability', main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
+```{r for loop functions, include=FALSE}
+## define functions for outputting LM summary and diagnostic plots to check for loops and model assumptions
+
+# univariate
+slr_summary_and_diagnostics <- function(mod, x_var, y_var, xlab, ylab){
+  # print(summary(mod)) # need to delete results = 'asis' in chunk header for this to knit properly
+  
+  plot(x = x_var, y = y_var, main='Y-X Scatterplot',
+       xlab = xlab, ylab = ylab); abline(mod, col='gray', lty=2)
+  plot(mod, which=1)
+  plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), 
+       xlab='Observed Cumulative Probability', ylab='Expected Cumulative Probability',
+       main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
   hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
+ }
+
+# multivariate
+mlr_summary_and_diagnostics <- function(mod){
+  # print(summary(mod))
+  
+  plot(x = predict(mod), y = rstudent(mod), xlab = 'Predicted Value', ylab = 'Jackknife Residual',
+        main = 'Scatterplot of Residuals'); abline(h = 0, lty = 2)
+  plot(ppoints(length(rstudent(mod))), sort(pnorm(rstudent(mod))), xlab='Observed Cumulative Probability', ylab='Expected Cumulative
+        Probability', main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
+  hist(rstudent(mod), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
+}
+
+## define function for printing formatted table of results
+results_table <- function(mod, v, form, exp = FALSE, custom_text){
+  
+  caption_text <- paste0("Association between ", noquote(v), " ", noquote(custom_text))
+  
+  # format model form to print on one line
+  mod_form <- deparse(form) %>% paste(collapse = '') %>% str_replace_all(' ', '\u00A0') %>% str_squish() 
+  mod_form_text <- paste0('Model Form: ', mod_form)
+  
+  print(broom::tidy(mod, conf.int = TRUE, exp = exp) %>% 
+          select(term, estimate, conf.low, conf.high, std.error, p.value) %>%
+          mutate(p.value = format.pval(p.value, digits = 3,eps = 0.001)) %>%
+          kableExtra::kable(caption = caption_text,
+            col.names = c('Term', 'Estimate', 'Lower CI', 'Upper CI', 'SE', 'p-value'), digits = 3) %>%
+          add_footnote(c('CI = 95% Confidence Interval', HTML(mod_form_text)), notation= 'none') %>%
+          kable_styling(latex_options='basic', html_font='Arial') %>% 
+          HTML())
+  
+  cat('<div style="height: 30px;"></div>')
 }
 ```
 
-This report describes analysis results investigating kidney hemodynamic function and insulin sensitivity measures among youth-onset (Colorado) and adult-onset (Netherlands) Type 2 diabetes patients. 
 
 # Methods
 
 ## Data Cleaning
 
-Datasets from the Colorado and Netherlands sites were separately cleaned as described in sections 1.1.1 and 1.1.2 before being combined as one main dataset for analyses. Variables that were considered similar between the two sites were combined as one variable.
+Datasets from the Colorado and Netherlands sites were separately cleaned as described in sections 1.1.1 and 1.1.2 before being combined as one main dataset for analyses. Variables that were considered similar between the two sites were combined as one variable. Note that measures for GFR, ERPF, FF, RVR, glomerular pressure, Ra, and Re in the combined dataset represent data from the euglycemic clamp at the Netherlands site and the hyperglycemic clamp at the Colorado site.
 
 ### Colorado Cleaning
 
@@ -96,54 +136,216 @@ All provided Netherlands datasets were first combined into one main dataset. One
 
 <!-- ## Data Analysis (to add in once analyses more finalized) -->
 
-# Results
+# Descriptive Statistics of Participants
 
-## Descriptive Statistics of Participants
-
-This section summarizes the variables available in the combined data set. Note that while some subjects at the Colorado site were enrolled on multiple studies, they are only represented once under `Study Name`. For example, if a subject was enrolled on RENAL-HEIR and IMPROVE, they are counted as a participant on either RENAL-HEIR or IMPROVE (whichever study they were enrolled on first). 
+This section summarizes the variables available in the combined data. Note that while some subjects at the Colorado site were enrolled on multiple studies, they are only represented once under `Study Name`. For example, if a subject was enrolled on RENAL-HEIR and IMPROVE, they are counted as a participant on either RENAL-HEIR or IMPROVE (whichever study they were enrolled on first). 
 
 ```{r table1, echo=FALSE}
 table1::table1 (~ study + age + diabetes_duration + sex + ethnicity + height + weight + waistcm +
                   Body_Fat_Percentage + bsa + bmi + hba1c + gfr_raw_plasma + gfr_bsa_plasma + eGFR_fas_cr_cysc + 
                   erpf_raw_plasma + erpf_bsa_plasma + ff + rvr + ra + re + glomerular_pressure + sbp + dbp + map + 
-                  creatinine_s + cholesterol + hdl + ldl + acr_u + AER_sex_adjusted + AER_covariate_adjusted + 
-                  gir_190 + gir_200 + steady_state_ffa + ffa_suppression + 
+                  creatinine_s + cholesterol + hdl + ldl + acr_u + AER_sex_adjusted + AER_covariate_adjusted +
+                  urine_microalb_quant_24hr + gir_190 + gir_200 + steady_state_ffa + ffa_suppression + 
                   steady_state_insulin + NEFA_V2.1_Fasting + NEFA_delta + metformin_timepoint +
                   raasi_timepoint + statin + Med_betablocker + Med_calciumantagonist + Med_anticoagulant | site, 
                 data = combined_clean)
 ```
 
+# Stratified Analysis Results
+
+This section reports results describing the relationship between NEFA suppression and measures of kidney hemodynamic function for subjects at the Colorado site and separately, those at the Netherlands site. Results reported in the *Multivariate Analyses* section
+describe this association between NEFA suppression and kidney hemodynamic measures after adjusting for the effect of HbA1c, T2D duration, age, sex, and either UACR/24 hr urine microalbuminuria quantity or sex-adjusted AER.
+
+**Example Interpretations:**
+
+Model #1: Colorado Association between gfr_raw_plasma and NEFA suppression (Section 3.1.1)
+
+* (Intercept) = 245.728: Average gfr raw plasma in Colorado subjects when NEFA suppression is 0 units.
+* ffa_suppression = -0.438: Average change in gfr raw plasma associated with a 1 unit increase in NEFA suppression for Colorado subjects.
+
+Model #2: Netherlands Association between gfr_raw_plasma and NEFA suppression, adjusted for sex, HbA1c, T2D duration, age, and 24 hr urine microalbuminuria quant. (Section 3.2.2)
+
+* (Intercept) = 233.792: Average gfr raw plasma in female Netherlands subjects when NEFA suppression, HbA1c, T2D duration, age, and 24 hr urine microalbuminuria quantity are 0. (This might not be meaningful to interpret).
+* ffa_suppression = -0.681: Average change in gfr raw plasma associated with a 1 unit increase in NEFA suppression, after adjusting for sex, HbA1c, T2D duration, age, and 24 hr urine microalbuminuria quantity.
+* sexMale = 21.678: Average difference in gfr raw plasma when male Netherlands subjects are compared to female subjects, after adjusting for all other variables. In other words, on average, gfr raw plasma was 21.678 units greater (95% CI: 2.654, 40.703) in males when compared to females, after controlling for NEFA suppression, HbA1c, T2D duration, age, and 24 hr urine microalbuminuria quantity.
+* hba1c, diabetes_duration, age, and urine_microalb_quant_24hr can be interpreted in the same manner as we interpreted ffa_suppression where each estimate corresponds to an average change in gfr raw plasma associated with a 1 unit increase in the metric of interest.
+
+
+```{r stratified dfs, include=FALSE}
+# define dfs for separate Colorado and Netherlands analyses
+CO_clean <- combined_clean %>% filter(site == 'Colorado')
+Neth_clean <- combined_clean %>% filter(site == 'Netherlands')
+```
+
+## Colorado
+
+### Univariate Analyses
+
+```{r univariate YT2D analyses, echo=FALSE, results='asis'}
+outcome_vars <- c('gfr_raw_plasma', 'gfr_bsa_plasma', 'erpf_raw_plasma', 'erpf_bsa_plasma', 
+                  'glomerular_pressure', 'ra', 're', 'rvr', 'ff')
+
+for (v in outcome_vars) {
+  form = as.formula(paste0(v,'~ ffa_suppression'))
+  mod <- lm(form, data = CO_clean)
+  results_table(mod = mod, v = v, form = form, exp = FALSE, custom_text = "and NEFA suppression")
+  
+  # slr_summary_and_diagnostics(mod, x_var = CO_clean$ffa_suppression, y_var = CO_clean[[v]], 
+  #                             xlab = 'ffa_suppression', ylab = noquote(v))
+  }
+```
+
+
+### Multivariate Analyses
+
+**Analyses with UACR Adjustment:**
+```{r multivariate YT2D analyses - UACR, echo=FALSE, results='asis'}
+outcome_vars <- c('gfr_raw_plasma', 'gfr_bsa_plasma', 'erpf_raw_plasma', 'erpf_bsa_plasma', 
+                  'glomerular_pressure', 'ra', 're', 'rvr', 'ff')
+
+for (v in outcome_vars) {
+  form = as.formula(paste0(v,'~ ffa_suppression + sex + hba1c + diabetes_duration + age + acr_u'))
+  mod <- lm(form, data = CO_clean)
+  results_table(mod = mod, v = v, form = form, exp = FALSE, custom_text = "and NEFA suppression, 
+                adjusted for sex, HbA1c, T2D duration, age, and UACR")
+  
+  # mlr_summary_and_diagnostics(mod)
+  }
+```
+
+
+**Analyses with sex-adjusted AER Adjustment:**
+```{r multivariate YT2D analyses - AER, echo=FALSE, results='asis'}
+outcome_vars <- c('gfr_raw_plasma', 'gfr_bsa_plasma', 'erpf_raw_plasma', 'erpf_bsa_plasma', 
+                  'glomerular_pressure', 'ra', 're', 'rvr', 'ff')
+
+for (v in outcome_vars) {
+  form = as.formula(paste0(v,'~ ffa_suppression + sex + hba1c + diabetes_duration + age + AER_sex_adjusted'))
+  mod <- lm(form, data = CO_clean)
+  results_table(mod = mod, v = v, form = form, exp = FALSE, custom_text = "and NEFA suppression, 
+                adjusted for sex, HbA1c, T2D duration, age, and sex-adjusted AER")
+  
+  # mlr_summary_and_diagnostics(mod)
+  }
+```
+
+## Netherlands
+
+### Univariate Analyses
+```{r univariate AT2D analyses, echo=FALSE, results='asis'}
+outcome_vars <- c('gfr_raw_plasma', 'gfr_bsa_plasma', 'erpf_raw_plasma', 'erpf_bsa_plasma', 
+                  'glomerular_pressure', 'ra', 're', 'rvr', 'ff')
+
+for (v in outcome_vars) {
+  form = as.formula(paste0(v,'~ ffa_suppression'))
+  mod <- lm(form, data = Neth_clean)
+  results_table(mod = mod, v = v, form = form, exp = FALSE, custom_text = "and NEFA suppression")
+  
+  # slr_summary_and_diagnostics(mod, x_var = Neth_clean$ffa_suppression, y_var = Neth_clean[[v]],
+  #                             xlab = 'ffa_suppression', ylab = noquote(v))
+  }
+```
+
+
+### Multivariate Analyses
+
+**Analyses with 24 hour Urine Microalbuminuria Quantity Adjustment:**
+```{r multivariate AT2D analyses - urine microalb quant, echo=FALSE, results='asis'}
+outcome_vars <- c('gfr_raw_plasma', 'gfr_bsa_plasma', 'erpf_raw_plasma', 'erpf_bsa_plasma', 
+                  'glomerular_pressure', 'ra', 're', 'rvr', 'ff')
+
+for (v in outcome_vars) {
+  form = as.formula(paste0(v,'~ ffa_suppression + sex + hba1c + diabetes_duration + age + urine_microalb_quant_24hr'))
+  mod <- lm(form, data = Neth_clean)
+  results_table(mod = mod, v = v, form = form, exp = FALSE, custom_text = "and NEFA suppression, 
+                adjusted for sex, HbA1c, T2D duration, age, and 24 hr urine microalbuminuria quant.")
+  
+  # mlr_summary_and_diagnostics(mod)
+  }
+```
+
+
+**Analyses with sex-adjusted AER Adjustment:**
+```{r multivariate AT2D analyses - AER, echo=FALSE, results='asis'}
+outcome_vars <- c('gfr_raw_plasma', 'gfr_bsa_plasma', 'erpf_raw_plasma', 'erpf_bsa_plasma', 
+                  'glomerular_pressure', 'ra', 're', 'rvr', 'ff')
+
+for (v in outcome_vars) {
+  form = as.formula(paste0(v,'~ ffa_suppression + sex + hba1c + diabetes_duration + age + AER_sex_adjusted'))
+  mod <- lm(form, data = Neth_clean)
+  results_table(mod = mod, v = v, form = form, exp = FALSE, custom_text = "and NEFA suppression, 
+                adjusted for sex, HbA1c, T2D duration, age, and sex-adjusted AER")
+  
+  # mlr_summary_and_diagnostics(mod)
+  }
+```
+
+# Pooled Analysis Results
+
+This section reports results comparing differences in NEFA suppression and kidney hemodynamic function measures between the Colorado and Netherlands sites after adjusting for either sex or both sex and HbA1c. We also explore whether there is an interaction effect between FFA suppression and site at the end of this section.
+
+**Example Interpretations:**
+
+Model #1: Association between gir_190 and site, adjusted for sex (Section 4.1.1)
+
+* (Intercept) = 3.866: Average raw M-value in female subjects at the Colorado site.
+* siteNetherlands = -0.149: Average difference in raw M-value when Netherlands subjects are compared to Colorado subjects, after adjusting for sex. In this case, we would say that on average, raw M-value in Colorado subjects was 0.149 units lower (95% CI: 1.209 lower, 0.912 higher) than in Netherlands subjects, after adjusting for sex.
+* sexMale = -0.072: Average difference in raw M-value when males at both sites are compared to females, after adjusting for the effect of site.
+
+Model #2: Association between gfr_raw_plasma and site, adjusted for sex and HbA1c (Section 4.2)
+
+* (Intercept) = 179.697: Average gfr raw plasma in female Colorado subjects with an HbA1c of 0. (May not be meaningful to interpret).
+* siteNetherlands = -109.473: Average difference in gfr raw plasma when Netherlands subjects are compared to Colorado subjects, after adjusting for sex and HbA1c.
+* sexMale = 23.344: Average difference in gfr raw plasma when males at both sites are compared to females, after adjusting for the effect of site and HbA1c.
+* hba1c = 2.983: Average change in gfr raw plasma associated with a 1 unit increase in HbA1c, after adjusting for site and sex.
+
 ## Comparison of Measures in Youth-onset vs. Adult-onset, Adjusted for Sex
 
-In the below output, `site` is the variable distinguishing between Youth-onset (Colorado) and Adult-onset (Netherlands).
-```{r YT2D vs AT2D adjusted for sex, echo=FALSE}
-outcome_vars <- c('steady_state_insulin', 'gir_190', 'gir_200', 'ffa_suppression')
+### Non-Transformed Models
+
+```{r YT2D vs AT2D adjusted for sex, echo=FALSE, message=FALSE, warning=TRUE, comment='', results='asis'}
+outcome_vars <- c('gir_190', 'gir_200', 'ffa_suppression')
 
 for (v in outcome_vars) {
   form = as.formula(paste0(v,'~ site + sex'))
   mod <- lm(form, data = combined_clean)
-  cat(noquote(c("Association between", noquote(v), "and site, adjusted for sex\n")))
-  cat("Model Form: ")
-  print(form)
-  lm_summary_and_diagnostics(mod)
-  }
+  results_table(mod = mod, v = v, form = form, exp = FALSE, custom_text = "and site, adjusted for sex")
+  
+  # mlr_summary_and_diagnostics(mod)
+}
+```
+
+
+### Log-transformed Models
+Due to a notable right skew in the data, a log-transformation of the steady state insulin variable was performed. The below output reports results that have been back-transformed to the non-logged scale. 
+
+The below results can be interpreted in the following manner:
+
+* (Intercept) = 342.123: The expected steady state insulin for female Colorado subjects.
+* siteNetherlands = 1.812: On average, steady state insulin was 81.2% higher in subjects in the Netherlands when compared to those in Colorado, after adjusting for sex (95% CI: 15.8%, 183.6%).
+
+```{r log YT2D vs AT2D adjusted for sex, echo=FALSE, message=FALSE, warning=TRUE, comment='', results='asis'}
+combined_clean <- combined_clean %>% mutate(log_steady_state_insulin = log(steady_state_insulin))
+ssi_mod <- lm(log_steady_state_insulin ~ site + sex, data = combined_clean)
+#mlr_summary_and_diagnostics(ssi_mod)
+results_table(mod = ssi_mod, v = 'steady_state_insulin', 
+              form = as.formula(log_steady_state_insulin ~ site + sex),
+              exp = TRUE, custom_text = "and site, adjusted for sex")
 ```
 
 
 ## Comparison of Measures in Youth-onset vs. Adult-onset, Adjusted for Sex and HbA1c
 
-In the below output, `site` is the variable distinguishing between Colorado and Netherlands.
-```{r YT2D vs AT2D adjusted for sex and HbA1c, echo=FALSE}
+```{r YT2D vs AT2D adjusted for sex and HbA1c, echo=FALSE, results='asis'}
 outcome_vars <- c('gfr_raw_plasma', 'gfr_bsa_plasma', 'erpf_raw_plasma', 'erpf_bsa_plasma', 
                   'glomerular_pressure', 'ra', 're', 'rvr', 'ff')
 
 for (v in outcome_vars) {
   form = as.formula(paste0(v,'~ site + sex + hba1c'))
   mod <- lm(form, data = combined_clean)
-  cat(noquote(c("Association between", noquote(v), "and site, adjusted for sex and HbA1c\n")))
-  cat("Model Form: ")
-  print(form)
-  lm_summary_and_diagnostics(mod)
+  results_table(mod = mod, v = v, form = form, exp = FALSE, custom_text = "and site, adjusted for sex and HbA1c")
+  
+  # mlr_summary_and_diagnostics(mod)
   }
 ```
 
@@ -156,96 +358,77 @@ How to interpret the output:
 
 In the R output, the `ffa_suppression:siteNetherlands` term tests whether there is an interaction effect between FFA suppression and site for the measure of interest. In instances where this effect is significant ($p < 0.05$), estimated marginal means and pairwise comparisons are provided. In the estimated marginal means output, the emmean reports an estimate of the effect of the measure of interest for each site. The pairwise comparison output provides p-values for testing whether there is a notable difference in the means between sites.
 
+```{r emmeans/pairwise comparisons function, include=FALSE}
+## define function for outputting emmeans or pairwise comparisons
+print_emmeans_prs <- function(result, caption_text){
+  print(result %>% 
+    kableExtra::kable(caption = caption_text, booktabs = TRUE, digits = 3) %>% 
+      kable_styling(latex_options = 'basic', html_font = 'Arial') %>% 
+      HTML())
+}
+```
 
 ### Non-Transformed Models
-```{r ffa suppression and site interaction mods, echo=FALSE}
-cat("Association between glomerular pressure and FFA suppression by Site (Interaction), adjusted for HbA1c:")
+```{r ffa suppression and site interaction mods, echo=FALSE, results='asis'}
 pglo_ffa_suppress_mod <- lm(glomerular_pressure ~ ffa_suppression:site + ffa_suppression + site + hba1c, data = combined_clean)
-lm_summary_and_diagnostics(pglo_ffa_suppress_mod)
-# ffa_suppression:site not significant w this model so emmeans not computed
+results_table(mod = pglo_ffa_suppress_mod, v = 'glomerular pressure', 
+              form = as.formula(glomerular_pressure ~ ffa_suppression:site + ffa_suppression + site + hba1c),
+              exp = FALSE, custom_text = "and FFA suppression by Site (Interaction), adjusted for HbA1c")
+# mlr_summary_and_diagnostics(pglo_ffa_suppress_mod)
+# interaction not significant, emmeans not computed
 
-cat("Association between re and FFA suppression by Site (Interaction), adjusted for HbA1c:")
 re_ffa_suppress_mod <- lm(re ~ ffa_suppression:site + ffa_suppression + site + hba1c, data = combined_clean)
-lm_summary_and_diagnostics(re_ffa_suppress_mod)
-# ffa_suppression:site not significant w this model so emmeans not computed
+results_table(mod = re_ffa_suppress_mod, v = 're', 
+              form = as.formula(re ~ ffa_suppression:site + ffa_suppression + site + hba1c),
+              exp = FALSE, custom_text = "and FFA suppression by Site (Interaction), adjusted for HbA1c")
+# mlr_summary_and_diagnostics(re_ffa_suppress_mod)
+# interaction not significant, emmeans not computed
 
-cat("Association between rvr and FFA suppression by Site (Interaction), adjusted for HbA1c:")
 rvr_ffa_suppress_mod <- lm(rvr ~ ffa_suppression:site + ffa_suppression + site + hba1c, data = combined_clean)
-lm_summary_and_diagnostics(rvr_ffa_suppress_mod)
+results_table(mod = rvr_ffa_suppress_mod, v = 'rvr', 
+              form = as.formula(rvr ~ ffa_suppression:site + ffa_suppression + site + hba1c),
+              exp = FALSE, custom_text = "and FFA suppression by Site (Interaction), adjusted for HbA1c")
+# mlr_summary_and_diagnostics(rvr_ffa_suppress_mod)
 m <- emmeans(rvr_ffa_suppress_mod, pairwise ~ site|ffa_suppression)
-cat("Estimated Marginal Means for rvr:")
-m$emmeans
-cat("Pairwise Comparison for rvr:")
-m$contrasts
+print_emmeans_prs(result = m$emmeans, caption_text = 'Estimated Marginal Means for rvr')
+print_emmeans_prs(result = m$contrasts, caption_text = 'Pairwise Comparison for rvr')
 ```
+
 
 ### Log-transformed Models
 
 Due to a notable right skew in the data, a log-transformation of the sex-adjusted AER and covariate-adjusted AER variables was performed. The below output reports results that have been back-transformed to the non-logged scale.  
 
-$$\\[0.01in]$$
-
-Association between sex-adjusted AER and FFA suppression by Site, adjusted for HbA1c:
-
-```{r ffa suppression and site interaction mods w log sex adj AER, echo=FALSE}
+```{r ffa suppression and site interaction mods w log sex adj AER, echo=FALSE, results='asis'}
 AER_ffa_suppress_mod1 <- lm(log(AER_sex_adjusted) ~ ffa_suppression:site + ffa_suppression + site  + hba1c, data = combined_clean)
 
-broom::tidy(AER_ffa_suppress_mod1, conf.int = F, exp = T) %>% 
-  select(term, estimate, std.error, statistic, p.value) %>%
-  mutate(p.value = format.pval(p.value, digits = 3, eps=0.001)) %>% 
-  kable(caption = 'Model Summary:',
-        col.names = c('Coefficients', 'Estimate', 'Std. Error', 't value', 'p-value'),
-        booktabs = T, digits = 3,
-        linesep = c('')) %>% 
-  kable_styling(latex_options=c('HOLD_position', 'striped'))
-# no emmeans added here because interaction not significant
+results_table(mod = AER_ffa_suppress_mod1, v = 'sex-adjusted AER', 
+              form = as.formula(log(AER_sex_adjusted) ~ ffa_suppression:site + ffa_suppression + site  + hba1c),
+              exp = TRUE, custom_text = "and FFA suppression by Site, adjusted for HbA1c")
+# interaction not significant, emmeans not computed
 
-plot(x = predict(AER_ffa_suppress_mod1), y = rstudent(AER_ffa_suppress_mod1), xlab = 'Predicted Value', ylab = 'Jackknife
-     Residual', main = 'Scatterplot of Residuals'); abline(h = 0, lty = 2)
-
-plot(ppoints(length(rstudent(AER_ffa_suppress_mod1))), sort(pnorm(rstudent(AER_ffa_suppress_mod1))), xlab='Observed Cumulative
-Probability', ylab='Expected Cumulative Probability', main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
-
-hist(rstudent(AER_ffa_suppress_mod1), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
+# mlr_summary_and_diagnostics(AER_ffa_suppress_mod1)
 ```
 
-$$\\[0.01in]$$
-Association between covariate-adjusted AER and FFA suppression by Site, adjusted for HbA1c:
-```{r ffa suppression and site interaction mods w log cov adj AER, echo=FALSE}
+
+```{r ffa suppression and site interaction mods w log cov adj AER, echo=FALSE, results='asis'}
 AER_ffa_suppress_mod2 <- lm(log(AER_covariate_adjusted) ~ ffa_suppression:site + ffa_suppression + site + hba1c, data = combined_clean)
 
-broom::tidy(AER_ffa_suppress_mod2, conf.int = F, exp = T) %>% 
-  select(term, estimate, std.error, statistic, p.value) %>%
-  mutate(p.value = format.pval(p.value, digits = 3, eps=0.001)) %>% 
-  kable(caption = 'Model Summary:',
-        col.names = c('Coefficients', 'Estimate', 'Std. Error', 't value', 'p-value'),
-        booktabs = T, digits = 3,
-        linesep = c('')) %>% 
-  kable_styling(latex_options=c('HOLD_position', 'striped'))
+results_table(mod = AER_ffa_suppress_mod2, v = 'covariate-adjusted AER',
+              form = as.formula(log(AER_covariate_adjusted) ~ ffa_suppression:site + ffa_suppression + site + hba1c),
+              exp = TRUE, custom_text = 'and FFA suppression by Site, adjusted for HbA1c')
 
-plot(x = predict(AER_ffa_suppress_mod2), y = rstudent(AER_ffa_suppress_mod2), xlab = 'Predicted Value', ylab = 'Jackknife
-     Residual', main = 'Scatterplot of Residuals'); abline(h = 0, lty = 2)
-
-plot(ppoints(length(rstudent(AER_ffa_suppress_mod2))), sort(pnorm(rstudent(AER_ffa_suppress_mod2))), xlab='Observed Cumulative
-Probability', ylab='Expected Cumulative Probability', main='Normal Probability Plot', cex=1); abline(a=0,b=1, col='gray65', lwd=1)
-
-hist(rstudent(AER_ffa_suppress_mod2), xlab='Jackknife Residual', main='Histogram of Residuals', freq=F)
+# mlr_summary_and_diagnostics(AER_ffa_suppress_mod2)
 
 m <- emmeans(AER_ffa_suppress_mod2, c("site", "ffa_suppression"), type = "response")
-prs <- pairs(m, adjust = "tukey", by = "ffa_suppression") 
+as.data.frame(m) %>% 
+  rename('emmean' = 'response') %>% 
+  print_emmeans_prs(caption_text = 'Estimated Marginal Means for covariate-adjusted AER')
 
-m %>%
-  kable(caption = 'Estimated Marginal Means for covariate-adjusted AER:', booktabs = TRUE, digits = 3,
-        col.names = c('Site', 'FFA Suppression', 'emmean', 'SE', 'df', 'lower.CL', 'upper.CL')) %>%
-  kable_styling(latex_options='basic', html_font='Arial') %>% 
-      htmltools::HTML()
-
+prs <- pairs(m, adjust = "tukey", by = "ffa_suppression")
 as.data.frame(prs) %>%
   select(-ffa_suppression) %>% 
-  kable(caption = 'Pairwise Comparison for covariate-adjusted AER:', booktabs = TRUE, digits = 3,
-        col.names = c('Contrast', 'Estimate', 'SE', 'df', 'null', 't.ratio', 'p.value')) %>% 
-  kable_styling(latex_options='basic', html_font='Arial') %>% 
-      htmltools::HTML()
+  print_emmeans_prs(caption_text ='Pairwise Comparison for covariate-adjusted AER')
 ```
 
 
@@ -253,3 +436,4 @@ as.data.frame(prs) %>%
 
 * `gir_190` = Raw M-Value (Colorado site)
 * `gir_200` = GIR (Colorado site)
+* For SBP, DBP, MAP, body fat percentage, and eGFR by Full Age Spectrum Scr and CysC, we pulled fasting data from the Netherlands site - should we instead be pulling euglycemic metrics as was done for mGFR, ERPF, FF, RVR, Pglo, Ra, Re?
