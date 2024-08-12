@@ -116,12 +116,13 @@ t1_data <- merge(t1_data, labs_keep, by="Record.ID", all.x = T, all.y = F)
 
 # CESD
 cesd <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Moore/Phenteramine RCT/Data raw/PilotRCTPhentermineT-LPCESD_DATA_2024-02-16_2232.csv")
+cesd$Record.ID <- cesd$record_id
+cesd_long <- cesd
 cesd <- cesd %>% filter(redcap_event_name == "study_visit_1_arm_1")
 cesd <- cesd %>% filter(redcap_repeat_instrument == "cesd")
 # some people have more than 1 CESD at this visit - keep the most recent
 cesd <- cesd %>% arrange(record_id, desc(cesd_dateofvisit))
 cesd <- cesd %>% group_by(record_id) %>% filter(row_number()==1)
-cesd$Record.ID <- cesd$record_id
 cesd <- ungroup(cesd)
 cesd_keep <- cesd %>% select(Record.ID, cesd_score)
 t1_data <- merge(t1_data, cesd_keep, by="Record.ID", all.x = T, all.y = F)
@@ -217,15 +218,37 @@ ht_wt_vitals_wide$sbp_ge_130 <- as.factor(ifelse(is.infinite(ht_wt_vitals_wide$s
 t2_data <- left_join(t2_data, ht_wt_vitals_wide, by = "Record.ID")
 
 # calculate AE vars based on labs
-labs_long <- labs_long %>% filter(redcap_event_name %in% c("study_visit_1_arm_1", "study_visit_2_arm_1", "study_visit_3_arm_1","study_visit_4_arm_1"))
+labs_long <- labs_long %>% filter(redcap_event_name %in% c("screeningenrollmen_arm_1", "study_visit_1_arm_1", "study_visit_2_arm_1", "study_visit_3_arm_1","study_visit_4_arm_1"))
+labs_long$Record.ID <- labs_long$record_id
 labs_long <- labs_long %>% filter(!(Record.ID %in% c("Jacky Test","Jacky Test 2")))
 labs_long <- labs_long %>% filter(!is.na(labs_bicarbonate) & !is.na(labs_creatinine) & !is.na(labs_potassium))
-labs_long$Record.ID <- labs_long$record_id
 labs_long <- labs_long %>% select(Record.ID, redcap_event_name, labs_bicarbonate, labs_creatinine, labs_potassium)
 labs_wide <- reshape(labs_long, direction = "wide", idvar = "Record.ID", timevar = "redcap_event_name")
-labs_wide$delta_bicarb <- labs_wide$labs_bicarbonate.study_visit_4_arm_1 - labs_wide$labs
-labs_wide$delta_sbp <- labs_wide$`sbp.Study Visit 4` - labs_wide$`sbp.Study Visit 1`
-labs_wide$delta_dbp <- labs_wide$`dbp.Study Visit 4` - labs_wide$`dbp.Study Visit 1`
+labs_wide$delta_bicarb <- labs_wide$labs_bicarbonate.study_visit_4_arm_1 - labs_wide$labs_bicarbonate.screeningenrollmen_arm_1
+labs_wide$delta_creat <- labs_wide$labs_creatinine.study_visit_4_arm_1 - labs_wide$labs_creatinine.screeningenrollmen_arm_1
+labs_wide$delta_K <- labs_wide$labs_potassium.study_visit_4_arm_1 - labs_wide$labs_potassium.screeningenrollmen_arm_1
+labs_wide <- labs_wide %>% rowwise() %>%
+  mutate(bicarb_min = min(labs_bicarbonate.study_visit_2_arm_1, labs_bicarbonate.study_visit_4_arm_1, na.rm = TRUE))
+labs_wide$bicarb_lt_20 <- as.factor(ifelse(is.infinite(labs_wide$bicarb_min), NA, 
+                                      ifelse(labs_wide$bicarb_min < 20, 1, 0)))
+labs_wide <- labs_wide %>% rowwise() %>%
+  mutate(K_min = min(labs_potassium.study_visit_2_arm_1, labs_potassium.study_visit_4_arm_1, na.rm = TRUE))
+labs_wide$K_lt_3.5 <- as.factor(ifelse(is.infinite(labs_wide$K_min), NA, 
+                                      ifelse(labs_wide$K_min < 3.5, 1, 0)))
+t2_data <- left_join(t2_data, labs_wide, by = "Record.ID")
+
+# calculate vars based on CESD
+cesd_long <- cesd_long %>% filter(redcap_event_name %in% c("screeningenrollmen_arm_1", "study_visit_1_arm_1", "study_visit_2_arm_1", "study_visit_3_arm_1","study_visit_4_arm_1"))
+cesd_long$redcap_event_name <- as.factor(cesd_long$redcap_event_name)
+cesd_long <- cesd_long %>% select(Record.ID, cesd_dateofvisit, redcap_event_name, cesd_score)
+cesd_long$cesd_score_ge20 <- as.factor(ifelse(cesd_long$cesd_score >= 20, 1, 0))
+cesd_long <- cesd_long %>% filter(!is.na(cesd_score))
+# some people have more than 1 CESD at a visit - keep the most recent
+cesd_long <- cesd_long %>% arrange(Record.ID, desc(cesd_dateofvisit))
+cesd_long <- cesd_long %>% group_by(Record.ID, redcap_event_name) %>% filter(row_number()==1)
+cesd_long <- ungroup(cesd_long)
+cesd_long$cesd_dateofvisit <- NULL
+cesd_wide <- reshape(cesd_long, direction = "wide", idvar = "Record.ID", timevar = "redcap_event_name", v.names = c("cesd_score","cesd_score_ge20"))
 ```
 
 # Results
@@ -254,7 +277,8 @@ kable(t1)
 t2 <- CreateTableOne(data = t2_data, vars = c("urine_amp_adherence","Max.Topiramate.Dose.Tolerated..mg.","Max.Phentermine.Dose.Tolerated..mg.",
                                               "any_ae", "severeae", "ae_dosereduce", "ae_discont", "general", "ophthalmologic", "gastrointestinal", 
                                               "cardiopulmonary", "genitourinary", "dermatologic", "neuropsychiatric", "allergic", "other", 
-                                              "delta_hr", "hr_ge_100", "delta_sbp", "sbp_120_129", "sbp_ge_130", "delta_dbp", "dbp_ge_80"), 
+                                              "delta_hr", "hr_ge_100", "delta_sbp", "sbp_120_129", "sbp_ge_130", "delta_dbp", "dbp_ge_80",
+                                              "delta_bicarb", "bicarb_lt_20", "delta_creat", "delta_K", "K_lt_3.5"), 
                      strata = "Randomization.Assignment")
 t2 <- print(t2, showAllLevels = T)
 ```
