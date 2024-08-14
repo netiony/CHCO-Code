@@ -21,7 +21,6 @@ library(dplyr)
 library(arsenal)
 library(ggplot2)
 library(tidyr)
-library(DEqMS)
 library(fgsea)
 library(ggrepel)
 library(labelled)
@@ -59,15 +58,20 @@ load("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_data_soma
 ```
 
 ```{r volcano-plot-function-mod, include=F}
-plotVolcano_mod <- function (data, FC, p.value, labels, identify = FALSE, fc.cutoff = 1, 
-  pt.size = 2.5, text.size = 3, cutoff = 0.05/nrow(data), sig_fc_lab = "Significant & Fold-Change",
-  sig_lab = "Significant", fc_lab = "Fold-Change", ns_lab = "Non-Significant", 
-  sig_fc_lab_col = "#f28482", sig_lab_col = "#f6bd60",
+plotVolcano_mod <- function (data, FC, p.value, labels, identify = FALSE, identify_manual = NULL, fc.cutoff = 1, 
+  label_apt = F, pt.size = 2.5, text.size = 3, cutoff = 0.05/nrow(data), 
+  sig_fc_pos_lab = "Significant & Fold-Change (+)",
+  sig_fc_neg_lab = "Significant & Fold-Change (-)", 
+  sig_lab = "Significant", 
+  fc_lab = "Fold-Change", ns_lab = "Non-Significant", 
+  sig_fc_pos_lab_col = "#f28482", sig_fc_neg_lab_col = "#8ecae6", sig_lab_col = "#f6bd60",
   fc_lab_col = "#84a59d", ns_lab_col = "#dad7cd",
   main = NULL, x.lab = NULL, ...) 
 {
   .fc <- enquo(FC)
   .p <- enquo(p.value)
+  .label <- enquo(labels)
+  
   if (all(pull(data, !!.fc) >= 0)) {
     warning("It appears you are not passing log2-transformed ", 
       "fold-change values. Please check.", call. = FALSE)
@@ -79,10 +83,11 @@ plotVolcano_mod <- function (data, FC, p.value, labels, identify = FALSE, fc.cut
     x.lab <- bquote(italic(log)[2] ~ (Fold ~ Change))
   }
   y.lab <- bquote(-italic(log)[10] ~ (p - value))
-  plot_df <- dplyr::mutate(data, group = case_when((-log10(!!.p) >= 
-    -log10(cutoff)) & (abs(!!.fc) >= fc.cutoff) ~ sig_fc_lab, 
-    -log10(!!.p) >= -log10(cutoff) ~ sig_lab, abs(!!.fc) >= 
-      fc.cutoff ~ fc_lab, TRUE ~ ns_lab), 
+  plot_df <- dplyr::mutate(data, 
+                           group = case_when((-log10(!!.p) >= -log10(cutoff)) & (abs(!!.fc) >= fc.cutoff & !!.fc > 0) ~ sig_fc_pos_lab, 
+                                             (-log10(!!.p) >= -log10(cutoff)) & (abs(!!.fc) >= fc.cutoff & !!.fc < 0) ~ sig_fc_neg_lab, 
+                                             -log10(!!.p) >= -log10(cutoff) ~ sig_lab, abs(!!.fc) >= fc.cutoff ~ fc_lab, 
+                                             TRUE ~ ns_lab), 
     type = grepl(paste0("^", sig_lab, "|", sig_fc_lab, "|Significant"), group))
 
   create_col_vector <- function(label_values, colors) {
@@ -90,20 +95,32 @@ plotVolcano_mod <- function (data, FC, p.value, labels, identify = FALSE, fc.cut
     return(cols)
   }
   
-  label_values = c(ns_lab, fc_lab, sig_lab, sig_fc_lab)
-  label_colors = c(ns_lab_col, fc_lab_col, sig_lab_col, sig_fc_lab_col)
+  label_values = c(ns_lab, fc_lab, sig_lab, sig_fc_pos_lab, sig_fc_neg_lab)
+  label_colors = c(ns_lab_col, fc_lab_col, sig_lab_col, sig_fc_pos_lab_col, sig_fc_neg_lab_col)
   cols <- create_col_vector(label_values, label_colors)
 
   p <- ggplot(plot_df, aes(x = !!.fc, y = -log10(!!.p), color = group)) + 
-    geom_point(alpha = 0.5, size = pt.size, ...) + scale_color_manual(values = cols, 
+    geom_point(alpha = 0.5, size = pt.size) + scale_color_manual(values = cols, 
     name = "") + labs(x = x.lab, y = y.lab, title = main) + 
     geom_vline(xintercept = c(-1, 1) * fc.cutoff, color = "grey", 
-      linetype = "longdash", alpha = 0.75) + geom_vline(xintercept = 0, 
+      linetype = "longdash", alpha = 0.75, ...) + geom_vline(xintercept = 0, 
     color = "grey50", linetype = "solid") + theme_soma() + 
     NULL
   if (identify) {
     p <- p + geom_text(data = dplyr::filter(plot_df, type), 
-      aes(label = !!enquo(labels)), hjust = 0, nudge_x = 0.05, 
+      aes(label = !!enquo(labels)), hjust = "inward", vjust = 0, nudge_x = 0.05, 
+      size = text.size, color = "black", check_overlap = TRUE)
+  }
+  if (!is.null(identify_manual) & label_apt) {
+    plot_df <- plot_df %>%
+        dplyr::mutate(label_col = rownames(plot_df))
+    p <- p + geom_text(data = dplyr::filter(plot_df, !!.label %in% identify_manual), 
+      aes(label = label_col), hjust = "inward", vjust = 0, nudge_x = 0.05, 
+      size = text.size, color = "black", check_overlap = TRUE)
+  }
+    if (!is.null(identify_manual) & !label_apt) {
+    p <- p + geom_text(data = dplyr::filter(plot_df, !!.label %in% identify_manual), 
+      aes(label = !!enquo(label_apt)), hjust = "inward", vjust = 0, nudge_x = 0.05, 
       size = text.size, color = "black", check_overlap = TRUE)
   }
   p
@@ -205,11 +222,13 @@ Total number of positive correlations with p\<0.05: `r nrow(subset(kendall_ts_ma
 #### Volcano plot of correlation
 
 ```{r kendall-volcano, echo = F}
-plotVolcano_mod(kendall_ts_mat, 
+plotVolcano_mod(data = kendall_ts_mat, 
             FC = tanner_stage_comp_ord, 
             p.value = p.value, 
-            label = Target, 
-            identify = T,
+            labels = Target, 
+            label_apt = T, 
+            identify = F,
+            identify_manual = c("WISP-2", "IGFBP-5"),
             fc.cutoff = 0,
             cutoff = 0.05,
             x.lab = "Correlation",
@@ -217,7 +236,8 @@ plotVolcano_mod(kendall_ts_mat,
             pt.size = 1,
             fc_lab = "p > 0.05",
             fc_lab_col = "#dad7cd",
-            sig_fc_lab = "p < 0.05") 
+            sig_fc_pos_lab = "p < 0.05 (Positive correlation)",
+            sig_fc_neg_lab = "p < 0.05 (Negative correlation)") 
 ```
 
 #### Positive correlations
