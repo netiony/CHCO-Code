@@ -1,5 +1,5 @@
 ---
-title: "MANGO MMTT Mixed Models <br>(Preliminary Results)"
+title: "MANGO Preliminary Analysis Results"
 author: "Callie Rountree-Jablin"
 date: "`r format(Sys.time(), '%d %B %Y')`"
 output:
@@ -14,28 +14,40 @@ output:
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(nlme)
+library(lme4)
 library(emmeans)
 library(kableExtra)
-knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+library(gtsummary)
+pacman::p_load(naniar)
 options(scipen=999)
+
+home_dir = "B:/Melanie Green/MANGO"
+knitr::opts_knit$set(echo=FALSE, root.dir = home_dir)
 ```
 
 
 ```{r read, include=FALSE}
-raw_dat <- read_csv("Mango-MangoPreandPostAsses_DATA_2024-04-12_1037.csv")
+raw_dat <- read_csv("./Raw Data/Mango-MangoPreandPostAsses_DATA_2024-07-17_1932.csv")
 ```
 
 
-```{r data cleaning and formatting, include=FALSE}
+```{r LMM data cleaning, include=FALSE}
 ## create dfs for each assay
-glucose <- raw_dat %>% select(pid, preop_glucose_neg10:preop_glucose_240, postop_glucose_neg10:postop_glucose_240) # checked
+glucose <- raw_dat %>% select(pid, preop_glucose_neg10:preop_glucose_240, postop_glucose_neg10:postop_glucose_240)
 insulin <- raw_dat %>% select(pid, preop_i_neg10:preop_i_240, postop_i_neg10:postop_i_240)
 ffa <- raw_dat %>% select(pid, preop_ffa_neg_10:preop_faa_240, postop_ffa_neg_10:postop_faa_240) %>% 
-  rename(c('preop_faa_neg10' = preop_ffa_neg_10, 'postop_faa_neg10' = postop_ffa_neg_10))
+  rename(c(preop_faa_neg10 = preop_ffa_neg_10, postop_faa_neg10 = postop_ffa_neg_10))
 glp1 <- raw_dat %>% select(pid, preop_glp_neg10:preop_glp_120, postop_glp_neg10:postop_glp_120)
 glucagon <- raw_dat %>% select(pid, preop_glucagon_neg10:preop_glucagon_240, postop_glucagon_neg10:postop_glucagon_240)
 triglycerides <- raw_dat %>%  select(pid, preop_trig_0:preop_trig_120, postop_trig_0:postop_trig_120)
 cpep <- raw_dat %>% select(pid, preop_cpep_neg10:preop_cpep_240, postop_cpep_neg10:postop_cpep_240)
+
+# extract pre and post weight measurements (units = kg)
+weights <- raw_dat %>% select(pid, preop_mmtt_weight, postop_mmtt_weight) %>%
+  rename(c(preop = preop_mmtt_weight, postop = postop_mmtt_weight)) %>% 
+  pivot_longer(cols = c(preop, postop),
+               names_to = "study_visit",
+               values_to = "weight")
 
 ## switch to doubly long format
 ######################################################################################################################
@@ -57,16 +69,16 @@ pivot_doubly_long <- function(df, assay_name){
                       values_to = assay_name)
 }
 
-glucose_long <- pivot_doubly_long(glucose, "glucose")
-insulin_long <- pivot_doubly_long(insulin, "i")
-ffa_long <- pivot_doubly_long(ffa, "faa")
-glp1_long <- pivot_doubly_long(glp1, "glp")
-glucagon_long <- pivot_doubly_long(glucagon, "glucagon")
-triglycerides_long <- pivot_doubly_long(triglycerides, "trig")
-cpep_long <- pivot_doubly_long(cpep, "cpep")
+# convert each df to long and add in weights
+glucose_long <- pivot_doubly_long(glucose, "glucose") %>% left_join(weights, by = join_by(pid, study_visit))
+insulin_long <- pivot_doubly_long(insulin, "i") %>% left_join(weights, by = join_by(pid, study_visit))
+ffa_long <- pivot_doubly_long(ffa, "faa") %>% left_join(weights, by = join_by(pid, study_visit))
+glp1_long <- pivot_doubly_long(glp1, "glp") %>% left_join(weights, by = join_by(pid, study_visit))
+glucagon_long <- pivot_doubly_long(glucagon, "glucagon") %>% left_join(weights, by = join_by(pid, study_visit))
+triglycerides_long <- pivot_doubly_long(triglycerides, "trig") %>% left_join(weights, by = join_by(pid, study_visit))
+cpep_long <- pivot_doubly_long(cpep, "cpep") %>% left_join(weights, by = join_by(pid, study_visit))
 
 ## clean up variables
-# define function for cleaning up each of the doubly long dfs
 clean_DL_dfs <- function(df_name){
   df <- get(df_name)
   
@@ -83,9 +95,47 @@ invisible(lapply(dfs_to_clean, clean_DL_dfs))
 ```
 
 
+```{r EDA, eval=FALSE, include=FALSE}
+## spaghetti plots with mean line
+spaghetti_plot <- function(df, assay_name){
+  df %>% 
+    ggplot(aes_string(x = 'time', y = assay_name, group = 'pid')) +
+    geom_line(alpha = 0.2) +
+    stat_summary(fun = mean, geom = 'line', aes(group = 1), color = 'orangered') +
+    stat_summary(fun = mean, geom = 'point', aes(group = 1), color = 'orangered') +
+    facet_wrap( ~study_visit) +
+    theme_bw()
+}
+
+spaghetti_plot(glucose_long, 'glucose')
+spaghetti_plot(insulin_long, 'i')
+spaghetti_plot(ffa_long, 'faa')
+spaghetti_plot(glp1_long, 'glp')
+spaghetti_plot(glucagon_long, 'glucagon')
+spaghetti_plot(triglycerides_long, "trig")
+spaghetti_plot(cpep_long, 'cpep')
+
+## histogram of weights
+weights %>% 
+  ggplot(aes(x = weight)) +
+  geom_histogram(binwidth = 5) +
+  labs(x = 'weight (kg)') +
+  facet_wrap(~study_visit) +
+  theme_bw()
+
+## missingness exploration
+glucose %>% miss_var_summary()
+insulin %>% miss_var_summary()
+ffa %>% miss_var_summary()
+glp1 %>% miss_var_summary()
+glucagon %>% miss_var_summary()
+triglycerides %>% miss_var_summary()
+cpep %>% miss_var_summary()
+```
+
 # Methods
 
-Mixed effects models were used to evaluate differences in MMTT labs before and after VSG bariatric surgery, while adjusting for the correlation of repeated measures within a participant. Estimated marginal means were calculated for each timepoint of the MMTT within a visit, and pairwise comparisons were used to test whether each timepoint differed across visits. 
+Mixed effects models were used to evaluate differences in MMTT labs before and after VSG bariatric surgery, while adjusting for the correlation of repeated measures within a participant. Estimated marginal means were calculated for each timepoint of the MMTT within a visit, and pairwise comparisons were used to test whether each timepoint differed across visits. Modeling with and without adjustment for changes in weight between study visits was performed; results are separately reported in sections 2 and 3 of this document. 
 
 Analyses for each of the MMTT labs were based on the following timepoints:
 
@@ -96,31 +146,94 @@ Analyses for each of the MMTT labs were based on the following timepoints:
 * Triglycerides: 0, 30, 60, 120 min
 * C-Peptide: -10, 0, 10, 20, 30, 60, 90, 120, 180, 240 min
 
+Differences in non-longitudinal labs (VSG, delta metrics, etc.) before and after surgery were evaluated using paired *t*-tests or Wilcoxon signed rank testing, depending on visual inspection of each metric's pre-op and post-op histogram distributions. Metrics analyzed with *t*-tests are reported with means and standard deviations for the pre-op and post-op timepoints. In instances where Wilcoxon signed rank testing was instead used, the associated pre-op and post-op measures are reported as median [25th percentile, 75th percentile]. These results are presented in section 4.
 
-```{r mixed function, include=FALSE}
-# define function that fits LMM then outputs a list of the ANOVA, marginal mean, and pairwise comparisons results
+
+```{r mixed functions, include=FALSE}
+## define function that fits LMM then outputs a list of the ANOVA, marginal mean, and pairwise comparisons results
 # inputted dat is the doubly long df for the assay of interest
 mixed <- function(dat, outcome){
-  form = as.formula(paste0(outcome,"~ study_visit * time"))
+  form = paste0(outcome,"~ study_visit * time")
   mod <- lme(as.formula(form), random = ~1|pid, data = dat, na.action = na.omit,
              correlation = corCompSymm(form = ~1 | pid)) # specifies within-subject variability as exchangeable
-  anova <- anova.lme(mod, type="marginal") # use ANOVA to obtain significance of interaction
-  m <- emmeans(mod,c("study_visit","time")) # compute estimated marginal means
+  anova <- anova.lme(mod, type="marginal") # use ANOVA to get significance of interaction
+  m <- emmeans(mod,c("study_visit","time")) # compute estimated marginal means to obtain effect at each timepoint
   prs <-  pairs(m,adjust="tukey",by="time") # perform pairwise comparisons by timepoint
+  
+  return(list(anova, m, prs))
+}
+
+## define weight adjusted version of mixed function
+mixed_wt_adj <- function(dat, outcome){
+  form = paste0(outcome,"~ study_visit * time + weight")
+  mod <- lme(as.formula(form), random = ~1|pid, data = dat, na.action = na.omit,
+             correlation = corCompSymm(form = ~1 | pid)) 
+  anova <- anova.lme(mod, type="marginal") 
+  m <- emmeans(mod,c("study_visit","time")) 
+  prs <-  pairs(m,adjust="tukey",by="time") 
   
   return(list(anova, m, prs))
 }
 ```
 
 
-# Results
+```{r convergence check, eval=FALSE, include=FALSE}
+# this chunk provides code for checking whether the models of interest are converging
+# the below functions print summary output for lme and lmer models
+# (lmer was additionally used here b/c we were uncertain that lme provides convergence warnings)
+
+## define function for checking non-adjusted mixed models
+mixed_check <- function(dat, outcome){
+  form1 = paste0(outcome,"~ study_visit * time")
+  mod1 <- lme(as.formula(form1), random = ~1|pid, data = dat, na.action = na.omit,
+             correlation = corCompSymm(form = ~1 | pid))
+  
+  form2 <- paste0(outcome,"~ study_visit * time + (1|pid)")
+  mod2 <- lmer(as.formula(form2), data = dat, na.action = na.omit)
+  print(summary(mod1))
+  print(summary(mod2), correlation = TRUE)
+}
+
+## check models using function
+mixed_check(dat = glucose_long, outcome = "glucose")
+mixed_check(dat = insulin_long, outcome = "i")
+mixed_check(dat = ffa_long, outcome = "faa")
+mixed_check(dat = glp1_long, outcome = "glp")
+mixed_check(dat = glucagon_long, outcome = "glucagon")
+mixed_check(dat = triglycerides_long, outcome = "trig")
+mixed_check(dat = cpep_long, outcome = "cpep")
+
+## define function for checking weight-adjusted mixed models
+mixed_wt_adj_check <- function(dat, outcome){
+  form1 = paste0(outcome,"~ study_visit * time + weight")
+  mod1 <- lme(as.formula(form1), random = ~1|pid, data = dat, na.action = na.omit,
+             correlation = corCompSymm(form = ~1 | pid))
+  
+  form2 <- paste0(outcome,"~ study_visit * time + weight + (1|pid)")
+  mod2 <- lmer(as.formula(form2), data = dat, na.action = na.omit)
+  print(summary(mod1))
+  print(summary(mod2), correlation = TRUE)
+}
+
+## check weight-adjusted models
+mixed_wt_adj_check(dat = glucose_long, outcome = "glucose")
+mixed_wt_adj_check(dat = insulin_long, outcome = "i")
+mixed_wt_adj_check(dat = ffa_long, outcome = "faa")
+mixed_check(dat = glp1_long, outcome = "glp")
+mixed_wt_adj_check(dat = glucagon_long, outcome = "glucagon")
+mixed_wt_adj_check(dat = triglycerides_long, outcome = "trig")
+mixed_wt_adj_check(dat = cpep_long, outcome = "cpep")
+```
+
+
+# Mixed Model Results
 How to interpret the output:
 
 * ANOVA Results: This table provides the parameter estimates for each term in the model. The `study_visit:time` term tests whether the pattern of change of the lab measure throughout the duration of the MMTT differed between the pre-op and post-op visits. For example, based on the insulin results, we can see that the trajectory of insulin during the MMTT did differ between visits (p < 0.05). In instances where the `study_visit:time` term has a p-value of $\ge0.05$, the estimated marginal means and pairwise comparisons tables are omitted from the report. 
 
 * Estimated Marginal Means: This table reports the estimated marginal means for each visit and timepoint. `lower.CL` and `upper.CL` respectively describe the lower and upper bounds of the 95% confidence interval.
 
-* Pairwise Comparisons: This table provides p-values for comparing whether there is a notable difference in the MMTT measure between the pre-op and post-op visits at each timepoint. For example, looking at the first row of the glucose pairwise comparisons table, glucose at the -10 min timepoint was not significantly different between the two study visits (p=0.284). 
+* Pairwise Comparisons: This table provides p-values for testing whether there is a notable difference in the MMTT measure between the pre-op and post-op visits at each timepoint. For example, looking at the first row of the glucose pairwise comparisons table, there was not a significant difference in glucose between the pre-op and post-op visits at -10 min (p=0.284). 
 
 ## Glucose
 ```{r glucose analysis, echo=FALSE}
@@ -206,13 +319,13 @@ glucagon_results[[1]] %>%
   kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>% 
   kable_styling(latex_options='basic', html_font='Arial') %>% 
       htmltools::HTML()
-# glucagon_results[[2]] %>% 
-#   kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>% 
-#   kable_styling(latex_options='basic', html_font='Arial') %>% 
+# glucagon_results[[2]] %>%
+#   kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>%
+#   kable_styling(latex_options='basic', html_font='Arial') %>%
 #       htmltools::HTML()
-# glucagon_results[[3]] %>% 
-#   kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>% 
-#   kable_styling(latex_options='basic', html_font='Arial') %>% 
+# glucagon_results[[3]] %>%
+#   kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>%
+#   kable_styling(latex_options='basic', html_font='Arial') %>%
 #       htmltools::HTML()
 ```
 
@@ -254,5 +367,276 @@ cpep_results[[1]] %>%
 #       htmltools::HTML()
 ```
 
-# Questions
-* Are the glucagon analyses based on the correct timepoints?
+# Weight-Adjusted Mixed Model Results
+
+How to interpret the output:
+
+Output for these models can be interpreted similarly to the regular non-adjusted mixed model results with the additional consideration that all results are now adjusted for weight. 
+
+## Glucose
+```{r glucose wt adj analysis, echo=FALSE}
+glucose_results <- mixed_wt_adj(dat = glucose_long, outcome = "glucose")
+
+glucose_results[[1]] %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+glucose_results[[2]] %>% 
+  kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+glucose_results[[3]] %>%
+  kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+```
+
+## Insulin
+
+```{r insulin wt adj analysis, echo=FALSE}
+insulin_results <- mixed_wt_adj(dat = insulin_long, outcome = "i")
+
+insulin_results[[1]] %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+insulin_results[[2]] %>% 
+  kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+insulin_results[[3]] %>% 
+  kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+```
+
+## FFA
+
+```{r ffa wt adj analysis, echo=FALSE}
+ffa_results <- mixed_wt_adj(dat = ffa_long, outcome = "faa")
+
+ffa_results[[1]] %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+ffa_results[[2]] %>% 
+  kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+ffa_results[[3]] %>% 
+  kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+```
+
+## GLP-1
+
+```{r glp1 wt adj analysis, echo=FALSE}
+glp1_results <- mixed_wt_adj(dat = glp1_long, outcome = "glp")
+
+glp1_results[[1]] %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+glp1_results[[2]] %>% 
+  kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+glp1_results[[3]] %>% 
+  kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+```
+
+## Glucagon
+<span style="color: blue;">Estimated marginal means and pairwise comparisons were not computed due to non-significant findings.</span>
+```{r glucagon wt adj analysis, echo=FALSE}
+glucagon_results <- mixed_wt_adj(dat = glucagon_long, outcome = "glucagon")
+
+glucagon_results[[1]] %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+# glucagon_results[[2]] %>%
+#   kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>%
+#   kable_styling(latex_options='basic', html_font='Arial') %>%
+#       htmltools::HTML()
+# glucagon_results[[3]] %>%
+#   kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>%
+#   kable_styling(latex_options='basic', html_font='Arial') %>%
+#       htmltools::HTML()
+```
+
+## Triglycerides
+<span style="color: blue;">Estimated marginal means and pairwise comparisons were not computed due to non-significant findings.</span>
+```{r triglycerides wt adj analysis, echo=FALSE}
+triglycerides_results <- mixed_wt_adj(dat = triglycerides_long, outcome = "trig")
+
+triglycerides_results[[1]] %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+# triglycerides_results[[2]] %>% 
+#   kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>% 
+#   kable_styling(latex_options='basic', html_font='Arial') %>% 
+#       htmltools::HTML()
+# triglycerides_results[[3]] %>% 
+#   kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>% 
+#   kable_styling(latex_options='basic', html_font='Arial') %>% 
+#       htmltools::HTML()
+```
+
+## C-Peptide
+<span style="color: blue;">Estimated marginal means and pairwise comparisons were not computed due to non-significant findings.</span>
+```{r cpep wt adj analysis, echo=FALSE}
+cpep_results <- mixed_wt_adj(dat = cpep_long, outcome = "cpep")
+
+cpep_results[[1]] %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>% 
+  kable_styling(latex_options='basic', html_font='Arial') %>% 
+      htmltools::HTML()
+# cpep_results[[2]] %>% 
+#   kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>% 
+#   kable_styling(latex_options='basic', html_font='Arial') %>% 
+#       htmltools::HTML()
+# cpep_results[[3]] %>% 
+#   kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>% 
+#   kable_styling(latex_options='basic', html_font='Arial') %>% 
+#       htmltools::HTML()
+```
+
+
+# Pre-op and Post-op Comparisons
+
+```{r pre/post comparisons data cleaning, echo=FALSE, message=FALSE, warning=FALSE}
+## create df with metrics of interest for pre/post comparison
+clean_metrics <- raw_dat %>%
+  # compute fasting and peak metrics
+  mutate(preop_fasting_glucose = rowMeans(select(., preop_glucose_neg10, preop_glucose_0), na.rm = TRUE),
+         postop_fasting_glucose = rowMeans(select(., postop_glucose_neg10, postop_glucose_0), na.rm = TRUE),
+         preop_peak_glucose = do.call(pmax, c(select(., preop_glucose_neg10: preop_glucose_240), na.rm = TRUE)),
+         postop_peak_glucose = do.call(pmax, c(select(., postop_glucose_neg10:postop_glucose_240), na.rm = TRUE)),
+         preop_peak_insulin = do.call(pmax, c(select(., preop_i_neg10:preop_i_240), na.rm = TRUE)),
+         postop_peak_insulin = do.call(pmax, c(select(., postop_i_neg10:postop_i_240), na.rm = TRUE))) %>%
+  select(c(pid, preop_mmtt_bmi, postop_mmtt_bmi, preop_mmtt_w_h, postop_mmtt_w_h, 
+           preop_a1c, postop_a1c, preop_alt, postop_alt, preop_ast, postop_ast, preop_ggt, postop_ggt, 
+           preop_mmtt_chol, postop_mmtt_chol, preop_mmtt_hdl, postop_mmtt_hdl, preop_mmtt_tg, postop_mmtt_tg, 
+           preop_mmtt_calc_ldl, postop_mmtt_calc_ldl, preop_mmtt_adiponectin, postop_mmtt_adiponectin, 
+           preop_homa, postop_homa, preop_fasting_glucose, postop_fasting_glucose, preop_peak_glucose, postop_peak_glucose,
+           preop_peak_insulin, postop_peak_insulin, preop_visceralfat_percent, postop_visceralfat_percent, preop_liver_fat_perc,
+           postop_liver_fat_perc, preop_bodpod_fat, postop_bodpod_fat, preop_bodpod_fatfreemass, postop_bodpod_fatfreemass,
+           preop_basal_fat_oxidation_mmol_min_kg, postop_basal_fat_oxidation_mmol_min_kg, preop_stage1_fat_oxidation_mmol_min_kg,
+           postop_stage1_fat_oxidation_mmol_min_kg, preop_basal_carb_oxidation_mmol_min_kg,
+           postop_basal_carb_oxidation_mmol_min_kg, preop_stage1_carb_oxidation_mmol_min_kg,
+           postop_stage1_carb_oxidation_mmol_min_kg, basal_rq, postop_basal_rq, stage1_rq, postop_stage1_rq,
+           preop_mets_3dpar, preop_mets_3dpar_v2, preop_kcals_day, preop_kcals_day_v2, preop_kcals_total,
+           preop_kcals_total_v2, preop_steps_total, preop_steps_total_v2, ffq_fat_g, ffq_fat_g_postop,
+           ffq_kcal, ffq_kcal_postop, ffq_pro_g, ffq_pro_g_postop, ffq_carbo_g, ffq_carbo_g_postop, ffq_totsugar_g,
+           ffq_totsugar_g_postop, ffq_fructose_g, ffq_fructose_g_postop)) %>%
+  # update variable names as needed to contain "pre" or "post" wording so that we can later create a study_visit column
+  rename(c(preop_basal_rq = basal_rq, preop_stage1_rq = stage1_rq, preop_ffq_fat_g = ffq_fat_g,
+           preop_ffq_kcal = ffq_kcal, preop_ffq_pro_g = ffq_pro_g, preop_ffq_carbo_g = ffq_carbo_g,
+           preop_ffq_totsugar_g = ffq_totsugar_g, preop_ffq_fructose_g = ffq_fructose_g,
+           postop_mets_3dpar = preop_mets_3dpar_v2, 
+           postop_kcals_day = preop_kcals_day_v2, postop_kcals_total = preop_kcals_total_v2, 
+           postop_steps_total = preop_steps_total_v2, postop_ffq_fat_g = ffq_fat_g_postop,
+           postop_ffq_kcal = ffq_kcal_postop, postop_ffq_pro_g = ffq_pro_g_postop,
+           postop_ffq_carbo_g = ffq_carbo_g_postop, postop_ffq_totsugar_g = ffq_totsugar_g_postop,
+           postop_ffq_fructose_g = ffq_fructose_g_postop)) %>% 
+  # remove percentages from visceral fat cols
+  mutate(preop_visceralfat_percent = str_remove(preop_visceralfat_percent, "%") %>% as.numeric(),
+         postop_visceralfat_percent = str_remove(postop_visceralfat_percent, "%") %>% as.numeric())
+  
+## format df to be in long format with each subject containing separate lines of data for pre and post
+clean_metrics <- clean_metrics %>% 
+  pivot_longer(cols = starts_with("preop_") | starts_with("postop_"),
+               names_to = "combined",
+               values_to = "value") %>% 
+  separate(combined, into = c("study_visit", "metric1", "metric2", "metric3", "metric4", "metric5", "metric6"))
+clean_metrics$metric <- apply(clean_metrics[, c("metric1", "metric2", "metric3", "metric4", "metric5", "metric6")], 
+                     1, function(x) paste(na.omit(x), collapse = "_"))
+clean_metrics <- clean_metrics %>%
+  select(-c(metric1, metric2, metric3, metric4, metric5, metric6)) %>% 
+  pivot_wider(names_from = metric, values_from = value)
+```
+
+
+```{r normality check, eval=FALSE, include=FALSE}
+## check distribution of metrics for deciding btwn. parametric and non-parametric testing 
+var_labels <- sjlabelled::get_label(clean_metrics[,-1])
+ncolumn <- ncol(clean_metrics)
+ncolumn <- ncolumn - 1
+
+for (col in 2:ncolumn){
+  var_name <- colnames(clean_metrics[,-1])[col]
+  plot <- ggplot(clean_metrics, aes(x = .data[[var_name]])) +
+    geom_histogram() +
+    labs(title = var_labels[var_name]) +
+    theme_bw() +
+    facet_wrap(~ study_visit) 
+  print(plot)
+}
+```
+
+## t-test Results
+
+How to interpret the output:
+
+The below table reports the mean and standard deviation for each metric at pre-op and post-op. The corresponding p-values test whether there is a notable difference in means between the two timepoints.
+
+```{r t-tests, echo=FALSE, message=FALSE, warning=FALSE}
+clean_metrics %>%
+  mutate(study_visit = factor(study_visit, levels = c('preop', 'postop'))) %>% 
+  select(c(pid, study_visit, mmtt_adiponectin, stage1_carb_oxidation_mmol_min_kg, basal_rq)) %>% 
+  tbl_summary(by = study_visit, include = -pid,
+              type = list(c(mmtt_adiponectin,
+                            stage1_carb_oxidation_mmol_min_kg, basal_rq) ~ 'continuous',
+                          study_visit ~ 'dichotomous'),
+              statistic = list(all_continuous() ~ '{mean} ({sd})'),
+              digits = everything() ~ c(2,2),
+              missing_text = 'N Missing') %>% 
+  add_p(test = all_continuous() ~ 'paired.t.test', group = pid,
+        pvalue_fun = ~ style_pvalue(.x, digits = 3)) %>% 
+  modify_header(label = '**Metric**',
+                stat_1 = '**Pre-op** (N={n})',
+                stat_2 = '**Post-op** (N={n})') %>%
+  modify_caption("t-test Results")
+```
+
+## Wilcoxon Signed Rank Results
+
+How to interpret the output:
+
+The table below reports the median, 25% percentile, and 75% percentile values for each metric at pre-op and post-op. Included are p-values for testing whether there is a notable difference in mean ranks between the two timepoints. In instances where p-values are not reported (ggt, mmtt_chol, fasting_glucose, stage1_rq, a1c), the models did not converge.
+
+```{r WRS testing, echo=FALSE, message=FALSE, warning=FALSE}
+clean_metrics %>%
+  mutate(study_visit = factor(study_visit, levels = c('preop', 'postop'))) %>% 
+  select(-c(mmtt_adiponectin, stage1_carb_oxidation_mmol_min_kg, basal_rq)) %>% 
+  tbl_summary(by = study_visit, include = -pid,
+              type = list(c(mmtt_bmi, mmtt_w_h, a1c, alt, ast, ggt, 
+                            mmtt_chol, mmtt_hdl, mmtt_tg, mmtt_calc_ldl, homa, fasting_glucose, peak_glucose,
+                            peak_insulin, visceralfat_percent, liver_fat_perc, bodpod_fat, 
+                            bodpod_fatfreemass, basal_fat_oxidation_mmol_min_kg, stage1_fat_oxidation_mmol_min_kg,
+                            basal_carb_oxidation_mmol_min_kg, stage1_rq, mets_3dpar, kcals_day, kcals_total, 
+                            steps_total, ffq_fat_g, ffq_kcal, ffq_pro_g, ffq_carbo_g, 
+                            ffq_totsugar_g, ffq_fructose_g) ~ 'continuous',
+                          study_visit ~ 'dichotomous'),
+              statistic = list(all_continuous() ~ '{median} [25% Pi: {p25}, 75% Pi: {p75}]'),
+              digits = everything() ~ c(2,2),
+              missing_text = 'N Missing') %>% 
+  add_p(test = all_continuous() ~ 'paired.wilcox.test',
+        group = pid,
+        pvalue_fun = ~ style_pvalue(.x, digits = 3)) %>% 
+  modify_header(label = '**Metric**',
+                stat_1 = '**Pre-op** (N={n})',
+                stat_2 = '**Post-op** (N={n})') %>%
+  modify_caption("Wilcoxon Signed Rank Results") %>%
+  modify_table_body(
+    ~ .x %>% 
+      mutate(p.value = ifelse(variable %in% c('ggt', 'mmtt_chol', 'fasting_glucose', 'stage1_rq', 'a1c'), NA, p.value))
+  )
+
+```
+
+Pi = percentile
