@@ -1,5 +1,5 @@
 library(ggrepel)
-library(qpcR)
+# library(qpcR)
 library(ggpubr)
 
 test_ipa <- readxl::read_xls("/Users/choiyej/Dropbox/PANTHER/IPA results/tanner_stage_12_345_rh_de_table_export.xls", skip = 1)
