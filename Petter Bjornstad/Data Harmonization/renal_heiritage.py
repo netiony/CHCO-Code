@@ -74,18 +74,33 @@ def clean_renal_heiritage():
     # Medical History
     # --------------------------------------------------------------------------
 
-    var = ["record_id"] + ["screen_a1c"] + ["insulin_inj"]
-    med = pd.DataFrame(proj.export_records(fields=var))
+    var = ["record_id"] + ["screen_a1c"] + ["insulin_inj"] + ["htn_med_type"] + ["mra_med"] +\
+    ["sglt2i_med"] + ["diabetes_med_other"] + ["addl_hld_meds"] + ["meds_weight_type"] + \
+    ["uric_acid_med"] + ["diabetes_med"]
+    med = pd.DataFrame(proj.export_records(fields=var)) 
     med = med.loc[med["redcap_event_name"].str.startswith('screen', na=False)]
     med.drop(["redcap_event_name"], inplace=True, axis=1)
     # Replace missing values
     med.replace(rep, np.nan, inplace=True)
     med.rename({"screen_a1c": "hba1c",
-                "insulin_inj": "insulin_med_timepoint"},
+                "sglt2i_med": "sglti_timepoint",
+                "diabetes_med_other___3": "glp1_agonist_timepoint",
+                "mra_med": "mra",
+                "htn_med_type___5": "diuretic",
+                "htn_med_type___4": "ca_channel_blocker",
+                "htn_med_type___3": "beta_blocker",
+                "addl_hld_meds___1": "statin",
+                "addl_hld_meds___2": "fibrates",
+                "meds_weight_type___1": "topiramate",
+                "meds_weight_type___2": "phentermine",
+                "uric_acid_med": "uric_acid_med"},
                 inplace=True, axis=1)
+    med['insulin_med_timepoint'] = med.apply(lambda row: "1" if row['insulin_inj'] == "1" or row['diabetes_med___2'] == "1" else 0, axis=1)
+    med['raasi_timepoint'] = med.apply(lambda row: "1" if row['htn_med_type___1'] == "1" or row['htn_med_type___2'] == "1" else 0, axis=1)
     # Replace 0/1 values with yes/no
-    med.iloc[:, 1:] = med.iloc[:, 1:].replace(
-        {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
+    meds = ["sglti_timepoint", "glp1_agonist_timepoint", "mra", "diuretic", "ca_channel_blocker",\
+    "beta_blocker", "statin", "fibrates", "topiramate", "phentermine", "uric_acid_med", "insulin_med_timepoint", "raasi_timepoint"]
+    med[meds] = med[meds].applymap(lambda x: "Yes" if x == "1" or x is True else ("No" if pd.notna(x) and x != "" else x))
     med["procedure"] = "screening"
     med["visit"] = "baseline"
 

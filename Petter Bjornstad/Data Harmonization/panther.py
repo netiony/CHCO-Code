@@ -90,7 +90,9 @@ def clean_panther():
     # Medications
     # --------------------------------------------------------------------------
 
-    var = ["record_id", "dkd_meds_dose", "t2d_meds_dose", "htn_med", "hx_cv_medlist"]
+    var = ["record_id", "dkd_meds_dose", "t2d_meds_dose", "htn_med",\
+    "hx_cv_medlist", "meds_weight_type", "glp1ra_med", "mra_med", \
+    "fibrates_med", "uric_acid_med"]
     med = pd.DataFrame(proj.export_records(fields=var, events=["screening_arm_1"]))
     # Replace missing values
     med.replace(rep, np.nan, inplace=True)
@@ -100,15 +102,28 @@ def clean_panther():
         inplace=True)
     med = med.rename(columns={"redcap_event_name": "visit"})
     # Meds by regex
-    med["sglti_timepoint"]=med.apply(lambda x: x.str.contains('sgl|canag|dapagl|empag|floz', case=False).any(), axis=1)
+    med["sglti_timepoint"]=med.apply(lambda x: x.str.contains('sgl|canag|dapagl|empag|floz|sglt2i_med', case=False).any(), axis=1)
     med["ace_inhibitor"]=med.apply(lambda x: x.str.contains('lisino|liso', case=False).any(), axis=1)
     med["raasi_timepoint"]=np.where(np.logical_or.reduce((med.ace_inhibitor==True, med.htn_med___1=="1", med.htn_med___2=="1")), True, False)
     med["metformin_timepoint"]=med.apply(lambda x: x.str.contains('met|axpin|diage|gluci|glucophage|metabe', case=False).any(), axis=1)
     med["insulin_med_timepoint"]=med.apply(lambda x: x.str.contains('insul|lantus', case=False).any(), axis=1)
-    meds=["sglti_timepoint", "raasi_timepoint", "metformin_timepoint", "insulin_med_timepoint"]
-    med[meds]= med[meds].applymap(lambda x: "Yes" if x else "No")
+    med.rename({"glp1ra_med": "glp1_agonist_timepoint",
+                "mra_med": "mra",
+                "htn_med___5": "diuretic",
+                "htn_med___4": "ca_channel_blocker",
+                "htn_med___3": "beta_blocker",
+                "htn_med___6": "statin",
+                "fibrates_med": "fibrates",
+                "meds_weight_type___1": "topiramate",
+                "meds_weight_type___2": "phentermine",
+                "uric_acid_med": "uric_acid_med"
+                },
+                inplace=True, axis=1)
+    meds=["sglti_timepoint", "raasi_timepoint", "metformin_timepoint", "insulin_med_timepoint", "glp1_agonist_timepoint", "mra", "diuretic", "ca_channel_blocker", "beta_blocker", "statin", "fibrates", "topiramate", "phentermine", "uric_acid_med"]
+    med[meds] = med[meds].applymap(lambda x: "Yes" if x == "1" or x is True else ("No" if pd.notna(x) and x != "" else x))
     # SGLT2i, RAASi, Metformin
-    med = med[["record_id", "visit", "sglti_timepoint", "raasi_timepoint", "metformin_timepoint", "insulin_med_timepoint"]].copy()
+    med = med[["record_id", "visit", "sglti_timepoint", "raasi_timepoint", "metformin_timepoint", "insulin_med_timepoint",\
+    "glp1_agonist_timepoint", "mra", "diuretic", "ca_channel_blocker", "beta_blocker", "statin", "fibrates", "topiramate", "phentermine", "uric_acid_med"]].copy()
     med["procedure"] = "medications"
     med["date"] = screen["date"]
 

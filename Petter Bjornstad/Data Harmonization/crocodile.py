@@ -84,7 +84,13 @@ def clean_crocodile():
                 "htn_med___5": "diuretic",
                 "htn_med___6": "statin",
                 "pump_basal_rate": "pump_basal_rate",
-                "cgm_yn": "cgm_yn"}
+                "cgm_yn": "cgm_yn",
+                "mra_med": "mra",
+                "fibrates_med": "fibrates",
+                "meds_weight_type___1": "topiramate",
+                "meds_weight_type___2": "phentermine",
+                "uric_acid_med": "uric_acid_med"
+                }
     og_names = list(med_list.keys())
     hx_list = [col for col in med.columns if col.startswith('hx_')]
     med = med[["record_id"] + og_names + hx_list]
@@ -100,7 +106,7 @@ def clean_crocodile():
         med["insulin_pump_timepoint"]), pd.to_numeric(med["insulin_injections_timepoint"])))
     # Replace 0/1 values with yes/no
     med.iloc[:, 1:] = med.iloc[:, 1:].replace(
-        {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
+        {0: "No", "0": "No", 2: "No", "2": "No", 1: "Yes", "1": "Yes"})
     med["procedure"] = "medications"
     med["visit"] = "baseline"
 
@@ -335,7 +341,15 @@ def clean_crocodile():
                  "mes_index", "mes_volume_weibel", "mes_volume_wiggins",
                  "mes_volume_con", "glom_nuc_count", "mes_nuc_count", "art_intima",
                  "art_media", "pod_nuc_density", "pod_cell_volume",
-                 "gbm_thick_artmean", "gbm_thick_harmmean"]
+                 "gbm_thick_artmean", "gbm_thick_harmmean",
+                 "cortex_total_area", "cortex_analyzed_area", 
+                 "cortex_percentage", "pt_total_number", 
+                 "pt_total_area", "pt_epithelium_area", "pt_lumen_area", "pt_nuclear_count", 
+                 "pt_total_nuc_area", "pt_density", "pt_avg_area", 
+                 "pt_epithelium_avg_area", "pt_lumen_avg_area", 
+                 "fractional_pt_total_area", "fractional_pt_epithelium_area", 
+                 "fractional_pt_lumen_area", "pt_nuc_density_number_tubule", 
+                 "pt_nuc_area", "pt_nuc_density_number_cortex", "pt_nuc_density_area_cortex"]
     biopsy = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
     biopsy.replace(rep, np.nan, inplace=True)
