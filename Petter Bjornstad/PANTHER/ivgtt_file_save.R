@@ -1,4 +1,5 @@
 library(dplyr)
+library(tidyr)
 
 # PANTHER raw lab data cleaning
 panther_dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = "") %>% filter(study == "PANTHER") %>%
@@ -7,17 +8,17 @@ panther_lab <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Raw/PA
 
 panther_lab_tst <- panther_lab %>%
   filter(grepl("gluc|ins", TestName, ignore.case=T)) %>%
-  mutate(TestName = gsub("\\s+", "", TestName)) %>%
-  mutate(test = gsub("glucose", "gluc_", TestName, ignore.case = T),
+  dplyr::mutate(TestName = gsub("\\s+", "", TestName)) %>%
+  dplyr::mutate(test = gsub("glucose", "gluc_", TestName, ignore.case = T),
          test = gsub("insulin", "ins_", test, ignore.case = T),
          test = gsub("-", "minus_", test, ignore.case = T),
          test = gsub("ins_minus_endo", "ins_", test, ignore.case = T),
          test = gsub("min$", "", test, ignore.case = T)) %>%
-  rename("mrn" = MRN, "date" = Collection.Date, "value" = Result.Numeric) %>%
+  dplyr::rename("mrn" = MRN, "date" = Collection.Date, "value" = Result.Numeric) %>%
   dplyr::select(mrn, date, value, test) %>% arrange(mrn) %>%
-  mutate(date = as.Date(date, format = "%m/%d/%y")) %>% 
+  dplyr::mutate(date = as.Date(date, format = "%m/%d/%y")) %>% 
   group_by(mrn) %>%
-  mutate(visit = case_when(date == min(date) ~ "baseline",
+  dplyr::mutate(visit = case_when(date == min(date) ~ "baseline",
                            date == max(date) ~ "year_1",
                            T ~ "")) %>% ungroup()
 
@@ -39,7 +40,7 @@ ivgtt_dat <- redcap_read(redcap_uri = "https://redcap.ucdenver.edu/api/",
   filter(redcap_event_name == "baseline_arm_1")
 ivgtt_dat <- ivgtt_dat[rowSums(!is.na(ivgtt_dat[, grepl("^gluc_|^ins_", names(ivgtt_dat))])) > 0, ]
 
-ivgtt_time <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/fsIVGTT/PANTHER_IVGTT_time_discrepency030624.csv")
+ivgtt_time <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/fsIVGTT/PANTHER_IVGTT_time_discrepency080224.csv")
 
 ivgtt_time <- ivgtt_time %>% filter(time!=150)
 
@@ -75,6 +76,7 @@ for (i in 1:length(ivgtt_dat$record_id)) {
                            insulin = insulin_column)
   df_name <- subject_level_df$record_id
   ivgtt_list[[df_name]] <- result_dat
+  print(df_name)
   write.csv(result_dat, paste0("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/fsIVGTT/subject_level_data/", df_name, ".csv"), quote = FALSE, row.names = FALSE)
 }
 
