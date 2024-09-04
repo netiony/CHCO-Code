@@ -222,7 +222,19 @@ labs_long <- labs_long %>% filter(redcap_event_name %in% c("screeningenrollmen_a
 labs_long$Record.ID <- labs_long$record_id
 labs_long <- labs_long %>% filter(!(Record.ID %in% c("Jacky Test","Jacky Test 2")))
 labs_long <- labs_long %>% filter(!is.na(labs_bicarbonate) & !is.na(labs_creatinine) & !is.na(labs_potassium))
-labs_long <- labs_long %>% select(Record.ID, redcap_event_name, labs_bicarbonate, labs_creatinine, labs_potassium)
+labs_long <- labs_long %>% select(Record.ID, labs_date, redcap_event_name, labs_bicarbonate, labs_creatinine, labs_potassium)
+# deal with duplicates
+labs_long <- labs_long %>% filter(!(Record.ID == "009" & labs_creatinine == 0.76))
+labs_long <- labs_long %>% filter(!(Record.ID == "008" & labs_creatinine == 0.80))
+labs_long <- labs_long %>% filter(!(Record.ID == "45" & labs_creatinine == 1.01))
+labs_long_003 <- labs_long %>% filter(Record.ID == "003" & redcap_event_name == "study_visit_2_arm_1")  
+labs_long <- labs_long %>% filter(!(Record.ID == "003" & redcap_event_name == "study_visit_2_arm_1"))
+labs_long_003 <- labs_long_003 %>% group_by(Record.ID, redcap_event_name) %>% summarise(labs_bicarbonate = mean(labs_bicarbonate),
+                                                                     labs_creatinine = mean(labs_creatinine),
+                                                                     labs_potassium = mean(labs_potassium))
+labs_long$labs_date <- NULL
+labs_long <- rbind(labs_long, labs_long_003)
+labs_long <- labs_long %>% arrange(Record.ID, redcap_event_name)
 labs_wide <- reshape(labs_long, direction = "wide", idvar = "Record.ID", timevar = "redcap_event_name")
 labs_wide$delta_bicarb <- labs_wide$labs_bicarbonate.study_visit_4_arm_1 - labs_wide$labs_bicarbonate.screeningenrollmen_arm_1
 labs_wide$delta_creat <- labs_wide$labs_creatinine.study_visit_4_arm_1 - labs_wide$labs_creatinine.screeningenrollmen_arm_1
@@ -239,16 +251,28 @@ t2_data <- left_join(t2_data, labs_wide, by = "Record.ID")
 
 # calculate vars based on CESD
 cesd_long <- cesd_long %>% filter(redcap_event_name %in% c("screeningenrollmen_arm_1", "study_visit_1_arm_1", "study_visit_2_arm_1", "study_visit_3_arm_1","study_visit_4_arm_1"))
-cesd_long$redcap_event_name <- as.factor(cesd_long$redcap_event_name)
+#cesd_long$redcap_event_name <- as.factor(cesd_long$redcap_event_name)
 cesd_long <- cesd_long %>% select(Record.ID, cesd_dateofvisit, redcap_event_name, cesd_score)
 cesd_long$cesd_score_ge20 <- as.factor(ifelse(cesd_long$cesd_score >= 20, 1, 0))
 cesd_long <- cesd_long %>% filter(!is.na(cesd_score))
 # some people have more than 1 CESD at a visit - keep the most recent
-cesd_long <- cesd_long %>% arrange(Record.ID, desc(cesd_dateofvisit))
-cesd_long <- cesd_long %>% group_by(Record.ID, redcap_event_name) %>% filter(row_number()==1)
-cesd_long <- ungroup(cesd_long)
-cesd_long$cesd_dateofvisit <- NULL
+# for some reason, when I group by record ID and redcap event name, filter, then ungroup, I get downstream errors
+# am sidestepping by sorting in a way that gives me the results I need
+cesd_long <- cesd_long %>% arrange(Record.ID, cesd_dateofvisit)
+#cesd_long <- cesd_long %>% group_by(Record.ID, redcap_event_name) %>% filter(row_number()==1) %>% ungroup()
+#cesd_long$cesd_dateofvisit <- NULL
 cesd_wide <- reshape(cesd_long, direction = "wide", idvar = "Record.ID", timevar = "redcap_event_name", v.names = c("cesd_score","cesd_score_ge20"))
+cesd_wide$delta_cesd <- cesd_wide$cesd_score.study_visit_4_arm_1- cesd_wide$cesd_score.study_visit_1_arm_1
+cesd_wide$score_lt20_ge20 <- ifelse(is.na(cesd_wide$cesd_score.study_visit_1_arm_1) | is.na(cesd_wide$cesd_score.study_visit_4_arm_1), NA, 
+                                    ifelse(cesd_wide$cesd_score_ge20.study_visit_1_arm_1==0 &
+                                      cesd_wide$cesd_score_ge20.study_visit_4_arm_1==1, 1, 0))
+cesd_wide$score_lt20_ge20 <- as.factor(cesd_wide$score_lt20_ge20)
+cesd_wide <- cesd_wide %>% select(Record.ID, delta_cesd, score_lt20_ge20)
+t2_data <- left_join(t2_data, cesd_wide, by = "Record.ID")
+
+# CSSRS
+cssrs <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Moore/Phenteramine RCT/Data raw/PilotRCTPhentermineT-LPCSSRS_DATA_2024-09-04_1721.csv")
+cssrs <- cssrs %>% filter(!is.na(redcap_repeat_instance))
 ```
 
 # Results
@@ -278,7 +302,8 @@ t2 <- CreateTableOne(data = t2_data, vars = c("urine_amp_adherence","Max.Topiram
                                               "any_ae", "severeae", "ae_dosereduce", "ae_discont", "general", "ophthalmologic", "gastrointestinal", 
                                               "cardiopulmonary", "genitourinary", "dermatologic", "neuropsychiatric", "allergic", "other", 
                                               "delta_hr", "hr_ge_100", "delta_sbp", "sbp_120_129", "sbp_ge_130", "delta_dbp", "dbp_ge_80",
-                                              "delta_bicarb", "bicarb_lt_20", "delta_creat", "delta_K", "K_lt_3.5"), 
+                                              "delta_bicarb", "bicarb_lt_20", "delta_creat", "delta_K", "K_lt_3.5",
+                                              "delta_cesd", "score_lt20_ge20"), 
                      strata = "Randomization.Assignment")
 t2 <- print(t2, showAllLevels = T)
 ```
