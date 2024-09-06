@@ -1,0 +1,405 @@
+---
+title: "PCOS and Age Preliminary Analysis Results"
+author: "Callie Rountree-Jablin"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(nlme)
+library(lme4)
+library(emmeans)
+library(kableExtra)
+library(gtsummary)
+pacman::p_load(naniar)
+library(fields)
+library(corrplot)
+options(scipen=999)
+
+home_dir = "B:/Melanie Green/PCOS and age"
+knitr::opts_knit$set(echo=FALSE, root.dir = home_dir)
+```
+
+```{r read, include=FALSE}
+raw_dat <- readxl::read_xlsx("./Raw Data/PCOS_Baseline_8.14.2024.xlsx")
+```
+
+```{r data cleaning, include=FALSE}
+## clean up raw data, create dfs for each assay 
+clean_dat <- raw_dat %>% rename(pid = 'young: age <16; old: age >=16',
+                                age_group = 'Code 1=Young, 2=Old') %>% 
+  mutate(age_group = factor(age_group, levels = c(1, 2), labels = c('young', 'old'))) %>% 
+  mutate(study = case_when(str_detect(pid, 'TEAL') ~ 'TEAL',
+                           str_detect(pid, '18-0803') ~ 'ORANGE',
+                           str_detect(pid, '6530') ~ 'APPLE',
+                           TRUE ~ 'PLUM'))
+
+glucose <- clean_dat %>% select(pid, study, age_group, glucose_0, glucose_10, glucose_20, glucose_30, glucose_45, glucose_60,
+                                     glucose_90, glucose_120, glucose_150, glucose_180, glucose_210, glucose_240)
+insulin <- clean_dat %>% select(pid, study, age_group, insulin_0, insulin_10, insulin_20, insulin_30, insulin_45, insulin_60,
+                                     insulin_90, insulin_120, insulin_150, insulin_180, insulin_210, insulin_240)
+cpep <- clean_dat %>% select(pid, study, age_group, cpeptide_0, cpeptide_10, cpeptide_20, cpeptide_30)
+glp1 <- clean_dat %>%  select(pid, study, age_group, glp1_0, glp1_10, glp1_30, glp1_60) %>% mutate(glp1_0 = as.numeric(glp1_0))
+glucagon <- clean_dat %>% select(pid, study, age_group, glucagon_0, glucagon_10, glucagon_30, glucagon_60, glucagon_90, glucagon_240)
+ffa <- clean_dat %>% select(pid, study, age_group, ffa_0, ffa_30, ffa_60, ffa_120, ffa_180, ffa_210, ffa_240)
+
+## switch to long format
+# define function for converting to long format
+pivot_to_long <- function(df, assay_name){
+  df %>% pivot_longer(cols = starts_with(assay_name),
+                      names_to = c(".value", "time"),
+                      names_sep = "_",
+                      values_to = assay_name) %>% 
+    mutate(time = as.factor(as.numeric(time)))
+}
+
+# convert dfs to long
+glucose_long <- pivot_to_long(glucose, "glucose")
+insulin_long <- pivot_to_long(insulin, "insulin")
+cpep_long <- pivot_to_long(cpep, "cpeptide")
+glp1_long <- pivot_to_long(glp1, "glp1")
+glucagon_long <- pivot_to_long(glucagon, "glucagon")
+ffa_long <- pivot_to_long(ffa, "ffa")
+```
+
+# Exploratory Data Analysis
+
+## Spaghetti Plots
+
+```{r spaghetti plot function, echo=FALSE, message=FALSE, warning=FALSE}
+## function for spaghetti plots with mean line and coloring by study
+spaghetti_plot <- function(df, assay_name){
+  df %>% 
+    ggplot(aes_string(x = 'time', y = assay_name, group = 'pid', color = 'study')) +
+    geom_line(alpha = 0.4) +
+    stat_summary(fun = mean, geom = 'line', aes(group = 1), color = 'black') +
+    stat_summary(fun = mean, geom = 'point', aes(group = 1), color = 'black') +
+    facet_wrap( ~ age_group) +
+    scale_color_manual(values = c('red3','orange','green4','royalblue')) +
+    theme_bw()
+}
+```
+
+### Glucose
+```{r glucose spaghetti plot, echo=FALSE, message=FALSE, warning=FALSE}
+spaghetti_plot(glucose_long, 'glucose')
+```
+
+### Insulin
+```{r insulin spaghetti plot, echo=FALSE, message=FALSE, warning=FALSE}
+spaghetti_plot(insulin_long, 'insulin')
+```
+
+### C-Peptide
+```{r cpep spaghetti plot, echo=FALSE, message=FALSE, warning=FALSE}
+spaghetti_plot(cpep_long, 'cpeptide')
+```
+
+### GLP-1
+```{r glp1 spaghetti plot, echo=FALSE, message=FALSE, warning=FALSE}
+spaghetti_plot(glp1_long, 'glp1')
+```
+
+### Glucagon
+```{r glucagon spaghetti plot, echo=FALSE, message=FALSE, warning=FALSE}
+spaghetti_plot(glucagon_long, 'glucagon')
+```
+
+### FFA
+```{r ffa spaghetti plot, echo=FALSE, message=FALSE, warning=FALSE}
+spaghetti_plot(ffa_long, 'ffa')
+```
+
+
+```{r outlier search based on EDA, eval=FALSE, include=FALSE}
+## find outliers
+
+# glp1 subject with notably large baseline value
+glp1 %>% filter(glp1_0 > 50)
+
+# glucagon old subject with slightly large values across the board
+glucagon %>% filter(glucagon_0 > 150)
+
+# glucagon young subject with large values
+glucagon %>%  filter(glucagon_90 > 150)
+
+# ffa with low baseline starting point - are entries for this subject shifted?
+ffa %>% filter(ffa_0 < 300) 
+```
+
+## Missingness Summary Plots
+
+### Glucose
+```{r glucose missingness exploration, echo=FALSE, warning=FALSE}
+gg_miss_var(glucose[,-c(1,2)], facet = age_group)
+gg_miss_upset(glucose, nset = 10)
+```
+
+### Insulin
+```{r insulin missingness exploration, echo=FALSE, warning=FALSE}
+gg_miss_var(insulin[,-c(1,2)], facet = age_group)
+gg_miss_upset(insulin, nset = 10)
+```
+
+### C-Peptide
+```{r cpep missingness exploration, echo=FALSE, warning=FALSE}
+gg_miss_var(cpep[,-c(1,2)], facet = age_group)
+gg_miss_upset(cpep, nset = 10)
+```
+
+### GLP-1
+```{r glp1 missingness exploration, echo=FALSE, warning=FALSE}
+gg_miss_var(glp1[,-c(1,2)], facet = age_group)
+gg_miss_upset(glp1, nset = 10)
+```
+
+### Glucagon
+```{r glucagon missingness exploration, echo=FALSE, warning=FALSE}
+gg_miss_var(glucagon[,-c(1,2)], facet = age_group)
+gg_miss_upset(glucagon, nset = 10)
+```
+
+### FFA
+```{r ffa missingness exploration, echo=FALSE, warning=FALSE}
+# ffa at 210 not collected for PLUM or APPLE
+gg_miss_var(ffa[,-c(1,2)], facet = age_group)
+gg_miss_upset(ffa, nset = 10)
+```
+
+
+```{r missingness summary, include=FALSE}
+# summarize missing vars quantitatively
+miss_var_summary(glucose[-c(1,2),])
+miss_var_summary(insulin[-c(1,2),])
+miss_var_summary(cpep[-c(1,2),])
+miss_var_summary(glp1[-c(1,2),])
+miss_var_summary(glucagon[-c(1,2),])
+miss_var_summary(ffa[-c(1,2),])
+
+# look at specific subjects with missing values 
+summarize_missingness <- function(df){
+  df %>% 
+    group_by(pid) %>% 
+    miss_var_summary() %>% 
+    filter(pct_miss > 0) %>% 
+    arrange(desc(pct_miss))
+}
+
+summarize_missingness(glucose)
+summarize_missingness(insulin)
+summarize_missingness(cpep)
+summarize_missingness(glp1)
+summarize_missingness(glucagon)
+summarize_missingness(ffa)
+```
+
+
+<!-- ## Correlation -->
+
+```{r correlation function, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+## define function for visualizing correlation using heat map and mixed plot
+correlation_plots <- function(df){
+  cor_matrix <- df %>% 
+    select(-c(pid, study, age_group)) %>% 
+    cor(use = 'pairwise.complete.obs')
+  
+  fields::image.plot(cor_matrix, main = 'Correlation Heatmap')
+  corrplot::corrplot.mixed(cor_matrix, main = 'Mixed Correlation Plot')
+}
+```
+
+<!-- ### Glucose -->
+```{r glucose correlation, eval=FALSE, include=FALSE}
+correlation_plots(glucose)
+```
+
+<!-- ### Insulin -->
+```{r insulin correlation, eval=FALSE, include=FALSE}
+correlation_plots(insulin)
+```
+
+<!-- ### C-Peptide -->
+```{r cpep correlation, eval=FALSE, include=FALSE}
+correlation_plots(cpep)
+```
+
+<!-- ### GLP-1 -->
+```{r glp1 correlation, eval=FALSE, include=FALSE}
+correlation_plots(glp1)
+```
+
+<!-- ### Glucagon -->
+```{r glucagon correlation, eval=FALSE, include=FALSE}
+correlation_plots(glucagon)
+```
+
+<!-- ### FFA -->
+```{r ffa correlation, eval=FALSE, include=FALSE}
+correlation_plots(ffa)
+```
+
+
+# Methods
+
+Mixed effects models were used to evaluate differences in labs between age groups (young: age < 16, old: age $\ge$ 16), while adjusting for the correlation of repeated measures within a participant. Furthermore, a first order autoregressive (AR(1)) correlation structure was assumed when accounting for the correlated repeated measures, based on visual inspection of within-participant correlation patterns. Estimated marginal means were calculated for each timepoint of the lab within a visit, and pairwise comparisons were used to test whether each timepoint differed between age groups. 
+
+Analyses for each metric are based on the following timepoints:
+
+-   Glucose, Insulin: 0, 10, 20, 30, 45, 60, 90, 120, 150, 180, 210, 240 min
+-   C-Peptide: 0, 10, 20, 30
+-   GLP-1: 0, 10, 30, 60
+-   Glucagon: 0, 10, 30, 60, 90, 240
+-   FFA: 0, 30, 60, 120, 180, 210, 240
+
+# Mixed Model Results
+
+How to interpret the output:
+
+* ANOVA Results: This table provides the parameter estimates for each term in the model. The `age_group:time` term tests whether the pattern of change of the lab measure across time differed by age group. For example, based on the C-peptide results, we can see that the trajectory of C-peptide across time did differ between age groups (p < 0.05).
+
+* Estimated Marginal Means: This table reports the estimated marginal means for each age group at each timepoint. `lower.CL` and `upper.CL` correspond to the lower and upper bounds of the 95% confidence interval.
+
+* Pairwise Comparisons: This table includes p-values for testing whether there is a notable difference in the lab measure between age group for each of the timepoints. For example, in the C-peptide pairwise comparisons table, a significant difference in the lab measure between age groups was only observed at 30 min (p < 0.001).
+
+```{r mixed functions, include=FALSE}
+## define function that fits LMM with random intercept for pid then outputs a list of the ANOVA, marginal mean, and pairwise comparisons results (inputted dat is the doubly long df for the assay of interest)
+mixed <- function(dat, outcome){
+  form = paste0(outcome,"~ age_group * time")
+  mod <- lme(as.formula(form), random = ~1|pid, data = dat, na.action = na.omit,
+             correlation = corAR1(form = ~1 | pid)) # specifies within-subject variability as AR(1)
+  anova <- anova.lme(mod, type="marginal") # use ANOVA to get significance of interaction
+  m <- emmeans(mod, c("age_group", "time")) # compute estimated marginal means to obtain effect at each timepoint
+  prs <-  pairs(m, adjust = "tukey", by = "time") # perform pairwise comparisons by timepoint
+
+  return(list(anova, m, prs))
+}
+```
+
+## Glucose
+<span style="color: blue;">Estimated marginal means and pairwise comparisons may not be meaningful to interpret due to non-significant findings.</span>
+```{r glucose analysis, echo=FALSE}
+glucose_results <- mixed(dat = glucose_long, outcome = "glucose")
+
+glucose_results[[1]] %>%
+  mutate(`p-value` = ifelse(`p-value` < 0.001, format.pval(`p-value`, digits = 3, eps = 0.001), sprintf('%.3f',`p-value`))) %>%
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+glucose_results[[2]] %>%
+  kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+glucose_results[[3]] %>%
+  kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+```
+
+## Insulin
+```{r insulin analysis, echo=FALSE}
+insulin_results <- mixed(dat = insulin_long, outcome = "insulin")
+
+insulin_results[[1]] %>%
+  as.data.frame() %>% 
+  mutate(`p-value` = ifelse(`p-value` < 0.001, format.pval(`p-value`, digits = 3, eps = 0.001), sprintf('%.3f',`p-value`))) %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+insulin_results[[2]] %>%
+  kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+insulin_results[[3]] %>%
+  kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+```
+
+## C-Peptide
+<!-- <span style="color: blue;">Estimated marginal means and pairwise comparisons were not computed due to non-significant findings.</span> -->
+```{r cpep analysis, echo=FALSE}
+cpep_results <- mixed(dat = cpep_long, outcome = "cpeptide")
+
+cpep_results[[1]] %>%
+  mutate(`p-value` = ifelse(`p-value` < 0.001, format.pval(`p-value`, digits = 3, eps = 0.001), sprintf('%.3f',`p-value`))) %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+cpep_results[[2]] %>%
+  kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+cpep_results[[3]] %>%
+  as.data.frame() %>% 
+  mutate(p.value = ifelse(p.value < 0.001, format.pval(p.value, digits = 3, eps = 0.001), sprintf('%.3f',p.value))) %>% 
+  kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits = 3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+```
+
+## GLP-1
+<span style="color: blue;">Estimated marginal means and pairwise comparisons may not be meaningful to interpret due to non-significant findings.</span>
+```{r glp1 analysis, echo=FALSE}
+glp1_results <- mixed(dat = glp1_long, outcome = "glp1")
+
+glp1_results[[1]] %>%
+  mutate(`p-value` = ifelse(`p-value` < 0.001, format.pval(`p-value`, digits = 3, eps = 0.001), sprintf('%.3f',`p-value`))) %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+glp1_results[[2]] %>%
+  kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+glp1_results[[3]] %>%
+  kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+```
+
+## Glucagon
+<span style="color: blue;">Estimated marginal means and pairwise comparisons may not be meaningful to interpret due to non-significant findings.</span>
+```{r glucagon analysis, echo=FALSE}
+glucagon_results <- mixed(dat = glucagon_long, outcome = "glucagon")
+
+glucagon_results[[1]] %>%
+  mutate(`p-value` = ifelse(`p-value` < 0.001, format.pval(`p-value`, digits = 3, eps = 0.001), sprintf('%.3f',`p-value`))) %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+glucagon_results[[2]] %>%
+  kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+glucagon_results[[3]] %>%
+  kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+```
+
+## FFA
+<span style="color: blue;">Estimated marginal means and pairwise comparisons may not be meaningful to interpret due to non-significant findings.</span>
+```{r ffa analysis, echo=FALSE}
+ffa_results <- mixed(dat = ffa_long, outcome = "ffa")
+
+ffa_results[[1]] %>%
+  mutate(`p-value` = ifelse(`p-value` < 0.001, format.pval(`p-value`, digits = 3, eps = 0.001), sprintf('%.3f',`p-value`))) %>% 
+  kable(caption = 'ANOVA Results:', booktabs = TRUE, digits = 3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+ffa_results[[2]] %>%
+  kable(caption = 'Estimated Marginal Means:', booktabs = TRUE, digits =3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+ffa_results[[3]] %>%
+  kable(caption = 'Pairwise Comparisons:', booktabs = TRUE, digits =3) %>%
+  kable_styling(latex_options='basic', html_font='Arial') %>%
+      htmltools::HTML()
+```
