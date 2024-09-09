@@ -1,8 +1,14 @@
 ---
 title: "Moore - Phenteramine vs. Placebo"
 author: "Laura Pyle"
-date: "`r Sys.Date()`"
-output: word_document
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
 ---
 
 ```{r setup, include=FALSE}
@@ -11,6 +17,9 @@ library(dplyr)
 library(tableone)
 library(stringr)
 library(growthcleanr)
+library(tidyr)
+library(ggplot2)
+library(arsenal)
 
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
 ```
@@ -71,8 +80,12 @@ demo <- demo %>% mutate (
 )
 
 # Drug tolerance - randomization assignment
-drug_tol <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Moore/Phenteramine RCT/Data raw/PilotRCTPhentermineT-LPDrugTolerance_DATA_LABELS_2024-02-05_1945.csv", na.strings = c("NA", "", " "))
-drug_tol <- drug_tol %>% filter(!is.na(Randomization.Assignment))
+drug_tol <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Moore/Phenteramine RCT/Data raw/PilotRCTPhentermineT-LPDrugTolerance_DATA_2024-09-07_2123.csv", na.strings = c("NA", "", " "))
+drug_tol <- drug_tol %>% filter(!is.na(randomization_grp))
+drug_tol$Record.ID <- drug_tol$record_id
+drug_tol$Record.ID <- str_pad(drug_tol$Record.ID, 3, pad = "0")
+drug_tol$Record.ID <- ifelse(drug_tol$Record.ID == "002", "0002", drug_tol$Record.ID)
+drug_tol$Record.ID <- ifelse(drug_tol$Record.ID == "045", "45", drug_tol$Record.ID)
 t1_data <- merge(demo, drug_tol, by="Record.ID", all.x = T, all.y = F)
 
 # Height/weight/vitals
@@ -94,6 +107,7 @@ ht_wt_vitals$sbp <- rowMeans(ht_wt_vitals[, c("Systolic.Blood.Pressure.1", "Syst
 ht_wt_vitals$dbp <- rowMeans(ht_wt_vitals[, c("Diastolic.Blood.Pressure.1", "Diastolic.Blood.Pressure.2", "Diastolic.Blood.Pressure.3")])
 ht_wt_vitals$hr <- rowMeans(ht_wt_vitals[, c("Heart.Rate.1.", "Heart.Rate.2.", "Heart.Rate.3.")])
 ht_wt_vitals_long <- ht_wt_vitals 
+ht_wt_vitals_t3 <- ht_wt_vitals_long
 ht_wt_vitals <- ht_wt_vitals %>% filter(Event.Name == "Study Visit 1")
 ht_wt_vitals <- ht_wt_vitals %>% filter(!is.na(Repeat.Instrument))
 sex_age <- demo[, c("Record.ID", "Biological.Sex", "AgeAtVisit1")]
@@ -107,11 +121,13 @@ t1_data <- merge(t1_data, ht_wt_vitals_keep, by="Record.ID", all.x = T, all.y = 
 
 # Labs
 labs <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Moore/Phenteramine RCT/Data raw/PilotRCTPhentermineT-LPLabs_DATA_2024-02-16_2219.csv")
+labs <- labs %>% filter(!(record_id %in% c("Jacky Test","Jacky Test 2")))
 labs_long <- labs
 labs <- labs %>% filter(redcap_event_name == "screeningenrollmen_arm_1")
 labs <- labs %>% filter(redcap_repeat_instrument == "labs")
 labs$Record.ID <- labs$record_id
 labs_keep <- labs %>% select(Record.ID, labs_a1c, labs_trig, labs_hdl, labs_ldl, labs_alt)
+labs_keep$labs_ldl <- ifelse(labs_keep$labs_ldl == 0, NA, labs_keep$labs_ldl)
 t1_data <- merge(t1_data, labs_keep, by="Record.ID", all.x = T, all.y = F)
 
 # CESD
@@ -165,11 +181,12 @@ simp_AE$other <- simp_AE %>% select(aes_other_yn) %>% rowSums(na.rm = TRUE)
 simp_AE$other <- as.factor(simp_AE$other)
 
 # create dataframe for Table 2
-t2_data <- t1_data %>% select(Record.ID, Max.Topiramate.Dose.Tolerated..mg., Max.Phentermine.Dose.Tolerated..mg., Randomization.Assignment)
+t2_data <- t1_data %>% select(Record.ID, topdose_tolerated, phentdose_tolerated, randomization_grp)
 urineamp <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Moore/Phenteramine RCT/Data raw/PilotRCTPhentermineT-LPUrineAmphetamine_DATA_2024-08-08_1216.csv")
 urineamp$Record.ID <- urineamp$record_id
 adher <- left_join(urineamp, drug_tol, by = "Record.ID") 
-adher <- adher %>% filter(Randomization.Assignment == "Active")
+adher$randomization_grp <- ifelse(adher$randomization_grp == 1, "Active", "Placebo")
+adher <- adher %>% filter(randomization_grp == "Active")
 adher <- adher %>% select(Record.ID, urine_v1result, urine_v2result, urine_v3result, urine_v4result)
 adher$urine_v1_performed <- ifelse(adher$urine_v1result %in% c(0,1), 1, 0)
 adher$urine_v2_performed <- ifelse(adher$urine_v2result %in% c(0,1), 1, 0)
@@ -222,7 +239,7 @@ labs_long <- labs_long %>% filter(redcap_event_name %in% c("screeningenrollmen_a
 labs_long$Record.ID <- labs_long$record_id
 labs_long <- labs_long %>% filter(!(Record.ID %in% c("Jacky Test","Jacky Test 2")))
 labs_long <- labs_long %>% filter(!is.na(labs_bicarbonate) & !is.na(labs_creatinine) & !is.na(labs_potassium))
-labs_long <- labs_long %>% select(Record.ID, labs_date, redcap_event_name, labs_bicarbonate, labs_creatinine, labs_potassium)
+labs_long <- labs_long %>% select(Record.ID, labs_date, redcap_event_name, labs_bicarbonate, labs_creatinine, labs_potassium, labs_ldl, labs_hdl, labs_alt, labs_a1c, labs_trig)
 # deal with duplicates
 labs_long <- labs_long %>% filter(!(Record.ID == "009" & labs_creatinine == 0.76))
 labs_long <- labs_long %>% filter(!(Record.ID == "008" & labs_creatinine == 0.80))
@@ -231,10 +248,17 @@ labs_long_003 <- labs_long %>% filter(Record.ID == "003" & redcap_event_name == 
 labs_long <- labs_long %>% filter(!(Record.ID == "003" & redcap_event_name == "study_visit_2_arm_1"))
 labs_long_003 <- labs_long_003 %>% group_by(Record.ID, redcap_event_name) %>% summarise(labs_bicarbonate = mean(labs_bicarbonate),
                                                                      labs_creatinine = mean(labs_creatinine),
-                                                                     labs_potassium = mean(labs_potassium))
+                                                                     labs_potassium = mean(labs_potassium),
+                                                                     labs_ldl = mean(labs_ldl),
+                                                                     labs_hdl = mean(labs_hdl),
+                                                                     labs_alt = mean(labs_alt),
+                                                                     labs_a1c = mean(labs_a1c),
+                                                                     labs_trig = mean(labs_trig))
 labs_long$labs_date <- NULL
 labs_long <- rbind(labs_long, labs_long_003)
 labs_long <- labs_long %>% arrange(Record.ID, redcap_event_name)
+t4_data <- labs_long
+
 labs_wide <- reshape(labs_long, direction = "wide", idvar = "Record.ID", timevar = "redcap_event_name")
 labs_wide$delta_bicarb <- labs_wide$labs_bicarbonate.study_visit_4_arm_1 - labs_wide$labs_bicarbonate.screeningenrollmen_arm_1
 labs_wide$delta_creat <- labs_wide$labs_creatinine.study_visit_4_arm_1 - labs_wide$labs_creatinine.screeningenrollmen_arm_1
@@ -263,16 +287,104 @@ cesd_long <- cesd_long %>% arrange(Record.ID, cesd_dateofvisit)
 #cesd_long$cesd_dateofvisit <- NULL
 cesd_wide <- reshape(cesd_long, direction = "wide", idvar = "Record.ID", timevar = "redcap_event_name", v.names = c("cesd_score","cesd_score_ge20"))
 cesd_wide$delta_cesd <- cesd_wide$cesd_score.study_visit_4_arm_1- cesd_wide$cesd_score.study_visit_1_arm_1
-cesd_wide$score_lt20_ge20 <- ifelse(is.na(cesd_wide$cesd_score.study_visit_1_arm_1) | is.na(cesd_wide$cesd_score.study_visit_4_arm_1), NA, 
+cesd_wide$cesd_score_lt20_ge20 <- ifelse(is.na(cesd_wide$cesd_score.study_visit_1_arm_1) | is.na(cesd_wide$cesd_score.study_visit_4_arm_1), NA, 
                                     ifelse(cesd_wide$cesd_score_ge20.study_visit_1_arm_1==0 &
                                       cesd_wide$cesd_score_ge20.study_visit_4_arm_1==1, 1, 0))
-cesd_wide$score_lt20_ge20 <- as.factor(cesd_wide$score_lt20_ge20)
-cesd_wide <- cesd_wide %>% select(Record.ID, delta_cesd, score_lt20_ge20)
+cesd_wide$cesd_score_lt20_ge20 <- as.factor(cesd_wide$cesd_score_lt20_ge20)
+cesd_wide <- cesd_wide %>% select(Record.ID, delta_cesd, cesd_score_lt20_ge20)
 t2_data <- left_join(t2_data, cesd_wide, by = "Record.ID")
 
 # CSSRS
 cssrs <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Moore/Phenteramine RCT/Data raw/PilotRCTPhentermineT-LPCSSRS_DATA_2024-09-04_1721.csv")
 cssrs <- cssrs %>% filter(!is.na(redcap_repeat_instance))
+cssrs <- cssrs %>% filter(!(record_id %in% c("Jacky Test","Jacky Test 2")))
+cssrs$pos_screen <- ifelse(is.na(cssrs$cssrs_1a) | is.na(cssrs$cssrs_2a) | is.na(cssrs$cssrs_6a), NA, 
+                           ifelse(cssrs$cssrs_1a == 1 | cssrs$cssrs_2a == 1 | cssrs$cssrs_6a == 1, 1, 0))
+cssrs$Record.ID <- cssrs$record_id
+cssrs_long <- cssrs %>% select(Record.ID, cssrs_dateofvisit, redcap_event_name, pos_screen)
+cssrs_long <- cssrs_long %>% group_by(Record.ID, redcap_event_name) %>% summarise(pos_screen = max(pos_screen)) %>% ungroup(Record.ID)
+cssrs_long$visnum <- ifelse(cssrs_long$redcap_event_name == "screeningenrollmen_arm_1", 0, 
+                            ifelse(cssrs_long$redcap_event_name == "study_visit_1_arm_1", 1, 4))
+cssrs_long <- cssrs_long %>% complete(redcap_event_name, nesting(Record.ID))
+cssrs_wide <- data.frame(unique(cssrs_long$Record.ID))
+times <- unique(cssrs_long$redcap_event_name)
+for (t in times) {
+  values <- cssrs_long$pos_screen[cssrs_long$redcap_event_name == t]
+  cssrs_wide <- cbind(cssrs_wide, values)
+}
+# Renaming of columns
+colnames(cssrs_wide)[-1] <- paste0("pos_screen_", times)
+colnames(cssrs_wide)[1] <- "Record.ID"
+cssrs_wide$pos_CSSRS_v1_v4 <- ifelse(cssrs_wide$pos_screen_study_visit_1_arm_1 == 1 | cssrs_wide$pos_screen_study_visit_4_arm_1 == 1, 1, 
+                                      ifelse(is.na(cssrs_wide$pos_screen_study_visit_1_arm_1) | is.na(cssrs_wide$pos_screen_study_visit_4_arm_1), NA, 0))
+cssrs_wide$pos_CSSRS_v1_v4_new <- ifelse(cssrs_wide$pos_CSSRS_v1_v4 == 0 & is.na(cssrs_wide$pos_CSSRS_v1_v4), NA, 
+                                          ifelse(cssrs_wide$pos_CSSRS_v1_v4 == 1 & cssrs_wide$pos_screen_screeningenrollmen_arm_1 == 0, 1, 0))
+cssrs_wide <- cssrs_wide %>% select(Record.ID, pos_CSSRS_v1_v4, pos_CSSRS_v1_v4_new)
+t2_data <- left_join(t2_data, cssrs_wide, by = "Record.ID")
+
+# Satisfaction
+satisfaction <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Moore/Phenteramine RCT/Data raw/PilotRCTPhentermineT-LPSatisfactionSurvey_DATA_2024-09-06_1152.csv")
+satisfaction <- satisfaction %>% filter(!is.na(redcap_repeat_instance))
+satisfaction$Record.ID <- satisfaction$record_id
+satisfaction <- satisfaction %>% filter(!(record_id %in% c("Jacky Test","Jacky Test 2")))
+satisfaction <- satisfaction %>% rowwise() %>% 
+  mutate(med_score = median(c(ss1, ss2, ss3, ss4, ss5, ss6, ss7, ss8, ss9, ss10, ss11, ss12, ss13, ss14, ss15), na.rm = T)) 
+satisfaction <- satisfaction %>% select(Record.ID, respondent, med_score)
+satisfaction$respondent <- as.factor(ifelse(satisfaction$respondent == 1, "Caregiver", "Youth"))
+satisfaction <- satisfaction %>% complete(respondent, nesting(Record.ID))
+satisfaction_wide <- data.frame(unique(satisfaction$Record.ID))
+times <- unique(satisfaction$respondent)
+for (t in times) {
+  values <- satisfaction$med_score[satisfaction$respondent == t]
+  satisfaction_wide <- cbind(satisfaction_wide, values)
+}
+# Renaming of columns
+colnames(satisfaction_wide)[-1] <- paste0("med_score_", times)
+colnames(satisfaction_wide)[1] <- "Record.ID"
+satisfaction_wide$Record.ID <- str_pad(satisfaction_wide$Record.ID, 3, pad = "0")
+satisfaction_wide$Record.ID <- ifelse(satisfaction_wide$Record.ID == "002", "0002", satisfaction_wide$Record.ID)
+satisfaction_wide$Record.ID <- ifelse(satisfaction_wide$Record.ID == "045", "45", satisfaction_wide$Record.ID)
+t2_data <- left_join(t2_data, satisfaction_wide, by = "Record.ID")
+
+t3_data <- ht_wt_vitals_t3
+t3_data <- t3_data %>% filter(Record.ID %in% t2_data$Record.ID)
+t3_data <- t3_data %>% filter(Event.Name %in% c("Study Visit 1", "Study Visit 2", "Study Visit 3", "Study Visit 4"))
+t3_data <- t3_data %>% filter(!is.na(Date.of.Visit.))
+r <- t2_data %>% select(Record.ID, randomization_grp)
+r <- unique(r)
+t3_data <- left_join(t3_data, r, by = "Record.ID")
+
+fig1_data <- t3_data %>% select(Record.ID, Event.Name, wt, randomization_grp)
+basewt <- fig1_data %>% filter(Event.Name == "Study Visit 1")
+basewt$basewt <- basewt$wt
+basewt <- basewt %>% select(Record.ID, basewt)
+fig1_data <- left_join(fig1_data, basewt, by = "Record.ID")
+fig1_data$percent_wt_loss <- ifelse(fig1_data$Event.Name == "Study Visit 1", 0, 
+                                    ((fig1_data$basewt - fig1_data$wt)/fig1_data$basewt)*100)
+fig1_data <- fig1_data %>% arrange(Record.ID, Event.Name)
+
+t3_data <- t3_data %>% select(Record.ID, Event.Name, Date.of.Visit., randomization_grp, wt, height_m)
+t3_data$bmi <- t3_data$wt / (t3_data$height_m * t3_data$height_m)
+t3_data <- t3_data %>% filter(Event.Name %in% c("Study Visit 1", "Study Visit 4"))
+t3_data_wide <- reshape(t3_data, direction = "wide", idvar = c("Record.ID", "randomization_grp"), timevar = "Event.Name")
+t3_data_wide$delta_days <- as.Date(t3_data_wide$`Date.of.Visit..Study Visit 4`, format = "%m/%d/%Y") - as.Date(t3_data_wide$`Date.of.Visit..Study Visit 1`, format = "%m/%d/%Y")
+t3_data_wide$percent_wt_change <- ((t3_data_wide$`wt.Study Visit 4` - t3_data_wide$`wt.Study Visit 1`) / t3_data_wide$`wt.Study Visit 1`) * 100
+t3_data_wide$absolute_wt_change <- t3_data_wide$`wt.Study Visit 4` - t3_data_wide$`wt.Study Visit 1`
+t3_data_wide$percent_bmi_change <- ((t3_data_wide$`bmi.Study Visit 4` - t3_data_wide$`bmi.Study Visit 1`) / t3_data_wide$`bmi.Study Visit 1`) * 100
+t3_data_wide$absolute_bmi_change <- t3_data_wide$`bmi.Study Visit 4` - t3_data_wide$`bmi.Study Visit 1`
+t3_data_wide$ge_5percent_wt_loss <- as.factor(ifelse(is.na(t3_data_wide$percent_wt_change), NA, 
+                                           ifelse(t3_data_wide$percent_wt_change <= -5, 1, 0)))
+t3_data_wide$ge_10percent_wt_loss <- as.factor(ifelse(is.na(t3_data_wide$percent_wt_change), NA, 
+                                           ifelse(t3_data_wide$percent_wt_change <= -10, 1, 0)))
+
+t4_data <- t4_data %>% filter(Record.ID %in% t2_data$Record.ID)
+t4_data <- left_join(t4_data, r, by = "Record.ID")
+t4_data_wide <- reshape(t4_data, direction = "wide", idvar = c("Record.ID", "randomization_grp"), timevar = "redcap_event_name")
+t4_data_wide$delta_ldl <- t4_data_wide$labs_ldl.study_visit_4_arm_1 - t4_data_wide$labs_ldl.screeningenrollmen_arm_1
+t4_data_wide$delta_hdl <- t4_data_wide$labs_hdl.study_visit_4_arm_1 - t4_data_wide$labs_hdl.screeningenrollmen_arm_1
+t4_data_wide$delta_alt <- t4_data_wide$labs_alt.study_visit_4_arm_1 - t4_data_wide$labs_alt.screeningenrollmen_arm_1
+t4_data_wide$delta_a1c <- t4_data_wide$labs_a1c.study_visit_4_arm_1 - t4_data_wide$labs_a1c.screeningenrollmen_arm_1
+t4_data_wide$delta_trig <- t4_data_wide$labs_trig.study_visit_4_arm_1 - t4_data_wide$labs_trig.screeningenrollmen_arm_1
 ```
 
 # Results
@@ -284,30 +396,72 @@ t1 <- CreateTableOne(data = t1_data, vars = c("AgeAtVisit1", "Biological.Sex", "
                                               "Months.post.MBS.at.Enrollment", "Obesity.Class.at.Enrollment", "Qualifying.Inclusion.Criteria",
                                               "Health.Insurance.Type", "Primary.caregiver.s.highest.level.of.education.",
                                               "Household.income.numeric", "food_insecurity", "height_m", "weight_kg", "sbp", "dbp",
-                                              "hr", "record_id", "labs_a1c", "labs_trig", "labs_hdl", "labs_ldl", "labs_alt",
+                                              "hr", "labs_a1c", "labs_trig", "labs_hdl", "labs_ldl", "labs_alt",
                                               "cesd_score", "cesd_score_ge20"), 
-                     strata = "Randomization.Assignment")
+                     strata = "randomization_grp")
+
+```
+
+```{r, include=TRUE, comment = ""}
+#summary(t1)
+```
+
+```{r, include=FALSE}
 t1 <- print(t1, nonnormal = c("Age..completed.years..at.Enrollment", "labs_a1c", "labs_trig", "labs_alt"), 
             showAllLevels = T)
 ```
 
 ```{r, include=TRUE}
+
 kable(t1)
 ```
 
 ## Table 2
 
 ```{r, include=FALSE}
-t2 <- CreateTableOne(data = t2_data, vars = c("urine_amp_adherence","Max.Topiramate.Dose.Tolerated..mg.","Max.Phentermine.Dose.Tolerated..mg.",
+t2 <- CreateTableOne(data = t2_data, vars = c("urine_amp_adherence","phentdose_tolerated","topdose_tolerated",
                                               "any_ae", "severeae", "ae_dosereduce", "ae_discont", "general", "ophthalmologic", "gastrointestinal", 
                                               "cardiopulmonary", "genitourinary", "dermatologic", "neuropsychiatric", "allergic", "other", 
                                               "delta_hr", "hr_ge_100", "delta_sbp", "sbp_120_129", "sbp_ge_130", "delta_dbp", "dbp_ge_80",
                                               "delta_bicarb", "bicarb_lt_20", "delta_creat", "delta_K", "K_lt_3.5",
-                                              "delta_cesd", "score_lt20_ge20"), 
-                     strata = "Randomization.Assignment")
-t2 <- print(t2, showAllLevels = T)
+                                              "delta_cesd", "score_lt20_ge20", "pos_CSSRS_v1_v4", "pos_CSSRS_v1_v4_new",
+                                              "med_score_Caregiver", "med_score_Youth"), 
+                     strata = "randomization_grp")
+t2 <- print(t2, showAllLevels = T, nonnormal = c("med_score_Caregiver", "med_score_Youth"))
 ```
 
 ```{r, include=TRUE}
 kable(t2)
+```
+
+## Figure 1
+
+```{r, include=TRUE, fig.width=6}
+p <- ggplot(data = fig1_data, aes(x = Event.Name, y = percent_wt_loss, group = Record.ID, 
+                                  col = as.factor(randomization_grp))) +
+  geom_point() + geom_line() + xlab("") + ylab("Percent weight loss") + 
+  scale_color_grey(name = "Randomization Assignment", labels = c("Placebo", "Active")) 
+
+p
+```
+
+## Table 3 
+
+```{r, include=FALSE}
+t3 <- tableby(randomization_grp ~ delta_days + percent_wt_change + absolute_wt_change + percent_bmi_change + absolute_bmi_change +
+                ge_5percent_wt_loss + ge_10percent_wt_loss, data = t3_data_wide)
+```
+
+```{r, include=TRUE, results='asis'}
+summary(t3)
+```
+
+## Table 4 
+
+```{r, include=FALSE}
+t4 <- tableby(randomization_grp ~ delta_trig + delta_ldl + delta_hdl + delta_alt + delta_a1c, data = t4_data_wide)
+```
+
+```{r, include=TRUE, results='asis'}
+summary(t4)
 ```
