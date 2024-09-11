@@ -5,7 +5,7 @@ requested <- requested %>%
   filter(!is.na(requested))
 
 pierre_dat <- dat %>%
-  filter(study == "CROCODILE" | study == "RENAL-HEIR") %>%
+  filter(study == "CROCODILE" | study == "RENAL-HEIR" | study == "CASPER") %>%
   dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
                    across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
                    .by = record_id) %>%
@@ -26,4 +26,4 @@ pierre_dat <- dat %>%
   #               ind3 = ind1+ind2)
 
 # number of participants with both hemodynamic and MRI data
-write.csv(pierre_dat, "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/pierre_harmonized_dataset_031524.csv", row.names = F)
+write.csv(pierre_dat, "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/pierre_harmonized_dataset_090524.csv", row.names = F)
