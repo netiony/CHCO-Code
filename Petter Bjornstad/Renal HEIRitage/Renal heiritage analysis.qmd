@@ -38,21 +38,13 @@ dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Cle
 dict <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv", na.strings = c(" ", "", "-9999",-9999)) %>%
   dplyr::select(variable_name, label)
 
-# Import co-enrolled IDs for IMPROVE, RH, and RH2 and transpose to long format
-coenroll_id <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Renal HERITAGE/Data_Cleaned/coenrolled_ids.csv") %>%
-  filter(rh2_id!="") %>%
-  pivot_longer(cols = 'improve_id':'rh2_id',
-               values_to = "record_id") %>% 
-  dplyr::select(merged_id, record_id) %>%
-  filter(record_id != "")
-
 # Limit dataset to IMPROVE, RH, RH2, and collapse to 1 row per participant
 dat <- dat %>%
   filter(study == "RENAL-HEIRitage"|study == "RENAL-HEIR"|study == "IMPROVE") %>%
   dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
             across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
             .by = c(record_id)) %>%
-  filter(participation_status!="Removed"|is.na(participation_status)) %>%
+  #filter(participation_status!="Removed"|is.na(participation_status)) %>%
   mutate(race_ethnicity_condensed = case_when(race == "White" & 
                                                 ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino White",
                                               race == "Black or African American" & 
@@ -61,22 +53,14 @@ dat <- dat %>%
                                               T ~ "Not Hispanic or Latino Other")) %>%
   mutate(elevated_albuminuria = case_when(elevated_albuminuria == "Yes" ~ "Elevated albuminuria",
                                           elevated_albuminuria == "No" ~ "Normoalbuminuria")) %>% 
-  mutate_at(vars(starts_with("fsoc")), function(x) case_when(x < 0 ~ 0, T~x)) %>%
-  left_join(coenroll_id)
+  mutate_at(vars(starts_with("fsoc")), function(x) case_when(x < 0 ~ 0, T~x)) 
 
 # Add follow up time to co-enrolled list
-coenroll_w_date <- dat %>%
-  dplyr::select(record_id, date) %>%
-  left_join(coenroll_id) %>%
-  filter(!is.na(merged_id))%>%
-  group_by(merged_id) %>%   
+dat <- dat %>%
+  group_by(mrn) %>%   
   dplyr::mutate(date_diff = as.numeric(interval(min(date), date), unit = "years")) %>%
-  group_by(merged_id, date_diff) %>%
-  distinct(merged_id, .keep_all = T)
-
-# Merge data with co-enrolled list with follow up time
-dat <- coenroll_w_date %>%
-  left_join(dat)
+  group_by(mrn, date_diff) %>%
+  distinct(mrn, .keep_all = T)
 
 # Calculate variables of interest
 dat %<>% ungroup() %>%
@@ -94,7 +78,6 @@ dat %<>% ungroup() %>%
          avg_bl_medulla = rowMeans(dplyr::select(., bold_l_bl_medulla, bold_r_bl_medulla), na.rm = T),
          avg_fsoc_medulla = rowMeans(dplyr::select(., fsoc_l_medulla, fsoc_r_medulla), na.rm = T),
          avg_fsoc_cortex = rowMeans(dplyr::select(., fsoc_l_cortex, fsoc_r_cortex), na.rm = T),
-
          avg_pcasl3d = rowMeans(dplyr::select(., pcasl3d_left, pcasl3d_right), na.rm = T),
          avg_k1_wo_cyst = rowMeans(dplyr::select(., ltot_k1_wo_cyst, rtot_k1_wo_cyst), na.rm = T),
          avg_k2_wo_cyst = rowMeans(dplyr::select(., ltot_k2_wo_cyst, rtot_k2_wo_cyst), na.rm = T),
@@ -156,12 +139,12 @@ dict[setdiff(names(dat), names(dict))] <- ""
 Hmisc::label(dat) = dict[match(names(dat), names(dict))]
 
 # Subset to participants who have follow up data
-rh_rh2 <- dat %>% group_by(merged_id) %>%
+rh_rh2 <- dat %>% group_by(mrn) %>%
   filter(max(row_number()) == 2)
 
 # Subset to RH2 visits only
-rh2 <- dat %>% group_by(merged_id) %>%
-  filter(max(row_number())==row_number())
+rh2 <- dat %>% group_by(mrn) %>%
+  filter(max(row_number())==row_number() & !is.na(rh2_id))
 ```
 
 # RH and RH2 (Baseline vs. follow up)
@@ -177,7 +160,7 @@ summary(tableby(followup ~ age + group + diabetes_duration + sex + fe(race_ethni
 
 ```{r echo = F, results='asis'}
 # RH2 as cross-sectional
-summary(tableby(group ~ age + diabetes_duration + sex + fe(race_ethnicity_condensed) + bmi + weight + height + waistcm + kwt(hba1c, "Nmiss", "median", "q1q3", "range") + sbp + dbp + cholesterol + ldl + hdl + total_kidney_volume_ml + ht_tkv + kwt(triglycerides, "Nmiss", "median", "q1q3", "range") + kwt(eGFR_fas_cr, "Nmiss", "median", "q1q3", "range") + kwt(eGFR_fas_cr_cysc, "Nmiss", "median", "q1q3", "range") + kwt(acr_u, "Nmiss", "median", "q1q3", "range") + fe(elevated_albuminuria) + date_diff + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + avg_bl_cortex+ avg_bl_medulla + avg_fsoc_cortex + avg_fsoc_medulla + gloms + glom_nuc_count + glom_tuft_area + glom_volume_con + gloms_gs + mes_matrix_area + mes_matrix_area + mes_nuc_count + mes_volume_con + fia, data = rh2, test=F))
+summary(tableby(group ~ age + diabetes_duration + sex + fe(race_ethnicity_condensed) + bmi + weight + height + waistcm + kwt(hba1c, "Nmiss", "median", "q1q3", "range") + sbp + dbp + cholesterol + ldl + hdl + total_kidney_volume_ml_merged + ht_adj_tkv_merged + kwt(triglycerides, "Nmiss", "median", "q1q3", "range") + kwt(eGFR_fas_cr, "Nmiss", "median", "q1q3", "range") + kwt(eGFR_fas_cr_cysc, "Nmiss", "median", "q1q3", "range") + kwt(acr_u, "Nmiss", "median", "q1q3", "range") + fe(elevated_albuminuria) + date_diff + gfr_raw_plasma + gfr_bsa_plasma + erpf_raw_plasma + erpf_bsa_plasma + avg_bl_cortex+ avg_bl_medulla + avg_fsoc_cortex + avg_fsoc_medulla + gloms + glom_nuc_count + glom_tuft_area + glom_volume_con + gloms_gs + mes_matrix_area + mes_matrix_area + mes_nuc_count + mes_volume_con + fia, data = rh2, test=F))
 ```
 
 # Changes over time
@@ -188,13 +171,13 @@ summary(tableby(group ~ age + diabetes_duration + sex + fe(race_ethnicity_conden
 ggplot(rh_rh2, aes(x = followup, y = gfr_bsa_plasma)) +
   geom_boxplot() + 
   geom_point(aes(x = followup, y = gfr_bsa_plasma, color = group)) +
-  geom_line(aes(x = followup, y = gfr_bsa_plasma, group = merged_id, color = group)) +
+  geom_line(aes(x = followup, y = gfr_bsa_plasma, group = mrn, color = group)) +
   facet_wrap(vars(group)) +
   theme_bw()
 
 ggplot(rh_rh2, aes(x = date_diff, y = gfr_bsa_plasma)) +
   geom_point(aes(x = date_diff, y = gfr_bsa_plasma, color = group)) +
-  geom_line(aes(x = date_diff, y = gfr_bsa_plasma, group = merged_id, color = group)) +
+  geom_line(aes(x = date_diff, y = gfr_bsa_plasma, group = mrn, color = group)) +
   facet_wrap(vars(group)) +
   theme_bw()
 ```
@@ -205,13 +188,13 @@ ggplot(rh_rh2, aes(x = date_diff, y = gfr_bsa_plasma)) +
 ggplot(rh_rh2, aes(x = followup, y = log(hba1c))) +
   geom_boxplot() + 
   geom_point(aes(x = followup, y = log(hba1c), color = group)) +
-  geom_line(aes(x = followup, y = log(hba1c), group = merged_id, color = group)) +
+  geom_line(aes(x = followup, y = log(hba1c), group = mrn, color = group)) +
   facet_wrap(vars(group)) +
   theme_bw()
 
 ggplot(rh_rh2, aes(x = date_diff, y = log(hba1c))) +
   geom_point(aes(x = date_diff, y = log(hba1c), color = group)) +
-  geom_line(aes(x = date_diff, y = log(hba1c), group = merged_id, color = group)) +
+  geom_line(aes(x = date_diff, y = log(hba1c), group = mrn, color = group)) +
   facet_wrap(vars(group)) +
   theme_bw()
 ```
@@ -222,13 +205,13 @@ ggplot(rh_rh2, aes(x = date_diff, y = log(hba1c))) +
 ggplot(rh_rh2, aes(x = followup, y = log(acr_u))) +
   geom_boxplot() + 
   geom_point(aes(x = followup, y = log(acr_u), color = group)) +
-  geom_line(aes(x = followup, y = log(acr_u), group = merged_id, color = group)) +
+  geom_line(aes(x = followup, y = log(acr_u), group = mrn, color = group)) +
   facet_wrap(vars(group)) +
   theme_bw()
 
 ggplot(rh_rh2, aes(x = date_diff, y = log(acr_u))) +
   geom_point(aes(x = date_diff, y = log(acr_u), color = group)) +
-  geom_line(aes(x = date_diff, y = log(acr_u), group = merged_id, color = group)) +
+  geom_line(aes(x = date_diff, y = log(acr_u), group = mrn, color = group)) +
   facet_wrap(vars(group)) +
   theme_bw()
 ```
@@ -239,13 +222,13 @@ ggplot(rh_rh2, aes(x = date_diff, y = log(acr_u))) +
 ggplot(rh_rh2, aes(x = followup, y = total_kidney_volume_ml_merged)) +
   geom_boxplot() + 
   geom_point(aes(x = followup, y = total_kidney_volume_ml_merged, color = group)) +
-  geom_line(aes(x = followup, y = total_kidney_volume_ml_merged, group = merged_id, color = group)) +
+  geom_line(aes(x = followup, y = total_kidney_volume_ml_merged, group = mrn, color = group)) +
   facet_wrap(vars(group)) +
   theme_bw()
 
 ggplot(rh_rh2, aes(x = date_diff, y = total_kidney_volume_ml_merged)) +
   geom_point(aes(x = date_diff, y = total_kidney_volume_ml_merged, color = group)) +
-  geom_line(aes(x = date_diff, y = total_kidney_volume_ml_merged, group = merged_id, color = group)) +
+  geom_line(aes(x = date_diff, y = total_kidney_volume_ml_merged, group = mrn, color = group)) +
   facet_wrap(vars(group)) +
   theme_bw()
 ```
