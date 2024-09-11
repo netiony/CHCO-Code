@@ -189,9 +189,9 @@ def clean_panther():
                   "bl_free_test" : "free_test"},
               axis=1, inplace=True)
     # Insulin
-    ins=list(ivgtt.loc[:, ivgtt.columns.str.startswith("insulin_")].columns.values)
-    ivgtt[ins] = ivgtt[ins].apply(
-        pd.to_numeric, errors='coerce')
+    # ins=list(ivgtt.loc[:, ivgtt.columns.str.startswith("insulin_")].columns.values)
+    # ivgtt[ins] = ivgtt[ins].apply(
+    #     pd.to_numeric, errors='coerce')
     # ivgtt["steady_state_insulin"] = ivgtt[['insulin_220',
     #                                        'insulin_230', 'insulin_240', 'insulin_245', 'insulin_249',
     #                                        'insulin_250', 'insulin_252', 'insulin_253', 'insulin_254',
@@ -208,10 +208,10 @@ def clean_panther():
     # # ACPRg
     # ivgtt["acprg"] = ivgtt[['cpeptide_2', 'cpeptide_4',
     #                         'cpeptide_6', 'cpeptide_8', 'cpeptide_10']].mean(axis=1) - ivgtt[['cpeptide_minus_10', 'cpeptide_minus_5']].mean(axis=1)
-    # # AIRg
+    # # AIRg (USE FROM MINMOD)
     # ivgtt["airg"] = ivgtt[['insulin_2', 'insulin_4',
     #                        'insulin_6', 'insulin_8', 'insulin_10']].mean(axis=1) * 6 - ivgtt[['insulin_minus_10', 'insulin_minus_5']].mean(axis=1) * 6
-    # # DI
+    # # DI (USE FROM MINMOD)
     # ivgtt["di"] = (ivgtt["gir_190"] /
     #                ivgtt["steady_state_insulin"]) * ivgtt["airg"]
               

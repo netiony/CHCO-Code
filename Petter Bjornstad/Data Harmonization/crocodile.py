@@ -183,6 +183,7 @@ def clean_crocodile():
     mri.rename({"volume_right": "right_kidney_volume_ml",
                 "volume_left": "left_kidney_volume_ml"},
                axis=1, inplace=True)
+    mri["date"] = labs["date"]
     mri["procedure"] = "bold_mri"
     mri["visit"] = "baseline"
 
@@ -325,7 +326,8 @@ def clean_crocodile():
     rct.loc[~(rct['ra'] > 0), 'ra'] = np.nan
     # Reduce rct dataset
     rct = rct[["record_id", "ff", "kfg", "deltapf", "cm", "pg",
-               "glomerular_pressure", "rbf", "rvr", "ra", "re"] + list(rename.values())]
+               "glomerular_pressure", "rbf", "rvr", "ra", "re",
+               "pah_bsa_plasma_urine", "pah_clear_bsa", "pah_raw"] + list(rename.values())]
     rct["procedure"] = "clamp"
     rct["visit"] = "baseline"
 
