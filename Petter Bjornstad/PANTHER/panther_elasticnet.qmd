@@ -48,804 +48,932 @@ load("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_analytes.
 load("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_data_soma_std.RData")
 ```
 
+```{r include = F}
+top_associations <- function(data, response_var, analyte_filter, top_n = 100, adjust_method = "fdr", covariates = NULL, log = F) {
+  
+  # Filter data based on specified criteria
+  filtered_data <- data %>%
+    filter(!is.na(!!sym(response_var)) & !!sym(response_var) > 0)
+  
+  # Identify analyte columns (those containing 'seq')
+  is_seq <- function(.x) grepl("seq", .x)
+  seq_cols <- is_seq(names(filtered_data))
+  predictors <- colnames(filtered_data[seq_cols])
+  
+  # Initialize result storage
+  result <- NULL
+  
+  # Loop through each predictor and fit a model
+  for (i in 1:length(predictors)) {
+    if(log){ 
+      form <- paste0("log(", response_var, ") ~ ", predictors[i])}
+    if(!log){
+      form <- paste0(response_var, "~ ", predictors[i])}
+    mod <- lm(data = filtered_data, formula = as.formula(form))
+    tidymod <- tidy(mod, exponentiate = FALSE, conf.int = TRUE)
+    tidymod <- tidymod[2, ]  # Keep only the predictor row
+    result <- rbind(result, tidymod)
+  }
+  
+  # Adjust p-values
+  result$adj.p.value <- p.adjust(result$p.value, method = adjust_method)
+  
+  # Rename and merge with analyte metadata
+  result$AptName <- result$term
+  result$term <- NULL
+  result <- merge(result, analyte_filter, by = "AptName", all.x = TRUE)
+  
+  # Order by p-value and select top N results
+  result <- result[order(result$p.value), ]
+  result_100 <- head(result, top_n)$AptName
+  
+  # Create the final matrix of predictors, including 'age'
+  predictors_matrix <- as.matrix(subset(filtered_data, select = c(covariates, result_100)))
+  
+  return(list(top_associations = result, predictors_matrix = predictors_matrix))
+}
+
+create_lm_summary <- function(data, response_var, predictors, retained_vars, log = F) {
+  
+  # Create formula for the linear model
+  if(log){
+    form <- as.formula(paste0("log(", response_var, ") ~ ", paste0(predictors, collapse = "+")))
+  }
+  if(!log){
+    form <- as.formula(paste0(response_var, " ~ ", paste0(predictors, collapse = "+")))
+  }
+  
+  # Fit the linear model
+  model <- lm(formula = form, data = data)
+  
+  # Tidy the model output and convert to a data frame
+  model_df <- as.data.frame(tidy(model, exponentiate = FALSE, conf.int = TRUE), digits = 3)
+  
+  # Left join with retained variables (retained_vars) and handle missing values for Target_nodup and TargetFullName
+  model_df <- model_df %>%
+    left_join(retained_vars, by = "term") %>%
+    dplyr::mutate(
+      Target_nodup = case_when(is.na(Target_nodup) ~ term, TRUE ~ Target_nodup),
+      TargetFullName = case_when(is.na(TargetFullName) ~ term, TRUE ~ TargetFullName)
+    ) %>%
+    dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
+  
+  return(list(model = model, model_df = model_df))
+}
+
+create_lm_summary_table_plot <- function(model_df, digits = 3, ...) {
+  
+  # Generate a sorted table using kable
+  sorted_table <- kable(arrange(model_df, p.value), digits = digits, ...)
+  
+  # Create the plot, excluding the first row (usually the intercept)
+  plot <- ggplot(model_df[-1,], 
+                 aes(estimate, 
+                     reorder(Target_nodup, dplyr::desc(p.value)), 
+                     xmin = conf.low, 
+                     xmax = conf.high, 
+                     height = 0)) +
+    geom_point() +
+    geom_vline(xintercept = 0, lty = 4) +
+    geom_errorbarh() +
+    labs(y = NULL, x = "Estimate") +
+    theme_minimal()
+  
+  return(list(table = sorted_table, plot = plot))
+}
+
+compute_rsq_conf_interval <- function(model, conf.level = 0.95) {
+  
+  # Calculate z-score for the specified confidence level
+  z <- qnorm(1 - (1 - conf.level) / 2)
+  
+  # Extract necessary model statistics
+  rsq <- summary(model)$adj.r.squared
+  k <- ncol(model$model) - 1  # Number of predictors
+  n <- model$df.residual + k + 1  # Total sample size
+  
+  # Compute the standard error of adjusted R-squared
+  rsq_se <- sqrt((4 * rsq * (1 - rsq)^2 * (n - k - 1)^2) / ((n^2 - 1) * (3 + n)))
+  
+  # Calculate lower and upper limits of the confidence interval
+  LL <- rsq - z * rsq_se
+  UL <- rsq + z * rsq_se
+  
+  return(list(
+    rsq_adj = rsq,
+    rsq_se = rsq_se,
+    conf.low = LL,
+    conf.high = UL
+  ))
+}
+
+```
+
 # Elastic Net Regression (with 10-fold cross-validation)
 
 Associate minmod results and TKV data with proteomics in an effort to find multi-protein signatures that associate with insulin sensitivity and secretion as well as total kidney volume in PANTHER (if underpowered for the insulin sensitivity - we might pull in data from other cohorts with proteomic data)
 
 ### AIRg (Insulin secretion)
 
-```{r elastic-net-airg, echo = F, warning = F, message=F}
-# Limit to records with non-missing AIRg
-panther_mm_airg <- cleanData_panther %>% 
-  filter(!is.na(mm_airg) & mm_airg > 0 ) %>% 
-  dplyr::select(mm_airg, starts_with("seq")) 
+#### Unadjusted model
 
-# Top 100 associations to AIRg
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(panther_mm_airg))
-predictors <- colnames(panther_mm_airg[seq])
-
-result_airg <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("log(mm_airg) ~ ",predictors[i])
-  mod <- lm(data = panther_mm_airg, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_airg <- rbind(result_airg,tidymod)
-}
-
-result_airg$adj.p.value <- p.adjust(result_airg$p.value, "fdr")
-result_airg$AptName <- result_airg$term
-result_airg$term <- NULL
-result_airg <- merge(result_airg,analytes,by="AptName",all.x = T, all.y = F)
-result_airg <- result_airg[order(result_airg$p.value),] 
-result_airg_100 <- head(result_airg, 100)$AptName
-predictors_airg <- as.matrix(subset(panther_mm_airg, select = result_airg_100))
+```{r elastic-net-airg-unadj, echo = F, warning = F, message=F, results ='asis'}
+airg_dat <- subset(cleanData_panther, !is.na(mm_airg) & mm_airg > 0)
+top_airg <- top_associations(airg_dat, "mm_airg", analytes, log = T)
 
 # Elastic net regression
-en_airg <- easy_elasticnet(data = panther_mm_airg, 
-                        outcome = "mm_airg", out = "1se.error",
-                        predictors = predictors_airg,
-                        cv_method="kfold", folds = 10)
+en_airg <- easy_elasticnet(data = airg_dat, 
+                           outcome = "mm_airg", 
+                           out = "1se.error",
+                           predictors = top_airg$predictors_matrix,
+                           cv_method="kfold", 
+                           folds = 10)
 length(en_airg)
 
-retained_vars_airg = analytes[analytes$AptName %in% en_airg, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_airg = analytes[analytes$AptName %in% en_airg, 
+                              c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
 write.csv(retained_vars_airg, 
           "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/airg_panther_proteomics.csv", 
           row.names = F)
 
-form_airg = as.formula(paste0("log(mm_airg) ~ ",paste0(en_airg,collapse = "+")))
-mod_airg = lm(formula = form_airg, data = panther_mm_airg)
-mod_df_airg = as.data.frame(tidy(mod_airg, exponentiate = F, conf.int = T), digits = 3) %>% 
-  left_join(retained_vars_airg) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_airg,p.value), digits = 3)
-ggplot(mod_df_airg[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_airg <- create_lm_summary(airg_dat, "mm_airg", en_airg, retained_vars_airg, log = T)
+create_lm_summary_table_plot(mod_df_airg$model_df, format = "html")
 ```
 
-Top `r length(result_airg_100)` proteins included in analysis. No. of proteins identified: `r length(en_airg)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_airg)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_airg <- mod_df_airg$model
 kable(glance(mod_airg))
 plot(mod_airg)
 
 # Adjusted R-squared 95% CI
-conf.level = 0.95
-z <- qnorm(1 - (1 - conf.level)/2)
+mod_airg_specs <- compute_rsq_conf_interval(mod_airg)
+```
 
-rsq_airg <- summary(mod_airg)$adj.r.squared
-k_airg <- ncol(mod_airg$model) - 1
-n_airg <- mod_airg$df.residual + k_airg + 1
-rsq.se_airg <- sqrt((4 * rsq_airg * (1 - rsq_airg)^2 * (n_airg - k_airg - 1)^2)/((n_airg^2 - 1) * (3 + n_airg)))
-LL_airg <- rsq_airg - z*rsq.se_airg
-UL_airg <- rsq_airg + z*rsq.se_airg
+#### Adjusted for age and sex
+
+```{r elastic-net-airg-adj, echo = F, warning = F, message=F, results = 'asis'}
+# Create dummy variables for 'sex'
+airg_dat$sexfemale <- ifelse(airg_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_airg <- as.matrix(cbind(subset(airg_dat, select = c("age", "sexfemale")), top_airg$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_airg_adj <- easy_elasticnet(data = airg_dat, 
+                               outcome = "mm_airg", out = "1se.error",
+                               predictors = predictors_airg,
+                               cv_method="kfold", folds = 10,
+                               penalty.factor = c(rep(0,2), rep(1, ncol(predictors_airg)-2)))
+length(en_airg_adj)
+
+retained_vars_airg_adj = analytes[analytes$AptName %in% en_airg_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+write.csv(retained_vars_airg_adj, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/airg_adj_panther_proteomics.csv", 
+          row.names = F)
+
+mod_df_airg_adj <- create_lm_summary(airg_dat, "mm_airg", en_airg_adj, retained_vars_airg_adj, log = T)
+create_lm_summary_table_plot(mod_df_airg_adj$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_airg)`.
+
+```{r echo = F, warning = F, message=F}
+mod_airg_adj <- mod_df_airg_adj$model
+kable(glance(mod_airg_adj))
+plot(mod_airg_adj)
+
+# Adjusted R-squared 95% CI
+mod_airg_adj_specs <- compute_rsq_conf_interval(mod_airg_adj)
 ```
 
 ### DI (disposition index: measure of how well the body compensates for insulin resistance)
 
-```{r elastic-net-di, echo = F, warning = F, message=F}
-# Limit to records with non-missing di
-panther_mm_di <- cleanData_panther %>% 
-  filter(!is.na(mm_di) & mm_di > 0) %>% 
-  dplyr::select(mm_di, starts_with("seq")) 
+#### Unadjusted model
 
-# Top 100 associations to di
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(panther_mm_di))
-predictors <- colnames(panther_mm_di[seq])
+```{r elastic-net-di-unadj, echo = F, warning = F, message=F, results ='asis'}
+di_dat <- subset(cleanData_panther, !is.na(mm_di) & mm_di > 0)
+top_di <- top_associations(di_dat, "mm_di", analytes, log = T, top_n = 200)
 
-result_di <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("log(mm_di) ~ ",predictors[i])
-  mod <- lm(data = panther_mm_di, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_di <- rbind(result_di,tidymod)
-}
-
-result_di$adj.p.value <- p.adjust(result_di$p.value, "fdr")
-result_di$AptName <- result_di$term
-result_di$term <- NULL
-result_di <- merge(result_di,analytes, by="AptName",all.x = T, all.y = F)
-result_di <- result_di[order(result_di$p.value),] 
-result_di_100 <- head(result_di, 150)$AptName
-predictors_di <- as.matrix(subset(panther_mm_di, select = result_di_100))
 # Elastic net regression
-en_di <- easy_elasticnet(data = panther_mm_di, 
-                        outcome = "mm_di", out = "1se.error",
-                        predictors = predictors_di,
-                        cv_method="kfold", folds = 10)
-
+en_di <- easy_elasticnet(data = di_dat, 
+                         outcome = "mm_di", 
+                         out = "1se.error",
+                         predictors = top_di$predictors_matrix,
+                         cv_method="kfold", 
+                         folds = 10)
 length(en_di)
 
-retained_vars_di = analytes[analytes$AptName %in% en_di, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_di = analytes[analytes$AptName %in% en_di, 
+                              c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
 write.csv(retained_vars_di, 
           "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/di_panther_proteomics.csv", 
           row.names = F)
 
-form_di = as.formula(paste0("log(mm_di) ~ ",paste0(en_di,collapse = "+")))
-mod_di = lm(formula = form_di, data = panther_mm_di)
-mod_df_di = as.data.frame(tidy(mod_di, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_di) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_di,p.value), digits = 3)
-ggplot(mod_df_di[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_di <- create_lm_summary(di_dat, "mm_di", en_di, retained_vars_di, log = T)
+create_lm_summary_table_plot(mod_df_di$model_df, format = "html")
 ```
 
-Top `r length(result_di_100)` proteins included in analysis. No. of proteins identified: `r length(en_di)`.
+Top 200 proteins included in analysis. No. of proteins identified: `r length(en_di)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_di <- mod_df_di$model
 kable(glance(mod_di))
 plot(mod_di)
 
 # Adjusted R-squared 95% CI
-rsq_di <- summary(mod_di)$adj.r.squared
-k_di <- ncol(mod_di$model) - 1
-n_di <- mod_di$df.residual + k_di + 1
-rsq.se_di <- sqrt((4 * rsq_di * (1 - rsq_di)^2 * (n_di - k_di - 1)^2)/((n_di^2 - 1) * (3 + n_di)))
-LL_di <- rsq_di - z*rsq.se_di
-UL_di <- rsq_di + z*rsq.se_di
+mod_di_specs <- compute_rsq_conf_interval(mod_di)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-di-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+di_dat$sexfemale <- ifelse(di_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_di <- as.matrix(cbind(subset(di_dat, select = c("age", "sexfemale")), top_di$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_di_adj <- easy_elasticnet(data = di_dat, 
+                               outcome = "mm_di", out = "1se.error",
+                               predictors = predictors_di,
+                               cv_method="kfold", folds = 10,
+                               penalty.factor = c(rep(0,2), rep(1, ncol(predictors_di)-2)))
+length(en_di_adj)
+
+retained_vars_di_adj = analytes[analytes$AptName %in% en_di_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+write.csv(retained_vars_di_adj, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/di_adj_panther_proteomics.csv", 
+          row.names = F)
+
+mod_df_di_adj <- create_lm_summary(di_dat, "mm_di", en_di_adj, retained_vars_di_adj, log = T)
+create_lm_summary_table_plot(mod_df_di_adj$model_df, format = "html")
+```
+
+Top 200 proteins included in analysis. No. of proteins identified: `r length(en_di)`.
+
+```{r echo = F, warning = F, message=F}
+mod_di_adj <- mod_df_di_adj$model
+kable(glance(mod_di_adj))
+plot(mod_di_adj)
+
+# Adjusted R-squared 95% CI
+mod_di_adj_specs <- compute_rsq_conf_interval(mod_di_adj)
 ```
 
 ### SI (insulin sensitivity)
 
-```{r elastic-net-si, echo = F, warning = F, message=F}
-# Limit to records with non-missing si
-panther_mm_si <- cleanData_panther %>% 
-  filter(!is.na(mm_si) & mm_si > 0) %>% 
-  dplyr::select(mm_si, starts_with("seq"))
+#### Unadjusted model
 
-# Top 100 associations to si
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(panther_mm_si))
-predictors <- colnames(panther_mm_si[seq])
-
-result_si <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("log(mm_si) ~ ",predictors[i])
-  mod <- lm(data = panther_mm_si, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_si <- rbind(result_si,tidymod)
-}
-
-result_si$adj.p.value <- p.adjust(result_si$p.value, "fdr")
-result_si$AptName <- result_si$term
-result_si$term <- NULL
-result_si <- merge(result_si,analytes,by="AptName",all.x = T, all.y = F)
-result_si <- result_si[order(result_si$p.value),] 
-result_si_100 <- head(result_si, 100)$AptName
-predictors_si <- as.matrix(subset(panther_mm_si, select = result_si_100))
+```{r elastic-net-si-unadj, echo = F, warning = F, message=F, results ='asis'}
+si_dat <- subset(cleanData_panther, !is.na(mm_si) & mm_si > 0)
+top_si <- top_associations(si_dat, "mm_si", analytes, log = T)
 
 # Elastic net regression
-en_si <- easy_elasticnet(data = panther_mm_si, 
-                        outcome = "mm_si", out = "1se.error",
-                        predictors = predictors_si,
-                        cv_method="kfold", folds = 10)
+en_si <- easy_elasticnet(data = si_dat, 
+                           outcome = "mm_si", 
+                           out = "1se.error",
+                           predictors = top_si$predictors_matrix,
+                           cv_method="kfold", 
+                           folds = 10)
+length(en_si)
 
-retained_vars_si = analytes[analytes$AptName %in% en_si, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_si = analytes[analytes$AptName %in% en_si, 
+                              c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
 write.csv(retained_vars_si, 
           "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/si_panther_proteomics.csv", 
           row.names = F)
 
-form_si = as.formula(paste0("log(mm_si) ~ ",paste0(en_si,collapse = "+")))
-mod_si = lm(formula = form_si, data = panther_mm_si)
-mod_df_si = as.data.frame(tidy(mod_si, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_si) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_si,p.value), digits = 3)
-ggplot(mod_df_si[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_si <- create_lm_summary(si_dat, "mm_si", en_si, retained_vars_si, log = T)
+create_lm_summary_table_plot(mod_df_si$model_df, format = "html")
 ```
 
-Top `r length(result_si_100)` proteins included in analysis. No. of proteins identified: `r length(en_si)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_si)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_si <- mod_df_si$model
 kable(glance(mod_si))
 plot(mod_si)
 
 # Adjusted R-squared 95% CI
-rsq_si <- summary(mod_si)$adj.r.squared
-k_si <- ncol(mod_si$model) - 1
-n_si <- mod_si$df.residual + k_si + 1
-rsq.se_si <- sqrt((4 * rsq_si * (1 - rsq_si)^2 * (n_si - k_si - 1)^2)/((n_si^2 - 1) * (3 + n_si)))
-LL_si <- rsq_si - z*rsq.se_si
-UL_si <- rsq_si + z*rsq.se_si
+mod_si_specs <- compute_rsq_conf_interval(mod_si)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-si-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+si_dat$sexfemale <- ifelse(si_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_si <- as.matrix(cbind(subset(si_dat, select = c("age", "sexfemale")), top_si$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_si_adj <- easy_elasticnet(data = si_dat, 
+                               outcome = "mm_si", out = "1se.error",
+                               predictors = predictors_si,
+                               cv_method="kfold", folds = 10,
+                               penalty.factor = c(rep(0,2), rep(1, ncol(predictors_si)-2)))
+length(en_si_adj)
+
+retained_vars_si_adj = analytes[analytes$AptName %in% en_si_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+write.csv(retained_vars_si_adj, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/si_adj_panther_proteomics.csv", 
+          row.names = F)
+
+mod_df_si_adj <- create_lm_summary(si_dat, "mm_si", en_si_adj, retained_vars_si_adj, log = T)
+create_lm_summary_table_plot(mod_df_si_adj$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_si)`.
+
+```{r echo = F, warning = F, message=F}
+mod_si_adj <- mod_df_si_adj$model
+kable(glance(mod_si_adj))
+plot(mod_si_adj)
+
+# Adjusted R-squared 95% CI
+mod_si_adj_specs <- compute_rsq_conf_interval(mod_si_adj)
 ```
 
 ### Beta-cell function
 
-```{r elastic-net-betacell, echo = F, warning = F, message=F}
-# Limit to records with non-missing bcell
-panther_mm_bcell <- cleanData_panther %>% 
-  filter(!is.na(mm_bcell) & mm_bcell > 0) %>% 
-  dplyr::select(mm_bcell, starts_with("seq")) 
+#### Unadjusted model
 
-# Top 100 associations to bcell
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(panther_mm_bcell))
-predictors <- colnames(panther_mm_bcell[seq])
+```{r elastic-net-bcell-unadj, echo = F, warning = F, message=F, results ='asis'}
+bcell_dat <- subset(cleanData_panther, !is.na(mm_bcell) & mm_bcell > 0)
+top_bcell <- top_associations(bcell_dat, "mm_bcell", analytes, log = T, top_n = 80)
 
-result_bcell <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("log(mm_bcell) ~ ",predictors[i])
-  mod <- lm(data = panther_mm_bcell, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_bcell <- rbind(result_bcell,tidymod)
-}
-
-result_bcell$adj.p.value <- p.adjust(result_bcell$p.value, "fdr")
-result_bcell$AptName <- result_bcell$term
-result_bcell$term <- NULL
-result_bcell <- merge(result_bcell,analytes,by="AptName",all.x = T, all.y = F)
-result_bcell <- result_bcell[order(result_bcell$p.value),] 
-result_bcell_100 <- head(result_bcell, 100)$AptName
-predictors_bcell <- as.matrix(subset(panther_mm_bcell, select = result_bcell_100))
 # Elastic net regression
-en_bcell <- easy_elasticnet(data = panther_mm_bcell, 
-                        outcome = "mm_bcell", out = "1se.error",
-                        predictors = predictors_bcell,
-                        cv_method="kfold", folds = 10)
+en_bcell <- easy_elasticnet(data = bcell_dat, 
+                           outcome = "mm_bcell", 
+                           out = "1se.error",
+                           predictors = top_bcell$predictors_matrix,
+                           cv_method="kfold", 
+                           folds = 10)
+length(en_bcell)
 
-retained_vars_bcell = analytes[analytes$AptName %in% en_bcell, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_bcell = analytes[analytes$AptName %in% en_bcell, 
+                              c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
 write.csv(retained_vars_bcell, 
           "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/bcell_panther_proteomics.csv", 
           row.names = F)
 
-
-form_bcell = as.formula(paste0("log(mm_bcell) ~ ",paste0(en_bcell,collapse = "+")))
-mod_bcell = lm(formula = form_bcell, data = panther_mm_bcell)
-mod_df_bcell = as.data.frame(tidy(mod_bcell, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_bcell) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_bcell,p.value), digits = 3)
-ggplot(mod_df_bcell[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_bcell <- create_lm_summary(bcell_dat, "mm_bcell", en_bcell, retained_vars_bcell, log = T)
+create_lm_summary_table_plot(mod_df_bcell$model_df, format = "html")
 ```
 
-Top `r length(result_bcell_100)` proteins included in analysis. No. of proteins identified: `r length(en_bcell)`.
+Top 80 proteins included in analysis. No. of proteins identified: `r length(en_bcell)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_bcell <- mod_df_bcell$model
 kable(glance(mod_bcell))
 plot(mod_bcell)
 
 # Adjusted R-squared 95% CI
-rsq_bcell <- summary(mod_bcell)$adj.r.squared
-k_bcell <- ncol(mod_bcell$model) - 1
-n_bcell <- mod_bcell$df.residual + k_bcell + 1
-rsq.se_bcell <- sqrt((4 * rsq_bcell * (1 - rsq_bcell)^2 * (n_bcell - k_bcell - 1)^2)/((n_bcell^2 - 1) * (3 + n_bcell)))
-LL_bcell <- rsq_bcell - z*rsq.se_bcell
-UL_bcell <- rsq_bcell + z*rsq.se_bcell
+mod_bcell_specs <- compute_rsq_conf_interval(mod_bcell)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-bcell-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+bcell_dat$sexfemale <- ifelse(bcell_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_bcell <- as.matrix(cbind(subset(bcell_dat, select = c("age", "sexfemale")), top_bcell$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_bcell_adj <- easy_elasticnet(data = bcell_dat, 
+                               outcome = "mm_bcell", out = "1se.error",
+                               predictors = predictors_bcell,
+                               cv_method="kfold", folds = 10,
+                               penalty.factor = c(rep(0,2), rep(1, ncol(predictors_bcell)-2)))
+length(en_bcell_adj)
+
+retained_vars_bcell_adj = analytes[analytes$AptName %in% en_bcell_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+write.csv(retained_vars_bcell_adj, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/bcell_adj_panther_proteomics.csv", 
+          row.names = F)
+
+mod_df_bcell_adj <- create_lm_summary(bcell_dat, "mm_bcell", en_bcell_adj, retained_vars_bcell_adj, log = T)
+create_lm_summary_table_plot(mod_df_bcell_adj$model_df, format = "html")
+```
+
+Top 80 proteins included in analysis. No. of proteins identified: `r length(en_bcell)`.
+
+```{r echo = F, warning = F, message=F}
+mod_bcell_adj <- mod_df_bcell_adj$model
+kable(glance(mod_bcell_adj))
+plot(mod_bcell_adj)
+
+# Adjusted R-squared 95% CI
+mod_bcell_adj_specs <- compute_rsq_conf_interval(mod_bcell_adj)
 ```
 
 ### Total Kidney Volume
 
-```{r elastic-net-tkv, echo = F, warning = F, message=F}
-hist(cleanData_panther$total_kidney_volume_ml)
-# Limit to records with non-missing tkv
-panther_total_kidney_volume_ml <- cleanData_panther %>% 
-  filter(!is.na(total_kidney_volume_ml)) %>% 
-  dplyr::select(total_kidney_volume_ml, starts_with("seq"))
+#### Unadjusted model
 
-# Top 100 associations to tkv
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(panther_total_kidney_volume_ml))
-predictors <- colnames(panther_total_kidney_volume_ml[seq])
+```{r elastic-net-tkv-unadj, echo = F, warning = F, message=F, results ='asis'}
+tkv_dat <- subset(cleanData_panther, !is.na(total_kidney_volume_ml) & total_kidney_volume_ml > 0)
+top_tkv <- top_associations(tkv_dat, "total_kidney_volume_ml", analytes, log = F)
 
-result_tkv <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("total_kidney_volume_ml ~ ",predictors[i])
-  mod <- lm(data = panther_total_kidney_volume_ml, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_tkv <- rbind(result_tkv,tidymod)
-}
-
-result_tkv$adj.p.value <- p.adjust(result_tkv$p.value, "fdr")
-result_tkv$AptName <- result_tkv$term
-result_tkv$term <- NULL
-result_tkv <- merge(result_tkv,analytes,by="AptName",all.x = T, all.y = F)
-result_tkv <- result_tkv[order(result_tkv$p.value),] 
-result_tkv_100 <- head(result_tkv, 100)$AptName
-predictors_tkv <- as.matrix(subset(panther_total_kidney_volume_ml, select = result_tkv_100))
 # Elastic net regression
-en_tkv <- easy_elasticnet(data = panther_total_kidney_volume_ml, 
-                        outcome = "total_kidney_volume_ml", out = "1se.error",
-                        predictors = predictors_tkv,
-                        cv_method="kfold", folds = 10)
+en_tkv <- easy_elasticnet(data = tkv_dat, 
+                           outcome = "total_kidney_volume_ml", 
+                           out = "1se.error",
+                           predictors = top_tkv$predictors_matrix,
+                           cv_method="kfold", 
+                           folds = 10)
+length(en_tkv)
 
-retained_vars_tkv = analytes[analytes$AptName %in% en_tkv, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_tkv = analytes[analytes$AptName %in% en_tkv, 
+                              c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
 write.csv(retained_vars_tkv, 
           "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/tkv_panther_proteomics.csv", 
           row.names = F)
 
-form_tkv = as.formula(paste0("total_kidney_volume_ml ~ ",paste0(en_tkv,collapse = "+")))
-mod_tkv = lm(formula = form_tkv, data = panther_total_kidney_volume_ml)
-mod_df_tkv = as.data.frame(tidy(mod_tkv, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_tkv) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_tkv,p.value), digits = 3)
-ggplot(mod_df_tkv[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_tkv <- create_lm_summary(tkv_dat, "total_kidney_volume_ml", en_tkv, retained_vars_tkv, log = F)
+create_lm_summary_table_plot(mod_df_tkv$model_df, format = "html")
 ```
 
-Top `r length(result_tkv_100)` proteins included in analysis. No. of proteins identified: `r length(en_tkv)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_tkv)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_tkv <- mod_df_tkv$model
 kable(glance(mod_tkv))
 plot(mod_tkv)
 
 # Adjusted R-squared 95% CI
-rsq_tkv <- summary(mod_tkv)$adj.r.squared
-k_tkv <- ncol(mod_tkv$model) - 1
-n_tkv <- mod_tkv$df.residual + k_tkv + 1
-rsq.se_tkv <- sqrt((4 * rsq_tkv * (1 - rsq_tkv)^2 * (n_tkv - k_tkv - 1)^2)/((n_tkv^2 - 1) * (3 + n_tkv)))
-LL_tkv <- rsq_tkv - z*rsq.se_tkv
-UL_tkv <- rsq_tkv + z*rsq.se_tkv
+mod_tkv_specs <- compute_rsq_conf_interval(mod_tkv)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-tkv-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+tkv_dat$sexfemale <- ifelse(tkv_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_tkv <- as.matrix(cbind(subset(tkv_dat, select = c("age", "sexfemale")), top_tkv$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_tkv_adj <- easy_elasticnet(data = tkv_dat, 
+                               outcome = "total_kidney_volume_ml", out = "1se.error",
+                               predictors = predictors_tkv,
+                               cv_method="kfold", folds = 10,
+                               penalty.factor = c(rep(0,2), rep(1, ncol(predictors_tkv)-2)))
+length(en_tkv_adj)
+
+retained_vars_tkv_adj = analytes[analytes$AptName %in% en_tkv_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+write.csv(retained_vars_tkv_adj, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/tkv_adj_panther_proteomics.csv", 
+          row.names = F)
+
+mod_df_tkv_adj <- create_lm_summary(tkv_dat, "total_kidney_volume_ml", en_tkv_adj, retained_vars_tkv_adj, log = F)
+create_lm_summary_table_plot(mod_df_tkv_adj$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_tkv)`.
+
+```{r echo = F, warning = F, message=F}
+mod_tkv_adj <- mod_df_tkv_adj$model
+kable(glance(mod_tkv_adj))
+plot(mod_tkv_adj)
+
+# Adjusted R-squared 95% CI
+mod_tkv_adj_specs <- compute_rsq_conf_interval(mod_tkv_adj)
 ```
 
 ### Height adjusted TKV
 
-```{r elastic-net-httkv, echo = F, warning = F, message=F}
-hist(cleanData_panther$ht_adj_tkv)
-# Limit to records with non-missing ht_adj_tkv
-panther_ht_adj_tkv <- cleanData_panther %>% 
-  filter(!is.na(ht_adj_tkv)) %>% 
-  dplyr::select(ht_adj_tkv, starts_with("seq")) 
+#### Unadjusted model
 
-# Top 100 associations to ht_adj_tkv
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(panther_ht_adj_tkv))
-predictors <- colnames(panther_ht_adj_tkv[seq])
+```{r elastic-net-ht_adj_tkv-unadj, echo = F, warning = F, message=F, results ='asis'}
+ht_adj_tkv_dat <- subset(cleanData_panther, !is.na(ht_adj_tkv) & ht_adj_tkv > 0)
+top_ht_adj_tkv <- top_associations(ht_adj_tkv_dat, "ht_adj_tkv", analytes, log = F)
 
-result_ht_adj_tkv <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("ht_adj_tkv ~ ",predictors[i])
-  mod <- lm(data = panther_ht_adj_tkv, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_ht_adj_tkv <- rbind(result_ht_adj_tkv,tidymod)
-}
-
-result_ht_adj_tkv$adj.p.value <- p.adjust(result_ht_adj_tkv$p.value, "fdr")
-result_ht_adj_tkv$AptName <- result_ht_adj_tkv$term
-result_ht_adj_tkv$term <- NULL
-result_ht_adj_tkv <- merge(result_ht_adj_tkv,analytes,by="AptName",all.x = T, all.y = F)
-result_ht_adj_tkv <- result_ht_adj_tkv[order(result_ht_adj_tkv$p.value),] 
-result_ht_adj_tkv_100 <- head(result_ht_adj_tkv, 100)$AptName
-predictors_ht_adj_tkv <- as.matrix(subset(panther_ht_adj_tkv, select = result_ht_adj_tkv_100))
 # Elastic net regression
-en_ht_adj_tkv <- easy_elasticnet(data = panther_ht_adj_tkv, 
-                        outcome = "ht_adj_tkv", out = "1se.error",
-                        predictors = predictors_ht_adj_tkv,
-                        cv_method="kfold", folds = 10)
+en_ht_adj_tkv <- easy_elasticnet(data = ht_adj_tkv_dat, 
+                           outcome = "ht_adj_tkv", 
+                           out = "1se.error",
+                           predictors = top_ht_adj_tkv$predictors_matrix,
+                           cv_method="kfold", 
+                           folds = 10)
+length(en_ht_adj_tkv)
 
-retained_vars_ht_adj_tkv = analytes[analytes$AptName %in% en_ht_adj_tkv, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_ht_adj_tkv = analytes[analytes$AptName %in% en_ht_adj_tkv, 
+                              c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
 write.csv(retained_vars_ht_adj_tkv, 
           "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/ht_adj_tkv_panther_proteomics.csv", 
           row.names = F)
 
-form_ht_adj_tkv = as.formula(paste0("ht_adj_tkv ~ ",paste0(en_ht_adj_tkv,collapse = "+")))
-mod_ht_adj_tkv = lm(formula = form_ht_adj_tkv, data = panther_ht_adj_tkv)
-mod_df_ht_adj_tkv = as.data.frame(tidy(mod_ht_adj_tkv, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_ht_adj_tkv) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_ht_adj_tkv,p.value), digits = 3)
-
-ggplot(mod_df_ht_adj_tkv[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_ht_adj_tkv <- create_lm_summary(ht_adj_tkv_dat, "ht_adj_tkv", en_ht_adj_tkv, retained_vars_ht_adj_tkv, log = F)
+create_lm_summary_table_plot(mod_df_ht_adj_tkv$model_df, format = "html")
 ```
 
-Top `r length(result_ht_adj_tkv_100)` proteins included in analysis. No. of proteins identified: `r length(en_ht_adj_tkv)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_ht_adj_tkv)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_ht_adj_tkv <- mod_df_ht_adj_tkv$model
 kable(glance(mod_ht_adj_tkv))
 plot(mod_ht_adj_tkv)
 
 # Adjusted R-squared 95% CI
-rsq_ht_adj_tkv <- summary(mod_ht_adj_tkv)$adj.r.squared
-k_ht_adj_tkv <- ncol(mod_ht_adj_tkv$model) - 1
-n_ht_adj_tkv <- mod_ht_adj_tkv$df.residual + k_ht_adj_tkv + 1
-rsq.se_ht_adj_tkv <- sqrt((4 * rsq_ht_adj_tkv * (1 - rsq_ht_adj_tkv)^2 * (n_ht_adj_tkv - k_ht_adj_tkv - 1)^2)/((n_ht_adj_tkv^2 - 1) * (3 + n_ht_adj_tkv)))
-LL_ht_adj_tkv <- rsq_ht_adj_tkv - z*rsq.se_ht_adj_tkv
-UL_ht_adj_tkv <- rsq_ht_adj_tkv + z*rsq.se_ht_adj_tkv
+mod_ht_adj_tkv_specs <- compute_rsq_conf_interval(mod_ht_adj_tkv)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-ht_adj_tkv-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+ht_adj_tkv_dat$sexfemale <- ifelse(ht_adj_tkv_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_ht_adj_tkv <- as.matrix(cbind(subset(ht_adj_tkv_dat, select = c("age", "sexfemale")), top_ht_adj_tkv$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_ht_adj_tkv_adj <- easy_elasticnet(data = ht_adj_tkv_dat, 
+                               outcome = "ht_adj_tkv", out = "1se.error",
+                               predictors = predictors_ht_adj_tkv,
+                               cv_method="kfold", folds = 10,
+                               penalty.factor = c(rep(0,2), rep(1, ncol(predictors_ht_adj_tkv)-2)))
+length(en_ht_adj_tkv_adj)
+
+retained_vars_ht_adj_tkv_adj = analytes[analytes$AptName %in% en_ht_adj_tkv_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+write.csv(retained_vars_ht_adj_tkv_adj, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/ht_adj_tkv_adj_panther_proteomics.csv", 
+          row.names = F)
+
+mod_df_ht_adj_tkv_adj <- create_lm_summary(ht_adj_tkv_dat, "ht_adj_tkv", en_ht_adj_tkv_adj, retained_vars_ht_adj_tkv_adj, log = F)
+create_lm_summary_table_plot(mod_df_ht_adj_tkv_adj$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_ht_adj_tkv)`.
+
+```{r echo = F, warning = F, message=F}
+mod_ht_adj_tkv_adj <- mod_df_ht_adj_tkv_adj$model
+kable(glance(mod_ht_adj_tkv_adj))
+plot(mod_ht_adj_tkv_adj)
+
+# Adjusted R-squared 95% CI
+mod_ht_adj_tkv_adj_specs <- compute_rsq_conf_interval(mod_ht_adj_tkv_adj)
 ```
 
 ### GFR (Raw plasma)
 
-```{r elastic-net-gfr, echo = F, warning = F, message=F}
-# Limit to records with non-missing gfr
-panther_gfr_raw_plasma <- cleanData_panther %>% 
-  filter(!is.na(gfr_raw_plasma) & gfr_raw_plasma > 0) %>% 
-  dplyr::select(gfr_raw_plasma, starts_with("seq")) 
+#### Unadjusted model
 
-# Top 100 associations to gfr
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(panther_gfr_raw_plasma))
-predictors <- colnames(panther_gfr_raw_plasma[seq])
+```{r elastic-net-gfr-unadj, echo = F, warning = F, message=F, results ='asis'}
+gfr_dat <- subset(cleanData_panther, !is.na(gfr_raw_plasma) & gfr_raw_plasma > 0)
+top_gfr <- top_associations(gfr_dat, "gfr_raw_plasma", analytes, log = T, top_n = 80)
 
-result_gfr <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("log(gfr_raw_plasma) ~ ",predictors[i])
-  mod <- lm(data = panther_gfr_raw_plasma, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_gfr <- rbind(result_gfr,tidymod)
-}
-
-result_gfr$adj.p.value <- p.adjust(result_gfr$p.value, "fdr")
-result_gfr$AptName <- result_gfr$term
-result_gfr$term <- NULL
-result_gfr <- merge(result_gfr,analytes,by="AptName",all.x = T, all.y = F)
-result_gfr <- result_gfr[order(result_gfr$p.value),] 
-result_gfr_100 <- head(result_gfr, 80)$AptName
-predictors_gfr <- as.matrix(subset(panther_gfr_raw_plasma, select = result_gfr_100))
 # Elastic net regression
-en_gfr <- easy_elasticnet(data = panther_gfr_raw_plasma, 
-                        outcome = "gfr_raw_plasma", out = "1se.error",
-                        predictors = predictors_gfr,
-                        cv_method="kfold", folds = 10)
+en_gfr <- easy_elasticnet(data = gfr_dat, 
+                          outcome = "gfr_raw_plasma", 
+                          out = "1se.error",
+                          predictors = top_gfr$predictors_matrix,
+                          cv_method="kfold", 
+                          folds = 10)
 length(en_gfr)
 
-retained_vars_gfr = analytes[analytes$AptName %in% en_gfr, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_gfr = analytes[analytes$AptName %in% en_gfr, 
+                             c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
 write.csv(retained_vars_gfr, 
           "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/gfr_panther_proteomics.csv", 
           row.names = F)
 
-form_gfr = as.formula(paste0("log(gfr_raw_plasma) ~ ",paste0(en_gfr,collapse = "+")))
-mod_gfr = lm(formula = form_gfr, data = panther_gfr_raw_plasma)
-mod_df_gfr = as.data.frame(tidy(mod_gfr, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_gfr) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_gfr,p.value), digits = 3)
-ggplot(mod_df_gfr[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_gfr <- create_lm_summary(gfr_dat, "gfr_raw_plasma", en_gfr, retained_vars_gfr, log = T)
+create_lm_summary_table_plot(mod_df_gfr$model_df, format = "html")
 ```
 
-Top `r length(result_gfr_100)` proteins included in analysis. No. of proteins identified: `r length(en_gfr)`.
+Top 80 proteins included in analysis. No. of proteins identified: `r length(en_gfr)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_gfr <- mod_df_gfr$model
 kable(glance(mod_gfr))
 plot(mod_gfr)
 
 # Adjusted R-squared 95% CI
-rsq_gfr <- summary(mod_gfr)$adj.r.squared
-k_gfr <- ncol(mod_gfr$model) - 1
-n_gfr <- mod_gfr$df.residual + k_gfr + 1
-rsq.se_gfr <- sqrt((4 * rsq_gfr * (1 - rsq_gfr)^2 * (n_gfr - k_gfr - 1)^2)/((n_gfr^2 - 1) * (3 + n_gfr)))
-LL_gfr <- rsq_gfr - z*rsq.se_gfr
-UL_gfr <- rsq_gfr + z*rsq.se_gfr
+mod_gfr_specs <- compute_rsq_conf_interval(mod_gfr)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-gfr-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+gfr_dat$sexfemale <- ifelse(gfr_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_gfr <- as.matrix(cbind(subset(gfr_dat, select = c("age", "sexfemale")), top_gfr$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_gfr_adj <- easy_elasticnet(data = gfr_dat, 
+                              outcome = "gfr_raw_plasma", out = "1se.error",
+                              predictors = predictors_gfr,
+                              cv_method="kfold", folds = 10,
+                              penalty.factor = c(rep(0,2), rep(1, ncol(predictors_gfr)-2)))
+length(en_gfr_adj)
+
+retained_vars_gfr_adj = analytes[analytes$AptName %in% en_gfr_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+write.csv(retained_vars_gfr_adj, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/gfr_adj_panther_proteomics.csv", 
+          row.names = F)
+
+mod_df_gfr_adj <- create_lm_summary(gfr_dat, "gfr_raw_plasma", en_gfr_adj, retained_vars_gfr_adj, log = T)
+create_lm_summary_table_plot(mod_df_gfr_adj$model_df, format = "html")
+```
+
+Top 80 proteins included in analysis. No. of proteins identified: `r length(en_gfr)`.
+
+```{r echo = F, warning = F, message=F}
+mod_gfr_adj <- mod_df_gfr_adj$model
+kable(glance(mod_gfr_adj))
+plot(mod_gfr_adj)
+
+# Adjusted R-squared 95% CI
+mod_gfr_adj_specs <- compute_rsq_conf_interval(mod_gfr_adj)
 ```
 
 ### GFR (BSA plasma)
 
-```{r elastic-net-gfr-bsa, echo = F, warning = F, message=F}
-# Limit to records with non-missing gfr
-panther_gfr_bsa_plasma <- cleanData_panther %>% 
-  filter(!is.na(gfr_bsa_plasma) & gfr_bsa_plasma > 0) %>% 
-  dplyr::select(gfr_bsa_plasma, starts_with("seq")) 
+#### Unadjusted model
 
-# Top 100 associations to gfr
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(panther_gfr_bsa_plasma))
-predictors <- colnames(panther_gfr_bsa_plasma[seq])
+```{r elastic-net-gfr_bsa-unadj, echo = F, warning = F, message=F, results ='asis'}
+gfr_bsa_dat <- subset(cleanData_panther, !is.na(gfr_bsa_plasma) & gfr_bsa_plasma > 0)
+top_gfr_bsa <- top_associations(gfr_bsa_dat, "gfr_bsa_plasma", analytes, log = T)
 
-result_gfr_bsa <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("log(gfr_bsa_plasma) ~ ",predictors[i])
-  mod <- lm(data = panther_gfr_bsa_plasma, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_gfr_bsa <- rbind(result_gfr_bsa,tidymod)
-}
-
-result_gfr_bsa$adj.p.value <- p.adjust(result_gfr_bsa$p.value, "fdr")
-result_gfr_bsa$AptName <- result_gfr_bsa$term
-result_gfr_bsa$term <- NULL
-result_gfr_bsa <- merge(result_gfr_bsa,analytes,by="AptName",all.x = T, all.y = F)
-result_gfr_bsa <- result_gfr_bsa[order(result_gfr_bsa$p.value),] 
-result_gfr_bsa_100 <- head(result_gfr_bsa, 100)$AptName
-predictors_gfr_bsa <- as.matrix(subset(panther_gfr_bsa_plasma, select = result_gfr_bsa_100))
 # Elastic net regression
-en_gfr_bsa <- easy_elasticnet(data = panther_gfr_bsa_plasma, 
-                        outcome = "gfr_bsa_plasma", out = "1se.error",
-                        predictors = predictors_gfr_bsa,
-                        cv_method="kfold", folds = 10)
+en_gfr_bsa <- easy_elasticnet(data = gfr_bsa_dat, 
+                           outcome = "gfr_bsa_plasma", 
+                           out = "1se.error",
+                           predictors = top_gfr_bsa$predictors_matrix,
+                           cv_method="kfold", 
+                           folds = 10)
+length(en_gfr_bsa)
 
-retained_vars_gfr_bsa = analytes[analytes$AptName %in% en_gfr_bsa, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_gfr_bsa = analytes[analytes$AptName %in% en_gfr_bsa, 
+                              c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
 write.csv(retained_vars_gfr_bsa, 
           "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/gfr_bsa_panther_proteomics.csv", 
           row.names = F)
 
-form_gfr_bsa = as.formula(paste0("log(gfr_bsa_plasma) ~ ",paste0(en_gfr_bsa,collapse = "+")))
-mod_gfr_bsa = lm(formula = form_gfr_bsa, data = panther_gfr_bsa_plasma)
-mod_df_gfr_bsa = as.data.frame(tidy(mod_gfr_bsa, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_gfr_bsa) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_gfr_bsa,p.value), digits = 3)
-ggplot(mod_df_gfr_bsa[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_gfr_bsa <- create_lm_summary(gfr_bsa_dat, "gfr_bsa_plasma", en_gfr_bsa, retained_vars_gfr_bsa, log = T)
+create_lm_summary_table_plot(mod_df_gfr_bsa$model_df, format = "html")
 ```
 
-Top `r length(result_gfr_100)` proteins included in analysis. No. of proteins identified: `r length(en_gfr_bsa)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_gfr_bsa)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_gfr_bsa <- mod_df_gfr_bsa$model
 kable(glance(mod_gfr_bsa))
 plot(mod_gfr_bsa)
 
 # Adjusted R-squared 95% CI
-rsq_gfr_bsa <- summary(mod_gfr_bsa)$adj.r.squared
-k_gfr_bsa <- ncol(mod_gfr_bsa$model) - 1
-n_gfr_bsa <- mod_gfr_bsa$df.residual + k_gfr_bsa + 1
-rsq.se_gfr_bsa <- sqrt((4 * rsq_gfr_bsa * (1 - rsq_gfr_bsa)^2 * (n_gfr_bsa - k_gfr_bsa - 1)^2)/((n_gfr_bsa^2 - 1) * (3 + n_gfr_bsa)))
-LL_gfr_bsa <- rsq_gfr_bsa - z*rsq.se_gfr_bsa
-UL_gfr_bsa <- rsq_gfr_bsa + z*rsq.se_gfr_bsa
+mod_gfr_bsa_specs <- compute_rsq_conf_interval(mod_gfr_bsa)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-gfr_bsa-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+gfr_bsa_dat$sexfemale <- ifelse(gfr_bsa_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_gfr_bsa <- as.matrix(cbind(subset(gfr_bsa_dat, select = c("age", "sexfemale")), top_gfr_bsa$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_gfr_bsa_adj <- easy_elasticnet(data = gfr_bsa_dat, 
+                               outcome = "gfr_bsa_plasma", out = "1se.error",
+                               predictors = predictors_gfr_bsa,
+                               cv_method="kfold", folds = 10,
+                               penalty.factor = c(rep(0,2), rep(1, ncol(predictors_gfr_bsa)-2)))
+length(en_gfr_bsa_adj)
+
+retained_vars_gfr_bsa_adj = analytes[analytes$AptName %in% en_gfr_bsa_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+write.csv(retained_vars_gfr_bsa_adj, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/gfr_bsa_adj_panther_proteomics.csv", 
+          row.names = F)
+
+mod_df_gfr_bsa_adj <- create_lm_summary(gfr_bsa_dat, "gfr_bsa_plasma", en_gfr_bsa_adj, retained_vars_gfr_bsa_adj, log = T)
+create_lm_summary_table_plot(mod_df_gfr_bsa_adj$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_gfr_bsa)`.
+
+```{r echo = F, warning = F, message=F}
+mod_gfr_bsa_adj <- mod_df_gfr_bsa_adj$model
+kable(glance(mod_gfr_bsa_adj))
+plot(mod_gfr_bsa_adj)
+
+# Adjusted R-squared 95% CI
+mod_gfr_bsa_adj_specs <- compute_rsq_conf_interval(mod_gfr_bsa_adj)
 ```
 
 ### RPF (Raw plasma)
 
-```{r elastic-net-rpf, echo = F, warning = F, message=F}
-# Limit to records with non-missing rpf
-panther_erpf_raw_plasma <- cleanData_panther %>% 
-  filter(!is.na(erpf_raw_plasma) & erpf_raw_plasma > 0) %>% 
-  dplyr::select(erpf_raw_plasma, starts_with("seq")) 
+#### Unadjusted model
 
-# Top 100 associations to rpf
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(panther_erpf_raw_plasma))
-predictors <- colnames(panther_erpf_raw_plasma[seq])
+```{r elastic-net-rpf-unadj, echo = F, warning = F, message=F, results ='asis'}
+rpf_dat <- subset(cleanData_panther, !is.na(erpf_raw_plasma) & erpf_raw_plasma > 0)
+top_rpf <- top_associations(rpf_dat, "erpf_raw_plasma", analytes, log = T)
 
-result_rpf <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("log(erpf_raw_plasma) ~ ",predictors[i])
-  mod <- lm(data = panther_erpf_raw_plasma, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_rpf <- rbind(result_rpf,tidymod)
-}
-
-result_rpf$adj.p.value <- p.adjust(result_rpf$p.value, "fdr")
-result_rpf$AptName <- result_rpf$term
-result_rpf$term <- NULL
-result_rpf <- merge(result_rpf,analytes,by="AptName",all.x = T, all.y = F)
-result_rpf <- result_rpf[order(result_rpf$p.value),] 
-result_rpf_100 <- head(result_rpf, 100)$AptName
-predictors_rpf <- as.matrix(subset(panther_erpf_raw_plasma, select = result_rpf_100))
 # Elastic net regression
-en_rpf <- easy_elasticnet(data = panther_erpf_raw_plasma, 
-                        outcome = "erpf_raw_plasma", out = "1se.error",
-                        predictors = predictors_rpf,
-                        cv_method="kfold", folds = 10)
+en_rpf <- easy_elasticnet(data = rpf_dat, 
+                          outcome = "erpf_raw_plasma", 
+                          out = "1se.error",
+                          predictors = top_rpf$predictors_matrix,
+                          cv_method="kfold", 
+                          folds = 10)
+length(en_rpf)
 
-retained_vars_rpf = analytes[analytes$AptName %in% en_rpf, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_rpf = analytes[analytes$AptName %in% en_rpf, 
+                             c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
 write.csv(retained_vars_rpf, 
           "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/rpf_panther_proteomics.csv", 
           row.names = F)
 
-form_rpf = as.formula(paste0("log(erpf_raw_plasma) ~ ",paste0(en_rpf,collapse = "+")))
-mod_rpf = lm(formula = form_rpf, data = panther_erpf_raw_plasma)
-mod_df_rpf = as.data.frame(tidy(mod_rpf, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_rpf) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_rpf,p.value), digits = 3)
-ggplot(mod_df_rpf[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_rpf <- create_lm_summary(rpf_dat, "erpf_raw_plasma", en_rpf, retained_vars_rpf, log = T)
+create_lm_summary_table_plot(mod_df_rpf$model_df, format = "html")
 ```
 
-Top `r length(result_rpf_100)` proteins included in analysis. No. of proteins identified: `r length(en_rpf)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_rpf)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_rpf <- mod_df_rpf$model
 kable(glance(mod_rpf))
 plot(mod_rpf)
 
 # Adjusted R-squared 95% CI
-rsq_rpf <- summary(mod_rpf)$adj.r.squared
-k_rpf <- ncol(mod_rpf$model) - 1
-n_rpf <- mod_rpf$df.residual + k_rpf + 1
-rsq.se_rpf <- sqrt((4 * rsq_rpf * (1 - rsq_rpf)^2 * (n_rpf - k_rpf - 1)^2)/((n_rpf^2 - 1) * (3 + n_rpf)))
-LL_rpf <- rsq_rpf - z*rsq.se_rpf
-UL_rpf <- rsq_rpf + z*rsq.se_rpf
+mod_rpf_specs <- compute_rsq_conf_interval(mod_rpf)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-rpf-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+rpf_dat$sexfemale <- ifelse(rpf_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_rpf <- as.matrix(cbind(subset(rpf_dat, select = c("age", "sexfemale")), top_rpf$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_rpf_adj <- easy_elasticnet(data = rpf_dat, 
+                              outcome = "erpf_raw_plasma", out = "1se.error",
+                              predictors = predictors_rpf,
+                              cv_method="kfold", folds = 10,
+                              penalty.factor = c(rep(0,2), rep(1, ncol(predictors_rpf)-2)))
+length(en_rpf_adj)
+
+retained_vars_rpf_adj = analytes[analytes$AptName %in% en_rpf_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+write.csv(retained_vars_rpf_adj, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/rpf_adj_panther_proteomics.csv", 
+          row.names = F)
+
+mod_df_rpf_adj <- create_lm_summary(rpf_dat, "erpf_raw_plasma", en_rpf_adj, retained_vars_rpf_adj, log = T)
+create_lm_summary_table_plot(mod_df_rpf_adj$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_rpf)`.
+
+```{r echo = F, warning = F, message=F}
+mod_rpf_adj <- mod_df_rpf_adj$model
+kable(glance(mod_rpf_adj))
+plot(mod_rpf_adj)
+
+# Adjusted R-squared 95% CI
+mod_rpf_adj_specs <- compute_rsq_conf_interval(mod_rpf_adj)
 ```
 
 ### RPF (BSA plasma)
 
-```{r elastic-net-rpf-bsa, echo = F, warning = F, message=F}
-# Limit to records with non-missing rpf
-panther_erpf_bsa_plasma <- cleanData_panther %>% 
-  filter(!is.na(erpf_bsa_plasma) & erpf_bsa_plasma > 0) %>% 
-  dplyr::select(erpf_bsa_plasma, starts_with("seq")) 
+#### Unadjusted model
 
-# Top 100 associations to rpf
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(panther_erpf_bsa_plasma))
-predictors <- colnames(panther_erpf_bsa_plasma[seq])
+```{r elastic-net-erpf_bsa-unadj, echo = F, warning = F, message=F, results ='asis'}
+erpf_bsa_dat <- subset(cleanData_panther, !is.na(erpf_bsa_plasma) & erpf_bsa_plasma > 0)
+top_erpf_bsa <- top_associations(erpf_bsa_dat, "erpf_bsa_plasma", analytes, log = T)
 
-result_rpf_bsa <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("log(erpf_bsa_plasma) ~ ",predictors[i])
-  mod <- lm(data = panther_erpf_bsa_plasma, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_rpf_bsa <- rbind(result_rpf_bsa,tidymod)
-}
-
-result_rpf_bsa$adj.p.value <- p.adjust(result_rpf_bsa$p.value, "fdr")
-result_rpf_bsa$AptName <- result_rpf_bsa$term
-result_rpf_bsa$term <- NULL
-result_rpf_bsa <- merge(result_rpf_bsa,analytes,by="AptName",all.x = T, all.y = F)
-result_rpf_bsa <- result_rpf_bsa[order(result_rpf_bsa$p.value),] 
-result_rpf_bsa_100 <- head(result_rpf_bsa, 100)$AptName
-predictors_rpf_bsa <- as.matrix(subset(panther_erpf_bsa_plasma, select = result_rpf_bsa_100))
 # Elastic net regression
-en_rpf_bsa <- easy_elasticnet(data = panther_erpf_bsa_plasma, 
-                        outcome = "erpf_bsa_plasma", out = "1se.error",
-                        predictors = predictors_rpf_bsa,
-                        cv_method="kfold", folds = 10)
+en_erpf_bsa <- easy_elasticnet(data = erpf_bsa_dat, 
+                           outcome = "erpf_bsa_plasma", 
+                           out = "1se.error",
+                           predictors = top_erpf_bsa$predictors_matrix,
+                           cv_method="kfold", 
+                           folds = 10)
+length(en_erpf_bsa)
 
-retained_vars_rpf_bsa = analytes[analytes$AptName %in% en_rpf_bsa, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_erpf_bsa = analytes[analytes$AptName %in% en_erpf_bsa, 
+                              c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
-write.csv(retained_vars_rpf_bsa, 
-          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/rpf_bsa_panther_proteomics.csv", 
+write.csv(retained_vars_erpf_bsa, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/erpf_bsa_panther_proteomics.csv", 
           row.names = F)
 
-form_rpf_bsa = as.formula(paste0("log(erpf_bsa_plasma) ~ ",paste0(en_rpf_bsa,collapse = "+")))
-mod_rpf_bsa = lm(formula = form_rpf_bsa, data = panther_erpf_bsa_plasma)
-mod_df_rpf_bsa = as.data.frame(tidy(mod_rpf_bsa, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_rpf_bsa) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_rpf_bsa,p.value), digits = 3)
-ggplot(mod_df_rpf_bsa[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_erpf_bsa <- create_lm_summary(erpf_bsa_dat, "erpf_bsa_plasma", en_erpf_bsa, retained_vars_erpf_bsa, log = T)
+create_lm_summary_table_plot(mod_df_erpf_bsa$model_df, format = "html")
 ```
 
-Top `r length(result_rpf_100)` proteins included in analysis. No. of proteins identified: `r length(en_rpf_bsa)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_erpf_bsa)`.
 
 ```{r echo = F, warning = F, message=F}
-kable(glance(mod_rpf_bsa))
-plot(mod_rpf_bsa)
+mod_erpf_bsa <- mod_df_erpf_bsa$model
+kable(glance(mod_erpf_bsa))
+plot(mod_erpf_bsa)
 
 # Adjusted R-squared 95% CI
-rsq_rpf_bsa <- summary(mod_rpf_bsa)$adj.r.squared
-k_rpf_bsa <- ncol(mod_rpf_bsa$model) - 1
-n_rpf_bsa <- mod_rpf_bsa$df.residual + k_rpf_bsa + 1
-rsq.se_rpf_bsa <- sqrt((4 * rsq_rpf_bsa * (1 - rsq_rpf_bsa)^2 * (n_rpf_bsa - k_rpf_bsa - 1)^2)/((n_rpf_bsa^2 - 1) * (3 + n_rpf_bsa)))
-LL_rpf_bsa <- rsq_rpf_bsa - z*rsq.se_rpf_bsa
-UL_rpf_bsa <- rsq_rpf_bsa + z*rsq.se_rpf_bsa
+mod_erpf_bsa_specs <- compute_rsq_conf_interval(mod_erpf_bsa)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-erpf_bsa-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+erpf_bsa_dat$sexfemale <- ifelse(erpf_bsa_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_erpf_bsa <- as.matrix(cbind(subset(erpf_bsa_dat, select = c("age", "sexfemale")), top_erpf_bsa$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_erpf_bsa_adj <- easy_elasticnet(data = erpf_bsa_dat, 
+                               outcome = "erpf_bsa_plasma", out = "1se.error",
+                               predictors = predictors_erpf_bsa,
+                               cv_method="kfold", folds = 10,
+                               penalty.factor = c(rep(0,2), rep(1, ncol(predictors_erpf_bsa)-2)))
+length(en_erpf_bsa_adj)
+
+retained_vars_erpf_bsa_adj = analytes[analytes$AptName %in% en_erpf_bsa_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+write.csv(retained_vars_erpf_bsa_adj, 
+          "/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/erpf_bsa_adj_panther_proteomics.csv", 
+          row.names = F)
+
+mod_df_erpf_bsa_adj <- create_lm_summary(erpf_bsa_dat, "erpf_bsa_plasma", en_erpf_bsa_adj, retained_vars_erpf_bsa_adj, log = T)
+create_lm_summary_table_plot(mod_df_erpf_bsa_adj$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_erpf_bsa)`.
+
+```{r echo = F, warning = F, message=F}
+mod_erpf_bsa_adj <- mod_df_erpf_bsa_adj$model
+kable(glance(mod_erpf_bsa_adj))
+plot(mod_erpf_bsa_adj)
+
+# Adjusted R-squared 95% CI
+mod_erpf_bsa_adj_specs <- compute_rsq_conf_interval(mod_erpf_bsa_adj)
 ```
 
 ## Elastic net models combined
+#### Unadjusted models
 
-```{r elastic-net-combined1, echo=F}
-elasticnet_combined <- data.frame(r2 = c(rsq_airg, rsq_bcell, rsq_di, rsq_si, rsq_tkv, rsq_ht_adj_tkv, rsq_gfr, rsq_gfr_bsa, rsq_rpf, rsq_rpf_bsa),
-                                  lower = c(LL_airg, LL_bcell, LL_di, LL_si, LL_tkv, LL_ht_adj_tkv, LL_gfr, LL_gfr_bsa, LL_rpf, LL_rpf_bsa),
-                                  upper = c(UL_airg, UL_bcell, UL_di, UL_si, UL_tkv, UL_ht_adj_tkv, UL_gfr, UL_gfr_bsa, UL_rpf, UL_rpf_bsa),
+```{r elastic-net-combined-all, echo=F}
+elasticnet_combined <- data.frame(r2 = c(mod_airg_specs$rsq_adj, mod_bcell_specs$rsq_adj, mod_di_specs$rsq_adj, mod_si_specs$rsq_adj, mod_tkv_specs$rsq_adj, mod_ht_adj_tkv_specs$rsq_adj, mod_gfr_specs$rsq_adj, mod_gfr_bsa_specs$rsq_adj, mod_rpf_specs$rsq_adj, mod_erpf_bsa_specs$rsq_adj),
+                                  lower = c(mod_airg_specs$conf.low, mod_bcell_specs$conf.low, mod_di_specs$conf.low, mod_si_specs$conf.low, mod_tkv_specs$conf.low, mod_ht_adj_tkv_specs$conf.low, mod_gfr_specs$conf.low, mod_gfr_bsa_specs$conf.low, mod_rpf_specs$conf.low, mod_erpf_bsa_specs$conf.low),
+                                  upper = c(mod_airg_specs$conf.high, mod_bcell_specs$conf.high, mod_di_specs$conf.high, mod_si_specs$conf.high, mod_tkv_specs$conf.high, mod_ht_adj_tkv_specs$conf.high, mod_gfr_specs$conf.high, mod_gfr_bsa_specs$conf.high, mod_rpf_specs$conf.high, mod_erpf_bsa_specs$conf.high),
                                   Model = c("AIRg", "B-cell", "DI", "SI", "TKV", "Ht-adj TKV", "GFR - Raw", "GFR - BSA", "RPF - Raw", "RPF - BSA"),
                                   No.proteins = c(length(en_airg), length(en_bcell), length(en_di), length(en_si), 
-                                        length(en_tkv), length(en_ht_adj_tkv), length(en_gfr),length(en_gfr_bsa),
-                                        length(en_rpf),length(en_rpf_bsa)))
+                                                  length(en_tkv), length(en_ht_adj_tkv), length(en_gfr),length(en_gfr_bsa),
+                                                  length(en_rpf),length(en_erpf_bsa)))
 elasticnet_combined$` ` <- paste(rep(" ", 20), collapse = " ")
 
 # Create confidence interval column to display
@@ -859,41 +987,117 @@ forest(data = elasticnet_combined[,c(4:7)],
        upper = elasticnet_combined$upper, ci_column = 3)
 ```
 
-```{r elastic-net-combined2, echo=F}
-elasticnet_combined <- data.frame(r2 = c(rsq_airg, rsq_bcell, rsq_di, rsq_si, rsq_tkv, rsq_ht_adj_tkv),
-                                  lower = c(LL_airg, LL_bcell, LL_di, LL_si, LL_tkv, LL_ht_adj_tkv),
-                                  upper = c(UL_airg, UL_bcell, UL_di, UL_si, UL_tkv, UL_ht_adj_tkv),
-                                  Model = c("AIRg", "B-cell", "DI", "SI", "TKV", "Ht-adj TKV"),
+```{r elastic-net-combined-ipna, echo=F}
+elasticnet_combined_ipna <- data.frame(r2 = c(mod_tkv_specs$rsq_adj, mod_ht_adj_tkv_specs$rsq_adj, mod_gfr_specs$rsq_adj, mod_rpf_specs$rsq_adj),
+                                  lower = c(mod_tkv_specs$conf.low, mod_ht_adj_tkv_specs$conf.low, mod_gfr_specs$conf.low, mod_rpf_specs$conf.low),
+                                  upper = c(mod_tkv_specs$conf.high, mod_ht_adj_tkv_specs$conf.high, mod_gfr_specs$conf.high, mod_rpf_specs$conf.high),
+                                  Model = c("TKV", "Ht-adj TKV", "GFR", "RPF"),
+                                  No.proteins = c(length(en_tkv), length(en_ht_adj_tkv), length(en_gfr),
+                                                  length(en_rpf)))
+elasticnet_combined_ipna$` ` <- paste(rep(" ", 20), collapse = " ")
+
+# Create confidence interval column to display
+elasticnet_combined_ipna$`Adjusted R-squared (95% CI)` <- ifelse(is.na(elasticnet_combined_ipna$r2), "",
+                             sprintf("%.2f (%.2f to %.2f)",
+                                     elasticnet_combined_ipna$r2, elasticnet_combined_ipna$lower, elasticnet_combined_ipna$upper))
+
+forest(data = elasticnet_combined_ipna[,c(4:7)], 
+       est = elasticnet_combined_ipna$r2,
+       lower = elasticnet_combined_ipna$lower,
+       upper = elasticnet_combined_ipna$upper, ci_column = 3)
+```
+
+```{r elastic-net-combined-ivgtt, echo=F}
+elasticnet_combined_ivgtt <- data.frame(r2 = c(mod_airg_specs$rsq_adj, mod_bcell_specs$rsq_adj, mod_di_specs$rsq_adj, mod_si_specs$rsq_adj, mod_tkv_specs$rsq_adj, mod_ht_adj_tkv_specs$rsq_adj, mod_gfr_specs$rsq_adj, mod_gfr_bsa_specs$rsq_adj, mod_rpf_specs$rsq_adj, mod_erpf_bsa_specs$rsq_adj),
+                                  lower = c(mod_airg_specs$conf.low, mod_bcell_specs$conf.low, mod_di_specs$conf.low, mod_si_specs$conf.low, mod_tkv_specs$conf.low, mod_ht_adj_tkv_specs$conf.low, mod_gfr_specs$conf.low, mod_gfr_bsa_specs$conf.low, mod_rpf_specs$conf.low, mod_erpf_bsa_specs$conf.low),
+                                  upper = c(mod_airg_specs$conf.high, mod_bcell_specs$conf.high, mod_di_specs$conf.high, mod_si_specs$conf.high, mod_tkv_specs$conf.high, mod_ht_adj_tkv_specs$conf.high, mod_gfr_specs$conf.high, mod_gfr_bsa_specs$conf.high, mod_rpf_specs$conf.high, mod_erpf_bsa_specs$conf.high),
+                                  Model = c("AIRg", "B-cell", "DI", "SI", "TKV", "Ht-adj TKV", "GFR - Raw", "GFR - BSA", "RPF - Raw", "RPF - BSA"),
                                   No.proteins = c(length(en_airg), length(en_bcell), length(en_di), length(en_si), 
-                                        length(en_tkv), length(en_ht_adj_tkv)))
-elasticnet_combined$` ` <- paste(rep(" ", 20), collapse = " ")
+                                                  length(en_tkv), length(en_ht_adj_tkv), length(en_gfr),length(en_gfr_bsa),
+                                                  length(en_rpf),length(en_erpf_bsa)))
+elasticnet_combined_ivgtt$` ` <- paste(rep(" ", 20), collapse = " ")
 
 # Create confidence interval column to display
-elasticnet_combined$`Adjusted R-squared (95% CI)` <- ifelse(is.na(elasticnet_combined$r2), "",
+elasticnet_combined_ivgtt$`Adjusted R-squared (95% CI)` <- ifelse(is.na(elasticnet_combined_ivgtt$r2), "",
                              sprintf("%.2f (%.2f to %.2f)",
-                                     elasticnet_combined$r2, elasticnet_combined$lower, elasticnet_combined$upper))
+                                     elasticnet_combined_ivgtt$r2, elasticnet_combined_ivgtt$lower, elasticnet_combined_ivgtt$upper))
 
-forest(data = elasticnet_combined[,c(4:7)], 
-       est = elasticnet_combined$r2,
-       lower = elasticnet_combined$lower,
-       upper = elasticnet_combined$upper, ci_column = 3)
+forest(data = elasticnet_combined_ivgtt[,c(4:7)], 
+       est = elasticnet_combined_ivgtt$r2,
+       lower = elasticnet_combined_ivgtt$lower,
+       upper = elasticnet_combined_ivgtt$upper, ci_column = 3)
 ```
 
-```{r elastic-net-combined3, echo=F}
-elasticnet_combined <- data.frame(r2 = c(rsq_airg, rsq_bcell, rsq_di, rsq_si),
-                                  lower = c(LL_airg, LL_bcell, LL_di, LL_si),
-                                  upper = c(UL_airg, UL_bcell, UL_di, UL_si),
-                                  Model = c("AIRg", "B-cell", "DI", "SI"),
-                                  No.proteins = c(length(en_airg), length(en_bcell), length(en_di), length(en_si)))
-elasticnet_combined$` ` <- paste(rep(" ", 20), collapse = " ")
+#### Adjusted models by age and sex
+
+```{r elastic-net-combined-all-adj, echo=F}
+elasticnet_combined_adj <- data.frame(r2 = c(mod_airg_adj_specs$rsq_adj, mod_bcell_adj_specs$rsq_adj, mod_di_adj_specs$rsq_adj, mod_si_adj_specs$rsq_adj, mod_tkv_adj_specs$rsq_adj, mod_ht_adj_tkv_adj_specs$rsq_adj, mod_gfr_adj_specs$rsq_adj, mod_gfr_bsa_adj_specs$rsq_adj, mod_rpf_adj_specs$rsq_adj, mod_erpf_bsa_adj_specs$rsq_adj),
+                                  lower = c(mod_airg_adj_specs$conf.low, mod_bcell_adj_specs$conf.low, mod_di_adj_specs$conf.low, mod_si_adj_specs$conf.low, mod_tkv_adj_specs$conf.low, mod_ht_adj_tkv_adj_specs$conf.low, mod_gfr_adj_specs$conf.low, mod_gfr_bsa_adj_specs$conf.low, mod_rpf_adj_specs$conf.low, mod_erpf_bsa_adj_specs$conf.low),
+                                  upper = c(mod_airg_adj_specs$conf.high, mod_bcell_adj_specs$conf.high, mod_di_adj_specs$conf.high, mod_si_adj_specs$conf.high, mod_tkv_adj_specs$conf.high, mod_ht_adj_tkv_adj_specs$conf.high, mod_gfr_adj_specs$conf.high, mod_gfr_bsa_adj_specs$conf.high, mod_rpf_adj_specs$conf.high, mod_erpf_bsa_adj_specs$conf.high),
+                                  Model = c("AIRg", "B-cell", "DI", "SI", "TKV", "Ht-adj TKV", "GFR - Raw", "GFR - BSA", "RPF - Raw", "RPF - BSA"),
+                                  No.proteins = c(length(en_airg_adj)-2, 
+                                                  length(en_bcell_adj)-2, 
+                                                  length(en_di_adj)-2, 
+                                                  length(en_si_adj)-2, 
+                                                  length(en_tkv_adj)-2, 
+                                                  length(en_ht_adj_tkv_adj)-2, 
+                                                  length(en_gfr_adj)-2,
+                                                  length(en_gfr_bsa_adj)-2,
+                                                  length(en_rpf_adj)-2,
+                                                  length(en_erpf_bsa_adj)-2))
+elasticnet_combined_adj$` ` <- paste(rep(" ", 20), collapse = " ")
 
 # Create confidence interval column to display
-elasticnet_combined$`Adjusted R-squared (95% CI)` <- ifelse(is.na(elasticnet_combined$r2), "",
+elasticnet_combined_adj$`Adjusted R-squared (95% CI)` <- ifelse(is.na(elasticnet_combined_adj$r2), "",
                              sprintf("%.2f (%.2f to %.2f)",
-                                     elasticnet_combined$r2, elasticnet_combined$lower, elasticnet_combined$upper))
+                                     elasticnet_combined_adj$r2, elasticnet_combined_adj$lower, elasticnet_combined_adj$upper))
 
-forest(data = elasticnet_combined[,c(4:7)], 
-       est = elasticnet_combined$r2,
-       lower = elasticnet_combined$lower,
-       upper = elasticnet_combined$upper, ci_column = 3)
+forest(data = elasticnet_combined_adj[,c(4:7)], 
+       est = elasticnet_combined_adj$r2,
+       lower = elasticnet_combined_adj$lower,
+       upper = elasticnet_combined_adj$upper, ci_column = 3)
+```
+
+```{r elastic-net-combined-ipna-adj, echo=F}
+elasticnet_combined_adj_ipna <- data.frame(r2 = c(mod_tkv_adj_specs$rsq_adj, mod_ht_adj_tkv_adj_specs$rsq_adj, mod_gfr_adj_specs$rsq_adj, mod_rpf_adj_specs$rsq_adj),
+                                  lower = c(mod_tkv_adj_specs$conf.low, mod_ht_adj_tkv_adj_specs$conf.low, mod_gfr_adj_specs$conf.low, mod_rpf_adj_specs$conf.low),
+                                  upper = c(mod_tkv_adj_specs$conf.high, mod_ht_adj_tkv_adj_specs$conf.high, mod_gfr_adj_specs$conf.high, mod_rpf_adj_specs$conf.high),
+                                  Model = c("TKV", "Ht-adj TKV", "GFR", "RPF"),
+                                  No.proteins = c(length(en_tkv_adj)-2, 
+                                                  length(en_ht_adj_tkv_adj)-2, 
+                                                  length(en_gfr_adj)-2, 
+                                                  length(en_rpf_adj)-2))
+elasticnet_combined_adj_ipna$` ` <- paste(rep(" ", 20), collapse = " ")
+
+# Create confidence interval column to display
+elasticnet_combined_adj_ipna$`Adjusted R-squared (95% CI)` <- ifelse(is.na(elasticnet_combined_adj_ipna$r2), "",
+                             sprintf("%.2f (%.2f to %.2f)",
+                                     elasticnet_combined_adj_ipna$r2, elasticnet_combined_adj_ipna$lower, elasticnet_combined_adj_ipna$upper))
+
+forest(data = elasticnet_combined_adj_ipna[,c(4:7)], 
+       est = elasticnet_combined_adj_ipna$r2,
+       lower = elasticnet_combined_adj_ipna$lower,
+       upper = elasticnet_combined_adj_ipna$upper, ci_column = 3)
+```
+
+```{r elastic-net-combined-ivgtt-adj, echo=F}
+elasticnet_combined_adj_ivgtt <- data.frame(r2 = c(mod_airg_adj_specs$rsq_adj, mod_bcell_adj_specs$rsq_adj, mod_di_adj_specs$rsq_adj, mod_si_adj_specs$rsq_adj),
+                                  lower = c(mod_airg_adj_specs$conf.low, mod_bcell_adj_specs$conf.low, mod_di_adj_specs$conf.low, mod_si_adj_specs$conf.low),
+                                  upper = c(mod_airg_adj_specs$conf.high, mod_bcell_adj_specs$conf.high, mod_di_adj_specs$conf.high, mod_si_adj_specs$conf.high),
+                                  Model = c("AIRg", "B-cell", "DI", "SI"),
+                                  No.proteins = c(length(en_airg_adj)-2, 
+                                                  length(en_bcell_adj)-2, 
+                                                  length(en_di_adj)-2, 
+                                                  length(en_si_adj)-2))
+elasticnet_combined_adj_ivgtt$` ` <- paste(rep(" ", 20), collapse = " ")
+
+# Create confidence interval column to display
+elasticnet_combined_adj_ivgtt$`Adjusted R-squared (95% CI)` <- ifelse(is.na(elasticnet_combined_adj_ivgtt$r2), "",
+                             sprintf("%.2f (%.2f to %.2f)",
+                                     elasticnet_combined_adj_ivgtt$r2, elasticnet_combined_adj_ivgtt$lower, elasticnet_combined_adj_ivgtt$upper))
+
+forest(data = elasticnet_combined_adj_ivgtt[,c(4:7)], 
+       est = elasticnet_combined_adj_ivgtt$r2,
+       lower = elasticnet_combined_adj_ivgtt$lower,
+       upper = elasticnet_combined_adj_ivgtt$upper, ci_column = 3)
 ```

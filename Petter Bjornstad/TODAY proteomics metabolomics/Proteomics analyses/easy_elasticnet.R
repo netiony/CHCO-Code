@@ -9,7 +9,7 @@ easy_elasticnet = function(data,outcome,predictors,
                            n_alphas = 10,n_lambdas = 100,max_coef = NULL,
                            model_type = "gaussian",time = NULL,
                            cv_method = "loo",folds = NULL,out = "1se.error",
-                           cores = 4,seed = 3654){
+                           cores = 4,seed = 3654,penalty.factor=rep(1, ncol(predictors))){
   require(ensr)
   df = data
   # Random seed
@@ -89,7 +89,7 @@ easy_elasticnet = function(data,outcome,predictors,
   # Refit models to get selected parameters (the coef() function output for caret is confusing)
   a = params$alpha
   l = params$lambda
-  mod = glmnet(y = Y,x = X,alpha = a,lambda = l,family = model_type)
+  mod = glmnet(y = Y,x = X,alpha = a,lambda = l,family = model_type, penalty.factor = penalty.factor)
   selected = as.matrix(coef(mod))
   selected = rownames(selected)[selected[,1] != 0]
   selected = selected[selected != "(Intercept)"]

@@ -9,7 +9,6 @@ format:
     toc-location: left
     code-fold: true
     embed-resources: true
-editor: visual
 ---
 
 # Validation (in RH/RH2/IMP)
@@ -39,21 +38,151 @@ library(grid)
 library(forestploter)
 library(eulerr)
 library(UpSetR)
+library(ComplexHeatmap)
 ```
 
 ```{r load-data-2, echo = F, include = F}
 # Panther + RH + RH2 + IMPROVE data + SOMA scaled (cleanData_comb)
 load("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther+rh+rh2+imp_data_soma_std.RData")
+cleanData_comb$sexfemale <- ifelse(cleanData_comb$sex == "female", 1, 0)
 retained_vars_tkv <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/tkv_panther_proteomics.csv")
 retained_vars_ht_adj_tkv <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/ht_adj_tkv_panther_proteomics.csv")
 retained_vars_gfr <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/gfr_panther_proteomics.csv")
 retained_vars_gfr_bsa <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/gfr_bsa_panther_proteomics.csv")
 retained_vars_rpf <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/rpf_panther_proteomics.csv")
-retained_vars_rpf_bsa <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/rpf_bsa_panther_proteomics.csv")
+retained_vars_erpf_bsa <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/erpf_bsa_panther_proteomics.csv")
+
+retained_vars_tkv_adj <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/tkv_adj_panther_proteomics.csv")
+retained_vars_ht_adj_tkv_adj <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/ht_adj_tkv_adj_panther_proteomics.csv")
+retained_vars_gfr_adj <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/gfr_adj_panther_proteomics.csv")
+retained_vars_gfr_bsa_adj <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/gfr_bsa_adj_panther_proteomics.csv")
+retained_vars_rpf_adj <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/rpf_adj_panther_proteomics.csv")
+retained_vars_erpf_bsa_adj <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Results/Proteomics/erpf_bsa_panther_proteomics.csv")
 # Load elastic net function
 source("/Users/choiyej/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/easy_elasticnet.R")
 # Load SOMAScan analytes data (analytes)
 load("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_analytes.RData")
+```
+
+```{r include = F}
+top_associations <- function(data, response_var, analyte_filter, top_n = 100, adjust_method = "fdr", covariates = NULL, log = F) {
+  
+  # Filter data based on specified criteria
+  filtered_data <- data %>%
+    filter(!is.na(!!sym(response_var)) & !!sym(response_var) > 0)
+  
+  # Identify analyte columns (those containing 'seq')
+  is_seq <- function(.x) grepl("seq", .x)
+  seq_cols <- is_seq(names(filtered_data))
+  predictors <- colnames(filtered_data[seq_cols])
+  
+  # Initialize result storage
+  result <- NULL
+  
+  # Loop through each predictor and fit a model
+  for (i in 1:length(predictors)) {
+    if(log){ 
+      form <- paste0("log(", response_var, ") ~ ", predictors[i])}
+    if(!log){
+      form <- paste0(response_var, "~ ", predictors[i])}
+    mod <- lm(data = filtered_data, formula = as.formula(form))
+    tidymod <- tidy(mod, exponentiate = FALSE, conf.int = TRUE)
+    tidymod <- tidymod[2, ]  # Keep only the predictor row
+    result <- rbind(result, tidymod)
+  }
+  
+  # Adjust p-values
+  result$adj.p.value <- p.adjust(result$p.value, method = adjust_method)
+  
+  # Rename and merge with analyte metadata
+  result$AptName <- result$term
+  result$term <- NULL
+  result <- merge(result, analyte_filter, by = "AptName", all.x = TRUE)
+  
+  # Order by p-value and select top N results
+  result <- result[order(result$p.value), ]
+  result_100 <- head(result, top_n)$AptName
+  
+  # Create the final matrix of predictors, including 'age'
+  predictors_matrix <- as.matrix(subset(filtered_data, select = c(covariates, result_100)))
+  
+  return(list(top_associations = result, predictors_matrix = predictors_matrix))
+}
+
+create_lm_summary <- function(data, response_var, predictors, retained_vars, log = F) {
+  
+  # Create formula for the linear model
+  if(log){
+    form <- as.formula(paste0("log(", response_var, ") ~ ", paste0(predictors, collapse = "+")))
+  }
+  if(!log){
+    form <- as.formula(paste0(response_var, " ~ ", paste0(predictors, collapse = "+")))
+  }
+  
+  # Fit the linear model
+  model <- lm(formula = form, data = data)
+  
+  # Tidy the model output and convert to a data frame
+  model_df <- as.data.frame(tidy(model, exponentiate = FALSE, conf.int = TRUE), digits = 3)
+  
+  # Left join with retained variables (retained_vars) and handle missing values for Target_nodup and TargetFullName
+  model_df <- model_df %>%
+    left_join(retained_vars, by = "term") %>%
+    dplyr::mutate(
+      Target_nodup = case_when(is.na(Target_nodup) ~ term, TRUE ~ Target_nodup),
+      TargetFullName = case_when(is.na(TargetFullName) ~ term, TRUE ~ TargetFullName)
+    ) %>%
+    dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
+  
+  return(list(model = model, model_df = model_df))
+}
+
+create_lm_summary_table_plot <- function(model_df, digits = 3, ...) {
+  
+  # Generate a sorted table using kable
+  sorted_table <- kable(arrange(model_df, p.value), digits = digits, ...)
+  
+  # Create the plot, excluding the first row (usually the intercept)
+  plot <- ggplot(model_df[-1,], 
+                 aes(estimate, 
+                     reorder(Target_nodup, dplyr::desc(p.value)), 
+                     xmin = conf.low, 
+                     xmax = conf.high, 
+                     height = 0)) +
+    geom_point() +
+    geom_vline(xintercept = 0, lty = 4) +
+    geom_errorbarh() +
+    labs(y = NULL, x = "Estimate") +
+    theme_minimal()
+  
+  return(list(table = sorted_table, plot = plot))
+}
+
+compute_rsq_conf_interval <- function(model, conf.level = 0.95) {
+  
+  # Calculate z-score for the specified confidence level
+  z <- qnorm(1 - (1 - conf.level) / 2)
+  
+  # Extract necessary model statistics
+  rsq <- summary(model)$adj.r.squared
+  k <- ncol(model$model) - 1  # Number of predictors
+  n <- model$df.residual + k + 1  # Total sample size
+  
+  # Compute the standard error of adjusted R-squared
+  rsq_se <- sqrt((4 * rsq * (1 - rsq)^2 * (n - k - 1)^2) / ((n^2 - 1) * (3 + n)))
+  
+  # Calculate lower and upper limits of the confidence interval
+  LL <- rsq - z * rsq_se
+  UL <- rsq + z * rsq_se
+  
+  return(list(
+    rsq_adj = rsq,
+    rsq_se = rsq_se,
+    conf.low = LL,
+    conf.high = UL
+  ))
+}
+
 ```
 
 ## Approach 1
@@ -61,241 +190,258 @@ load("/Volumes/Peds Endo/Petter Bjornstad/PANTHER/Data_Cleaned/panther_analytes.
 Validate the multi-protein signatures identified in PANTHER to explain the variance in htTKV, TKV, GFR and RPF in pooled a RH/RH2/IT2D sample set. If the multi-protein signatures identified in PANTHER do not explain the variance in htTKV, TKV, GFR and RPF in a mostly TS5 cohort (RH/RH2/IT2D), this might be ascribed to differences in pubertal status, which is interesting! However, if they perform well the proteins are likely not puberty related.
 
 ### Total Kidney Volume
+#### Unadjusted
+```{r tkv-validation, echo = F, results= 'asis'}
+tkv_val_dat <- subset(cleanData_comb, !is.na(combined_tkv))
+mod_df_tkv_val <- create_lm_summary(tkv_val_dat, "combined_tkv", retained_vars_tkv$term, retained_vars_tkv)
+create_lm_summary_table_plot(mod_df_tkv_val$model_df, format = "html")
 
-```{r tkv-validation, echo = F}
-form_tkv = as.formula(paste0("combined_tkv ~ ",paste0(retained_vars_tkv$term,collapse = "+")))
-mod_tkv_val = lm(formula = form_tkv, data = subset(cleanData_comb, !is.na(combined_tkv)))
-mod_df_tkv_val = as.data.frame(tidy(mod_tkv_val, exponentiate = F, conf.int = T), digits = 3) %>% 
-  left_join(retained_vars_tkv) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-                TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_tkv_val,p.value), digits = 3)
-ggplot(mod_df_tkv_val[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
-
+mod_tkv_val <- mod_df_tkv_val$model
 kable(glance(mod_tkv_val))
 plot(mod_tkv_val)
 
 # Adjusted R-squared 95% CI
-z = qnorm(0.975)
-rsq_tkv_val <- summary(mod_tkv_val)$adj.r.squared
-k_tkv_val <- ncol(mod_tkv_val$model) - 1
-n_tkv_val <- mod_tkv_val$df.residual + k_tkv_val + 1
-rsq.se_tkv_val <- sqrt((4 * rsq_tkv_val * (1 - rsq_tkv_val)^2 * (n_tkv_val - k_tkv_val - 1)^2)/((n_tkv_val^2 - 1) * (3 + n_tkv_val)))
-LL_tkv_val <- rsq_tkv_val - z*rsq.se_tkv_val
-UL_tkv_val <- rsq_tkv_val + z*rsq.se_tkv_val
+mod_tkv_val_specs <- compute_rsq_conf_interval(mod_tkv_val)
+```
+#### Adjusted for age and sex
+```{r tkv-validation-adj, echo = F, results= 'asis'}
+mod_df_tkv_val_adj <- create_lm_summary(tkv_val_dat, "combined_tkv", c("age", "sexfemale", retained_vars_tkv_adj$term), retained_vars_tkv_adj)
+create_lm_summary_table_plot(mod_df_tkv_val_adj$model_df, format = "html")
+
+mod_tkv_val_adj <- mod_df_tkv_val_adj$model
+kable(glance(mod_tkv_val_adj))
+plot(mod_tkv_val_adj)
+
+# Adjusted R-squared 95% CI
+mod_tkv_val_adj_specs <- compute_rsq_conf_interval(mod_tkv_val_adj)
 ```
 
 ### Height adjusted TKV
+#### Unadjusted
+```{r ht-adj-tkv-validation, echo = F, results= 'asis'}
+ht_tkv_val_dat <- subset(cleanData_comb, !is.na(combined_ht_tkv))
+mod_df_ht_tkv_val <- create_lm_summary(ht_tkv_val_dat, "combined_ht_tkv", retained_vars_ht_adj_tkv$term, retained_vars_ht_adj_tkv)
+create_lm_summary_table_plot(mod_df_ht_tkv_val$model_df, format = "html")
 
-```{r ht-adj-tkv-validation, echo = F}
-form_ht_adj_tkv = as.formula(paste0("combined_ht_tkv ~ ",paste0(retained_vars_ht_adj_tkv$term,collapse = "+")))
-mod_ht_adj_tkv_val = lm(formula = form_ht_adj_tkv, data = subset(cleanData_comb, !is.na(combined_ht_tkv)))
-mod_df_ht_adj_tkv_val = as.data.frame(tidy(mod_ht_adj_tkv_val, exponentiate = F, conf.int = T), digits = 3) %>% 
-  left_join(retained_vars_ht_adj_tkv) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-                TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_ht_adj_tkv_val,p.value), digits = 3)
-ggplot(mod_df_ht_adj_tkv_val[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
-
-kable(glance(mod_ht_adj_tkv_val))
-plot(mod_ht_adj_tkv_val)
+mod_ht_tkv_val <- mod_df_ht_tkv_val$model
+kable(glance(mod_ht_tkv_val))
+plot(mod_ht_tkv_val)
 
 # Adjusted R-squared 95% CI
-rsq_ht_adj_tkv_val <- summary(mod_ht_adj_tkv_val)$adj.r.squared
-k_ht_adj_tkv_val <- ncol(mod_ht_adj_tkv_val$model) - 1
-n_ht_adj_tkv_val <- mod_ht_adj_tkv_val$df.residual + k_ht_adj_tkv_val + 1
-rsq.se_ht_adj_tkv_val <- sqrt((4 * rsq_ht_adj_tkv_val * (1 - rsq_ht_adj_tkv_val)^2 * (n_ht_adj_tkv_val - k_ht_adj_tkv_val - 1)^2)/((n_ht_adj_tkv_val^2 - 1) * (3 + n_ht_adj_tkv_val)))
-LL_ht_adj_tkv_val <- rsq_ht_adj_tkv_val - z*rsq.se_ht_adj_tkv_val
-UL_ht_adj_tkv_val <- rsq_ht_adj_tkv_val + z*rsq.se_ht_adj_tkv_val
+mod_ht_tkv_val_specs <- compute_rsq_conf_interval(mod_ht_tkv_val)
+```
+
+#### Adjusted for age and sex
+```{r ht-adj-tkv-validation-adj, echo = F, results= 'asis'}
+mod_df_ht_tkv_val_adj <- create_lm_summary(ht_tkv_val_dat, "combined_ht_tkv", c("age", "sexfemale", retained_vars_ht_adj_tkv$term), retained_vars_ht_adj_tkv)
+create_lm_summary_table_plot(mod_df_ht_tkv_val_adj$model_df, format = "html")
+
+mod_ht_tkv_val_adj <- mod_df_ht_tkv_val_adj$model
+kable(glance(mod_ht_tkv_val_adj))
+plot(mod_ht_tkv_val_adj)
+
+# Adjusted R-squared 95% CI
+mod_ht_tkv_val_adj_specs <- compute_rsq_conf_interval(mod_ht_tkv_val_adj)
 ```
 
 ### GFR (Raw plasma)
+#### Unadjusted
+```{r gfr-validation, echo = F, results= 'asis'}
+gfr_val_dat <- subset(cleanData_comb, !is.na(gfr_raw_plasma))
+mod_df_gfr_val <- create_lm_summary(gfr_val_dat, "gfr_raw_plasma", retained_vars_gfr$term, retained_vars_gfr)
+create_lm_summary_table_plot(mod_df_gfr_val$model_df, format = "html")
 
-```{r gfr-validation, echo = F}
-form_gfr = as.formula(paste0("gfr_raw_plasma ~ ",paste0(retained_vars_gfr$term,collapse = "+")))
-mod_gfr_val = lm(formula = form_gfr, data = subset(cleanData_comb, !is.na(gfr_raw_plasma)))
-mod_df_gfr_val = as.data.frame(tidy(mod_gfr_val, exponentiate = F, conf.int = T), digits = 3) %>% 
-  left_join(retained_vars_gfr) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-                TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_gfr_val,p.value), digits = 3)
-ggplot(mod_df_gfr_val[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
-
+mod_gfr_val <- mod_df_gfr_val$model
 kable(glance(mod_gfr_val))
 plot(mod_gfr_val)
 
 # Adjusted R-squared 95% CI
-rsq_gfr_val <- summary(mod_gfr_val)$adj.r.squared
-k_gfr_val <- ncol(mod_gfr_val$model) - 1
-n_gfr_val <- mod_gfr_val$df.residual + k_gfr_val + 1
-rsq.se_gfr_val <- sqrt((4 * rsq_gfr_val * (1 - rsq_gfr_val)^2 * (n_gfr_val - k_gfr_val - 1)^2)/((n_gfr_val^2 - 1) * (3 + n_gfr_val)))
-LL_gfr_val <- rsq_gfr_val - z*rsq.se_gfr_val
-UL_gfr_val <- rsq_gfr_val + z*rsq.se_gfr_val
+mod_gfr_val_specs <- compute_rsq_conf_interval(mod_gfr_val)
 ```
+#### Adjusted for age and sex
+```{r gfr-validation-adj, echo = F, results= 'asis'}
+mod_df_gfr_val_adj <- create_lm_summary(gfr_val_dat, "gfr_raw_plasma", c("age", "sexfemale", retained_vars_gfr_adj$term), retained_vars_gfr_adj)
+create_lm_summary_table_plot(mod_df_gfr_val_adj$model_df, format = "html")
 
+mod_gfr_val_adj <- mod_df_gfr_val_adj$model
+kable(glance(mod_gfr_val_adj))
+plot(mod_gfr_val_adj)
+
+# Adjusted R-squared 95% CI
+mod_gfr_val_adj_specs <- compute_rsq_conf_interval(mod_gfr_val_adj)
+```
 
 ### GFR (BSA plasma)
 
-```{r gfr-bsa-validation, echo = F}
-form_gfr_bsa = as.formula(paste0("gfr_bsa_plasma ~ ",paste0(retained_vars_gfr_bsa$term,collapse = "+")))
-mod_gfr_bsa_val = lm(formula = form_gfr_bsa, data = subset(cleanData_comb, !is.na(gfr_bsa_plasma)))
-mod_df_gfr_bsa_val = as.data.frame(tidy(mod_gfr_bsa_val, exponentiate = F, conf.int = T), digits = 3) %>% 
-  left_join(retained_vars_gfr_bsa) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-                TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
+#### Unadjusted
+```{r gfr-bsa-validation, echo = F, results= 'asis'}
+gfr_bsa_val_dat <- subset(cleanData_comb, !is.na(gfr_bsa_plasma))
+mod_df_gfr_bsa_val <- create_lm_summary(gfr_bsa_val_dat, "gfr_bsa_plasma", retained_vars_gfr_bsa$term, retained_vars_gfr_bsa)
+create_lm_summary_table_plot(mod_df_gfr_bsa_val$model_df, format = "html")
 
-kable(arrange(mod_df_gfr_bsa_val,p.value), digits = 3)
-ggplot(mod_df_gfr_bsa_val[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
-
+mod_gfr_bsa_val <- mod_df_gfr_bsa_val$model
 kable(glance(mod_gfr_bsa_val))
 plot(mod_gfr_bsa_val)
 
 # Adjusted R-squared 95% CI
-rsq_gfr_bsa_val <- summary(mod_gfr_bsa_val)$adj.r.squared
-k_gfr_bsa_val <- ncol(mod_gfr_bsa_val$model) - 1
-n_gfr_bsa_val <- mod_gfr_bsa_val$df.residual + k_gfr_bsa_val + 1
-rsq.se_gfr_bsa_val <- sqrt((4 * rsq_gfr_bsa_val * (1 - rsq_gfr_bsa_val)^2 * (n_gfr_bsa_val - k_gfr_bsa_val - 1)^2)/((n_gfr_bsa_val^2 - 1) * (3 + n_gfr_bsa_val)))
-LL_gfr_bsa_val <- rsq_gfr_bsa_val - z*rsq.se_gfr_bsa_val
-UL_gfr_bsa_val <- rsq_gfr_bsa_val + z*rsq.se_gfr_bsa_val
+mod_gfr_bsa_val_specs <- compute_rsq_conf_interval(mod_gfr_bsa_val)
+```
+#### Adjusted for age and sex
+```{r gfr-bsa-validation-adj, echo = F, results= 'asis'}
+mod_df_gfr_bsa_val_adj <- create_lm_summary(gfr_bsa_val_dat, "gfr_bsa_plasma", c("age", "sexfemale", retained_vars_gfr_bsa_adj$term), retained_vars_gfr_bsa_adj)
+create_lm_summary_table_plot(mod_df_gfr_bsa_val_adj$model_df, format = "html")
+
+mod_gfr_bsa_val_adj <- mod_df_gfr_bsa_val_adj$model
+kable(glance(mod_gfr_bsa_val_adj))
+plot(mod_gfr_bsa_val_adj)
+
+# Adjusted R-squared 95% CI
+mod_gfr_bsa_val_adj_specs <- compute_rsq_conf_interval(mod_gfr_bsa_val_adj)
 ```
 
 ### RPF (Raw plasma)
+#### Unadjusted
+```{r rpf-validation, echo = F, results= 'asis'}
+rpf_val_dat <- subset(cleanData_comb, !is.na(erpf_raw_plasma))
+mod_df_rpf_val <- create_lm_summary(rpf_val_dat, "erpf_raw_plasma", retained_vars_rpf$term, retained_vars_rpf)
+create_lm_summary_table_plot(mod_df_rpf_val$model_df, format = "html")
 
-```{r rpf-validation, echo = F}
-form_rpf = as.formula(paste0("erpf_raw_plasma ~ ",paste0(retained_vars_rpf$term,collapse = "+")))
-mod_rpf_val = lm(formula = form_rpf, data = subset(cleanData_comb, !is.na(erpf_raw_plasma)))
-mod_df_rpf_val = as.data.frame(tidy(mod_rpf_val, exponentiate = F, conf.int = T), digits = 3) %>% 
-  left_join(retained_vars_rpf) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-                TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_rpf_val,p.value), digits = 3)
-ggplot(mod_df_rpf_val[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
-
+mod_rpf_val <- mod_df_rpf_val$model
 kable(glance(mod_rpf_val))
 plot(mod_rpf_val)
 
 # Adjusted R-squared 95% CI
-rsq_rpf_val <- summary(mod_rpf_val)$adj.r.squared
-k_rpf_val <- ncol(mod_rpf_val$model) - 1
-n_rpf_val <- mod_rpf_val$df.residual + k_rpf_val + 1
-rsq.se_rpf_val <- sqrt((4 * rsq_rpf_val * (1 - rsq_rpf_val)^2 * (n_rpf_val - k_rpf_val - 1)^2)/((n_rpf_val^2 - 1) * (3 + n_rpf_val)))
-LL_rpf_val <- rsq_rpf_val - z*rsq.se_rpf_val
-UL_rpf_val <- rsq_rpf_val + z*rsq.se_rpf_val
+mod_rpf_val_specs <- compute_rsq_conf_interval(mod_rpf_val)
+```
+#### Adjusted for age and sex
+```{r rpf-validation-adj, echo = F, results= 'asis'}
+mod_df_rpf_val_adj <- create_lm_summary(rpf_val_dat, "erpf_raw_plasma", c("age", "sexfemale", retained_vars_rpf_adj$term), retained_vars_rpf_adj)
+create_lm_summary_table_plot(mod_df_rpf_val_adj$model_df, format = "html")
+
+mod_rpf_val_adj <- mod_df_rpf_val_adj$model
+kable(glance(mod_rpf_val_adj))
+plot(mod_rpf_val_adj)
+
+# Adjusted R-squared 95% CI
+mod_rpf_val_adj_specs <- compute_rsq_conf_interval(mod_rpf_val_adj)
 ```
 
 ### RPF (BSA plasma)
 
-```{r rpf-bsa-validation, echo = F}
-form_rpf_bsa = as.formula(paste0("erpf_bsa_plasma ~ ",paste0(retained_vars_rpf_bsa$term,collapse = "+")))
-mod_rpf_bsa_val = lm(formula = form_rpf_bsa, data = subset(cleanData_comb, !is.na(erpf_bsa_plasma)))
-mod_df_rpf_bsa_val = as.data.frame(tidy(mod_rpf_bsa_val, exponentiate = F, conf.int = T), digits = 3) %>% 
-  left_join(retained_vars_rpf_bsa) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-                TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
+#### Unadjusted
+```{r rpf-bsa-validation, echo = F, results= 'asis'}
+erpf_bsa_val_dat <- subset(cleanData_comb, !is.na(erpf_bsa_plasma))
+mod_df_erpf_bsa_val <- create_lm_summary(erpf_bsa_val_dat, "erpf_bsa_plasma", retained_vars_erpf_bsa$term, retained_vars_erpf_bsa)
+create_lm_summary_table_plot(mod_df_erpf_bsa_val$model_df, format = "html")
 
-kable(arrange(mod_df_rpf_bsa_val,p.value), digits = 3)
-ggplot(mod_df_rpf_bsa_val[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
-
-kable(glance(mod_rpf_bsa_val))
-plot(mod_rpf_bsa_val)
+mod_erpf_bsa_val <- mod_df_erpf_bsa_val$model
+kable(glance(mod_erpf_bsa_val))
+plot(mod_erpf_bsa_val)
 
 # Adjusted R-squared 95% CI
-rsq_rpf_bsa_val <- summary(mod_rpf_bsa_val)$adj.r.squared
-k_rpf_bsa_val <- ncol(mod_rpf_bsa_val$model) - 1
-n_rpf_bsa_val <- mod_rpf_bsa_val$df.residual + k_rpf_bsa_val + 1
-rsq.se_rpf_bsa_val <- sqrt((4 * rsq_rpf_bsa_val * (1 - rsq_rpf_bsa_val)^2 * (n_rpf_bsa_val - k_rpf_bsa_val - 1)^2)/((n_rpf_bsa_val^2 - 1) * (3 + n_rpf_bsa_val)))
-LL_rpf_bsa_val <- rsq_rpf_bsa_val - z*rsq.se_rpf_bsa_val
-UL_rpf_bsa_val <- rsq_rpf_bsa_val + z*rsq.se_rpf_bsa_val
+mod_erpf_bsa_val_specs <- compute_rsq_conf_interval(mod_erpf_bsa_val)
+```
+#### Adjusted for age and sex
+```{r rpf-bsa-validation-adj, echo = F, results= 'asis'}
+mod_df_erpf_bsa_val_adj <- create_lm_summary(erpf_bsa_val_dat, "erpf_bsa_plasma", c("age", "sexfemale", retained_vars_erpf_bsa_adj$term), retained_vars_erpf_bsa_adj)
+create_lm_summary_table_plot(mod_df_erpf_bsa_val_adj$model_df, format = "html")
+
+mod_erpf_bsa_val_adj <- mod_df_erpf_bsa_val_adj$model
+kable(glance(mod_erpf_bsa_val_adj))
+plot(mod_erpf_bsa_val_adj)
+
+# Adjusted R-squared 95% CI
+mod_erpf_bsa_val_adj_specs <- compute_rsq_conf_interval(mod_erpf_bsa_val_adj)
 ```
 
 ## Model comparison
-
-```{r models-combined2, echo=F}
-validation_combined <- data.frame(r2 = c(rsq_tkv_val, rsq_ht_adj_tkv_val, rsq_gfr_val, rsq_gfr_bsa_val, rsq_rpf_val, rsq_rpf_bsa_val),
-                                  lower = c(LL_tkv_val, LL_ht_adj_tkv_val, LL_gfr_val, LL_gfr_bsa_val, LL_rpf_val, LL_rpf_bsa_val),
-                                  upper = c(UL_tkv_val, UL_ht_adj_tkv_val, UL_gfr_val, UL_gfr_bsa_val, UL_rpf_val, UL_rpf_bsa_val),
+#### Unadjusted
+```{r models-combined-val-all, echo=F}
+validation_combined <- data.frame(r2 = c(mod_tkv_val_specs$rsq_adj, mod_ht_tkv_val_adj_specs$rsq_adj, mod_gfr_val_specs$rsq_adj, mod_gfr_bsa_val_specs$rsq_adj, mod_rpf_val_specs$rsq_adj, mod_erpf_bsa_val_specs$rsq_adj),
+                                  lower = c(mod_tkv_val_specs$conf.low, mod_ht_tkv_val_adj_specs$conf.low, mod_gfr_val_specs$conf.low, mod_gfr_bsa_val_specs$conf.low, mod_rpf_val_specs$conf.low, mod_erpf_bsa_val_specs$conf.low),
+                                  upper = c(mod_tkv_val_specs$conf.high, mod_ht_tkv_val_adj_specs$conf.high, mod_gfr_val_specs$conf.high, mod_gfr_bsa_val_specs$conf.high, mod_rpf_val_specs$conf.high, mod_erpf_bsa_val_specs$conf.high),
                                   Model = c("TKV", "Ht-adj TKV", "GFR-Raw", "GFR-BSA", "RPF-Raw", "RPF-BSA"),
                                   No.proteins = c(nrow(retained_vars_tkv), 
                                                   nrow(retained_vars_ht_adj_tkv), 
                                                   nrow(retained_vars_gfr), 
                                                   nrow(retained_vars_gfr_bsa), 
                                                   nrow(retained_vars_rpf), 
-                                                  nrow(retained_vars_rpf_bsa)))
+                                                  nrow(retained_vars_erpf_bsa)))
 validation_combined$` ` <- paste(rep(" ", 20), collapse = " ")
 
 # Create confidence interval column to display
 validation_combined$`Adjusted R-squared (95% CI)` <- ifelse(is.na(validation_combined$r2), "",
                              sprintf("%.2f (%.2f to %.2f)",
                                      validation_combined$r2, validation_combined$lower, validation_combined$upper))
-validation_combined
 forest(data = validation_combined[,c(4:7)], 
        est = validation_combined$r2,
        lower = validation_combined$lower,
        upper = validation_combined$upper, ci_column = 3)
+```
+
+```{r models-combined-val-ipna, echo=F}
+validation_combined_ipna <- data.frame(r2 = c(mod_tkv_val_specs$rsq_adj, mod_ht_tkv_val_adj_specs$rsq_adj, mod_gfr_val_specs$rsq_adj, mod_rpf_val_specs$rsq_adj),
+                                  lower = c(mod_tkv_val_specs$conf.low, mod_ht_tkv_val_adj_specs$conf.low, mod_gfr_val_specs$conf.low, mod_rpf_val_specs$conf.low),
+                                  upper = c(mod_tkv_val_specs$conf.high, mod_ht_tkv_val_adj_specs$conf.high, mod_gfr_val_specs$conf.high, mod_rpf_val_specs$conf.high),
+                                  Model = c("TKV", "Ht-adj TKV", "GFR", "RPF"),
+                                  No.proteins = c(nrow(retained_vars_tkv), 
+                                                  nrow(retained_vars_ht_adj_tkv), 
+                                                  nrow(retained_vars_gfr), 
+                                                  nrow(retained_vars_rpf)))
+validation_combined_ipna$` ` <- paste(rep(" ", 20), collapse = " ")
+
+# Create confidence interval column to display
+validation_combined_ipna$`Adjusted R-squared (95% CI)` <- ifelse(is.na(validation_combined_ipna$r2), "",
+                             sprintf("%.2f (%.2f to %.2f)",
+                                     validation_combined_ipna$r2, validation_combined_ipna$lower, validation_combined_ipna$upper))
+forest(data = validation_combined_ipna[,c(4:7)], 
+       est = validation_combined_ipna$r2,
+       lower = validation_combined_ipna$lower,
+       upper = validation_combined_ipna$upper, ci_column = 3)
+```
+
+#### Adjusted for age and sex
+```{r models-combined-val-all-adj, echo=F}
+validation_combined_adj <- data.frame(r2 = c(mod_tkv_val_adj_specs$rsq_adj, mod_ht_tkv_val_adj_specs$rsq_adj, mod_gfr_val_adj_specs$rsq_adj, mod_gfr_bsa_val_adj_specs$rsq_adj, mod_rpf_val_adj_specs$rsq_adj, mod_erpf_bsa_val_adj_specs$rsq_adj),
+                                  lower = c(mod_tkv_val_adj_specs$conf.low, mod_ht_tkv_val_adj_specs$conf.low, mod_gfr_val_adj_specs$conf.low, mod_gfr_bsa_val_adj_specs$conf.low, mod_rpf_val_adj_specs$conf.low, mod_erpf_bsa_val_adj_specs$conf.low),
+                                  upper = c(mod_tkv_val_adj_specs$conf.high, mod_ht_tkv_val_adj_specs$conf.high, mod_gfr_val_adj_specs$conf.high, mod_gfr_bsa_val_adj_specs$conf.high, mod_rpf_val_adj_specs$conf.high, mod_erpf_bsa_val_adj_specs$conf.high),
+                                  Model = c("TKV", "Ht-adj TKV", "GFR-Raw", "GFR-BSA", "RPF-Raw", "RPF-BSA"),
+                                  No.proteins = c(nrow(retained_vars_tkv_adj), 
+                                                  nrow(retained_vars_ht_adj_tkv_adj), 
+                                                  nrow(retained_vars_gfr_adj), 
+                                                  nrow(retained_vars_gfr_bsa_adj), 
+                                                  nrow(retained_vars_rpf_adj), 
+                                                  nrow(retained_vars_erpf_bsa_adj)))
+validation_combined_adj$` ` <- paste(rep(" ", 20), collapse = " ")
+
+# Create confidence interval column to display
+validation_combined_adj$`Adjusted R-squared (95% CI)` <- ifelse(is.na(validation_combined_adj$r2), "",
+                             sprintf("%.2f (%.2f to %.2f)",
+                                     validation_combined_adj$r2, validation_combined_adj$lower, validation_combined_adj$upper))
+forest(data = validation_combined_adj[,c(4:7)], 
+       est = validation_combined_adj$r2,
+       lower = validation_combined_adj$lower,
+       upper = validation_combined_adj$upper, ci_column = 3)
+```
+```{r models-combined-val-ipna-adj, echo=F}
+validation_combined_adj_ipna <- data.frame(r2 = c(mod_tkv_val_adj_specs$rsq_adj, mod_ht_tkv_val_adj_specs$rsq_adj, mod_gfr_val_adj_specs$rsq_adj,  mod_rpf_val_adj_specs$rsq_adj),
+                                  lower = c(mod_tkv_val_adj_specs$conf.low, mod_ht_tkv_val_adj_specs$conf.low, mod_gfr_val_adj_specs$conf.low,  mod_rpf_val_adj_specs$conf.low),
+                                  upper = c(mod_tkv_val_adj_specs$conf.high, mod_ht_tkv_val_adj_specs$conf.high, mod_gfr_val_adj_specs$conf.high,  mod_rpf_val_adj_specs$conf.high),
+                                  Model = c("TKV", "Ht-adj TKV", "GFR", "RPF"),
+                                  No.proteins = c(nrow(retained_vars_tkv_adj), 
+                                                  nrow(retained_vars_ht_adj_tkv_adj), 
+                                                  nrow(retained_vars_gfr_adj), 
+                                                  nrow(retained_vars_rpf_adj)))
+validation_combined_adj_ipna$` ` <- paste(rep(" ", 20), collapse = " ")
+
+# Create confidence interval column to display
+validation_combined_adj_ipna$`Adjusted R-squared (95% CI)` <- ifelse(is.na(validation_combined_adj_ipna$r2), "",
+                             sprintf("%.2f (%.2f to %.2f)",
+                                     validation_combined_adj_ipna$r2, validation_combined_adj_ipna$lower, validation_combined_adj_ipna$upper))
+forest(data = validation_combined_adj_ipna[,c(4:7)], 
+       est = validation_combined_adj_ipna$r2,
+       lower = validation_combined_adj_ipna$lower,
+       upper = validation_combined_adj_ipna$upper, ci_column = 3)
 ```
 
 # Elastic net for RH/RH2/IMPROVE
@@ -304,942 +450,1019 @@ forest(data = validation_combined[,c(4:7)],
 cleanData_others <- cleanData_comb %>% filter(study != "PANTHER")
 ```
 
+
 ### Total Kidney Volume
 
-```{r elastic-net-tkv-others, echo = F, warning = F, message=F}
-hist(cleanData_others$combined_tkv)
-# Limit to records with non-missing tkv
-others_combined_tkv <- cleanData_others %>% 
-  filter(!is.na(combined_tkv)) %>% 
-  dplyr::select(combined_tkv, starts_with("seq"))
+#### Unadjusted model
 
-# Top 100 associations to tkv
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(others_combined_tkv))
-predictors <- colnames(others_combined_tkv[seq])
+```{r elastic-net-tkv_others-unadj, echo = F, warning = F, message=F, results ='asis'}
+tkv_others_dat <- subset(cleanData_others, !is.na(total_kidney_volume_ml) & total_kidney_volume_ml > 0)
+top_tkv_others <- top_associations(tkv_others_dat, "total_kidney_volume_ml", analytes, log = F)
 
-result_tkv_others <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("combined_tkv ~ ",predictors[i])
-  mod <- lm(data = others_combined_tkv, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_tkv_others <- rbind(result_tkv_others,tidymod)
-}
-
-result_tkv_others$adj.p.value <- p.adjust(result_tkv_others$p.value, "fdr")
-result_tkv_others$AptName <- result_tkv_others$term
-result_tkv_others$term <- NULL
-result_tkv_others <- merge(result_tkv_others,analytes,by="AptName",all.x = T, all.y = F)
-result_tkv_others <- result_tkv_others[order(result_tkv_others$p.value),] 
-result_tkv_others_100 <- head(result_tkv_others, 100)$AptName
-predictors_tkv_others <- as.matrix(subset(others_combined_tkv, select = result_tkv_others_100))
 # Elastic net regression
-en_tkv_others <- easy_elasticnet(data = others_combined_tkv, 
-                        outcome = "combined_tkv", out = "1se.error",
-                        predictors = predictors_tkv_others,
-                        cv_method="kfold", folds = 10)
+en_tkv_others <- easy_elasticnet(data = tkv_others_dat, 
+                           outcome = "total_kidney_volume_ml", 
+                           out = "1se.error",
+                           predictors = top_tkv_others$predictors_matrix,
+                           cv_method="kfold", 
+                           folds = 10)
+length(en_tkv_others)
 
-retained_vars_tkv_others = analytes[analytes$AptName %in% en_tkv_others, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_tkv_others = analytes[analytes$AptName %in% en_tkv_others, 
+                              c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
-form_tkv_others = as.formula(paste0("combined_tkv ~ ",paste0(en_tkv_others,collapse = "+")))
-mod_tkv_others = lm(formula = form_tkv_others, data = others_combined_tkv)
-mod_df_tkv_others = as.data.frame(tidy(mod_tkv_others, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_tkv_others) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_tkv_others,p.value), digits = 3)
-ggplot(mod_df_tkv_others[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_tkv_others <- create_lm_summary(tkv_others_dat, "total_kidney_volume_ml", en_tkv_others, retained_vars_tkv_others, log = F)
+create_lm_summary_table_plot(mod_df_tkv_others$model_df, format = "html")
 ```
 
-Top `r length(result_tkv_others_100)` proteins included in analysis. No. of proteins identified: `r length(en_tkv_others)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_tkv_others)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_tkv_others <- mod_df_tkv_others$model
 kable(glance(mod_tkv_others))
 plot(mod_tkv_others)
 
 # Adjusted R-squared 95% CI
-rsq_tkv_others <- summary(mod_tkv_others)$adj.r.squared
-k_tkv_others <- ncol(mod_tkv_others$model) - 1
-n_tkv_others <- mod_tkv_others$df.residual + k_tkv_others + 1
-rsq.se_tkv_others <- sqrt((4 * rsq_tkv_others * (1 - rsq_tkv_others)^2 * (n_tkv_others - k_tkv_others - 1)^2)/((n_tkv_others^2 - 1) * (3 + n_tkv_others)))
-LL_tkv_others <- rsq_tkv_others - z*rsq.se_tkv_others
-UL_tkv_others <- rsq_tkv_others + z*rsq.se_tkv_others
+mod_tkv_others_specs <- compute_rsq_conf_interval(mod_tkv_others)
 ```
 
-### Height adjusted TKV
+#### Adjusted for age and sex
 
-```{r elastic-net-httkv-others, echo = F, warning = F, message=F}
-hist(cleanData_others$combined_ht_tkv)
-# Limit to records with non-missing combined_ht_tkv
-ht_adj_tkv_others <- cleanData_others %>% 
-  filter(!is.na(combined_ht_tkv)) %>% 
-  dplyr::select(combined_ht_tkv, starts_with("seq")) 
+```{r elastic-net-tkv_others-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+tkv_others_dat$sexfemale <- ifelse(tkv_others_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_tkv_others <- as.matrix(cbind(subset(tkv_others_dat, select = c("age", "sexfemale")), top_tkv_others$predictors_matrix))
 
-# Top 100 associations to ht_adj_tkv
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(ht_adj_tkv_others))
-predictors <- colnames(ht_adj_tkv_others[seq])
-
-result_ht_adj_tkv_others <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("combined_ht_tkv ~ ",predictors[i])
-  mod <- lm(data = ht_adj_tkv_others, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_ht_adj_tkv_others <- rbind(result_ht_adj_tkv_others,tidymod)
-}
-
-result_ht_adj_tkv_others$adj.p.value <- p.adjust(result_ht_adj_tkv_others$p.value, "fdr")
-result_ht_adj_tkv_others$AptName <- result_ht_adj_tkv_others$term
-result_ht_adj_tkv_others$term <- NULL
-result_ht_adj_tkv_others <- merge(result_ht_adj_tkv_others,analytes,by="AptName",all.x = T, all.y = F)
-result_ht_adj_tkv_others <- result_ht_adj_tkv_others[order(result_ht_adj_tkv_others$p.value),] 
-result_ht_adj_tkv_100 <- head(result_ht_adj_tkv_others, 100)$AptName
-predictors_ht_adj_tkv_others <- as.matrix(subset(ht_adj_tkv_others, select = result_ht_adj_tkv_100))
 # Elastic net regression
-en_ht_adj_tkv_others <- easy_elasticnet(data = ht_adj_tkv_others, 
-                        outcome = "combined_ht_tkv", out = "1se.error",
-                        predictors = predictors_ht_adj_tkv_others,
-                        cv_method="kfold", folds = 10)
+## Force age and sex to models to adjust
+en_tkv_others_adj <- easy_elasticnet(data = tkv_others_dat, 
+                               outcome = "total_kidney_volume_ml", out = "1se.error",
+                               predictors = predictors_tkv_others,
+                               cv_method="kfold", folds = 10,
+                               penalty.factor = c(rep(0,2), rep(1, ncol(predictors_tkv_others)-2)))
+length(en_tkv_others_adj)
 
-retained_vars_ht_adj_tkv_others = analytes[analytes$AptName %in% en_ht_adj_tkv_others, c("AptName","Target_nodup","TargetFullName")] %>%
+retained_vars_tkv_others_adj = analytes[analytes$AptName %in% en_tkv_others_adj, c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
-form_ht_adj_tkv_others = as.formula(paste0("combined_ht_tkv ~ ",paste0(en_ht_adj_tkv_others,collapse = "+")))
-mod_ht_adj_tkv_others = lm(formula = form_ht_adj_tkv_others, data = ht_adj_tkv_others)
-mod_df_ht_adj_tkv_others = as.data.frame(tidy(mod_ht_adj_tkv_others, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_ht_adj_tkv_others) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_ht_adj_tkv_others,p.value), digits = 3)
-
-ggplot(mod_df_ht_adj_tkv_others[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_tkv_others_adj <- create_lm_summary(tkv_others_dat, "total_kidney_volume_ml", en_tkv_others_adj, retained_vars_tkv_others_adj, log = F)
+create_lm_summary_table_plot(mod_df_tkv_others_adj$model_df, format = "html")
 ```
 
-Top `r length(result_ht_adj_tkv_100)` proteins included in analysis. No. of proteins identified: `r length(en_ht_adj_tkv_others)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_tkv_others)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_tkv_others_adj <- mod_df_tkv_others_adj$model
+kable(glance(mod_tkv_others_adj))
+plot(mod_tkv_others_adj)
+
+# Adjusted R-squared 95% CI
+mod_tkv_others_adj_specs <- compute_rsq_conf_interval(mod_tkv_others_adj)
+```
+
+
+
+
+### Height adjusted TKV
+#### Unadjusted model
+```{r elastic-net-ht_adj_tkv_others-unadj, echo = F, warning = F, message=F, results ='asis'}
+ht_adj_tkv_others_dat <- subset(cleanData_others, !is.na(ht_adj_tkv) & ht_adj_tkv > 0)
+top_ht_adj_tkv_others <- top_associations(ht_adj_tkv_others_dat, "ht_adj_tkv", analytes, log = F)
+
+# Elastic net regression
+en_ht_adj_tkv_others <- easy_elasticnet(data = ht_adj_tkv_others_dat, 
+                           outcome = "ht_adj_tkv", 
+                           out = "1se.error",
+                           predictors = top_ht_adj_tkv_others$predictors_matrix,
+                           cv_method="kfold", 
+                           folds = 10)
+length(en_ht_adj_tkv_others)
+
+# Save retained variables from elastic net
+retained_vars_ht_adj_tkv_others = analytes[analytes$AptName %in% en_ht_adj_tkv_others, 
+                              c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+mod_df_ht_adj_tkv_others <- create_lm_summary(ht_adj_tkv_others_dat, "ht_adj_tkv", en_ht_adj_tkv_others, retained_vars_ht_adj_tkv_others, log = F)
+create_lm_summary_table_plot(mod_df_ht_adj_tkv_others$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_ht_adj_tkv_others)`.
+
+```{r echo = F, warning = F, message=F}
+mod_ht_adj_tkv_others <- mod_df_ht_adj_tkv_others$model
 kable(glance(mod_ht_adj_tkv_others))
 plot(mod_ht_adj_tkv_others)
 
 # Adjusted R-squared 95% CI
-rsq_ht_adj_tkv_others <- summary(mod_ht_adj_tkv_others)$adj.r.squared
-k_ht_adj_tkv_others <- ncol(mod_ht_adj_tkv_others$model) - 1
-n_ht_adj_tkv_others <- mod_ht_adj_tkv_others$df.residual + k_ht_adj_tkv_others + 1
-rsq.se_ht_adj_tkv_others <- sqrt((4 * rsq_ht_adj_tkv_others * (1 - rsq_ht_adj_tkv_others)^2 * (n_ht_adj_tkv_others - k_ht_adj_tkv_others - 1)^2)/((n_ht_adj_tkv_others^2 - 1) * (3 + n_ht_adj_tkv_others)))
-LL_ht_adj_tkv_others <- rsq_ht_adj_tkv_others - z*rsq.se_ht_adj_tkv_others
-UL_ht_adj_tkv_others <- rsq_ht_adj_tkv_others + z*rsq.se_ht_adj_tkv_others
+mod_ht_adj_tkv_others_specs <- compute_rsq_conf_interval(mod_ht_adj_tkv_others)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-ht_adj_tkv_others-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+ht_adj_tkv_others_dat$sexfemale <- ifelse(ht_adj_tkv_others_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_ht_adj_tkv_others <- as.matrix(cbind(subset(ht_adj_tkv_others_dat, select = c("age", "sexfemale")), top_ht_adj_tkv_others$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_ht_adj_tkv_others_adj <- easy_elasticnet(data = ht_adj_tkv_others_dat, 
+                               outcome = "ht_adj_tkv", out = "1se.error",
+                               predictors = predictors_ht_adj_tkv_others,
+                               cv_method="kfold", folds = 10,
+                               penalty.factor = c(rep(0,2), rep(1, ncol(predictors_ht_adj_tkv_others)-2)))
+length(en_ht_adj_tkv_others_adj)
+
+retained_vars_ht_adj_tkv_others_adj = analytes[analytes$AptName %in% en_ht_adj_tkv_others_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+mod_df_ht_adj_tkv_others_adj <- create_lm_summary(ht_adj_tkv_others_dat, "ht_adj_tkv", en_ht_adj_tkv_others_adj, retained_vars_ht_adj_tkv_others_adj, log = F)
+create_lm_summary_table_plot(mod_df_ht_adj_tkv_others_adj$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_ht_adj_tkv_others)`.
+
+```{r echo = F, warning = F, message=F}
+mod_ht_adj_tkv_others_adj <- mod_df_ht_adj_tkv_others_adj$model
+kable(glance(mod_ht_adj_tkv_others_adj))
+plot(mod_ht_adj_tkv_others_adj)
+
+# Adjusted R-squared 95% CI
+mod_ht_adj_tkv_others_adj_specs <- compute_rsq_conf_interval(mod_ht_adj_tkv_others_adj)
 ```
 
 ### GFR (Raw plasma)
+#### Unadjusted model
 
-```{r elastic-net-gfr-others, echo = F, warning = F, message=F}
-# Limit to records with non-missing gfr
-others_gfr_raw_plasma <- cleanData_others %>% 
-  filter(!is.na(gfr_raw_plasma) & gfr_raw_plasma > 0) %>% 
-  dplyr::select(gfr_raw_plasma, starts_with("seq")) 
+```{r elastic-net-gfr_others-unadj, echo = F, warning = F, message=F, results ='asis'}
+gfr_others_dat <- subset(cleanData_others, !is.na(gfr_raw_plasma) & gfr_raw_plasma > 0)
+top_gfr_others <- top_associations(gfr_others_dat, "gfr_raw_plasma", analytes, log = T, top_n = 100)
 
-# Top 100 associations to gfr
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(others_gfr_raw_plasma))
-predictors <- colnames(others_gfr_raw_plasma[seq])
-
-result_gfr_others <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("log(gfr_raw_plasma) ~ ",predictors[i])
-  mod <- lm(data = others_gfr_raw_plasma, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_gfr_others <- rbind(result_gfr_others,tidymod)
-}
-
-result_gfr_others$adj.p.value <- p.adjust(result_gfr_others$p.value, "fdr")
-result_gfr_others$AptName <- result_gfr_others$term
-result_gfr_others$term <- NULL
-result_gfr_others <- merge(result_gfr_others,analytes,by="AptName",all.x = T, all.y = F)
-result_gfr_others <- result_gfr_others[order(result_gfr_others$p.value),] 
-result_gfr_others_100 <- head(result_gfr_others, 80)$AptName
-predictors_gfr_others <- as.matrix(subset(others_gfr_raw_plasma, select = result_gfr_others_100))
 # Elastic net regression
-en_gfr_others <- easy_elasticnet(data = others_gfr_raw_plasma, 
-                        outcome = "gfr_raw_plasma", out = "1se.error",
-                        predictors = predictors_gfr_others,
-                        cv_method="kfold", folds = 10)
+en_gfr_others <- easy_elasticnet(data = gfr_others_dat, 
+                          outcome = "gfr_raw_plasma", 
+                          out = "1se.error",
+                          predictors = top_gfr_others$predictors_matrix,
+                          cv_method="kfold", 
+                          folds = 10)
+length(en_gfr_others)
 
-retained_vars_gfr_others = analytes[analytes$AptName %in% en_gfr_others, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_gfr_others = analytes[analytes$AptName %in% en_gfr_others, 
+                             c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
-form_gfr_others = as.formula(paste0("log(gfr_raw_plasma) ~ ",paste0(en_gfr_others,collapse = "+")))
-mod_gfr_others = lm(formula = form_gfr, data = others_gfr_raw_plasma)
-mod_df_gfr_others = as.data.frame(tidy(mod_gfr_others, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_gfr) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_gfr_others,p.value), digits = 3)
-ggplot(mod_df_gfr_others[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_gfr_others <- create_lm_summary(gfr_others_dat, "gfr_raw_plasma", en_gfr_others, retained_vars_gfr_others, log = T)
+create_lm_summary_table_plot(mod_df_gfr_others$model_df, format = "html")
 ```
 
-Top `r length(result_gfr_others_100)` proteins included in analysis. No. of proteins identified: `r length(en_gfr_others)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_gfr_others)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_gfr_others <- mod_df_gfr_others$model
 kable(glance(mod_gfr_others))
 plot(mod_gfr_others)
 
 # Adjusted R-squared 95% CI
-rsq_gfr_others <- summary(mod_gfr_others)$adj.r.squared
-k_gfr_others <- ncol(mod_gfr_others$model) - 1
-n_gfr_others <- mod_gfr_others$df.residual + k_gfr_others + 1
-rsq.se_gfr_others <- sqrt((4 * rsq_gfr_others * (1 - rsq_gfr_others)^2 * (n_gfr_others - k_gfr_others - 1)^2)/((n_gfr_others^2 - 1) * (3 + n_gfr_others)))
-LL_gfr_others <- rsq_gfr_others - z*rsq.se_gfr_others
-UL_gfr_others <- rsq_gfr_others + z*rsq.se_gfr_others
+mod_gfr_others_specs <- compute_rsq_conf_interval(mod_gfr_others)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-gfr_others-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+gfr_others_dat$sexfemale <- ifelse(gfr_others_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_gfr_others <- as.matrix(cbind(subset(gfr_others_dat, select = c("age", "sexfemale")), top_gfr_others$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_gfr_others_adj <- easy_elasticnet(data = gfr_others_dat, 
+                              outcome = "gfr_raw_plasma", out = "1se.error",
+                              predictors = predictors_gfr_others,
+                              cv_method="kfold", folds = 10,
+                              penalty.factor = c(rep(0,2), rep(1, ncol(predictors_gfr_others)-2)))
+length(en_gfr_others_adj)
+
+retained_vars_gfr_others_adj = analytes[analytes$AptName %in% en_gfr_others_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+mod_df_gfr_others_adj <- create_lm_summary(gfr_others_dat, "gfr_raw_plasma", en_gfr_others_adj, retained_vars_gfr_others_adj, log = T)
+create_lm_summary_table_plot(mod_df_gfr_others_adj$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_gfr_others)`.
+
+```{r echo = F, warning = F, message=F}
+mod_gfr_others_adj <- mod_df_gfr_others_adj$model
+kable(glance(mod_gfr_others_adj))
+plot(mod_gfr_others_adj)
+
+# Adjusted R-squared 95% CI
+mod_gfr_others_adj_specs <- compute_rsq_conf_interval(mod_gfr_others_adj)
 ```
 
 ### GFR (BSA plasma)
 
-```{r elastic-net-gfr-bsa-others, echo = F, warning = F, message=F}
-# Limit to records with non-missing gfr
-others_gfr_bsa_plasma <- cleanData_others %>% 
-  filter(!is.na(gfr_bsa_plasma) & gfr_bsa_plasma > 0) %>% 
-  dplyr::select(gfr_bsa_plasma, starts_with("seq")) 
+#### Unadjusted model
 
-# Top 100 associations to gfr
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(others_gfr_bsa_plasma))
-predictors <- colnames(others_gfr_bsa_plasma[seq])
+```{r elastic-net-gfr_others_bsa-unadj, echo = F, warning = F, message=F, results ='asis'}
+gfr_others_bsa_dat <- subset(cleanData_others, !is.na(gfr_bsa_plasma) & gfr_bsa_plasma > 0)
+top_gfr_others_bsa <- top_associations(gfr_others_bsa_dat, "gfr_bsa_plasma", analytes, log = T)
 
-result_gfr_bsa_others <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("log(gfr_bsa_plasma) ~ ",predictors[i])
-  mod <- lm(data = others_gfr_bsa_plasma, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_gfr_bsa_others <- rbind(result_gfr_bsa_others,tidymod)
-}
-
-result_gfr_bsa_others$adj.p.value <- p.adjust(result_gfr_bsa_others$p.value, "fdr")
-result_gfr_bsa_others$AptName <- result_gfr_bsa_others$term
-result_gfr_bsa_others$term <- NULL
-result_gfr_bsa_others <- merge(result_gfr_bsa_others,analytes,by="AptName",all.x = T, all.y = F)
-result_gfr_bsa_others <- result_gfr_bsa_others[order(result_gfr_bsa_others$p.value),] 
-result_gfr_bsa_others_100 <- head(result_gfr_bsa_others, 100)$AptName
-predictors_gfr_bsa_others <- as.matrix(subset(others_gfr_bsa_plasma, select = result_gfr_bsa_others_100))
 # Elastic net regression
-en_gfr_bsa_others <- easy_elasticnet(data = others_gfr_bsa_plasma, 
-                        outcome = "gfr_bsa_plasma", out = "1se.error",
-                        predictors = predictors_gfr_bsa_others,
-                        cv_method="kfold", folds = 10)
+en_gfr_others_bsa <- easy_elasticnet(data = gfr_others_bsa_dat, 
+                           outcome = "gfr_bsa_plasma", 
+                           out = "1se.error",
+                           predictors = top_gfr_others_bsa$predictors_matrix,
+                           cv_method="kfold", 
+                           folds = 10)
+length(en_gfr_others_bsa)
 
-retained_vars_gfr_bsa_others = analytes[analytes$AptName %in% en_gfr_bsa_others, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_gfr_others_bsa = analytes[analytes$AptName %in% en_gfr_others_bsa, 
+                              c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
-form_gfr_bsa_others = as.formula(paste0("log(gfr_bsa_plasma) ~ ",paste0(en_gfr_bsa_others,collapse = "+")))
-mod_gfr_bsa_others = lm(formula = form_gfr_bsa_others, data = others_gfr_bsa_plasma)
-mod_df_gfr_bsa_others = as.data.frame(tidy(mod_gfr_bsa_others, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_gfr_bsa_others) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_gfr_bsa_others,p.value), digits = 3)
-ggplot(mod_df_gfr_bsa_others[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_gfr_others_bsa <- create_lm_summary(gfr_others_bsa_dat, "gfr_bsa_plasma", en_gfr_others_bsa, retained_vars_gfr_others_bsa, log = T)
+create_lm_summary_table_plot(mod_df_gfr_others_bsa$model_df, format = "html")
 ```
 
-Top `r length(result_gfr_others_100)` proteins included in analysis. No. of proteins identified: `r length(en_gfr_bsa_others)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_gfr_others_bsa)`.
 
 ```{r echo = F, warning = F, message=F}
-kable(glance(mod_gfr_bsa_others))
-plot(mod_gfr_bsa_others)
+mod_gfr_others_bsa <- mod_df_gfr_others_bsa$model
+kable(glance(mod_gfr_others_bsa))
+plot(mod_gfr_others_bsa)
 
 # Adjusted R-squared 95% CI
-rsq_gfr_bsa_others <- summary(mod_gfr_bsa_others)$adj.r.squared
-k_gfr_bsa_others <- ncol(mod_gfr_bsa_others$model) - 1
-n_gfr_bsa_others <- mod_gfr_bsa_others$df.residual + k_gfr_bsa_others + 1
-rsq.se_gfr_bsa_others <- sqrt((4 * rsq_gfr_bsa_others * (1 - rsq_gfr_bsa_others)^2 * (n_gfr_bsa_others - k_gfr_bsa_others - 1)^2)/((n_gfr_bsa_others^2 - 1) * (3 + n_gfr_bsa_others)))
-LL_gfr_bsa_others <- rsq_gfr_bsa_others - z*rsq.se_gfr_bsa_others
-UL_gfr_bsa_others <- rsq_gfr_bsa_others + z*rsq.se_gfr_bsa_others
+mod_gfr_others_bsa_specs <- compute_rsq_conf_interval(mod_gfr_others_bsa)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-gfr_others_bsa-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+gfr_others_bsa_dat$sexfemale <- ifelse(gfr_others_bsa_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_gfr_others_bsa <- as.matrix(cbind(subset(gfr_others_bsa_dat, select = c("age", "sexfemale")), top_gfr_others_bsa$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_gfr_others_bsa_adj <- easy_elasticnet(data = gfr_others_bsa_dat, 
+                               outcome = "gfr_bsa_plasma", out = "1se.error",
+                               predictors = predictors_gfr_others_bsa,
+                               cv_method="kfold", folds = 10,
+                               penalty.factor = c(rep(0,2), rep(1, ncol(predictors_gfr_others_bsa)-2)))
+length(en_gfr_others_bsa_adj)
+
+retained_vars_gfr_others_bsa_adj = analytes[analytes$AptName %in% en_gfr_others_bsa_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+mod_df_gfr_others_bsa_adj <- create_lm_summary(gfr_others_bsa_dat, "gfr_bsa_plasma", en_gfr_others_bsa_adj, retained_vars_gfr_others_bsa_adj, log = T)
+create_lm_summary_table_plot(mod_df_gfr_others_bsa_adj$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_gfr_others_bsa)`.
+
+```{r echo = F, warning = F, message=F}
+mod_gfr_others_bsa_adj <- mod_df_gfr_others_bsa_adj$model
+kable(glance(mod_gfr_others_bsa_adj))
+plot(mod_gfr_others_bsa_adj)
+
+# Adjusted R-squared 95% CI
+mod_gfr_others_bsa_adj_specs <- compute_rsq_conf_interval(mod_gfr_others_bsa_adj)
 ```
 
 ### RPF (Raw plasma)
 
-```{r elastic-net-rpf-others, echo = F, warning = F, message=F}
-# Limit to records with non-missing rpf
-others_erpf_raw_plasma <- cleanData_others %>% 
-  filter(!is.na(erpf_raw_plasma) & erpf_raw_plasma > 0) %>% 
-  dplyr::select(erpf_raw_plasma, starts_with("seq")) 
+#### Unadjusted model
 
-# Top 100 associations to rpf
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(others_erpf_raw_plasma))
-predictors <- colnames(others_erpf_raw_plasma[seq])
+```{r elastic-net-rpf_others-unadj, echo = F, warning = F, message=F, results ='asis'}
+rpf_others_dat <- subset(cleanData_others, !is.na(erpf_raw_plasma) & erpf_raw_plasma > 0)
+top_rpf_others <- top_associations(rpf_others_dat, "erpf_raw_plasma", analytes, log = T)
 
-result_rpf_others <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("log(erpf_raw_plasma) ~ ",predictors[i])
-  mod <- lm(data = others_erpf_raw_plasma, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_rpf_others <- rbind(result_rpf_others,tidymod)
-}
-
-result_rpf_others$adj.p.value <- p.adjust(result_rpf_others$p.value, "fdr")
-result_rpf_others$AptName <- result_rpf_others$term
-result_rpf_others$term <- NULL
-result_rpf_others <- merge(result_rpf_others,analytes,by="AptName",all.x = T, all.y = F)
-result_rpf_others <- result_rpf_others[order(result_rpf_others$p.value),] 
-result_rpf_others_100 <- head(result_rpf_others, 100)$AptName
-predictors_rpf_others <- as.matrix(subset(others_erpf_raw_plasma, select = result_rpf_others_100))
 # Elastic net regression
-en_rpf_others <- easy_elasticnet(data = others_erpf_raw_plasma, 
-                        outcome = "erpf_raw_plasma", out = "1se.error",
-                        predictors = predictors_rpf_others,
-                        cv_method="kfold", folds = 10)
+en_rpf_others <- easy_elasticnet(data = rpf_others_dat, 
+                          outcome = "erpf_raw_plasma", 
+                          out = "1se.error",
+                          predictors = top_rpf_others$predictors_matrix,
+                          cv_method="kfold", 
+                          folds = 10)
+length(en_rpf_others)
 
-retained_vars_rpf_others = analytes[analytes$AptName %in% en_rpf_others, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_rpf_others = analytes[analytes$AptName %in% en_rpf_others, 
+                             c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
-form_rpf_others = as.formula(paste0("log(erpf_raw_plasma) ~ ",paste0(en_rpf_others,collapse = "+")))
-mod_rpf_others = lm(formula = form_rpf_others, data = others_erpf_raw_plasma)
-mod_df_rpf_others = as.data.frame(tidy(mod_rpf_others, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_rpf_others) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_rpf_others,p.value), digits = 3)
-ggplot(mod_df_rpf_others[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_rpf_others <- create_lm_summary(rpf_others_dat, "erpf_raw_plasma", en_rpf_others, retained_vars_rpf_others, log = T)
+create_lm_summary_table_plot(mod_df_rpf_others$model_df, format = "html")
 ```
 
-Top `r length(result_rpf_others_100)` proteins included in analysis. No. of proteins identified: `r length(en_rpf_others)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_rpf_others)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_rpf_others <- mod_df_rpf_others$model
 kable(glance(mod_rpf_others))
 plot(mod_rpf_others)
 
 # Adjusted R-squared 95% CI
-rsq_rpf_others <- summary(mod_rpf_others)$adj.r.squared
-k_rpf_others <- ncol(mod_rpf_others$model) - 1
-n_rpf_others <- mod_rpf_others$df.residual + k_rpf_others + 1
-rsq.se_rpf_others <- sqrt((4 * rsq_rpf_others * (1 - rsq_rpf_others)^2 * (n_rpf_others - k_rpf_others - 1)^2)/((n_rpf_others^2 - 1) * (3 + n_rpf_others)))
-LL_rpf_others <- rsq_rpf_others - z*rsq.se_rpf_others
-UL_rpf_others <- rsq_rpf_others + z*rsq.se_rpf_others
+mod_rpf_others_specs <- compute_rsq_conf_interval(mod_rpf_others)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-rpf_others-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+rpf_others_dat$sexfemale <- ifelse(rpf_others_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_rpf_others <- as.matrix(cbind(subset(rpf_others_dat, select = c("age", "sexfemale")), top_rpf_others$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_rpf_others_adj <- easy_elasticnet(data = rpf_others_dat, 
+                              outcome = "erpf_raw_plasma", out = "1se.error",
+                              predictors = predictors_rpf_others,
+                              cv_method="kfold", folds = 10,
+                              penalty.factor = c(rep(0,2), rep(1, ncol(predictors_rpf_others)-2)))
+length(en_rpf_others_adj)
+
+retained_vars_rpf_others_adj = analytes[analytes$AptName %in% en_rpf_others_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+mod_df_rpf_others_adj <- create_lm_summary(rpf_others_dat, "erpf_raw_plasma", en_rpf_others_adj, retained_vars_rpf_others_adj, log = T)
+create_lm_summary_table_plot(mod_df_rpf_others_adj$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_rpf_others)`.
+
+```{r echo = F, warning = F, message=F}
+mod_rpf_others_adj <- mod_df_rpf_others_adj$model
+kable(glance(mod_rpf_others_adj))
+plot(mod_rpf_others_adj)
+
+# Adjusted R-squared 95% CI
+mod_rpf_others_adj_specs <- compute_rsq_conf_interval(mod_rpf_others_adj)
 ```
 
 ### RPF (BSA plasma)
 
-```{r elastic-net-rpf-bsa-others, echo = F, warning = F, message=F}
-# Limit to records with non-missing rpf
-others_erpf_bsa_plasma <- cleanData_others %>% 
-  filter(!is.na(erpf_bsa_plasma) & erpf_bsa_plasma > 0) %>% 
-  dplyr::select(erpf_bsa_plasma, starts_with("seq")) 
+#### Unadjusted model
 
-# Top 100 associations to rpf
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(others_erpf_bsa_plasma))
-predictors <- colnames(others_erpf_bsa_plasma[seq])
+```{r elastic-net-erpf_others_bsa-unadj, echo = F, warning = F, message=F, results ='asis'}
+erpf_others_bsa_dat <- subset(cleanData_others, !is.na(erpf_bsa_plasma) & erpf_bsa_plasma > 0)
+top_erpf_others_bsa <- top_associations(erpf_others_bsa_dat, "erpf_bsa_plasma", analytes, log = T)
 
-result_rpf_bsa_others <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("log(erpf_bsa_plasma) ~ ",predictors[i])
-  mod <- lm(data = others_erpf_bsa_plasma, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_rpf_bsa_others <- rbind(result_rpf_bsa_others,tidymod)
-}
-
-result_rpf_bsa_others$adj.p.value <- p.adjust(result_rpf_bsa_others$p.value, "fdr")
-result_rpf_bsa_others$AptName <- result_rpf_bsa_others$term
-result_rpf_bsa_others$term <- NULL
-result_rpf_bsa_others <- merge(result_rpf_bsa_others,analytes,by="AptName",all.x = T, all.y = F)
-result_rpf_bsa_others <- result_rpf_bsa_others[order(result_rpf_bsa_others$p.value),] 
-result_rpf_bsa_others_100 <- head(result_rpf_bsa_others, 100)$AptName
-predictors_rpf_bsa_others <- as.matrix(subset(others_erpf_bsa_plasma, select = result_rpf_bsa_others_100))
 # Elastic net regression
-en_rpf_bsa_others <- easy_elasticnet(data = others_erpf_bsa_plasma, 
-                        outcome = "erpf_bsa_plasma", out = "1se.error",
-                        predictors = predictors_rpf_bsa_others,
-                        cv_method="kfold", folds = 10)
+en_erpf_others_bsa <- easy_elasticnet(data = erpf_others_bsa_dat, 
+                           outcome = "erpf_bsa_plasma", 
+                           out = "1se.error",
+                           predictors = top_erpf_others_bsa$predictors_matrix,
+                           cv_method="kfold", 
+                           folds = 10)
+length(en_erpf_others_bsa)
 
-retained_vars_rpf_bsa_others = analytes[analytes$AptName %in% en_rpf_bsa_others, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_erpf_others_bsa = analytes[analytes$AptName %in% en_erpf_others_bsa, 
+                              c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
-form_rpf_bsa_others = as.formula(paste0("log(erpf_bsa_plasma) ~ ",paste0(en_rpf_bsa_others,collapse = "+")))
-mod_rpf_bsa_others = lm(formula = form_rpf_bsa_others, data = others_erpf_bsa_plasma)
-mod_df_rpf_bsa_others = as.data.frame(tidy(mod_rpf_bsa_others, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_rpf_bsa_others) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_rpf_bsa_others,p.value), digits = 3)
-ggplot(mod_df_rpf_bsa_others[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_erpf_others_bsa <- create_lm_summary(erpf_others_bsa_dat, "erpf_bsa_plasma", en_erpf_others_bsa, retained_vars_erpf_others_bsa, log = T)
+create_lm_summary_table_plot(mod_df_erpf_others_bsa$model_df, format = "html")
 ```
 
-Top `r length(result_rpf_bsa_others_100)` proteins included in analysis. No. of proteins identified: `r length(en_rpf_bsa_others)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_erpf_others_bsa)`.
 
 ```{r echo = F, warning = F, message=F}
-kable(glance(mod_rpf_bsa_others))
-plot(mod_rpf_bsa_others)
+mod_erpf_others_bsa <- mod_df_erpf_others_bsa$model
+kable(glance(mod_erpf_others_bsa))
+plot(mod_erpf_others_bsa)
 
 # Adjusted R-squared 95% CI
-rsq_rpf_bsa_others <- summary(mod_rpf_bsa_others)$adj.r.squared
-k_rpf_bsa_others <- ncol(mod_rpf_bsa_others$model) - 1
-n_rpf_bsa_others <- mod_rpf_bsa_others$df.residual + k_rpf_bsa_others + 1
-rsq.se_rpf_bsa_others <- sqrt((4 * rsq_rpf_bsa_others * (1 - rsq_rpf_bsa_others)^2 * (n_rpf_bsa_others - k_rpf_bsa_others - 1)^2)/((n_rpf_bsa_others^2 - 1) * (3 + n_rpf_bsa_others)))
-LL_rpf_bsa_others <- rsq_rpf_bsa_others - z*rsq.se_rpf_bsa_others
-UL_rpf_bsa_others <- rsq_rpf_bsa_others + z*rsq.se_rpf_bsa_others
+mod_erpf_others_bsa_specs <- compute_rsq_conf_interval(mod_erpf_others_bsa)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-erpf_others_bsa-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+erpf_others_bsa_dat$sexfemale <- ifelse(erpf_others_bsa_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_erpf_others_bsa <- as.matrix(cbind(subset(erpf_others_bsa_dat, select = c("age", "sexfemale")), top_erpf_others_bsa$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_erpf_others_bsa_adj <- easy_elasticnet(data = erpf_others_bsa_dat, 
+                               outcome = "erpf_bsa_plasma", out = "1se.error",
+                               predictors = predictors_erpf_others_bsa,
+                               cv_method="kfold", folds = 10,
+                               penalty.factor = c(rep(0,2), rep(1, ncol(predictors_erpf_others_bsa)-2)))
+length(en_erpf_others_bsa_adj)
+
+retained_vars_erpf_others_bsa_adj = analytes[analytes$AptName %in% en_erpf_others_bsa_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+mod_df_erpf_others_bsa_adj <- create_lm_summary(erpf_others_bsa_dat, "erpf_bsa_plasma", en_erpf_others_bsa_adj, retained_vars_erpf_others_bsa_adj, log = T)
+create_lm_summary_table_plot(mod_df_erpf_others_bsa_adj$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_erpf_others_bsa)`.
+
+```{r echo = F, warning = F, message=F}
+mod_erpf_others_bsa_adj <- mod_df_erpf_others_bsa_adj$model
+kable(glance(mod_erpf_others_bsa_adj))
+plot(mod_erpf_others_bsa_adj)
+
+# Adjusted R-squared 95% CI
+mod_erpf_others_bsa_adj_specs <- compute_rsq_conf_interval(mod_erpf_others_bsa_adj)
 ```
 
 ## Model comparison
-
+#### Unadjusted models
 ```{r models-others2, echo=F}
-others <- data.frame(r2 = c(rsq_tkv_others, rsq_ht_adj_tkv_others, rsq_gfr_others, rsq_gfr_bsa_others, rsq_rpf_others, rsq_rpf_bsa_others),
-                       lower = c(LL_tkv_others, LL_ht_adj_tkv_others, LL_gfr_others, LL_gfr_bsa_others, LL_rpf_others, LL_rpf_bsa_others),
-                       upper = c(UL_tkv_others, UL_ht_adj_tkv_others, UL_gfr_others, UL_gfr_bsa_others, UL_rpf_others, UL_rpf_bsa_others),
-                       Model = c("TKV", "Ht-adj TKV", "GFR-Raw", "GFR-BSA", "RPF-Raw", "RPF-BSA"),
-                       No.proteins = c(length(en_tkv_others), 
-                                       length(en_ht_adj_tkv_others), 
-                                       length(en_gfr_others), 
-                                       length(en_gfr_bsa_others), 
-                                       length(en_rpf_others), 
-                                       length(en_rpf_bsa_others)))
+others <- data.frame(r2 = c(mod_tkv_others_specs$rsq_adj, mod_ht_adj_tkv_others_specs$rsq_adj, mod_gfr_others_specs$rsq_adj, mod_gfr_others_bsa_specs$rsq_adj, mod_rpf_others_specs$rsq_adj, mod_erpf_others_bsa_specs$rsq_adj),
+                                  lower = c(mod_tkv_others_specs$conf.low, mod_ht_adj_tkv_others_specs$conf.low, mod_gfr_others_specs$conf.low, mod_gfr_others_bsa_specs$conf.low, mod_rpf_others_specs$conf.low, mod_erpf_others_bsa_specs$conf.low),
+                                  upper = c(mod_tkv_others_specs$conf.high, mod_ht_adj_tkv_others_specs$conf.high, mod_gfr_others_specs$conf.high, mod_gfr_others_bsa_specs$conf.high, mod_rpf_others_specs$conf.high, mod_erpf_others_bsa_specs$conf.high),
+                                  Model = c("TKV", "Ht-adj TKV", "GFR - Raw", "GFR - BSA", "RPF - Raw", "RPF - BSA"),
+                                  No.proteins = c(length(en_tkv_others), 
+                                                  length(en_ht_adj_tkv_others),
+                                                  length(en_gfr_others),
+                                                  length(en_gfr_others_bsa),
+                                                  length(en_rpf_others),
+                                                  length(en_erpf_others_bsa)))
 others$` ` <- paste(rep(" ", 20), collapse = " ")
+
 
 # Create confidence interval column to display
 others$`Adjusted R-squared (95% CI)` <- 
   ifelse(is.na(others$r2), "",
          sprintf("%.2f (%.2f to %.2f)",
                  others$r2, others$lower, others$upper))
-others
 forest(data = others[,c(4:7)], 
        est = others$r2,
        lower = others$lower,
        upper = others$upper, ci_column = 3)
+```
+```{r models-others-ipna, echo=F}
+others_ipna <- data.frame(r2 = c(mod_tkv_others_specs$rsq_adj, mod_ht_adj_tkv_others_specs$rsq_adj, mod_gfr_others_specs$rsq_adj, mod_rpf_others_specs$rsq_adj),
+                                  lower = c(mod_tkv_others_specs$conf.low, mod_ht_adj_tkv_others_specs$conf.low, mod_gfr_others_specs$conf.low, mod_rpf_others_specs$conf.low),
+                                  upper = c(mod_tkv_others_specs$conf.high, mod_ht_adj_tkv_others_specs$conf.high, mod_gfr_others_specs$conf.high, mod_rpf_others_specs$conf.high),
+                                  Model = c("TKV", "Ht-adj TKV", "GFR", "RPF"),
+                                  No.proteins = c(length(en_tkv_others), 
+                                                  length(en_ht_adj_tkv_others),
+                                                  length(en_gfr_others),
+                                                  length(en_rpf_others)))
+others_ipna$` ` <- paste(rep(" ", 20), collapse = " ")
+
+
+# Create confidence interval column to display
+others_ipna$`Adjusted R-squared (95% CI)` <- 
+  ifelse(is.na(others_ipna$r2), "",
+         sprintf("%.2f (%.2f to %.2f)",
+                 others_ipna$r2, others_ipna$lower, others_ipna$upper))
+forest(data = others_ipna[,c(4:7)], 
+       est = others_ipna$r2,
+       lower = others_ipna$lower,
+       upper = others_ipna$upper, ci_column = 3)
+```
+
+#### Adjusted for age and sex
+```{r models-others-adjusted, echo=F}
+others_adj <- data.frame(r2 = c(mod_tkv_others_adj_specs$rsq_adj, mod_ht_adj_tkv_others_adj_specs$rsq_adj, mod_gfr_others_adj_specs$rsq_adj, mod_gfr_others_bsa_adj_specs$rsq_adj, mod_rpf_others_adj_specs$rsq_adj, mod_erpf_others_bsa_adj_specs$rsq_adj),
+                                  lower = c(mod_tkv_others_adj_specs$conf.low, mod_ht_adj_tkv_others_adj_specs$conf.low, mod_gfr_others_adj_specs$conf.low, mod_gfr_others_bsa_adj_specs$conf.low, mod_rpf_others_adj_specs$conf.low, mod_erpf_others_bsa_adj_specs$conf.low),
+                                  upper = c(mod_tkv_others_adj_specs$conf.high, mod_ht_adj_tkv_others_adj_specs$conf.high, mod_gfr_others_adj_specs$conf.high, mod_gfr_others_bsa_adj_specs$conf.high, mod_rpf_others_adj_specs$conf.high, mod_erpf_others_bsa_adj_specs$conf.high),
+                                  Model = c("TKV", "Ht-adj TKV", "GFR - Raw", "GFR - BSA", "RPF - Raw", "RPF - BSA"),
+                                  No.proteins = c(length(en_tkv_others_adj)-2, 
+                                                  length(en_ht_adj_tkv_others_adj)-2,
+                                                  length(en_gfr_others_adj)-2,
+                                                  length(en_gfr_others_bsa_adj)-2,
+                                                  length(en_rpf_others_adj)-2,
+                                                  length(en_erpf_others_bsa_adj)-2))
+others_adj$` ` <- paste(rep(" ", 20), collapse = " ")
+
+# Create confidence interval column to display
+others_adj$`Adjusted R-squared (95% CI)` <- 
+  ifelse(is.na(others_adj$r2), "",
+         sprintf("%.2f (%.2f to %.2f)",
+                 others_adj$r2, others_adj$lower, others_adj$upper))
+forest(data = others_adj[,c(4:7)], 
+       est = others_adj$r2,
+       lower = others_adj$lower,
+       upper = others_adj$upper, ci_column = 3)
+```
+
+```{r models-others-ipna-adjusted, echo=F}
+others_ipna_adj <- data.frame(r2 = c(mod_tkv_others_adj_specs$rsq_adj, mod_ht_adj_tkv_others_adj_specs$rsq_adj, mod_gfr_others_adj_specs$rsq_adj, mod_rpf_others_adj_specs$rsq_adj),
+                                  lower = c(mod_tkv_others_adj_specs$conf.low, mod_ht_adj_tkv_others_adj_specs$conf.low, mod_gfr_others_adj_specs$conf.low, mod_rpf_others_adj_specs$conf.low),
+                                  upper = c(mod_tkv_others_adj_specs$conf.high, mod_ht_adj_tkv_others_adj_specs$conf.high, mod_gfr_others_adj_specs$conf.high, mod_rpf_others_adj_specs$conf.high),
+                                  Model = c("TKV", "Ht-adj TKV", "GFR", "RPF"),
+                                  No.proteins = c(length(en_tkv_others_adj)-2, 
+                                                  length(en_ht_adj_tkv_others_adj)-2,
+                                                  length(en_gfr_others_adj)-2,
+                                                  length(en_rpf_others_adj)-2))
+others_ipna_adj$` ` <- paste(rep(" ", 20), collapse = " ")
+
+
+# Create confidence interval column to display
+others_ipna_adj$`Adjusted R-squared (95% CI)` <- 
+  ifelse(is.na(others_ipna_adj$r2), "",
+         sprintf("%.2f (%.2f to %.2f)",
+                 others_ipna_adj$r2, others_ipna_adj$lower, others_ipna_adj$upper))
+forest(data = others_ipna_adj[,c(4:7)], 
+       est = others_ipna_adj$r2,
+       lower = others_ipna_adj$lower,
+       upper = others_ipna_adj$upper, ci_column = 3)
 ```
 
 # Elastic net for PANTHER + RH/RH2/IMPROVE
 
 ### Total Kidney Volume
 
-```{r elastic-net-tkv-comb, echo = F, warning = F, message=F}
-hist(cleanData_comb$combined_tkv)
-# Limit to records with non-missing tkv
-comb_combined_tkv <- cleanData_comb %>% 
-  filter(!is.na(combined_tkv)) %>% 
-  dplyr::select(combined_tkv, starts_with("seq"))
+#### Unadjusted model
 
-# Top 100 associations to tkv
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(comb_combined_tkv))
-predictors <- colnames(comb_combined_tkv[seq])
+```{r elastic-net-tkv_comb-unadj, echo = F, warning = F, message=F, results ='asis'}
+tkv_comb_dat <- subset(cleanData_comb, !is.na(total_kidney_volume_ml) & total_kidney_volume_ml > 0)
+top_tkv_comb <- top_associations(tkv_comb_dat, "total_kidney_volume_ml", analytes, log = F)
 
-result_tkv_comb <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("combined_tkv ~ ",predictors[i])
-  mod <- lm(data = comb_combined_tkv, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_tkv_comb <- rbind(result_tkv_comb,tidymod)
-}
-
-result_tkv_comb$adj.p.value <- p.adjust(result_tkv_comb$p.value, "fdr")
-result_tkv_comb$AptName <- result_tkv_comb$term
-result_tkv_comb$term <- NULL
-result_tkv_comb <- merge(result_tkv_comb,analytes,by="AptName",all.x = T, all.y = F)
-result_tkv_comb <- result_tkv_comb[order(result_tkv_comb$p.value),] 
-result_tkv_comb_100 <- head(result_tkv_comb, 100)$AptName
-predictors_tkv_comb <- as.matrix(subset(comb_combined_tkv, select = result_tkv_comb_100))
 # Elastic net regression
-en_tkv_comb <- easy_elasticnet(data = comb_combined_tkv, 
-                        outcome = "combined_tkv", out = "1se.error",
-                        predictors = predictors_tkv_comb,
-                        cv_method="kfold", folds = 10)
+en_tkv_comb <- easy_elasticnet(data = tkv_comb_dat, 
+                           outcome = "total_kidney_volume_ml", 
+                           out = "1se.error",
+                           predictors = top_tkv_comb$predictors_matrix,
+                           cv_method="kfold", 
+                           folds = 10)
+length(en_tkv_comb)
 
-retained_vars_tkv_comb = analytes[analytes$AptName %in% en_tkv_comb, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_tkv_comb = analytes[analytes$AptName %in% en_tkv_comb, 
+                              c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
-form_tkv_comb = as.formula(paste0("combined_tkv ~ ",paste0(en_tkv_comb,collapse = "+")))
-mod_tkv_comb = lm(formula = form_tkv_comb, data = comb_combined_tkv)
-mod_df_tkv_comb = as.data.frame(tidy(mod_tkv_comb, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_tkv_comb) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_tkv_comb,p.value), digits = 3)
-ggplot(mod_df_tkv_comb[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_tkv_comb <- create_lm_summary(tkv_comb_dat, "total_kidney_volume_ml", en_tkv_comb, retained_vars_tkv_comb, log = F)
+create_lm_summary_table_plot(mod_df_tkv_comb$model_df, format = "html")
 ```
 
-Top `r length(result_tkv_comb_100)` proteins included in analysis. No. of proteins identified: `r length(en_tkv_comb)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_tkv_comb)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_tkv_comb <- mod_df_tkv_comb$model
 kable(glance(mod_tkv_comb))
 plot(mod_tkv_comb)
 
 # Adjusted R-squared 95% CI
-rsq_tkv_comb <- summary(mod_tkv_comb)$adj.r.squared
-k_tkv_comb <- ncol(mod_tkv_comb$model) - 1
-n_tkv_comb <- mod_tkv_comb$df.residual + k_tkv_comb + 1
-rsq.se_tkv_comb <- sqrt((4 * rsq_tkv_comb * (1 - rsq_tkv_comb)^2 * (n_tkv_comb - k_tkv_comb - 1)^2)/((n_tkv_comb^2 - 1) * (3 + n_tkv_comb)))
-LL_tkv_comb <- rsq_tkv_comb - z*rsq.se_tkv_comb
-UL_tkv_comb <- rsq_tkv_comb + z*rsq.se_tkv_comb
+mod_tkv_comb_specs <- compute_rsq_conf_interval(mod_tkv_comb)
 ```
 
-### Height adjusted TKV
+#### Adjusted for age and sex
 
-```{r elastic-net-httkv, echo = F, warning = F, message=F}
-hist(cleanData_comb$combined_ht_tkv)
-# Limit to records with non-missing ht_adj_tkv
-ht_adj_tkv_comb <- cleanData_comb %>% 
-  filter(!is.na(combined_ht_tkv)) %>% 
-  dplyr::select(combined_ht_tkv, starts_with("seq")) 
+```{r elastic-net-tkv_comb-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+tkv_comb_dat$sexfemale <- ifelse(tkv_comb_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_tkv_comb <- as.matrix(cbind(subset(tkv_comb_dat, select = c("age", "sexfemale")), top_tkv_comb$predictors_matrix))
 
-# Top 100 associations to ht_adj_tkv
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(ht_adj_tkv_comb))
-predictors <- colnames(ht_adj_tkv_comb[seq])
-
-result_ht_adj_tkv_comb <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("combined_ht_tkv ~ ",predictors[i])
-  mod <- lm(data = ht_adj_tkv_comb, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_ht_adj_tkv_comb <- rbind(result_ht_adj_tkv_comb,tidymod)
-}
-
-result_ht_adj_tkv_comb$adj.p.value <- p.adjust(result_ht_adj_tkv_comb$p.value, "fdr")
-result_ht_adj_tkv_comb$AptName <- result_ht_adj_tkv_comb$term
-result_ht_adj_tkv_comb$term <- NULL
-result_ht_adj_tkv_comb <- merge(result_ht_adj_tkv_comb,analytes,by="AptName",all.x = T, all.y = F)
-result_ht_adj_tkv_comb <- result_ht_adj_tkv_comb[order(result_ht_adj_tkv_comb$p.value),] 
-result_ht_adj_tkv_100 <- head(result_ht_adj_tkv_comb, 100)$AptName
-predictors_ht_adj_tkv_comb <- as.matrix(subset(ht_adj_tkv_comb, select = result_ht_adj_tkv_100))
 # Elastic net regression
-en_ht_adj_tkv_comb <- easy_elasticnet(data = ht_adj_tkv_comb, 
-                        outcome = "combined_ht_tkv", out = "1se.error",
-                        predictors = predictors_ht_adj_tkv_comb,
-                        cv_method="kfold", folds = 10)
+## Force age and sex to models to adjust
+en_tkv_comb_adj <- easy_elasticnet(data = tkv_comb_dat, 
+                               outcome = "total_kidney_volume_ml", out = "1se.error",
+                               predictors = predictors_tkv_comb,
+                               cv_method="kfold", folds = 10,
+                               penalty.factor = c(rep(0,2), rep(1, ncol(predictors_tkv_comb)-2)))
+length(en_tkv_comb_adj)
 
-retained_vars_ht_adj_tkv_comb = analytes[analytes$AptName %in% en_ht_adj_tkv_comb, c("AptName","Target_nodup","TargetFullName")] %>%
+retained_vars_tkv_comb_adj = analytes[analytes$AptName %in% en_tkv_comb_adj, c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
-form_ht_adj_tkv_comb = as.formula(paste0("combined_ht_tkv ~ ",paste0(en_ht_adj_tkv_comb,collapse = "+")))
-mod_ht_adj_tkv_comb = lm(formula = form_ht_adj_tkv_comb, data = ht_adj_tkv_comb)
-mod_df_ht_adj_tkv_comb = as.data.frame(tidy(mod_ht_adj_tkv_comb, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_ht_adj_tkv_comb) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_ht_adj_tkv_comb,p.value), digits = 3)
-
-ggplot(mod_df_ht_adj_tkv_comb[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_tkv_comb_adj <- create_lm_summary(tkv_comb_dat, "total_kidney_volume_ml", en_tkv_comb_adj, retained_vars_tkv_comb_adj, log = F)
+create_lm_summary_table_plot(mod_df_tkv_comb_adj$model_df, format = "html")
 ```
 
-Top `r length(result_ht_adj_tkv_100)` proteins included in analysis. No. of proteins identified: `r length(en_ht_adj_tkv_comb)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_tkv_comb)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_tkv_comb_adj <- mod_df_tkv_comb_adj$model
+kable(glance(mod_tkv_comb_adj))
+plot(mod_tkv_comb_adj)
+
+# Adjusted R-squared 95% CI
+mod_tkv_comb_adj_specs <- compute_rsq_conf_interval(mod_tkv_comb_adj)
+```
+
+
+
+
+### Height adjusted TKV
+#### Unadjusted model
+```{r elastic-net-ht_adj_tkv_comb-unadj, echo = F, warning = F, message=F, results ='asis'}
+ht_adj_tkv_comb_dat <- subset(cleanData_comb, !is.na(ht_adj_tkv) & ht_adj_tkv > 0)
+top_ht_adj_tkv_comb <- top_associations(ht_adj_tkv_comb_dat, "ht_adj_tkv", analytes, log = F, top_n = 50)
+
+# Elastic net regression
+en_ht_adj_tkv_comb <- easy_elasticnet(data = ht_adj_tkv_comb_dat, 
+                           outcome = "ht_adj_tkv", 
+                           out = "1se.error",
+                           predictors = top_ht_adj_tkv_comb$predictors_matrix,
+                           cv_method="kfold", 
+                           folds = 10)
+length(en_ht_adj_tkv_comb)
+
+# Save retained variables from elastic net
+retained_vars_ht_adj_tkv_comb = analytes[analytes$AptName %in% en_ht_adj_tkv_comb, 
+                              c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+mod_df_ht_adj_tkv_comb <- create_lm_summary(ht_adj_tkv_comb_dat, "ht_adj_tkv", en_ht_adj_tkv_comb, retained_vars_ht_adj_tkv_comb, log = F)
+create_lm_summary_table_plot(mod_df_ht_adj_tkv_comb$model_df, format = "html")
+```
+
+Top 50 proteins included in analysis. No. of proteins identified: `r length(en_ht_adj_tkv_comb)`.
+
+```{r echo = F, warning = F, message=F}
+mod_ht_adj_tkv_comb <- mod_df_ht_adj_tkv_comb$model
 kable(glance(mod_ht_adj_tkv_comb))
 plot(mod_ht_adj_tkv_comb)
 
 # Adjusted R-squared 95% CI
-rsq_ht_adj_tkv_comb <- summary(mod_ht_adj_tkv_comb)$adj.r.squared
-k_ht_adj_tkv_comb <- ncol(mod_ht_adj_tkv_comb$model) - 1
-n_ht_adj_tkv_comb <- mod_ht_adj_tkv_comb$df.residual + k_ht_adj_tkv_comb + 1
-rsq.se_ht_adj_tkv_comb <- sqrt((4 * rsq_ht_adj_tkv_comb * (1 - rsq_ht_adj_tkv_comb)^2 * (n_ht_adj_tkv_comb - k_ht_adj_tkv_comb - 1)^2)/((n_ht_adj_tkv_comb^2 - 1) * (3 + n_ht_adj_tkv_comb)))
-LL_ht_adj_tkv_comb <- rsq_ht_adj_tkv_comb - z*rsq.se_ht_adj_tkv_comb
-UL_ht_adj_tkv_comb <- rsq_ht_adj_tkv_comb + z*rsq.se_ht_adj_tkv_comb
+mod_ht_adj_tkv_comb_specs <- compute_rsq_conf_interval(mod_ht_adj_tkv_comb)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-ht_adj_tkv_comb-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+ht_adj_tkv_comb_dat$sexfemale <- ifelse(ht_adj_tkv_comb_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_ht_adj_tkv_comb <- as.matrix(cbind(subset(ht_adj_tkv_comb_dat, select = c("age", "sexfemale")), top_ht_adj_tkv_comb$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_ht_adj_tkv_comb_adj <- easy_elasticnet(data = ht_adj_tkv_comb_dat, 
+                               outcome = "ht_adj_tkv", out = "1se.error",
+                               predictors = predictors_ht_adj_tkv_comb,
+                               cv_method="kfold", folds = 10,
+                               penalty.factor = c(rep(0,2), rep(1, ncol(predictors_ht_adj_tkv_comb)-2)))
+length(en_ht_adj_tkv_comb_adj)
+
+retained_vars_ht_adj_tkv_comb_adj = analytes[analytes$AptName %in% en_ht_adj_tkv_comb_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+mod_df_ht_adj_tkv_comb_adj <- create_lm_summary(ht_adj_tkv_comb_dat, "ht_adj_tkv", en_ht_adj_tkv_comb_adj, retained_vars_ht_adj_tkv_comb_adj, log = F)
+create_lm_summary_table_plot(mod_df_ht_adj_tkv_comb_adj$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_ht_adj_tkv_comb)`.
+
+```{r echo = F, warning = F, message=F}
+mod_ht_adj_tkv_comb_adj <- mod_df_ht_adj_tkv_comb_adj$model
+kable(glance(mod_ht_adj_tkv_comb_adj))
+plot(mod_ht_adj_tkv_comb_adj)
+
+# Adjusted R-squared 95% CI
+mod_ht_adj_tkv_comb_adj_specs <- compute_rsq_conf_interval(mod_ht_adj_tkv_comb_adj)
 ```
 
 ### GFR (Raw plasma)
+#### Unadjusted model
 
-```{r elastic-net-gfr, echo = F, warning = F, message=F}
-# Limit to records with non-missing gfr
-comb_gfr_raw_plasma <- cleanData_comb %>% 
-  filter(!is.na(gfr_raw_plasma) & gfr_raw_plasma > 0) %>% 
-  dplyr::select(gfr_raw_plasma, starts_with("seq")) 
+```{r elastic-net-gfr_comb-unadj, echo = F, warning = F, message=F, results ='asis'}
+gfr_comb_dat <- subset(cleanData_comb, !is.na(gfr_raw_plasma) & gfr_raw_plasma > 0)
+top_gfr_comb <- top_associations(gfr_comb_dat, "gfr_raw_plasma", analytes, log = T, top_n = 100)
 
-# Top 100 associations to gfr
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(comb_gfr_raw_plasma))
-predictors <- colnames(comb_gfr_raw_plasma[seq])
-
-result_gfr_comb <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("log(gfr_raw_plasma) ~ ",predictors[i])
-  mod <- lm(data = comb_gfr_raw_plasma, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_gfr_comb <- rbind(result_gfr_comb,tidymod)
-}
-
-result_gfr_comb$adj.p.value <- p.adjust(result_gfr_comb$p.value, "fdr")
-result_gfr_comb$AptName <- result_gfr_comb$term
-result_gfr_comb$term <- NULL
-result_gfr_comb <- merge(result_gfr_comb,analytes,by="AptName",all.x = T, all.y = F)
-result_gfr_comb <- result_gfr_comb[order(result_gfr_comb$p.value),] 
-result_gfr_comb_100 <- head(result_gfr_comb, 80)$AptName
-predictors_gfr_comb <- as.matrix(subset(comb_gfr_raw_plasma, select = result_gfr_comb_100))
 # Elastic net regression
-en_gfr_comb <- easy_elasticnet(data = comb_gfr_raw_plasma, 
-                        outcome = "gfr_raw_plasma", out = "1se.error",
-                        predictors = predictors_gfr_comb,
-                        cv_method="kfold", folds = 10)
+en_gfr_comb <- easy_elasticnet(data = gfr_comb_dat, 
+                          outcome = "gfr_raw_plasma", 
+                          out = "1se.error",
+                          predictors = top_gfr_comb$predictors_matrix,
+                          cv_method="kfold", 
+                          folds = 10)
+length(en_gfr_comb)
 
-retained_vars_gfr_comb = analytes[analytes$AptName %in% en_gfr_comb, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_gfr_comb = analytes[analytes$AptName %in% en_gfr_comb, 
+                             c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
-form_gfr_comb = as.formula(paste0("log(gfr_raw_plasma) ~ ",paste0(en_gfr_comb,collapse = "+")))
-mod_gfr_comb = lm(formula = form_gfr_comb, data = comb_gfr_raw_plasma)
-mod_df_gfr_comb = as.data.frame(tidy(mod_gfr_comb, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_gfr_comb) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_gfr_comb,p.value), digits = 3)
-ggplot(mod_df_gfr_comb[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_gfr_comb <- create_lm_summary(gfr_comb_dat, "gfr_raw_plasma", en_gfr_comb, retained_vars_gfr_comb, log = T)
+create_lm_summary_table_plot(mod_df_gfr_comb$model_df, format = "html")
 ```
 
-Top `r length(result_gfr_comb_100)` proteins included in analysis. No. of proteins identified: `r length(en_gfr_comb)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_gfr_comb)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_gfr_comb <- mod_df_gfr_comb$model
 kable(glance(mod_gfr_comb))
 plot(mod_gfr_comb)
 
 # Adjusted R-squared 95% CI
-rsq_gfr_comb <- summary(mod_gfr_comb)$adj.r.squared
-k_gfr_comb <- ncol(mod_gfr_comb$model) - 1
-n_gfr_comb <- mod_gfr_comb$df.residual + k_gfr_comb + 1
-rsq.se_gfr_comb <- sqrt((4 * rsq_gfr_comb * (1 - rsq_gfr_comb)^2 * (n_gfr_comb - k_gfr_comb - 1)^2)/((n_gfr_comb^2 - 1) * (3 + n_gfr_comb)))
-LL_gfr_comb <- rsq_gfr_comb - z*rsq.se_gfr_comb
-UL_gfr_comb <- rsq_gfr_comb + z*rsq.se_gfr_comb
+mod_gfr_comb_specs <- compute_rsq_conf_interval(mod_gfr_comb)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-gfr_comb-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+gfr_comb_dat$sexfemale <- ifelse(gfr_comb_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_gfr_comb <- as.matrix(cbind(subset(gfr_comb_dat, select = c("age", "sexfemale")), top_gfr_comb$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_gfr_comb_adj <- easy_elasticnet(data = gfr_comb_dat, 
+                              outcome = "gfr_raw_plasma", out = "1se.error",
+                              predictors = predictors_gfr_comb,
+                              cv_method="kfold", folds = 10,
+                              penalty.factor = c(rep(0,2), rep(1, ncol(predictors_gfr_comb)-2)))
+length(en_gfr_comb_adj)
+
+retained_vars_gfr_comb_adj = analytes[analytes$AptName %in% en_gfr_comb_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+mod_df_gfr_comb_adj <- create_lm_summary(gfr_comb_dat, "gfr_raw_plasma", en_gfr_comb_adj, retained_vars_gfr_comb_adj, log = T)
+create_lm_summary_table_plot(mod_df_gfr_comb_adj$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_gfr_comb)`.
+
+```{r echo = F, warning = F, message=F}
+mod_gfr_comb_adj <- mod_df_gfr_comb_adj$model
+kable(glance(mod_gfr_comb_adj))
+plot(mod_gfr_comb_adj)
+
+# Adjusted R-squared 95% CI
+mod_gfr_comb_adj_specs <- compute_rsq_conf_interval(mod_gfr_comb_adj)
 ```
 
 ### GFR (BSA plasma)
 
-```{r elastic-net-gfr-bsa, echo = F, warning = F, message=F}
-# Limit to records with non-missing gfr
-comb_gfr_bsa_plasma <- cleanData_comb %>% 
-  filter(!is.na(gfr_bsa_plasma) & gfr_bsa_plasma > 0) %>% 
-  dplyr::select(gfr_bsa_plasma, starts_with("seq")) 
+#### Unadjusted model
 
-# Top 100 associations to gfr
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(comb_gfr_bsa_plasma))
-predictors <- colnames(comb_gfr_bsa_plasma[seq])
+```{r elastic-net-gfr_comb_bsa-unadj, echo = F, warning = F, message=F, results ='asis'}
+gfr_comb_bsa_dat <- subset(cleanData_comb, !is.na(gfr_bsa_plasma) & gfr_bsa_plasma > 0)
+top_gfr_comb_bsa <- top_associations(gfr_comb_bsa_dat, "gfr_bsa_plasma", analytes, log = T)
 
-result_gfr_bsa_comb <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("log(gfr_bsa_plasma) ~ ",predictors[i])
-  mod <- lm(data = comb_gfr_bsa_plasma, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_gfr_bsa_comb <- rbind(result_gfr_bsa_comb,tidymod)
-}
-
-result_gfr_bsa_comb$adj.p.value <- p.adjust(result_gfr_bsa_comb$p.value, "fdr")
-result_gfr_bsa_comb$AptName <- result_gfr_bsa_comb$term
-result_gfr_bsa_comb$term <- NULL
-result_gfr_bsa_comb <- merge(result_gfr_bsa_comb,analytes,by="AptName",all.x = T, all.y = F)
-result_gfr_bsa_comb <- result_gfr_bsa_comb[order(result_gfr_bsa_comb$p.value),] 
-result_gfr_bsa_comb_100 <- head(result_gfr_bsa_comb, 100)$AptName
-predictors_gfr_bsa_comb <- as.matrix(subset(comb_gfr_bsa_plasma, select = result_gfr_bsa_comb_100))
 # Elastic net regression
-en_gfr_bsa_comb <- easy_elasticnet(data = comb_gfr_bsa_plasma, 
-                        outcome = "gfr_bsa_plasma", out = "1se.error",
-                        predictors = predictors_gfr_bsa_comb,
-                        cv_method="kfold", folds = 10)
+en_gfr_comb_bsa <- easy_elasticnet(data = gfr_comb_bsa_dat, 
+                           outcome = "gfr_bsa_plasma", 
+                           out = "1se.error",
+                           predictors = top_gfr_comb_bsa$predictors_matrix,
+                           cv_method="kfold", 
+                           folds = 10)
+length(en_gfr_comb_bsa)
 
-retained_vars_gfr_bsa_comb = analytes[analytes$AptName %in% en_gfr_bsa_comb, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_gfr_comb_bsa = analytes[analytes$AptName %in% en_gfr_comb_bsa, 
+                              c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
-form_gfr_bsa_comb = as.formula(paste0("log(gfr_bsa_plasma) ~ ",paste0(en_gfr_bsa_comb,collapse = "+")))
-mod_gfr_bsa_comb = lm(formula = form_gfr_bsa_comb, data = comb_gfr_bsa_plasma)
-mod_df_gfr_bsa_comb = as.data.frame(tidy(mod_gfr_bsa_comb, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_gfr_bsa_comb) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_gfr_bsa_comb,p.value), digits = 3)
-ggplot(mod_df_gfr_bsa_comb[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_gfr_comb_bsa <- create_lm_summary(gfr_comb_bsa_dat, "gfr_bsa_plasma", en_gfr_comb_bsa, retained_vars_gfr_comb_bsa, log = T)
+create_lm_summary_table_plot(mod_df_gfr_comb_bsa$model_df, format = "html")
 ```
 
-Top `r length(result_gfr_bsa_comb_100)` proteins included in analysis. No. of proteins identified: `r length(en_gfr_bsa_comb)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_gfr_comb_bsa)`.
 
 ```{r echo = F, warning = F, message=F}
-kable(glance(mod_gfr_bsa_comb))
-plot(mod_gfr_bsa_comb)
+mod_gfr_comb_bsa <- mod_df_gfr_comb_bsa$model
+kable(glance(mod_gfr_comb_bsa))
+plot(mod_gfr_comb_bsa)
 
 # Adjusted R-squared 95% CI
-rsq_gfr_bsa_comb <- summary(mod_gfr_bsa_comb)$adj.r.squared
-k_gfr_bsa_comb <- ncol(mod_gfr_bsa_comb$model) - 1
-n_gfr_bsa_comb <- mod_gfr_bsa_comb$df.residual + k_gfr_bsa_comb + 1
-rsq.se_gfr_bsa_comb <- sqrt((4 * rsq_gfr_bsa_comb * (1 - rsq_gfr_bsa_comb)^2 * (n_gfr_bsa_comb - k_gfr_bsa_comb - 1)^2)/((n_gfr_bsa_comb^2 - 1) * (3 + n_gfr_bsa_comb)))
-LL_gfr_bsa_comb <- rsq_gfr_bsa_comb - z*rsq.se_gfr_bsa_comb
-UL_gfr_bsa_comb <- rsq_gfr_bsa_comb + z*rsq.se_gfr_bsa_comb
+mod_gfr_comb_bsa_specs <- compute_rsq_conf_interval(mod_gfr_comb_bsa)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-gfr_comb_bsa-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+gfr_comb_bsa_dat$sexfemale <- ifelse(gfr_comb_bsa_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_gfr_comb_bsa <- as.matrix(cbind(subset(gfr_comb_bsa_dat, select = c("age", "sexfemale")), top_gfr_comb_bsa$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_gfr_comb_bsa_adj <- easy_elasticnet(data = gfr_comb_bsa_dat, 
+                               outcome = "gfr_bsa_plasma", out = "1se.error",
+                               predictors = predictors_gfr_comb_bsa,
+                               cv_method="kfold", folds = 10,
+                               penalty.factor = c(rep(0,2), rep(1, ncol(predictors_gfr_comb_bsa)-2)))
+length(en_gfr_comb_bsa_adj)
+
+retained_vars_gfr_comb_bsa_adj = analytes[analytes$AptName %in% en_gfr_comb_bsa_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+mod_df_gfr_comb_bsa_adj <- create_lm_summary(gfr_comb_bsa_dat, "gfr_bsa_plasma", en_gfr_comb_bsa_adj, retained_vars_gfr_comb_bsa_adj, log = T)
+create_lm_summary_table_plot(mod_df_gfr_comb_bsa_adj$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_gfr_comb_bsa)`.
+
+```{r echo = F, warning = F, message=F}
+mod_gfr_comb_bsa_adj <- mod_df_gfr_comb_bsa_adj$model
+kable(glance(mod_gfr_comb_bsa_adj))
+plot(mod_gfr_comb_bsa_adj)
+
+# Adjusted R-squared 95% CI
+mod_gfr_comb_bsa_adj_specs <- compute_rsq_conf_interval(mod_gfr_comb_bsa_adj)
 ```
 
 ### RPF (Raw plasma)
 
-```{r elastic-net-rpf, echo = F, warning = F, message=F}
-# Limit to records with non-missing rpf
-comb_erpf_raw_plasma <- cleanData_comb %>% 
-  filter(!is.na(erpf_raw_plasma) & erpf_raw_plasma > 0) %>% 
-  dplyr::select(erpf_raw_plasma, starts_with("seq")) 
+#### Unadjusted model
 
-# Top 100 associations to rpf
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(comb_erpf_raw_plasma))
-predictors <- colnames(comb_erpf_raw_plasma[seq])
+```{r elastic-net-rpf_comb-unadj, echo = F, warning = F, message=F, results ='asis'}
+rpf_comb_dat <- subset(cleanData_comb, !is.na(erpf_raw_plasma) & erpf_raw_plasma > 0)
+top_rpf_comb <- top_associations(rpf_comb_dat, "erpf_raw_plasma", analytes, log = T)
 
-result_rpf_comb <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("log(erpf_raw_plasma) ~ ",predictors[i])
-  mod <- lm(data = comb_erpf_raw_plasma, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_rpf_comb <- rbind(result_rpf_comb,tidymod)
-}
-
-result_rpf_comb$adj.p.value <- p.adjust(result_rpf_comb$p.value, "fdr")
-result_rpf_comb$AptName <- result_rpf_comb$term
-result_rpf_comb$term <- NULL
-result_rpf_comb <- merge(result_rpf_comb,analytes,by="AptName",all.x = T, all.y = F)
-result_rpf_comb <- result_rpf_comb[order(result_rpf_comb$p.value),] 
-result_rpf_comb_100 <- head(result_rpf_comb, 100)$AptName
-predictors_rpf_comb <- as.matrix(subset(comb_erpf_raw_plasma, select = result_rpf_comb_100))
 # Elastic net regression
-en_rpf_comb <- easy_elasticnet(data = comb_erpf_raw_plasma, 
-                        outcome = "erpf_raw_plasma", out = "1se.error",
-                        predictors = predictors_rpf_comb,
-                        cv_method="kfold", folds = 10)
+en_rpf_comb <- easy_elasticnet(data = rpf_comb_dat, 
+                          outcome = "erpf_raw_plasma", 
+                          out = "1se.error",
+                          predictors = top_rpf_comb$predictors_matrix,
+                          cv_method="kfold", 
+                          folds = 10)
+length(en_rpf_comb)
 
-retained_vars_rpf_comb = analytes[analytes$AptName %in% en_rpf_comb, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_rpf_comb = analytes[analytes$AptName %in% en_rpf_comb, 
+                             c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
-form_rpf_comb = as.formula(paste0("log(erpf_raw_plasma) ~ ",paste0(en_rpf_comb,collapse = "+")))
-mod_rpf_comb = lm(formula = form_rpf_comb, data = comb_erpf_raw_plasma)
-mod_df_rpf_comb = as.data.frame(tidy(mod_rpf_comb, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_rpf_comb) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_rpf_comb,p.value), digits = 3)
-ggplot(mod_df_rpf_comb[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_rpf_comb <- create_lm_summary(rpf_comb_dat, "erpf_raw_plasma", en_rpf_comb, retained_vars_rpf_comb, log = T)
+create_lm_summary_table_plot(mod_df_rpf_comb$model_df, format = "html")
 ```
 
-Top `r length(result_rpf_comb_100)` proteins included in analysis. No. of proteins identified: `r length(en_rpf_comb)`.
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_rpf_comb)`.
 
 ```{r echo = F, warning = F, message=F}
+mod_rpf_comb <- mod_df_rpf_comb$model
 kable(glance(mod_rpf_comb))
 plot(mod_rpf_comb)
 
 # Adjusted R-squared 95% CI
-rsq_rpf_comb <- summary(mod_rpf_comb)$adj.r.squared
-k_rpf_comb <- ncol(mod_rpf_comb$model) - 1
-n_rpf_comb <- mod_rpf_comb$df.residual + k_rpf_comb + 1
-rsq.se_rpf_comb <- sqrt((4 * rsq_rpf_comb * (1 - rsq_rpf_comb)^2 * (n_rpf_comb - k_rpf_comb - 1)^2)/((n_rpf_comb^2 - 1) * (3 + n_rpf_comb)))
-LL_rpf_comb <- rsq_rpf_comb - z*rsq.se_rpf_comb
-UL_rpf_comb <- rsq_rpf_comb + z*rsq.se_rpf_comb
+mod_rpf_comb_specs <- compute_rsq_conf_interval(mod_rpf_comb)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-rpf_comb-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+rpf_comb_dat$sexfemale <- ifelse(rpf_comb_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_rpf_comb <- as.matrix(cbind(subset(rpf_comb_dat, select = c("age", "sexfemale")), top_rpf_comb$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_rpf_comb_adj <- easy_elasticnet(data = rpf_comb_dat, 
+                              outcome = "erpf_raw_plasma", out = "1se.error",
+                              predictors = predictors_rpf_comb,
+                              cv_method="kfold", folds = 10,
+                              penalty.factor = c(rep(0,2), rep(1, ncol(predictors_rpf_comb)-2)))
+length(en_rpf_comb_adj)
+
+retained_vars_rpf_comb_adj = analytes[analytes$AptName %in% en_rpf_comb_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+mod_df_rpf_comb_adj <- create_lm_summary(rpf_comb_dat, "erpf_raw_plasma", en_rpf_comb_adj, retained_vars_rpf_comb_adj, log = T)
+create_lm_summary_table_plot(mod_df_rpf_comb_adj$model_df, format = "html")
+```
+
+Top 100 proteins included in analysis. No. of proteins identified: `r length(en_rpf_comb)`.
+
+```{r echo = F, warning = F, message=F}
+mod_rpf_comb_adj <- mod_df_rpf_comb_adj$model
+kable(glance(mod_rpf_comb_adj))
+plot(mod_rpf_comb_adj)
+
+# Adjusted R-squared 95% CI
+mod_rpf_comb_adj_specs <- compute_rsq_conf_interval(mod_rpf_comb_adj)
 ```
 
 ### RPF (BSA plasma)
 
-```{r elastic-net-rpf-bsa, echo = F, warning = F, message=F}
-# Limit to records with non-missing rpf
-comb_erpf_bsa_plasma <- cleanData_comb %>% 
-  filter(!is.na(erpf_bsa_plasma) & erpf_bsa_plasma > 0) %>% 
-  dplyr::select(erpf_bsa_plasma, starts_with("seq")) 
+#### Unadjusted model
 
-# Top 100 associations to rpf
-is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(comb_erpf_bsa_plasma))
-predictors <- colnames(comb_erpf_bsa_plasma[seq])
+```{r elastic-net-erpf_comb_bsa-unadj, echo = F, warning = F, message=F, results ='asis'}
+erpf_comb_bsa_dat <- subset(cleanData_comb, !is.na(erpf_bsa_plasma) & erpf_bsa_plasma > 0)
+top_erpf_comb_bsa <- top_associations(erpf_comb_bsa_dat, "erpf_bsa_plasma", analytes, log = T, top_n = 30)
 
-result_rpf_bsa_comb <- NULL
-for (i in 1:length(predictors)) {
-  form <- paste0("log(erpf_bsa_plasma) ~ ",predictors[i])
-  mod <- lm(data = comb_erpf_bsa_plasma, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=F, conf.int = TRUE)
-  tidymod <- tidymod[2,]
-  result_rpf_bsa_comb <- rbind(result_rpf_bsa_comb,tidymod)
-}
-
-result_rpf_bsa_comb$adj.p.value <- p.adjust(result_rpf_bsa_comb$p.value, "fdr")
-result_rpf_bsa_comb$AptName <- result_rpf_bsa_comb$term
-result_rpf_bsa_comb$term <- NULL
-result_rpf_bsa_comb <- merge(result_rpf_bsa_comb,analytes,by="AptName",all.x = T, all.y = F)
-result_rpf_bsa_comb <- result_rpf_bsa_comb[order(result_rpf_bsa_comb$p.value),] 
-result_rpf_bsa_comb_100 <- head(result_rpf_bsa_comb, 100)$AptName
-predictors_rpf_bsa_comb <- as.matrix(subset(comb_erpf_bsa_plasma, select = result_rpf_bsa_comb_100))
 # Elastic net regression
-en_rpf_bsa_comb <- easy_elasticnet(data = comb_erpf_bsa_plasma, 
-                        outcome = "erpf_bsa_plasma", out = "1se.error",
-                        predictors = predictors_rpf_bsa_comb,
-                        cv_method="kfold", folds = 10)
+en_erpf_comb_bsa <- easy_elasticnet(data = erpf_comb_bsa_dat, 
+                           outcome = "erpf_bsa_plasma", 
+                           out = "1se.error",
+                           predictors = top_erpf_comb_bsa$predictors_matrix,
+                           cv_method="kfold", 
+                           folds = 10)
+length(en_erpf_comb_bsa)
 
-retained_vars_rpf_bsa_comb = analytes[analytes$AptName %in% en_rpf_bsa_comb, c("AptName","Target_nodup","TargetFullName")] %>%
+# Save retained variables from elastic net
+retained_vars_erpf_comb_bsa = analytes[analytes$AptName %in% en_erpf_comb_bsa, 
+                              c("AptName","Target_nodup","TargetFullName")] %>%
   dplyr::rename("term" = AptName)
 
-form_rpf_bsa_comb = as.formula(paste0("log(erpf_bsa_plasma) ~ ",paste0(en_rpf_bsa_comb,collapse = "+")))
-mod_rpf_bsa_comb = lm(formula = form_rpf_bsa_comb, data = comb_erpf_bsa_plasma)
-mod_df_rpf_bsa_comb = as.data.frame(tidy(mod_rpf_bsa_comb, exponentiate = F, conf.int = T), digits = 3) %>% left_join(retained_vars_rpf_bsa_comb) %>%
-  dplyr::mutate(Target_nodup = case_when(is.na(Target_nodup) ~ "Intercept", T ~ Target_nodup),
-         TargetFullName = case_when(is.na(TargetFullName) ~ "Intercept", T ~ TargetFullName)) %>%
-  dplyr::select(Target_nodup, TargetFullName, estimate, std.error, statistic, p.value, conf.low, conf.high)
-
-kable(arrange(mod_df_rpf_bsa_comb,p.value), digits = 3)
-ggplot(mod_df_rpf_bsa_comb[-1,], 
-       aes(estimate, 
-           reorder(Target_nodup,dplyr::desc(p.value)), 
-           xmin = conf.low, 
-           xmax = conf.high, 
-           height = 0)) +
-  geom_point() +
-  geom_vline(xintercept = 0, lty = 4) +
-  geom_errorbarh() +
-  labs(y = NULL)
+mod_df_erpf_comb_bsa <- create_lm_summary(erpf_comb_bsa_dat, "erpf_bsa_plasma", en_erpf_comb_bsa, retained_vars_erpf_comb_bsa, log = T)
+create_lm_summary_table_plot(mod_df_erpf_comb_bsa$model_df, format = "html")
 ```
 
-Top `r length(result_rpf_bsa_comb_100)` proteins included in analysis. No. of proteins identified: `r length(en_rpf_bsa_comb)`.
+Top 30 proteins included in analysis. No. of proteins identified: `r length(en_erpf_comb_bsa)`.
 
 ```{r echo = F, warning = F, message=F}
-kable(glance(mod_rpf_bsa_comb))
-plot(mod_rpf_bsa_comb)
+mod_erpf_comb_bsa <- mod_df_erpf_comb_bsa$model
+kable(glance(mod_erpf_comb_bsa))
+plot(mod_erpf_comb_bsa)
 
 # Adjusted R-squared 95% CI
-rsq_rpf_bsa_comb <- summary(mod_rpf_bsa_comb)$adj.r.squared
-k_rpf_bsa_comb <- ncol(mod_rpf_bsa_comb$model) - 1
-n_rpf_bsa_comb <- mod_rpf_bsa_comb$df.residual + k_rpf_bsa_comb + 1
-rsq.se_rpf_bsa_comb <- sqrt((4 * rsq_rpf_bsa_comb * (1 - rsq_rpf_bsa_comb)^2 * (n_rpf_bsa_comb - k_rpf_bsa_comb - 1)^2)/((n_rpf_bsa_comb^2 - 1) * (3 + n_rpf_bsa_comb)))
-LL_rpf_bsa_comb <- rsq_rpf_bsa_comb - z*rsq.se_rpf_bsa_comb
-UL_rpf_bsa_comb <- rsq_rpf_bsa_comb + z*rsq.se_rpf_bsa_comb
+mod_erpf_comb_bsa_specs <- compute_rsq_conf_interval(mod_erpf_comb_bsa)
+```
+
+#### Adjusted for age and sex
+
+```{r elastic-net-erpf_comb_bsa-adj, echo = F, warning = F, message=F, results ='asis'}
+# Create dummy variables for 'sex'
+erpf_comb_bsa_dat$sexfemale <- ifelse(erpf_comb_bsa_dat$sex == "female", 1, 0)
+# Add sex and age to matrix
+predictors_erpf_comb_bsa <- as.matrix(cbind(subset(erpf_comb_bsa_dat, select = c("age", "sexfemale")), top_erpf_comb_bsa$predictors_matrix))
+
+# Elastic net regression
+## Force age and sex to models to adjust
+en_erpf_comb_bsa_adj <- easy_elasticnet(data = erpf_comb_bsa_dat, 
+                               outcome = "erpf_bsa_plasma", out = "1se.error",
+                               predictors = predictors_erpf_comb_bsa,
+                               cv_method="kfold", folds = 10,
+                               penalty.factor = c(rep(0,2), rep(1, ncol(predictors_erpf_comb_bsa)-2)))
+length(en_erpf_comb_bsa_adj)
+
+retained_vars_erpf_comb_bsa_adj = analytes[analytes$AptName %in% en_erpf_comb_bsa_adj, c("AptName","Target_nodup","TargetFullName")] %>%
+  dplyr::rename("term" = AptName)
+
+mod_df_erpf_comb_bsa_adj <- create_lm_summary(erpf_comb_bsa_dat, "erpf_bsa_plasma", en_erpf_comb_bsa_adj, retained_vars_erpf_comb_bsa_adj, log = T)
+create_lm_summary_table_plot(mod_df_erpf_comb_bsa_adj$model_df, format = "html")
+```
+
+Top 30 proteins included in analysis. No. of proteins identified: `r length(en_erpf_comb_bsa)`.
+
+```{r echo = F, warning = F, message=F}
+mod_erpf_comb_bsa_adj <- mod_df_erpf_comb_bsa_adj$model
+kable(glance(mod_erpf_comb_bsa_adj))
+plot(mod_erpf_comb_bsa_adj)
+
+# Adjusted R-squared 95% CI
+mod_erpf_comb_bsa_adj_specs <- compute_rsq_conf_interval(mod_erpf_comb_bsa_adj)
 ```
 
 ## Model comparison
 
-```{r models-combined3, echo=F}
-combined <- data.frame(r2 = c(rsq_tkv_comb, rsq_ht_adj_tkv_comb, rsq_gfr_comb, rsq_gfr_bsa_comb, rsq_rpf_comb, rsq_rpf_bsa_comb),
-                       lower = c(LL_tkv_comb, LL_ht_adj_tkv_comb, LL_gfr_comb, LL_gfr_bsa_comb, LL_rpf_comb, LL_rpf_bsa_comb),
-                       upper = c(UL_tkv_comb, UL_ht_adj_tkv_comb, UL_gfr_comb, UL_gfr_bsa_comb, UL_rpf_comb, UL_rpf_bsa_comb),
-                       Model = c("TKV", "Ht-adj TKV", "GFR-Raw", "GFR-BSA", "RPF-Raw", "RPF-BSA"),
-                       No.proteins = c(length(en_tkv_comb), 
-                                       length(en_ht_adj_tkv_comb), 
-                                       length(en_gfr_comb), 
-                                       length(en_gfr_bsa_comb), 
-                                       length(en_rpf_comb), 
-                                       length(en_rpf_bsa_comb)))
-combined$` ` <- paste(rep(" ", 20), collapse = " ")
+#### Unadjusted models
+```{r models-comb2, echo=F}
+comb <- data.frame(r2 = c(mod_tkv_comb_specs$rsq_adj, mod_ht_adj_tkv_comb_specs$rsq_adj, mod_gfr_comb_specs$rsq_adj, mod_gfr_comb_bsa_specs$rsq_adj, mod_rpf_comb_specs$rsq_adj, mod_erpf_comb_bsa_specs$rsq_adj),
+                                  lower = c(mod_tkv_comb_specs$conf.low, mod_ht_adj_tkv_comb_specs$conf.low, mod_gfr_comb_specs$conf.low, mod_gfr_comb_bsa_specs$conf.low, mod_rpf_comb_specs$conf.low, mod_erpf_comb_bsa_specs$conf.low),
+                                  upper = c(mod_tkv_comb_specs$conf.high, mod_ht_adj_tkv_comb_specs$conf.high, mod_gfr_comb_specs$conf.high, mod_gfr_comb_bsa_specs$conf.high, mod_rpf_comb_specs$conf.high, mod_erpf_comb_bsa_specs$conf.high),
+                                  Model = c("TKV", "Ht-adj TKV", "GFR - Raw", "GFR - BSA", "RPF - Raw", "RPF - BSA"),
+                                  No.proteins = c(length(en_tkv_comb), 
+                                                  length(en_ht_adj_tkv_comb),
+                                                  length(en_gfr_comb),
+                                                  length(en_gfr_comb_bsa),
+                                                  length(en_rpf_comb),
+                                                  length(en_erpf_comb_bsa)))
+comb$` ` <- paste(rep(" ", 20), collapse = " ")
+
 
 # Create confidence interval column to display
-combined$`Adjusted R-squared (95% CI)` <- 
-  ifelse(is.na(combined$r2), "",
+comb$`Adjusted R-squared (95% CI)` <- 
+  ifelse(is.na(comb$r2), "",
          sprintf("%.2f (%.2f to %.2f)",
-                 combined$r2, combined$lower, combined$upper))
-combined
-forest(data = combined[,c(4:7)], 
-       est = combined$r2,
-       lower = combined$lower,
-       upper = combined$upper, ci_column = 3)
+                 comb$r2, comb$lower, comb$upper))
+forest(data = comb[,c(4:7)], 
+       est = comb$r2,
+       lower = comb$lower,
+       upper = comb$upper, ci_column = 3)
+```
+
+```{r models-comb-ipna, echo=F}
+comb_ipna <- data.frame(r2 = c(mod_tkv_comb_specs$rsq_adj, mod_ht_adj_tkv_comb_specs$rsq_adj, mod_gfr_comb_specs$rsq_adj, mod_rpf_comb_specs$rsq_adj),
+                                  lower = c(mod_tkv_comb_specs$conf.low, mod_ht_adj_tkv_comb_specs$conf.low, mod_gfr_comb_specs$conf.low, mod_rpf_comb_specs$conf.low),
+                                  upper = c(mod_tkv_comb_specs$conf.high, mod_ht_adj_tkv_comb_specs$conf.high, mod_gfr_comb_specs$conf.high, mod_rpf_comb_specs$conf.high),
+                                  Model = c("TKV", "Ht-adj TKV", "GFR", "RPF"),
+                                  No.proteins = c(length(en_tkv_comb), 
+                                                  length(en_ht_adj_tkv_comb),
+                                                  length(en_gfr_comb),
+                                                  length(en_rpf_comb)))
+comb_ipna$` ` <- paste(rep(" ", 20), collapse = " ")
+
+
+# Create confidence interval column to display
+comb_ipna$`Adjusted R-squared (95% CI)` <- 
+  ifelse(is.na(comb_ipna$r2), "",
+         sprintf("%.2f (%.2f to %.2f)",
+                 comb_ipna$r2, comb_ipna$lower, comb_ipna$upper))
+forest(data = comb_ipna[,c(4:7)], 
+       est = comb_ipna$r2,
+       lower = comb_ipna$lower,
+       upper = comb_ipna$upper, ci_column = 3)
 ```
 
 # Overlap of proteins (PANTHER vs. RH/RH2/IMPROVE)
@@ -1252,8 +1475,8 @@ panther_n_tkv = nrow(retained_vars_tkv) - both_n_tkv
 others_n_tkv = length(en_tkv_others) - both_n_tkv
   
 plot(euler(c("PANTHER" = panther_n_tkv, 
-        "RH/RH2/IMPROVE" = others_n_tkv,
-        "PANTHER&RH/RH2/IMPROVE" = both_n_tkv)),
+             "RH/RH2/IMPROVE" = others_n_tkv,
+             "PANTHER&RH/RH2/IMPROVE" = both_n_tkv)),
      quantities = list(cex = 1.1, col = c("#f25c54", "#013a63", "#343a40", "#343a40", "#343a40","#343a40"),
                        font = 6),
      fills = c("#fcd5ce", "#a9d6e5"),
@@ -1261,9 +1484,29 @@ plot(euler(c("PANTHER" = panther_n_tkv,
      labels = list(cex = 1.1, 
                    col = c("#f25c54", "#013a63")))
 
-tkv_upset_list <- unique(c(en_tkv_others, retained_vars_tkv$term))
-
-upset(fromList(listInput))
+# upset plot
+lt = list(PANTHER = retained_vars_tkv$term,
+          `RH/RH2/IMPROVE` = en_tkv_others)
+m_upset <- make_comb_mat(lt)
+cs = comb_size(m_upset)
+UpSet(m_upset, 
+    top_annotation = HeatmapAnnotation(
+        "Protein Intersections" = anno_barplot(cs, 
+            ylim = c(0, max(cs)*1.1),
+            border = FALSE, 
+            gp = gpar(fill = c(c("#013a63", "#f25c54", "#f25c54"))), 
+            height = unit(4, "cm"),
+            add_numbers = T,
+            numbers_gp = gpar(fontsize = 12)
+        ), 
+        annotation_name_rot = 90),
+    right_annotation = upset_right_annotation(m_upset, add_numbers = T,
+                                              numbers_gp = gpar(fontsize = 12)),
+    show_row_names = T,
+    lwd = 4,
+    pt_size = unit(5, "mm"),
+    comb_col = c("#f25c54", "#013a63")[comb_degree(m_upset)],
+    bg_col = "#FFFFFF")
 ```
 
 ## Height adjusted TKV
@@ -1282,6 +1525,30 @@ plot(euler(c("PANTHER" = panther_n_ht_adj_tkv,
      edges = c(lex = 0),
      labels = list(cex = 1.1, 
                    col = c("#f25c54", "#013a63")))
+
+# upset plot
+lt = list(PANTHER = retained_vars_ht_adj_tkv$term,
+          `RH/RH2/IMPROVE` = en_ht_adj_tkv_others)
+m_upset <- make_comb_mat(lt)
+cs = comb_size(m_upset)
+UpSet(m_upset, 
+    top_annotation = HeatmapAnnotation(
+        "Protein Intersections" = anno_barplot(cs, 
+            ylim = c(0, max(cs)*1.1),
+            border = FALSE, 
+            gp = gpar(fill = c(c("#013a63", "#f25c54", "#f25c54"))), 
+            height = unit(4, "cm"),
+            add_numbers = T,
+            numbers_gp = gpar(fontsize = 12)
+        ), 
+        annotation_name_rot = 90),
+    right_annotation = upset_right_annotation(m_upset, add_numbers = T,
+                                              numbers_gp = gpar(fontsize = 12)),
+    show_row_names = T,
+    lwd = 4,
+    pt_size = unit(5, "mm"),
+    comb_col = c("#f25c54", "#013a63")[comb_degree(m_upset)],
+    bg_col = "#FFFFFF")
 ```
 
 ## GFR (Raw plasma)
@@ -1300,14 +1567,39 @@ plot(euler(c("PANTHER" = panther_n_gfr,
      edges = c(lex = 0),
      labels = list(cex = 1.1, 
                    col = c("#f25c54", "#013a63")))
+
+# upset plot
+lt = list(PANTHER = retained_vars_gfr$term,
+          `RH/RH2/IMPROVE` = en_gfr_others)
+m_upset <- make_comb_mat(lt)
+cs = comb_size(m_upset)
+UpSet(m_upset, 
+    top_annotation = HeatmapAnnotation(
+        "Protein Intersections" = anno_barplot(cs, 
+            ylim = c(0, max(cs)*1.1),
+            border = FALSE, 
+            gp = gpar(fill = c(c("#f25c54", "#f25c54"))), 
+            height = unit(4, "cm"),
+            add_numbers = T,
+            numbers_gp = gpar(fontsize = 12)
+        ), 
+        annotation_name_rot = 90),
+    right_annotation = upset_right_annotation(m_upset, add_numbers = T,
+                                              numbers_gp = gpar(fontsize = 12)),
+    show_row_names = T,
+    lwd = 4,
+    pt_size = unit(5, "mm"),
+    comb_col = c("#f25c54")[comb_degree(m_upset)],
+    bg_col = "#FFFFFF")
+
 ```
 
 ## GFR (BSA plasma)
 
 ```{r venn-diagram-gfr_bsa}
-both_n_gfr_bsa = sum(en_gfr_bsa_others %in% retained_vars_gfr_bsa$term)
+both_n_gfr_bsa = sum(en_gfr_others_bsa %in% retained_vars_gfr_bsa$term)
 panther_n_gfr_bsa = nrow(retained_vars_gfr_bsa) - both_n_gfr_bsa
-others_n_gfr_bsa = length(en_gfr_bsa_others) - both_n_gfr_bsa
+others_n_gfr_bsa = length(en_gfr_others_bsa) - both_n_gfr_bsa
   
 plot(euler(c("PANTHER" = panther_n_gfr_bsa, 
         "RH/RH2/IMPROVE" = others_n_gfr_bsa,
@@ -1336,14 +1628,38 @@ plot(euler(c("PANTHER" = panther_n_rpf,
      edges = c(lex = 0),
      labels = list(cex = 1.1, 
                    col = c("#f25c54", "#013a63")))
+
+# upset plot
+lt = list(PANTHER = retained_vars_rpf$term,
+          `RH/RH2/IMPROVE` = en_rpf_others)
+m_upset <- make_comb_mat(lt)
+cs = comb_size(m_upset)
+UpSet(m_upset, 
+    top_annotation = HeatmapAnnotation(
+        "Protein Intersections" = anno_barplot(cs, 
+            ylim = c(0, max(cs)*1.1),
+            border = FALSE, 
+            gp = gpar(fill = c(c("#013a63", "#f25c54", "#f25c54"))), 
+            height = unit(4, "cm"),
+            add_numbers = T,
+            numbers_gp = gpar(fontsize = 12)
+        ), 
+        annotation_name_rot = 90),
+    right_annotation = upset_right_annotation(m_upset, add_numbers = T,
+                                              numbers_gp = gpar(fontsize = 12)),
+    show_row_names = T,
+    lwd = 4,
+    pt_size = unit(5, "mm"),
+    comb_col = c("#f25c54", "#013a63")[comb_degree(m_upset)],
+    bg_col = "#FFFFFF")
 ```
 
 ## RPF (BSA plasma)
 
 ```{r venn-diagram-rpf_bsa}
-both_n_rpf_bsa = sum(en_rpf_bsa_others %in% retained_vars_rpf_bsa$term)
-panther_n_rpf_bsa = nrow(retained_vars_rpf_bsa) - both_n_rpf_bsa
-others_n_rpf_bsa = length(en_rpf_bsa_others) - both_n_rpf_bsa
+both_n_rpf_bsa = sum(en_erpf_others_bsa %in% retained_vars_erpf_bsa$term)
+panther_n_rpf_bsa = nrow(retained_vars_erpf_bsa) - both_n_rpf_bsa
+others_n_rpf_bsa = length(en_erpf_others_bsa) - both_n_rpf_bsa
   
 plot(euler(c("PANTHER" = panther_n_rpf_bsa, 
         "RH/RH2/IMPROVE" = others_n_rpf_bsa,
@@ -1354,6 +1670,30 @@ plot(euler(c("PANTHER" = panther_n_rpf_bsa,
      edges = c(lex = 0),
      labels = list(cex = 1.1, 
                    col = c("#f25c54", "#013a63")))
+
+# upset plot
+lt = list(PANTHER = retained_vars_erpf_bsa$term,
+          `RH/RH2/IMPROVE` = en_erpf_others_bsa)
+m_upset <- make_comb_mat(lt)
+cs = comb_size(m_upset)
+UpSet(m_upset, 
+    top_annotation = HeatmapAnnotation(
+        "Protein Intersections" = anno_barplot(cs, 
+            ylim = c(0, max(cs)*1.1),
+            border = FALSE, 
+            gp = gpar(fill = c(c("#013a63", "#f25c54", "#f25c54"))), 
+            height = unit(4, "cm"),
+            add_numbers = T,
+            numbers_gp = gpar(fontsize = 12)
+        ), 
+        annotation_name_rot = 90),
+    right_annotation = upset_right_annotation(m_upset, add_numbers = T,
+                                              numbers_gp = gpar(fontsize = 12)),
+    show_row_names = T,
+    lwd = 4,
+    pt_size = unit(5, "mm"),
+    comb_col = c("#f25c54", "#013a63")[comb_degree(m_upset)],
+    bg_col = "#FFFFFF")
 ```
 
 # Overlap of proteins (IMPROVE vs. RH/RH2/IMPROVE vs. ALL)
@@ -1386,6 +1726,30 @@ plot(euler(c("ALL" = comb_n_tkv - comb_panther_n_tkv - comb_others_n_tkv - all_n
      edges = c(lex = 0),
      labels = list(cex = 1.1, 
                    col = c("#132a13", "#f25c54", "#013a63")))
+
+# upset plot
+lt = list(PANTHER = retained_vars_tkv$term,
+          `RH/RH2/IMPROVE` = en_tkv_others,
+          ALL = en_tkv_comb)
+m_upset <- make_comb_mat(lt)
+cs = comb_size(m_upset)
+UpSet(m_upset, 
+    top_annotation = HeatmapAnnotation(
+        "Protein Intersections" = anno_barplot(cs, 
+            ylim = c(0, max(cs)*1.1),
+            border = FALSE, 
+            gp = gpar(fill = "black"), 
+            height = unit(4, "cm"),
+            add_numbers = T,
+            numbers_gp = gpar(fontsize = 12)
+        ), 
+        annotation_name_rot = 90),
+    right_annotation = upset_right_annotation(m_upset, add_numbers = T,
+                                              numbers_gp = gpar(fontsize = 12)),
+    show_row_names = T,
+    lwd = 4,
+    pt_size = unit(5, "mm"),
+    bg_col = "#FFFFFF")
 ```
 
 ## Height adjusted TKV
@@ -1416,6 +1780,30 @@ plot(euler(c("ALL" = comb_n_ht_adj_tkv - comb_panther_n_ht_adj_tkv - comb_others
      edges = c(lex = 0),
      labels = list(cex = 1.1, 
                    col = c("#132a13", "#f25c54", "#013a63")))
+
+# upset plot
+lt = list(PANTHER = retained_vars_ht_adj_tkv$term,
+          `RH/RH2/IMPROVE` = en_ht_adj_tkv_others,
+          ALL = en_ht_adj_tkv_comb)
+m_upset <- make_comb_mat(lt)
+cs = comb_size(m_upset)
+UpSet(m_upset, 
+    top_annotation = HeatmapAnnotation(
+        "Protein Intersections" = anno_barplot(cs, 
+            ylim = c(0, max(cs)*1.1),
+            border = FALSE, 
+            gp = gpar(fill = "black"), 
+            height = unit(4, "cm"),
+            add_numbers = T,
+            numbers_gp = gpar(fontsize = 12)
+        ), 
+        annotation_name_rot = 90),
+    right_annotation = upset_right_annotation(m_upset, add_numbers = T,
+                                              numbers_gp = gpar(fontsize = 12)),
+    show_row_names = T,
+    lwd = 4,
+    pt_size = unit(5, "mm"),
+    bg_col = "#FFFFFF")
 ```
 
 ## GFR (Raw plasma)
@@ -1446,22 +1834,46 @@ plot(euler(c("ALL" = comb_n_gfr - comb_panther_n_gfr - comb_others_n_gfr - all_n
      edges = c(lex = 0),
      labels = list(cex = 1.1, 
                    col = c("#132a13", "#f25c54", "#013a63")))
+
+# upset plot
+lt = list(PANTHER = retained_vars_gfr$term,
+          `RH/RH2/IMPROVE` = en_gfr_others,
+          ALL = en_gfr_comb)
+m_upset <- make_comb_mat(lt)
+cs = comb_size(m_upset)
+UpSet(m_upset, 
+    top_annotation = HeatmapAnnotation(
+        "Protein Intersections" = anno_barplot(cs, 
+            ylim = c(0, max(cs)*1.1),
+            border = FALSE, 
+            gp = gpar(fill = "black"), 
+            height = unit(4, "cm"),
+            add_numbers = T,
+            numbers_gp = gpar(fontsize = 12)
+        ), 
+        annotation_name_rot = 90),
+    right_annotation = upset_right_annotation(m_upset, add_numbers = T,
+                                              numbers_gp = gpar(fontsize = 12)),
+    show_row_names = T,
+    lwd = 4,
+    pt_size = unit(5, "mm"),
+    bg_col = "#FFFFFF")
 ```
 
 ## GFR (BSA plasma)
 
 ```{r venn-diagram-gfr_bsa-2}
-comb_n_gfr_bsa = length(en_gfr_bsa_comb)
+comb_n_gfr_bsa = length(en_gfr_comb_bsa)
 panther_n_gfr_bsa = nrow(retained_vars_gfr_bsa)
-others_n_gfr_bsa = length(en_gfr_bsa_others)
+others_n_gfr_bsa = length(en_gfr_others_bsa)
 comb_n_gfr_bsa + panther_n_gfr_bsa + others_n_gfr_bsa
 
-comb_panther_n_gfr_bsa = sum(en_gfr_bsa_comb %in% retained_vars_gfr_bsa$term)
-comb_others_n_gfr_bsa = sum(en_gfr_bsa_comb %in% en_gfr_bsa_others)
-panther_others_n_gfr_bsa = sum(en_gfr_bsa_others %in% retained_vars_gfr_bsa$term)
+comb_panther_n_gfr_bsa = sum(en_gfr_comb_bsa %in% retained_vars_gfr_bsa$term)
+comb_others_n_gfr_bsa = sum(en_gfr_comb_bsa %in% en_gfr_others_bsa)
+panther_others_n_gfr_bsa = sum(en_gfr_others_bsa %in% retained_vars_gfr_bsa$term)
 
-all_n_gfr_bsa = sum((en_gfr_bsa_comb %in% retained_vars_gfr_bsa$term) &
-                       (en_gfr_bsa_comb %in% en_gfr_bsa_others))
+all_n_gfr_bsa = sum((en_gfr_comb_bsa %in% retained_vars_gfr_bsa$term) &
+                       (en_gfr_comb_bsa %in% en_gfr_others_bsa))
 
 plot(euler(c("ALL" = comb_n_gfr_bsa - comb_panther_n_gfr_bsa - comb_others_n_gfr_bsa - all_n_gfr_bsa,
              "PANTHER" = panther_n_gfr_bsa - comb_panther_n_gfr_bsa - panther_others_n_gfr_bsa - all_n_gfr_bsa, 
@@ -1476,6 +1888,29 @@ plot(euler(c("ALL" = comb_n_gfr_bsa - comb_panther_n_gfr_bsa - comb_others_n_gfr
      edges = c(lex = 0),
      labels = list(cex = 1.1, 
                    col = c("#132a13", "#f25c54", "#013a63")))
+# upset plot
+lt = list(PANTHER = retained_vars_gfr_bsa$term,
+          `RH/RH2/IMPROVE` = en_gfr_others_bsa,
+          ALL = en_gfr_comb_bsa)
+m_upset <- make_comb_mat(lt)
+cs = comb_size(m_upset)
+UpSet(m_upset, 
+    top_annotation = HeatmapAnnotation(
+        "Protein Intersections" = anno_barplot(cs, 
+            ylim = c(0, max(cs)*1.1),
+            border = FALSE, 
+            gp = gpar(fill = "black"), 
+            height = unit(4, "cm"),
+            add_numbers = T,
+            numbers_gp = gpar(fontsize = 12)
+        ), 
+        annotation_name_rot = 90),
+    right_annotation = upset_right_annotation(m_upset, add_numbers = T,
+                                              numbers_gp = gpar(fontsize = 12)),
+    show_row_names = T,
+    lwd = 4,
+    pt_size = unit(5, "mm"),
+    bg_col = "#FFFFFF")
 ```
 
 ## RPF (Raw plasma)
@@ -1506,22 +1941,47 @@ plot(euler(c("ALL" = comb_n_rpf - comb_panther_n_rpf - comb_others_n_rpf - all_n
      edges = c(lex = 0),
      labels = list(cex = 1.1, 
                    col = c("#132a13", "#f25c54", "#013a63")))
+
+# upset plot
+lt = list(PANTHER = retained_vars_rpf$term,
+          `RH/RH2/IMPROVE` = en_rpf_others,
+          ALL = en_rpf_comb)
+m_upset <- make_comb_mat(lt)
+cs = comb_size(m_upset)
+UpSet(m_upset, 
+    top_annotation = HeatmapAnnotation(
+        "Protein Intersections" = anno_barplot(cs, 
+            ylim = c(0, max(cs)*1.1),
+            border = FALSE, 
+            gp = gpar(fill = "black"), 
+            height = unit(4, "cm"),
+            add_numbers = T,
+            numbers_gp = gpar(fontsize = 12)
+        ), 
+        annotation_name_rot = 90),
+    right_annotation = upset_right_annotation(m_upset, add_numbers = T,
+                                              numbers_gp = gpar(fontsize = 12)),
+    show_row_names = T,
+    lwd = 4,
+    pt_size = unit(5, "mm"),
+    bg_col = "#FFFFFF")
+
 ```
 
 ## RPF (BSA plasma)
 
 ```{r venn-diagram-rpf_bsa-2}
-comb_n_rpf_bsa = length(en_rpf_bsa_comb)
-panther_n_rpf_bsa = nrow(retained_vars_rpf_bsa)
-others_n_rpf_bsa = length(en_rpf_bsa_others)
+comb_n_rpf_bsa = length(en_erpf_comb_bsa)
+panther_n_rpf_bsa = nrow(retained_vars_erpf_bsa)
+others_n_rpf_bsa = length(en_erpf_others_bsa)
 comb_n_rpf_bsa + panther_n_rpf_bsa + others_n_rpf_bsa
 
-comb_panther_n_rpf_bsa = sum(en_rpf_bsa_comb %in% retained_vars_rpf_bsa$term)
-comb_others_n_rpf_bsa = sum(en_rpf_bsa_comb %in% en_rpf_bsa_others)
-panther_others_n_rpf_bsa = sum(en_rpf_bsa_others %in% retained_vars_rpf_bsa$term)
+comb_panther_n_rpf_bsa = sum(en_erpf_comb_bsa %in% retained_vars_erpf_bsa$term)
+comb_others_n_rpf_bsa = sum(en_erpf_comb_bsa %in% en_erpf_others_bsa)
+panther_others_n_rpf_bsa = sum(en_erpf_others_bsa %in% retained_vars_erpf_bsa$term)
 
-all_n_rpf_bsa = sum((en_rpf_bsa_comb %in% retained_vars_rpf_bsa$term) &
-                       (en_rpf_bsa_comb %in% en_rpf_bsa_others))
+all_n_rpf_bsa = sum((en_erpf_comb_bsa %in% retained_vars_erpf_bsa$term) &
+                       (en_erpf_comb_bsa %in% en_erpf_others_bsa))
 
 plot(euler(c("ALL" = comb_n_rpf_bsa - comb_panther_n_rpf_bsa - comb_others_n_rpf_bsa - all_n_rpf_bsa,
              "PANTHER" = panther_n_rpf_bsa - comb_panther_n_rpf_bsa - panther_others_n_rpf_bsa - all_n_rpf_bsa, 
@@ -1536,4 +1996,29 @@ plot(euler(c("ALL" = comb_n_rpf_bsa - comb_panther_n_rpf_bsa - comb_others_n_rpf
      edges = c(lex = 0),
      labels = list(cex = 1.1, 
                    col = c("#132a13", "#f25c54", "#013a63")))
+
+# upset plot
+lt = list(PANTHER = retained_vars_erpf_bsa$term,
+          `RH/RH2/IMPROVE` = en_erpf_others_bsa,
+          ALL = en_erpf_comb_bsa)
+m_upset <- make_comb_mat(lt)
+cs = comb_size(m_upset)
+UpSet(m_upset, 
+    top_annotation = HeatmapAnnotation(
+        "Protein Intersections" = anno_barplot(cs, 
+            ylim = c(0, max(cs)*1.1),
+            border = FALSE, 
+            gp = gpar(fill = "black"), 
+            height = unit(4, "cm"),
+            add_numbers = T,
+            numbers_gp = gpar(fontsize = 12)
+        ), 
+        annotation_name_rot = 90),
+    right_annotation = upset_right_annotation(m_upset, add_numbers = T,
+                                              numbers_gp = gpar(fontsize = 12)),
+    show_row_names = T,
+    lwd = 4,
+    pt_size = unit(5, "mm"),
+    bg_col = "#FFFFFF")
+
 ```
