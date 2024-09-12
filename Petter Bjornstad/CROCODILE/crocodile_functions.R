@@ -41,9 +41,9 @@ leptin_adipo_genes <- c(
 # function for de.markers
 de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, extension){
   m = FindMarkers(seurat_object, features = genes,group.by = group.by,ident.1 = id1, 
-                  ident.2 = id2, subset.ident = celltype,verbose = F, logfc.threshold=0.001,
+                  ident.2 = id2, subset.ident = celltype, verbose = F, logfc.threshold=0.001,
                   min.pct = 0.001)
-  m$p_val_adj = p.adjust(m$p_val,method = "bonferroni")
+  m$p_val_adj = p.adjust(m$p_val,method = "fdr")
   m <- m %>% 
     rownames_to_column('gene') %>%
     arrange(p_val) %>%
@@ -239,7 +239,7 @@ metabo_sc <- function(data, gene, transcripts, gene_name) {
       geom_smooth(method = lm, se = F) +
       labs(color = "Group",
            y = gene_name,
-           x = if((label(data[[transcripts[i]]]))=="") (transcripts[i]) else label(data[[transcripts[i]]])) +
+           x = if(is.null(label(data[[transcripts[i]]]))) (transcripts[i]) else label(data[[transcripts[i]]])) +
       theme_bw()
     plots[[i]] <- plot
   }
