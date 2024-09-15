@@ -1,0 +1,515 @@
+---
+title: "TODAY Somalogic baseline analyses - elastic net Cox models for glycemia"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+knit: (function(rmdfile, ...) { rmarkdown::render(rmdfile, output_dir='/Users/pylell/Dropbox/TODAY glycemic manuscript [shared]/') })
+output: rtf_document
+---
+
+```{r setup, include=FALSE}
+library(SomaDataIO)
+library(limma)
+library(dplyr)
+library(caret)
+library(purrr)
+library(multtest)
+library(openxlsx)
+library(tableone)
+library(EnhancedVolcano)
+library(knitr)
+library(survival)
+library(broom)
+library(plsRcox)
+library(forestmodel)
+library(survC1)
+library(naniar)
+library(rms)
+library(readxl)
+library(forester)
+library(grid)
+library(forestploter)
+library(doParallel)
+library(foreach)
+library(readr)
+library(nestedcv)
+
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+
+knitr::opts_chunk$set(echo = FALSE)
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "E:/Petter Bjornstad/TODAY subaward"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  home_dir = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
+}
+knitr::opts_knit$set(root.dir = home_dir)
+
+```
+
+```{r, include=FALSE}
+setwd(home_dir)
+# load somalogic data, with QC samples already excluded
+load("./Somalogic data raw/soma.Rdata")
+
+# load analyte info
+load("./Somalogic data raw/analytes.Rdata")
+
+# load comorbidity data
+load("./Clinical data/comorb.Rdata")
+
+# load baseline risk factors
+load("./Clinical data/TODAY/baserisk.Rdata")
+
+# take only the baseline soma samples
+# can we just take the earliest or is it possible someone would have a follow-up sample but not baseline?
+# probably can take the first and then check the years to make sure compatible with TODAY
+base <- soma %>% arrange(releaseid,Date.Drawn) %>% group_by(releaseid) %>% filter(row_number()==1)
+
+# these 3 release IDs have first sample after end of recruitment, so they must be missing the baseline visit
+base <- base %>% filter(!releaseid %in% c("65-85903","65-47984","65-25901"))
+
+# merge in complication data
+base <- left_join(base, comorb, by="releaseid")
+
+# merge in baseline risk factors
+base <- left_join(base, baserisk, by="releaseid")
+
+# identify columns corresponding to proteins
+#is_seq <- function(.x) grepl("^seq\\.[0-9]{4}", .x) # regex for analytes
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(base))
+
+# convert to numeric
+base[,seq] <- apply(base[,seq],2,as.numeric)
+seq_names <- colnames(base[,seq])
+
+# are there proteins with low variability?
+no_var = caret::nearZeroVar(base[,seq])
+# none
+
+# log transform
+base_log <- base %>% modify_if(is_seq(names(.)), log)
+
+# scale by SD
+base_log_scale <- base_log
+predictors <- colnames(base_log[seq])
+for (i in 1:length(predictors)) {
+  base_log_scale[,paste0(predictors[i])] <- base_log_scale[,paste0(predictors[i])]/sd(unlist(base_log[,paste0(predictors[i])]))
+}
+
+set.seed(3654)
+source("~/Documents/Github/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/easy_elasticnet.R")
+```
+
+# Loss of glycemic control
+
+## Elastic net with 10-fold cross-validation
+
+```{r nestedcv,echo=TRUE }
+file.remove("/Users/pylell/Dropbox/TODAY glycemic manuscript [shared]/Analysis output/glycemia_feature_selection.csv")
+
+data_model <- base_log_scale %>% 
+    select(releaseid, GLYC, DAYSTOGLYC, seq_names)  %>% ungroup()
+
+y <- data_model %>% select(GLYC, DAYSTOGLYC)
+x <- data_model %>% select(all_of(seq_names))
+
+# try to write a screening function for univariable cox models
+# should take x and y and return character vector of names of filtered predictors
+cox_screen <- function(x, y) {
+  data <- cbind(y, x)
+  data <- cbind(data, base_log_scale$bmi, base_log_scale$si_1_ins0, base_log_scale$AGEBASE, base_log_scale$sex)
+  predictors <- seq_names
+
+  result_GLYC <- NULL
+  for (i in 1:length(predictors)) {
+    form <- paste0("Surv(DAYSTOGLYC, GLYC)~",predictors[i],"+bmi+si_1_ins0+AGEBASE+sex")
+    mod <- coxph(data = base_log_scale, formula = as.formula(form))
+    tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
+    tidymod <- tidymod[1,]
+    result_GLYC <- rbind(result_GLYC,tidymod)
+  }
+  result_GLYC$adj.p.value <- p.adjust(result_GLYC$p.value, "fdr")
+  result_GLYC$AptName <- result_GLYC$term
+  result_GLYC <- merge(result_GLYC,analytes,by="AptName",all.x = T, all.y = F)
+  result_GLYC <- result_GLYC[order(result_GLYC$p.value),] 
+  result_GLYC <- result_GLYC[1:100,]
+  result_GLYC_vec <- result_GLYC$AptName
+  return(result_GLYC_vec)
+}
+
+result_GLYC <- cox_screen(x, y)
+```
+
+```{r checking feature selection stability,echo=TRUE }
+library(doSNOW)
+getDoParWorkers()
+getDoParName()
+registerDoSNOW(makeCluster(16, type = "SOCK"))
+getDoParWorkers()
+getDoParName()
+
+file.remove("/Users/pylell/Dropbox/TODAY glycemic manuscript [shared]/Analysis output/glycemia_feature_selection.csv")
+
+data_model <- base_log_scale %>% 
+    select(releaseid, GLYC, DAYSTOGLYC, seq_names)  %>% ungroup()
+  
+foreach(j = 1:5, .packages = c("survival", "broom", "readr")) %dopar% {
+  print(j)
+ 
+  # Getting strata training and test data.
+  split <- initial_split(solar_data_model, prob = 0.7,
+                         strata ="diabete_change_di")
+
+  train <- training(split) %>% mutate(id = "train")
+
+  y_train <- train %>% dplyr::select(all_of(outcomes)) %>%
+    as.matrix()
+
+  x_train <- train %>%
+    dplyr::select(all_of(features),
+                  all_of(covars1[-4]),
+                  all_of(covars2)
+                  ) %>%
+    fastDummies::dummy_cols(remove_selected_columns = TRUE,
+                          remove_first_dummy = TRUE) %>%
+    as.matrix()
+  
+  # univariable Cox models
+  result_GLYC <- NULL
+  predictors <- seq_names
+  for (i in 1:length(predictors)) {
+    form <- paste0("Surv(DAYSTOGLYC, GLYC)~",predictors[i],"+bmi+si_1_ins0+AGEBASE+sex")
+    mod <- coxph(data = base_log_scale, formula = as.formula(form))
+    tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
+    tidymod <- tidymod[1,]
+    result_GLYC <- rbind(result_GLYC,tidymod)
+  }
+  result_GLYC$adj.p.value <- p.adjust(result_GLYC$p.value, "fdr")
+  result_GLYC$AptName <- result_GLYC$term
+  result_GLYC$term <- NULL
+  result_GLYC <- merge(result_GLYC,analytes,by="AptName",all.x = T, all.y = F)
+  result_GLYC <- result_GLYC[order(result_GLYC$p.value),] 
+  result_GLYC <- cbind(result_GLYC, rep(j, nrow(result_GLYC)))
+
+write_csv(result_GLYC, "/Users/pylell/Dropbox/TODAY glycemic manuscript [shared]/Analysis output/glycemia_feature_selection.csv",
+           append = TRUE, col_names = F)  
+  
+#   y_train <- data_model %>% dplyr::select(GLYC, DAYSTOGLYC) %>%
+#     as.matrix()
+# 
+#   x_train <- data_model %>%
+#     dplyr::select(all_of(seq_names)) %>%
+#     as.matrix()
+# 
+#   ctrl <- trainControl(
+#     method = "cv",
+#     number  = 10,
+#     classProbs = TRUE,
+#     summaryFunction = twoClassSummary
+#   )
+# 
+#   fit <- train(
+#     x = x_train,
+#     y = y_train,
+#     method = "glmnet",
+#     trControl = ctrl,
+#     metric = "ROC",
+#     tuneGrid = expand.grid(alpha = 1, lambda = seq(0.001, 0.1, by = 0.001)),
+#     penalty.factor = c(rep(1,length(features)), rep(0, 7))
+#   )
+# 
+#   result <- as.data.frame(as.matrix(coef(fit$finalModel, fit$bestTune$lambda))) %>%
+#     rownames_to_column() %>%
+#     rename(coef = s1,
+#            feature = rowname) %>%
+#     mutate(outcome = "diabete_change_di")
+# 
+#   result_selected_feature <- result %>% filter(coef != 0)
+# 
+# write_csv(result_selected_feature,
+#           fs::path(dir_results,
+#                  "prediction",
+#                  "4_feature_selection_diabete_5000_1122.csv"),
+#           append = TRUE)
+}
+stopCluster(cl)
+```
+
+## Selected features
+**Features selected in at least 85% of the 5,000 iterations were included in the prediction models**
+```{r selecting features, echo=TRUE}
+## Load selected feature file
+feature <- read_csv(
+            fs::path(dir_results, 
+                   "prediction",
+                   "4_feature_selection_diabete_5000_1122.csv")
+,col_names = FALSE) %>%
+    dplyr::rename(feature = X1,
+           coefficient = X2,
+           outcome = X3)
+
+## Selected features that appear at least 4250 times of the replications
+feature_n <- feature %>% 
+  group_by(feature) %>% 
+  dplyr::summarize(count =n()) %>%
+  arrange(desc(count)) %>%
+  mutate(percentage = count/5000)
+
+# write_csv(feature_n,fs::path(dir_results, 
+#                    "prediction",
+#                    "4_feature_selection_percentage.csv"))
+# feature_n %>% filter(!feature %in% c(covars1, covars2, "sex_1_Male") & feature != "(Intercept)"& percentage > 0.25) %>% ggplot(aes(x=percentage)) + 
+#   geom_vline(aes(xintercept = 0.85), color = "blue", linetype = "dashed")+
+#   # geom_vline(aes(xintercept = 0.9), color = "blue", linetype = "dashed")+
+#   geom_histogram(fill = "white", color = "black", bins = 100) +
+#   labs(title = "Distribution of Percentage", x = "Percentage", y = "Count") +
+#   scale_x_continuous(limits = c(0.2, 1), breaks = seq(0.2,1,0.1)) +
+#   theme_classic()
+# 
+# ggsave(filename = fs::path(dir_reports, "4_feature_selection_distribution.png"), 
+#        width = 10, height = 6, dpi=300)
+
+feature_80 <- feature_n %>% filter(count > 0.85*5000)
+
+selected_feature_name <- feature_80$feature[-c(1:8)] # 3
+```
+
+```{r old code, include=FALSE, comment=""}
+
+# filter to top 100 proteins by effect size
+f = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx"
+
+# GLYCEMIA
+glyc_keep = read_excel(f,sheet = "GLYC CPH")
+glyc_keep <- arrange(glyc_keep,adj.p.value)
+glyc_drop <- glyc_keep[101:nrow(glyc_keep),"AptName"]
+rownames(glyc_drop) <- glyc_drop$AptName
+glyc_drop <- as.data.frame(t(glyc_drop))
+glyc <- base_log_scale %>% dplyr::select(-colnames(glyc_drop))
+
+concordance_df_glyc <- NULL
+
+glyc_nozero <- glyc[!glyc$DAYSTOGLYC == 0,]
+seq <- is_seq(names(glyc))
+
+glyc_select = easy_elasticnet(data = glyc_nozero,outcome = "GLYC",
+                           predictors = glyc_nozero[,seq], out = "min.error",
+                           model_type = "cox",time = "DAYSTOGLYC", cv_method="kfold", folds = 10)
+retained_vars = analytes[analytes$AptName %in% glyc_select, c("Target","TargetFullName")]
+
+form = as.formula(paste0("Surv(DAYSTOGLYC, GLYC)~",paste0(glyc_select,collapse = "+")))
+mod = coxph(formula = form,data = glyc_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf$Target <- analytes[analytes$AptName %in% moddf$term, ]$Target
+moddf <- cbind(moddf$Target,moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Target","Apt Name","Hazard Ratio","SE","P-value")
+concordance_df_glyc <- as.data.frame(cbind("Loss of glycemic control","Proteins",mod$concordance[[6]], mod$concordance[[7]]))
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+```{r, include=TRUE, comment=""}
+# make forest plot summarizing HRs for selected proteins
+elastic_net_for_plot <- as.data.frame(moddf)
+elastic_net_for_plot[,3:5] <- apply(elastic_net_for_plot[,3:5], 2, as.numeric)
+elastic_net_for_plot$Target <- ifelse(elastic_net_for_plot$Target == "aldolase C", "Aldolase C", elastic_net_for_plot$Target)
+elastic_net_for_plot$`Lower bound 95% CI` <- elastic_net_for_plot$`Hazard Ratio` - (1.96 * elastic_net_for_plot$SE)
+elastic_net_for_plot$`Upper bound 95% CI` <- elastic_net_for_plot$`Hazard Ratio` + (1.96 * elastic_net_for_plot$SE)
+elastic_net_for_plot <- elastic_net_for_plot %>% arrange(`P-value`)
+elastic_net_for_plot$Target <- paste0(elastic_net_for_plot$Target, " (", elastic_net_for_plot$`Apt Name`, ")")
+elastic_net_for_plot$` ` <- paste(rep(" ", 30), collapse = " ")
+elastic_net_for_plot$`HR (95% CI)` <- sprintf("%.2f (%.2f to %.2f)",
+                                     elastic_net_for_plot$`Hazard Ratio`, elastic_net_for_plot$`Lower bound 95% CI`, elastic_net_for_plot$`Upper bound 95% CI`)
+elastic_net_for_plot_p <- forest(elastic_net_for_plot[,c("Target"," ","HR (95% CI)")], est = elastic_net_for_plot$`Hazard Ratio`, lower = elastic_net_for_plot$`Lower bound 95% CI`, upper = elastic_net_for_plot$`Upper bound 95% CI`, ci_column = 2, xlim = c(0, 2), ref_line = 1)
+png('/Users/pylell/Dropbox/TODAY glycemic manuscript [shared]/Analysis output/forest_plot_elastic_net_proteins.png', res = 300, width = 10, height = 15, units = "in")
+elastic_net_for_plot_p
+dev.off()
+```
+
+## Model with proteins selected by elastic net and covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOGLYC, GLYC)~",paste0(glyc_select,collapse = "+"),paste0("+bmi+si_1_ins0+AGEBASE+sex")))
+mod = coxph(formula = form,data = glyc_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf$Target <- NA
+moddf[1:(nrow(moddf)-4),]$Target <- analytes[analytes$AptName %in% moddf[1:(nrow(moddf)-4),]$term, ]$Target
+moddf$Target <- paste0(moddf$Target, " (", moddf$`term`, ")")
+moddf$Target <- ifelse(moddf$Target == "NA (bmi)", "BMI", moddf$Target)
+moddf$Target <- ifelse(moddf$Target == "NA (si_1_ins0)", "Insulin sensitivity", moddf$Target)
+moddf$Target <- ifelse(moddf$Target == "NA (AGEBASE)", "Age", moddf$Target)
+moddf$Target <- ifelse(moddf$Target == "NA (sex)", "Sex", moddf$Target)
+moddf <- cbind(moddf$Target,moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Target","Apt Name","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Loss of glycemic control","Proteins + covariates (BMI, Si, age, sex)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_glyc <- rbind(concordance_df_glyc, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+```{r, include=TRUE, comment=""}
+# make forest plot summarizing HRs for selected proteins and covariates
+elastic_net_for_plot <- as.data.frame(moddf)
+elastic_net_for_plot[,3:5] <- apply(elastic_net_for_plot[,3:5], 2, as.numeric)
+elastic_net_for_plot$Target <- ifelse(elastic_net_for_plot$Target == "aldolase C (seq.9876.20)", "Aldolase C (seq.9876.20)", elastic_net_for_plot$Target)
+elastic_net_for_plot$`Lower bound 95% CI` <- elastic_net_for_plot$`Hazard Ratio` - (1.96 * elastic_net_for_plot$SE)
+elastic_net_for_plot$`Upper bound 95% CI` <- elastic_net_for_plot$`Hazard Ratio` + (1.96 * elastic_net_for_plot$SE)
+elastic_net_for_plot <- elastic_net_for_plot %>% arrange(`P-value`)
+elastic_net_for_plot$` ` <- paste(rep(" ", 30), collapse = " ")
+elastic_net_for_plot$`HR (95% CI)` <- sprintf("%.2f (%.2f to %.2f)",
+                                     elastic_net_for_plot$`Hazard Ratio`, elastic_net_for_plot$`Lower bound 95% CI`, elastic_net_for_plot$`Upper bound 95% CI`)
+elastic_net_for_plot_p <- forest(elastic_net_for_plot[,c("Target"," ","HR (95% CI)")], est = elastic_net_for_plot$`Hazard Ratio`, lower = elastic_net_for_plot$`Lower bound 95% CI`, upper = elastic_net_for_plot$`Upper bound 95% CI`, ci_column = 2, xlim = c(0, 26), ref_line = 1)
+png('/Users/pylell/Dropbox/TODAY glycemic manuscript [shared]/Analysis output/forest_plot_elastic_net_proteins_covariates.png', res = 300, width = 10, height = 15, units = "in")
+elastic_net_for_plot_p
+dev.off()
+```
+
+## Model with only covariates
+
+```{r, include=FALSE, comment=""}
+form = as.formula(paste0("Surv(DAYSTOGLYC, GLYC)~bmi+si_1_ins0+AGEBASE+sex"))
+mod = coxph(formula = form,data = glyc_nozero)
+kable(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+
+# make a summary table
+moddf <- as.data.frame(tidy(mod, exponentiate = TRUE, conf.int = TRUE),digits = 3)
+moddf <- cbind(moddf$term,round(moddf$estimate, digits=3),round(moddf$std.error, digits=3),round(moddf$p.value, digits=3))
+colnames(moddf) <- c("Variable","Hazard Ratio","SE","P-value")
+concordance_df_temp <- as.data.frame(cbind("Loss of glycemic control","Covariates (BMI, Si, age, sex)",mod$concordance[[6]], mod$concordance[[7]]))
+concordance_df_glyc <- rbind(concordance_df_glyc, concordance_df_temp)
+```
+
+```{r, include=TRUE, comment=""}
+kable(moddf, row.names=F)
+```
+
+There are `r nrow(moddf)` variables in the model.
+
+```{r, include=TRUE, comment=""}
+kable(round(mod$concordance,digits=3))
+```
+
+## Summary tables and plots
+
+```{r, include=FALSE, comment=""}
+colnames(concordance_df_glyc) <- c("Outcome","Model","Concordance","SE")
+concordance_df_glyc$Concordance <- as.numeric(concordance_df_glyc$Concordance)
+concordance_df_glyc$SE <- as.numeric(concordance_df_glyc$SE)
+concordance_df_glyc$ci_low <- concordance_df_glyc$Concordance - (1.96*concordance_df_glyc$SE)
+concordance_df_glyc$ci_high <- concordance_df_glyc$Concordance + (1.96*concordance_df_glyc$SE)
+concordance_df_glyc[,c("Concordance","SE","ci_low", "ci_high")] <- round(concordance_df_glyc[,c("Concordance","SE","ci_low", "ci_high")],2)
+colnames(concordance_df_glyc) <- c("Outcome","Model","Concordance","SE","Lower bound 95% CI","Upper bound 95% CI")
+concordance_df_glyc <- rbind(concordance_df_glyc[3,],concordance_df_glyc[1,],concordance_df_glyc[2,])
+
+```
+
+```{r, include=TRUE, comment=""}
+# glycemia forest plot summarizing concordance
+concordance_df_for_plot <- concordance_df_glyc
+concordance_df_for_plot$` ` <- paste(rep(" ", 40), collapse = " ")
+concordance_df_for_plot$`Concordance (95% CI)` <- sprintf("%.2f (%.2f to %.2f)",
+                                     concordance_df_for_plot$Concordance, concordance_df_for_plot$`Lower bound 95% CI`, concordance_df_for_plot$`Upper bound 95% CI`)
+p <- forest(concordance_df_for_plot[, c(1:2, 7:8)], est = concordance_df_for_plot$Concordance, lower = concordance_df_for_plot$`Lower bound 95% CI`,
+       upper = concordance_df_for_plot$`Upper bound 95% CI`, ci_column = 3, xlim = c(0,1))
+#p$widths <- unit(c(1,100,50,50), "mm")
+png('/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and glycemia/Figures/forest_plot_elastic_net_glycemia_concordance.png', res = 300, width = 9, height = 3, units = "in")
+p
+dev.off()
+png('/Users/pylell/Dropbox/TODAY glycemic manuscript [shared]/Analysis output/forest_plot_elastic_net_glycemia_concordance.png', res = 300, width = 11, height = 3, units = "in")
+p
+dev.off()
+```
+
+# Forest plots for univariate results
+```{r, include=FALSE}
+# forest plot of overall results
+f = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx"
+glyc_forest = read_excel(f,sheet = "GLYC CPH")
+glyc_forest <- glyc_forest %>% arrange(adj.p.value)
+glyc_forest <- glyc_forest[1:20,]
+glyc_forest$Target <- ifelse(glyc_forest$Target == "carboxylesterase, liver", "Liver carboxylesterase", glyc_forest$Target)
+glyc_forest$Target <- ifelse(glyc_forest$Target == "aldolase C", "Aldolase C", glyc_forest$Target)
+glyc_forest$Target <- paste0(glyc_forest$Target, " (", glyc_forest$AptName, ")")
+glyc_forest$` ` <- paste(rep(" ", 30), collapse = " ")
+glyc_forest$`HR (95% CI)` <- sprintf("%.2f (%.2f to %.2f)",
+                                     glyc_forest$estimate, glyc_forest$conf.low, glyc_forest$conf.high)
+glyc_forest_p <- forest(glyc_forest[,c("Target"," ","HR (95% CI)")], est = glyc_forest$estimate, lower = glyc_forest$conf.low, upper = glyc_forest$conf.high, ci_column = 2, xlim = c(0, 3.5), ref_line = 1)
+png('/Users/pylell/Dropbox/TODAY glycemic manuscript [shared]/Analysis output/forest_plot_univariate_CPH_overall.png', res = 300, width = 10, height = 10, units = "in")
+glyc_forest_p
+dev.off()
+
+# forest plot by ethnicity
+# Hispanic
+f = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted Hispanic.xlsx"
+glyc_forest = read_excel(f,sheet = "GLYC CPH")
+glyc_forest <- glyc_forest %>% arrange(adj.p.value)
+glyc_forest <- glyc_forest[1:20,]
+glyc_forest$Target <- ifelse(glyc_forest$Target == "carboxylesterase, liver", "Liver carboxylesterase", glyc_forest$Target)
+glyc_forest$Target <- ifelse(glyc_forest$Target == "aldolase C", "Aldolase C", glyc_forest$Target)
+glyc_forest$Target <- paste0(glyc_forest$Target, " (", glyc_forest$AptName, ")")
+glyc_forest$` ` <- paste(rep(" ", 30), collapse = " ")
+glyc_forest$`HR (95% CI)` <- sprintf("%.2f (%.2f to %.2f)",
+                                     glyc_forest$estimate, glyc_forest$conf.low, glyc_forest$conf.high)
+glyc_forest_p <- forest(glyc_forest[,c("Target"," ","HR (95% CI)")], est = glyc_forest$estimate, lower = glyc_forest$conf.low, upper = glyc_forest$conf.high, ci_column = 2, xlim = c(0, 3.5), ref_line = 1)
+png('/Users/pylell/Dropbox/TODAY glycemic manuscript [shared]/Analysis output/forest_plot_univariate_CPH_Hispanic.png', res = 300, width = 10, height = 10, units = "in")
+glyc_forest_p
+dev.off()
+
+# NHB
+f = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted NHB.xlsx"
+glyc_forest = read_excel(f,sheet = "GLYC CPH")
+glyc_forest <- glyc_forest %>% arrange(adj.p.value)
+glyc_forest <- glyc_forest[1:20,]
+glyc_forest$Target <- ifelse(glyc_forest$Target == "carboxylesterase, liver", "Liver carboxylesterase", glyc_forest$Target)
+glyc_forest$Target <- ifelse(glyc_forest$Target == "aldolase C", "Aldolase C", glyc_forest$Target)
+glyc_forest$Target <- paste0(glyc_forest$Target, " (", glyc_forest$AptName, ")")
+glyc_forest$` ` <- paste(rep(" ", 30), collapse = " ")
+glyc_forest$`HR (95% CI)` <- sprintf("%.2f (%.2f to %.2f)",
+                                     glyc_forest$estimate, glyc_forest$conf.low, glyc_forest$conf.high)
+glyc_forest_p <- forest(glyc_forest[,c("Target"," ","HR (95% CI)")], est = glyc_forest$estimate, lower = glyc_forest$conf.low, upper = glyc_forest$conf.high, ci_column = 2, xlim = c(0, 3.5), ref_line = 1)
+png('/Users/pylell/Dropbox/TODAY glycemic manuscript [shared]/Analysis output/forest_plot_univariate_CPH_NHB.png', res = 300, width = 10, height = 10, units = "in")
+glyc_forest_p
+dev.off()
+
+# NHW
+f = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted NHW.xlsx"
+glyc_forest = read_excel(f,sheet = "GLYC CPH")
+glyc_forest <- glyc_forest %>% arrange(adj.p.value)
+glyc_forest <- glyc_forest[1:20,]
+glyc_forest$Target <- ifelse(glyc_forest$Target == "carboxylesterase, liver", "Liver carboxylesterase", glyc_forest$Target)
+glyc_forest$Target <- ifelse(glyc_forest$Target == "aldolase C", "Aldolase C", glyc_forest$Target)
+glyc_forest$Target <- paste0(glyc_forest$Target, " (", glyc_forest$AptName, ")")
+glyc_forest$` ` <- paste(rep(" ", 30), collapse = " ")
+glyc_forest$`HR (95% CI)` <- sprintf("%.2f (%.2f to %.2f)",
+                                     glyc_forest$estimate, glyc_forest$conf.low, glyc_forest$conf.high)
+glyc_forest_p <- forest(glyc_forest[,c("Target"," ","HR (95% CI)")], est = glyc_forest$estimate, lower = glyc_forest$conf.low, upper = glyc_forest$conf.high, ci_column = 2, xlim = c(0, 3.5), ref_line = 1)
+png('/Users/pylell/Dropbox/TODAY glycemic manuscript [shared]/Analysis output/forest_plot_univariate_CPH_NHW.png', res = 300, width = 10, height = 10, units = "in")
+glyc_forest_p
+dev.off()
+```
+
+
