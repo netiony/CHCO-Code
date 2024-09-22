@@ -11,7 +11,7 @@ if(Sys.info()["sysname"] == "Windows"){
 #setwd(home_dir)
 
 # read in data - we want to use the fully processed, normalized file ending in "anmlSMP.adat"
-soma <- read_adat("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Somalogic data raw/WUS-22-001_Somalogic_normalized/WUS-22-001_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
+soma <- read_adat("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Somalogic data raw/WUS-22-001_Somalogic_normalized/WUS-22-001_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
 analytes <- getAnalyteInfo(soma)
 
 # remove fc mouse and no protein
@@ -24,12 +24,12 @@ analytes <- analytes %>% filter(Organism == "Human")
 analytes <- analytes %>% filter(Type == "Protein")
 
 # read in the files that will link repository ID (column A) to Somalogic ID (column C)
-ids1 <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Somalogic repository link/Omics-Petter Ancillary Samples at Colorado LEAD Center - Wash U.csv")
+ids1 <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Somalogic repository link/Omics-Petter Ancillary Samples at Colorado LEAD Center - Wash U.csv")
 colnames(ids1) <- c("releaseid","material_type","current_label","MASK.ID","Date.Drawn","visnum","location")
 ids1$bsi_id <- NA
-ids2 <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Somalogic repository link/Omics-Petter Ancillary Samples at NIDDK-TODAY - Wash U.csv")
+ids2 <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Somalogic repository link/Omics-Petter Ancillary Samples at NIDDK-TODAY - Wash U.csv")
 ids2$MASK.ID <- NA
-ids3 <- read.csv("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Somalogic repository link/Omics-Petter Ancillary Samples at NIDDK-TODAY2 - Wash U.csv")
+ids3 <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Somalogic repository link/Omics-Petter Ancillary Samples at NIDDK-TODAY2 - Wash U.csv")
 ids3$MASK.ID <- NA
 ids <- rbind(ids1, ids2, ids3)
 ids$SampleDescription <- ids$current_label
