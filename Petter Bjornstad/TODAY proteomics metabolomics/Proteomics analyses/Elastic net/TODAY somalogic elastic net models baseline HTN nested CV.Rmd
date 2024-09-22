@@ -1,5 +1,5 @@
 ---
-title: "TODAY Somalogic baseline analyses - elastic net Cox models for hypertension with nested CV"
+title: "TODAY Somalogic baseline analyses - elastic net Cox models for HTN with nested CV"
 author: "Laura Pyle"
 date: "`r format(Sys.time(), '%d %B %Y')`"
 knit: (function(rmdfile, ...) { rmarkdown::render(rmdfile, output_dir='/Users/pylell/Dropbox/TODAY HTN and DKD output') })
@@ -90,7 +90,6 @@ no_var = caret::nearZeroVar(base[,seq])
 
 # log transform
 base_log <- base %>% modify_if(is_seq(names(.)), log)
-base_log <- base_log %>% filter(DAYSTOHTN >= 1)
 
 # scale by SD
 base_log_scale <- base_log
@@ -99,48 +98,26 @@ for (i in 1:length(predictors)) {
   base_log_scale[,paste0(predictors[i])] <- base_log_scale[,paste0(predictors[i])]/sd(unlist(base_log[,paste0(predictors[i])]))
 }
 
-base_log_scale <- base_log_scale %>% ungroup()
+base_log_scale <- base_log_scale %>% filter(DAYSTOHTN >= 1) %>% ungroup()
 
 source("~/Documents/Github/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/Elastic net/easy_elasticnet.R")
 ```
 
-# Model evaluation using nested cross-validation
+# HTN elastic net with nested CV
 
-## HTN
+```{r nestedcv,echo=TRUE, include = FALSE }
+set.seed(1234)
 
-```{r nestedcv,echo=TRUE, cache=TRUE, include = FALSE }
-set.seed(3654)
-#file.remove("/Users/pylell/Dropbox/TODAY HTN and DKD output/HTN_feature_selection.csv")
+y <- as.matrix(base_log_scale %>% select(HTN, DAYSTOHTN))
+x <- as.matrix(base_log_scale %>% select(all_of(seq_names)))
 
-#data_model <- base_log_scale %>% 
-#    select(releaseid, HTN, DAYSTOHTN, seq_names)  %>% ungroup()
-
-y <- base_log_scale %>% select(HTN, DAYSTOHTN)
-x <- base_log_scale %>% select(all_of(seq_names))
-
-# screening function for univariable cox models
-# should take x and y and return character vector of names of filtered predictors
 cox_screen <- function(x, y) {
- #data <- cbind(y, x)
- # data <- cbind(data, base_log_scale$bmi, base_log_scale$si_1_ins0, base_log_scale$AGEBASE, base_log_scale$sex,
-  #              base_log_scale$race, base_log_scale$HbA1c, base_log_scale$UAlbCreat, base_log_scale$EstCreatClear,
-   #             base_log_scale$log_trig)
   predictors <- seq_names
- # colnames(data) <- c(colnames(data[,1:7289]),"bmi","si_1_ins0","AGEBASE","sex","race","HbA1c","UAlbCreat","EstCreatClear","log_trig")
-
   result_HTN <- NULL
   for (i in 1:length(predictors)) {
     print(i)
-    #y <- Surv(base_log_scale$DAYSTOHTN, base_log_scale$HTN)
-    data <- cbind(y, x)
-    #colnames(data) <- c("HTN", "DAYSTOHTN", colnames(x))
-    z <- base_log_scale %>% select(all_of(predictors[i]))
-    data <- cbind(data, base_log_scale$bmi, base_log_scale$si_1_ins0, base_log_scale$AGEBASE, base_log_scale$sex,
-                base_log_scale$race, base_log_scale$HbA1c, base_log_scale$UAlbCreat, base_log_scale$EstCreatClear,
-               base_log_scale$log_trig)
-    colnames(data) <- c(colnames(data[,1:7290]),"bmi","si_1_ins0","AGEBASE","sex","race","HbA1c","UAlbCreat","EstCreatClear","log_trig")
-    form <- paste0("Surv(base_log_scale$DAYSTOHTN, base_log_scale$HTN) ~",predictors[i],"+AGEBASE+sex+race+HbA1c+UAlbCreat+EstCreatClear+bmi+si_1_ins0+log_trig")
-    mod <- coxph(data = data, formula = as.formula(form))
+    form <- paste0("Surv(DAYSTOHTN, HTN)~",predictors[i],"+AGEBASE+sex+race+HbA1c+UAlbCreat+EstCreatClear+bmi+si_1_ins0+log_trig")
+    mod <- coxph(data = base_log_scale, formula = as.formula(form))
     tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
     tidymod <- tidymod[1,]
     result_HTN <- rbind(result_HTN,tidymod)
@@ -156,12 +133,17 @@ cox_screen <- function(x, y) {
 }
 
 # test the screening function
-#y <- Surv(base_log_scale$DAYSTOHTN, base_log_scale$HTN)
-#result_HTN <- cox_screen(x, y)
+# in the test function, we pass y as a matrix, but it is not used inside the function
+# x is passed as a matrix
+result_HTN <- cox_screen(x, y)
 
-res <- nestcv.glmnet(y = as.matrix(y), x = as.matrix(x),
-                         family = "cox", cv.cores = 1, outer_method = "LOOCV", filterFUN = cox_screen,  
+# to use nested CV, y needs to be a Surv object
+y <- Surv(base_log_scale$DAYSTOHTN, base_log_scale$HTN)
+res <- nestcv.glmnet(y = y, x = x,
+                         family = "cox", cv.cores = 16, outer_method = "LOOCV", filterFUN = cox_screen,  
                      n_inner_folds = 10, final = T, verbose = T)
+#res <- nestcv.glmnet(y = y, x = x,
+#                         family = "cox", cv.cores = 16, outer_method = "cv", filterFUN #                     n_inner_folds = 10, final = T, verbose = T)
 selected_vars <- res$final_coef
 selected_vars$AptName <- row.names(selected_vars)
 selected_vars$Target <- analytes[analytes$AptName %in% selected_vars$AptName, ]$Target
