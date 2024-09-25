@@ -1,0 +1,608 @@
+---
+title: "IMPROVE Pseudotime"
+author: "Ye Ji Choi"
+date: "today"
+date-format: long
+execute: 
+  echo: false
+  warning: false
+  messages: false
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
+    code-fold: true
+    self-contained: true
+    fig-cap-location: top
+    page-layout: full
+editor: source
+---
+
+```{r libraries, message = F}
+#| include: false
+library(Seurat)
+library(future)
+library(tidyverse)
+library(colorspace)
+library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggpubr)
+library(rstatix)
+library(table1)
+library(Biobase)
+library(ReactomeGSA)
+library(GSEABase)
+library(msigdbr)
+library(kableExtra)
+library(knitr)
+library(slingshot); library(SingleCellExperiment)
+library(RColorBrewer); library(scales)
+library(viridis); library(UpSetR)
+library(pheatmap)
+library(fgsea); library(tradeSeq)
+library(DescTools)
+library(Totem)
+library(dyndimred)
+```
+
+```{r data-setup, echo = F, message=F}
+# Parallel processing
+plan(multicore, workers = 16)
+options(future.globals.maxSize=2e9)
+so <- readRDS("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/data_clean/seurat_data_no_computations.RDS")
+dict <- read.csv("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv") %>%
+  dplyr::select(variable_name, label)
+dat <- read.csv("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv")
+source("/home/yejichoi2/Documents/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/label_harmonized_function.R")
+source("/home/yejichoi2/Documents/CHCO-Code/Petter Bjornstad/CROCODILE/crocodile_functions.R")
+
+dat <- dat %>%
+  filter(study == "IMPROVE") %>%
+  filter(visit != "3_months_post_surgery") %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+            across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+            .by = c(record_id, visit)) %>%
+  dplyr::filter(record_id %in% c("IT_07", "IT_08", "IT_10", "IT_11", "IT_12")) %>%
+  mutate(race_ethnicity_condensed = case_when(race == "White" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino White",
+                                              race == "Black or African American" & 
+                                                ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino Black",
+                                              ethnicity == "Hispanic or Latino" ~ "Hispanic or Latino",
+                                              T ~ "Not Hispanic or Latino Other"),
+         elevated_albuminuria = case_when(elevated_albuminuria == "Yes" ~ "Elevated albuminuria",
+                                          elevated_albuminuria == "No" ~ "Normoalbuminuria"),
+         michigan_id = case_when(visit == "baseline" ~ paste0(record_id, "_BL"),
+                                 visit == "12_months_post_surgery" ~ paste0(record_id, "_12M"))) %>% 
+  mutate_at(vars(starts_with("fsoc")), function(x) case_when(x < 0 ~ 0, T~x)) %>%
+  dplyr::select(-cryostor_id, -kit_id)
+
+dict <- setNames(data.frame(t(dict[ , - 1])), dict[ , 1])
+dict <- dict %>%
+  mutate(sce_PT.slingPseudotime_1 = "Pseudotime",
+         gbm_thick_art_mean = "GBM thickness",
+         p2_raw_m = "M-value",
+         avg_c_k2 = "Cortical K2",
+         bmi = "BMI",
+         diabetes_duration = "Diabetes duration", 
+         hba1c = "HbA1c")
+
+## Incorporate some clinical variables to SO
+so_meta <- so@meta.data[,1:13] %>% filter(michigan_id %in% dat$michigan_id)
+so_meta <- left_join(so_meta, dat, by = "michigan_id")
+so <- so[,so$michigan_id %in% dat$michigan_id]
+so <- AddMetaData(so, so_meta)
+
+## Preprocess Seurat object
+so <- NormalizeData(so)
+so <- ScaleData(so)
+so <- RunPCA(so, features = VariableFeatures(object = so))
+ElbowPlot(so)
+# Cluster cells
+so <- FindNeighbors(so)
+so <- FindClusters(so)
+# Perform UMAP and tSNE
+so <- RunUMAP(so, dims = 1:20)
+# so = RunTSNE(so,dim.embed = 3)
+# General cell types as identifiers
+so$generaltype <- sub("_.*", "", so$LR_clusters)
+Idents(so) <- so$generaltype
+
+```
+
+```{r echo =F, include = F}
+# function for de.markers
+de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, extension){
+  m = FindMarkers(seurat_object, features = genes,group.by = group.by,ident.1 = id1, 
+                  ident.2 = id2, subset.ident = celltype,verbose = F, logfc.threshold=0.001,
+                  min.pct = 0.001)
+  m$p_val_adj = p.adjust(m$p_val,method = "bonferroni")
+  m <- m %>% 
+    rownames_to_column('gene') %>%
+    arrange(p_val) %>%
+    column_to_rownames('gene') %>%
+    dplyr::select(avg_log2FC,pct.1,pct.2,p_val,p_val_adj) %>%
+    filter(!is.na(p_val))
+  
+  genes_subset <- rownames(m)[m$p_val <= 0.05]
+
+  if (length(genes_subset) > 0){
+    assign(paste0("genes_subset", extension), genes_subset, envir = .GlobalEnv)
+  }
+  assign(paste0("m", extension), m, envir = .GlobalEnv)
+  return(knitr::kable(m, digits = 3
+                      ))
+}
+
+## Top 2000 genes
+de.markers(so, NULL, "visit", id1 = "baseline", id2 = "12_months_post_surgery", "PT", "_top")
+m_top <- m_top %>% head(2000)
+```
+
+```{r include = F}
+## Make SO into SCE object for pseudotime analysis
+sce_PT <- as.SingleCellExperiment(subset(so, generaltype == "PT" & celltype != "PT_lowQuality"), assay = "RNA")
+
+# # Totem clustering for trajectory analysis
+# gc()
+# sce_PT <- PrepareTotem(sce_PT)
+# sce_PT <- RunDimRed(object = sce_PT,
+#                     dim.red.method = "lmds",
+#                     dim.red.features = row.names(m_top),
+#                     dim.reduction.par.list = list(ndim=5))
+# 
+# ## where so@assays$RNA@counts is the normalized expression count
+# # gc()
+# # dim_red <- dimred_pca(t(subset(so, generaltype == "PT" & celltype != "PT_lowQuality")@assays$RNA@counts), ndim=2)
+# dim_red <- reducedDim(sce_PT, type = "lmds")
+# 
+# sce_PT <- RunClustering(sce_PT,
+#                         k.range = 5:20,
+#                         min.cluster.size = 5,
+#                         N.clusterings=10000)
+# gc()
+# viz_cell <- VizCellConnectivity(sce_PT,viz.dim.red = dim_red)
+# 
+# 
+# sce_PT <- SelectClusterings(sce_PT,selection.method = 1,
+#                        selection.N.models = 10,
+#                        selection.stratified=FALSE,
+#                        prior.clustering = NULL)
+# VizMST(sce_PT,clustering.names = ReturnTrajNames(sce_PT),viz.dim.red = dim_red)
+```
+
+```{r echo = F}
+# VizMST(sce_PT, clustering.names = sce_PT$visit, viz.dim.red = dim_red)
+```
+
+```{r echo = F}
+n_baseline <- nrow(so@meta.data %>% filter(generaltype == "PT" & celltype != "PT_lowQuality" & visit == "baseline"))
+n_12_months_post_surgery <- nrow(so@meta.data %>% filter(generaltype == "PT" & celltype != "PT_lowQuality" & visit == "12_months_post_surgery"))
+
+# By PT subtypes (by celltype)
+cellcount<- so@meta.data %>% 
+  filter(generaltype == "PT" & celltype != "PT_lowQuality") %>%
+  dplyr::group_by(visit, celltype) %>%
+  dplyr::summarise(count = n()) %>%
+  dplyr::mutate(n = case_when(visit == "baseline" ~ n_baseline, visit == "12_months_post_surgery" ~ n_12_months_post_surgery),
+         ratio = count / n) %>% ungroup() %>%
+  group_by(celltype) %>%
+  dplyr::mutate(proportion = ratio/sum(ratio)) %>%
+  dplyr::select(proportion, visit, celltype) %>%
+  ggplot(aes(x= celltype, y= proportion, fill = visit)) + 
+  geom_bar(stat = "identity", position = "fill") +
+  theme_classic() +
+  labs(x = NULL,
+       y = "Proportion",
+       fill = "visit") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  theme(plot.title = element_text(hjust=0.5, face="bold"),
+        text = element_text(size = 20)) +
+  ggtitle("Proportion of cells") +
+  scale_fill_manual(values = c("#264653", "#2a9d8f"))
+
+cellcount
+```
+
+
+
+# PT cells (PT-1 thru -5)
+
+Removed outlier clusters that slingshot was overfitting.
+
+```{r, echo = F}
+so_PT <- subset(so, generaltype == "PT" & celltype != "PT_lowQuality")
+so_PT <- NormalizeData(so_PT)
+so_PT <- ScaleData(so_PT)
+# ElbowPlot(so_PT)
+so_PT <- RunPCA(so_PT, ncomponents = 10, features = VariableFeatures(object = so_PT))
+so_PT <- FindNeighbors(so_PT)
+so_PT <- FindClusters(so_PT)
+so_PT <- RunUMAP(so_PT, dims = 1:10)
+so_PT <- RunTSNE(so_PT, dimred = "UMAP")
+
+# DimPlot(object = so_PT, reduction = "umap")
+# DimPlot(object = so_PT, reduction = "umap", group.by = "Group")
+# DimPlot(object = so_PT, reduction = "umap", group.by = "celltype")
+umap_keep <- rownames(as.data.frame(so_PT@reductions$umap@cell.embeddings) %>%
+  filter(UMAP_1 < 10))
+so_PT <- so_PT[, umap_keep]
+DimPlot(object = so_PT, reduction = "umap")
+DimPlot(object = so_PT, reduction = "umap", group.by = "visit")
+DimPlot(object = so_PT, reduction = "umap", group.by = "celltype")
+```
+
+After visualizing UMAP by cell type clusters, we fit slingshot two ways: 
+  i) setting start cluster as PT-3, ending cluster as PT-4 (PT-3 having the most "healthy" cells, PT-4 having the most "diseased" cells),
+  ii) unsupervised.
+  
+The first method resulted in two trajectories (lineage 1: PT-3  PT-2  PT-5  PT-4; lineage 2: PT-3  PT-2  PT-1), and the second method also resulted in two trajectories (lineage 1: PT-4  PT-5  PT-2  PT-3; lineage 2: PT-4  PT-5  PT-2  PT-1).
+
+Lineage 1 of the unsupervised method was the exact inverse of lineage 1 of the supervised method. Therefore, we moved forward with the initial method.
+
+```{r echo = F}
+# PT-3 to PT-4
+sce_PT <- as.SingleCellExperiment(so_PT)
+sce_PT <- slingshot(sce_PT, reducedDim = 'UMAP', 
+                    clusterLabels = colData(sce_PT)$celltype,
+                    end.clus = 'PT-4')
+shuffle <- sample(ncol(sce_PT))
+
+jpeg("/home/yejichoi2/Documents/lin_temp_folder/PT_slingshot_UMAP_vsg.jpeg", width = 900, height = 800, quality = 100)
+par(mar = c(5, 6, 1, 1)) 
+plot(reducedDims(sce_PT)$UMAP[shuffle, ], asp = 1, pch = 16,
+     xlab = "UMAP-1", ylab = "UMAP-2",
+     col = hcl.colors(100, alpha = .5, palette = "PinkYl")[cut(sce_PT$slingPseudotime_1, breaks = 100)][shuffle],
+     cex.lab = 3, cex.axis = 2)
+lines(SlingshotDataSet(sce_PT), type = "lineages")
+lines(SlingshotDataSet(sce_PT))
+dev.off()
+
+SlingshotDataSet(sce_PT)
+
+# sce_PT_unsupervised <- as.SingleCellExperiment(so_PT)
+# sce_PT_unsupervised <- slingshot(sce_PT, reducedDim = 'UMAP', clusterLabels = colData(sce_PT)$celltype)
+# shuffle <- sample(ncol(sce_PT_unsupervised))
+# plot(reducedDims(sce_PT_unsupervised)$UMAP[shuffle, ], asp = 1, pch = 16,
+#      xlab = "UMAP-1", ylab = "UMAP-2",
+#      col = hcl.colors(100, alpha = 0.5, palette = "PinkYl")[cut(sce_PT_unsupervised$slingPseudotime_1, breaks = 100)][shuffle])
+# lines(SlingshotDataSet(sce_PT_unsupervised), type = "lineages")
+# lines(SlingshotDataSet(sce_PT_unsupervised))
+# SlingshotDataSet(sce_PT_unsupervised)
+# 
+plot_df <- as.data.frame(slingPseudotime(sce_PT)) %>%
+  dplyr::mutate(visit = colData(sce_PT)$visit)
+#lines(SlingshotDataSet(sce_PT))
+
+# plot(reducedDims(sce_PT)$UMAP[shuffle, ], asp = 1, pch = 16,
+#      xlab = "UMAP-1", ylab = "UMAP-2",
+#      col = sce_PT$visit)
+# 
+# lines(SlingshotDataSet(sce_PT), type = "lineages")
+# legend("topright", pch = 16, col = alpha(c("12_months_post_surgery" = "#ffcb77", "baseline" = "#fe6d73"), 0.4), bty = "n", 
+#        legend = levels(factor(colData(sce)$visit)))
+# 
+# plotUMAP(sce_PT, colour_by="pseudotime", point_alpha=0.3) +
+#     geom_segment(data=grid.df, 
+#         mapping=aes(x=start.1, y=start.2, xend=end.1, yend=end.2), 
+#         arrow=arrow(length=unit(0.05, "inches"), type="closed"))
+```
+
+```{r echo = F}
+# Function to plot all smooth after fitGAM
+plot_smooth <- function(sce, gene, title = gene) {
+  non_missing_cells <- (colData(sce)$tradeSeq$conditions != "NA")
+  non_missing_cells <- as.data.frame(non_missing_cells) %>% 
+    dplyr::mutate(non_missing_cells = case_when(non_missing_cells == T ~ 1))
+  cnt <- assays(sce)$counts[gene, , drop=F]
+  cnt <- as.data.frame(t(cnt))
+  cnt <- cnt*non_missing_cells
+  colnames(cnt) <- "exp"
+  cnt <- cnt %>% filter(!is.na(exp))
+  pseudotime <- (colData(sce)$crv$pseudotime.Lineage1 * non_missing_cells %>%
+    filter(!is.na(non_missing_cells)))$non_missing_cells
+  condition <- colData(sce)$tradeSeq$conditions
+  
+  if ("NA" %in% condition){
+    condition <- condition[condition != "NA"]
+  }
+  
+  ncondition <- length(unique(condition))
+  
+  if (ncondition == 2){
+    colors = c("#007e5d",  "#ff8989")
+  }
+  if (ncondition == 3){
+    colors = c("#ef767a", "#456990", "#49beaa")
+  }
+  if(ncondition == 4){
+    colors = c("#003049", "#d62828", "#f77f00", "#fcbf49")
+  }
+  if(ncondition == 5){
+    colors = c("#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51")
+  }
+  
+  cnt_smooth <- predictSmooth(sce, gene, nPoints=100) %>%
+    filter(lineage == 1) %>% dplyr::select(-lineage)
+  cnt_smooth <- cnt_smooth[, c("yhat", "time", "condition")]
+  colnames(cnt_smooth) <- c("exp", "pseudotime", "condition")
+  cnt_smooth <- cnt_smooth %>% filter(condition!="NA")
+  
+  p <- ggplot(NULL, aes(x=pseudotime, y=log1p(exp), color=condition)) + 
+    geom_point(data=cnt, size=1, alpha = 0.3) +
+    geom_line(data=cnt_smooth, linewidth=1.5) +
+    labs(x = "Pseudotime",
+         y = "Log(expression + 1)", 
+         title = title,
+         color = "Group") +
+    theme_minimal() +
+    theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+    scale_color_manual(values = colors)
+  return(p)
+}
+```
+
+## Trajectory inference
+### By group
+#### Differential progression (shown by density plot)
+
+The density plots on the trajectory of both lineage 1 and 2 show later pseudotime values in the baseline group. The Kolmogorov-Smirnov test was used to assess whether the two groups of pseudotime values were derived from the same distribution. Both lineages resulted in highly significant tests, concluding that there are differences between the distrbutions of 12_months_post_surgery and baseline in both lineages.
+
+```{r echo = F, warning = F, message=F}
+DimPlot(object = so_PT, reduction = "umap", group.by = "celltype")
+
+# Lineage 1 density plot
+ggdensity(plot_df, x = "Lineage1", fill = "visit",
+          color = "visit", palette = c("#f08080", "#1282a2")) +
+  labs(x = "Pseudotime", y = "Density")
+ks.test(slingPseudotime(sce_PT)[colData(sce_PT)$visit == "baseline", 1],
+        slingPseudotime(sce_PT)[colData(sce_PT)$visit == "12_months_post_surgery", 1])
+```
+
+
+#### Differential expression
+##### FitGAM
+```{r echo = F}
+genes = unique(c(genes, oxy_phos_genes))
+tca_genes_top <- genes[genes %in% row.names(m_top)]
+
+sce_PT <- fitGAM(sce_PT, 
+                 conditions = factor(colData(sce_PT)$visit), 
+                 nknots = 5, 
+                 genes = unique(c(rownames(m_top), genes)))
+```
+
+##### Association test
+
+The association test was done to assess significant changes in gene expression as a function of pseudotime within each lineage. The null hypothesis of this test is that gene expression is not a function of time (i.e., testing whether the estimated smoothers are significantly varying as a function of pseudotime within each lineage). 
+
+
+The top 2000 genes that were most differentially expressed between Baseline and 12M were included in the analysis. Genes involved in the TCA cycle and oxphos were also included regardless of DE. 
+
+###### Lineage 1
+```{r echo = F}
+at <- associationTest(sce_PT, lineages = T) %>%
+  rownames_to_column(var = "gene")
+rownames(at) <- at$gene
+
+# TCA/oxphos Baseline lineage 1 genes
+at_baseline_tca1 <- subset(at, rownames(at) %in% genes)
+at_baseline_tca1 <- rownames(at_baseline_tca1)[at_baseline_tca1$pvalue_lineage1_conditionbaseline <= 0.05]
+at_baseline_tca1 <- at_baseline_tca1[!is.na(at_baseline_tca1)]
+length(at_baseline_tca1)
+kable(head(arrange(subset(at, rownames(at) %in% at_baseline_tca1), by = pvalue_lineage1_conditionbaseline), n = 10))
+
+# TCA/oxphos 12M lineage 1 genes
+at_12m_tca1 <- subset(at, rownames(at) %in% genes)
+at_12m_tca1 <- rownames(at_12m_tca1)[at_12m_tca1$pvalue_lineage1_condition12_months_post_surgery <= 0.05]
+at_12m_tca1 <- at_12m_tca1[!is.na(at_12m_tca1)]
+length(at_12m_tca1)
+kable(head(arrange(subset(at, rownames(at) %in% at_12m_tca1), by = pvalue_lineage1_condition12_months_post_surgery), n = 10))
+UpSetR::upset(fromList(list(baseline = at_baseline_tca1, "12M" = at_12m_tca1)))
+
+# significant Baseline lineage 1 genes
+at_baseline <- rownames(at)[at$pvalue_lineage1_conditionbaseline <= 0.05]
+at_baseline <- at_baseline[!is.na(at_baseline)]
+length(at_baseline)
+kable(head(arrange(subset(at, rownames(at) %in% at_baseline), by = pvalue_lineage1_conditionbaseline), n = 10))
+
+# significant 12M lineage 1 genes
+at_12m <- rownames(at)[at$pvalue_lineage1_condition12_months_post_surgery <= 0.05]
+at_12m <- at_12m[!is.na(at_12m)]
+length(at_12m)
+kable(head(dplyr::arrange(subset(at, rownames(at) %in% at_12m), by = pvalue_lineage1_condition12_months_post_surgery), n = 10))
+UpSetR::upset(fromList(list(baseline = at_baseline, "12M" = at_12m)))
+```
+
+##### Condition test
+
+```{r echo = F}
+# Conditioned by group; plots for each transcript
+for (i in 1:length(genes)){
+  plot <- plot_smooth(sce_PT, genes[i])
+  gene_expression <- plotGeneCount(sce_PT, counts, gene = genes[i],
+                        title = genes[i])
+  print(plot + gene_expression)
+}
+```
+
+```{r echo = F}
+# conditions test
+ct <- conditionTest(sce_PT)
+```
+
+###### Lineage 1
+
+```{r echo = F}
+subset(ct, rownames(ct) %in% genes)
+sum(ct$pvalue <= 0.05, na.rm = TRUE)
+conditionGenes1 <- rownames(ct)[ct$pvalue <= 0.05]
+conditionGenes1 <- conditionGenes1[!is.na(conditionGenes1)]
+length(conditionGenes1)
+kable(head(dplyr::arrange(subset(ct, rownames(ct) %in% conditionGenes1), by = pvalue), n = 20))
+```
+
+*Top 20 highly DE genes*
+
+```{r echo = F}
+ct <- ct %>%
+  rownames_to_column(var = "gene")
+rownames(ct) <- ct$gene
+
+de_genes1 <- (head(arrange(ct, by = pvalue), n = 20))$gene
+
+for (i in 1:length(de_genes1)){
+  plot <- plot_smooth(sce_PT, de_genes1[i])
+  gene_expression <- plotGeneCount(sce_PT, counts, gene = de_genes1[i],
+                        title = de_genes1[i])
+  print(plot + gene_expression)
+}
+```
+
+```{r echo = F}
+cell_exp_baseline <- as.data.frame(subset(so_PT, visit == "baseline")@assays$RNA@counts)
+cell_to_pseudotime <- data.frame(cell = colnames(so_PT),
+                                 pseudotime = sce_PT$slingPseudotime_1) %>%
+  filter(!is.na(pseudotime))
+
+matched_indices <- match(colnames(cell_exp_baseline), cell_to_pseudotime$cell)
+valid_indices <- !is.na(matched_indices)
+cell_exp_baseline <- cell_exp_baseline[, valid_indices]
+colnames(cell_exp_baseline) <- cell_to_pseudotime$pseudotime[matched_indices[valid_indices]]
+cell_exp_baseline <- cell_exp_baseline[, order(names(cell_exp_baseline))]
+
+cell_exp_12m <- as.data.frame(subset(so_PT, visit == "12_months_post_surgery")@assays$RNA@counts)
+matched_indices <- match(colnames(cell_exp_12m), cell_to_pseudotime$cell)
+valid_indices <- !is.na(matched_indices)
+cell_exp_12m <- cell_exp_12m[, valid_indices]
+colnames(cell_exp_12m) <- cell_to_pseudotime$pseudotime[matched_indices[valid_indices]]
+cell_exp_12m <- cell_exp_12m[, order(names(cell_exp_12m))]
+
+# Lineage 1
+breaksList = seq(0, 15, by = 0.01)
+## Baseline
+heat_baseline <- pheatmap(cell_exp_baseline[conditionGenes1,],
+  cluster_cols = FALSE, cluster_rows = FALSE,
+  show_rownames = F, show_colnames = F, main = "Baseline", legend = TRUE,
+  silent = TRUE, color = colorRampPalette(rev(brewer.pal(n = 7, 
+                                                name = "RdYlBu")))(length(breaksList)),
+  breaks = breaksList,
+  border_color = F)
+
+## 12M
+
+heat_12m <- pheatmap(cell_exp_12m[conditionGenes1,],
+  cluster_cols = FALSE, cluster_rows = FALSE,
+  show_rownames = F, show_colnames = F, main = "12M", legend = TRUE,
+  silent = TRUE, color = colorRampPalette(rev(brewer.pal(n = 7, 
+                                                name = "RdYlBu")))(length(breaksList)),
+  breaks = breaksList,
+  border_color = F)
+
+ggarrange(heat_baseline[[4]], heat_12m[[4]])
+
+## Smoothed
+smooth <- predictSmooth(sce_PT, conditionGenes1, tidy = F, nPoints = 100)
+smooth_scaled <- t(scale(t(smooth)))
+breaksList = seq(-1.1, 2.5, by = 0.01)
+
+# Lineage 1
+## Baseline
+heat_baseline <- pheatmap(smooth_scaled[conditionGenes1, 1:100],
+  cluster_cols = FALSE,cluster_rows = FALSE,
+  show_rownames = F, show_colnames = F, main = "Baseline", legend = TRUE,
+  silent = TRUE,
+        color = colorRampPalette(rev(brewer.pal(n = 7, 
+                                                name = "RdYlBu")))(length(breaksList)),
+  breaks = breaksList,
+  border_color = F)
+
+## 12M
+heat_12m <- pheatmap(smooth_scaled[conditionGenes1, 101:200],
+  cluster_cols = FALSE,cluster_rows = FALSE,
+  show_rownames = F, show_colnames = FALSE, main = "12M", legend = TRUE,
+  silent = TRUE,
+        color = colorRampPalette(rev(brewer.pal(n = 7, 
+                                                name = "RdYlBu")))(length(breaksList)),
+  breaks = breaksList,
+  border_color = F)
+
+ggarrange(heat_baseline[[4]], heat_12m[[4]])
+```
+
+```{r echo = F}
+conditionGenes1 <- genes[genes %in% conditionGenes1]
+
+breaksList = seq(0, 2, by = 0.01)
+# Lineage 1
+## Baseline
+heat_baseline <- pheatmap(cell_exp_baseline[conditionGenes1,],
+  cluster_cols = FALSE, cluster_rows = FALSE,
+  show_rownames = T, show_colnames = F, main = "Baseline", legend = TRUE,
+  silent = TRUE, breaks = breaksList, color = colorRampPalette(rev(brewer.pal(n = 7, 
+                                                name = "RdYlBu")))(length(breaksList)),
+  border_color = F)
+
+## 12M
+heat_12m <- pheatmap(cell_exp_12m[conditionGenes1,],
+  cluster_cols = FALSE, cluster_rows = FALSE,
+  show_rownames = T, show_colnames = F, main = "12M", legend = TRUE,
+  silent = TRUE, breaks = breaksList, color = colorRampPalette(rev(brewer.pal(n = 7, 
+                                                name = "RdYlBu")))(length(breaksList)),
+  border_color = F)
+
+ggarrange(heat_baseline[[4]], heat_12m[[4]])
+
+# Smoothed
+smooth <- predictSmooth(sce_PT, conditionGenes1, tidy = F, nPoints = 100)
+smooth_scaled <- t(base::scale(t(smooth)))
+breaksList = seq(-1.1, 4, by = 0.01)
+
+# Lineage 1
+## Baseline
+heat_baseline <- pheatmap(smooth_scaled[conditionGenes1, 1:100],
+  cluster_cols = FALSE,cluster_rows = FALSE,
+  show_rownames = TRUE, show_colnames = FALSE, main = "Baseline", legend = TRUE,
+  silent = TRUE,
+        color = colorRampPalette(rev(brewer.pal(n = 7, 
+                                                name = "RdYlBu")))(length(breaksList)),
+  breaks = breaksList,
+  border_color = F)
+
+## 12M
+heat_12m <- pheatmap(smooth_scaled[conditionGenes1, 101:200],
+  cluster_cols = FALSE,cluster_rows = FALSE,
+  show_rownames = TRUE, show_colnames = FALSE, main = "12M", legend = TRUE,
+  silent = TRUE,
+        color = colorRampPalette(rev(brewer.pal(n = 7, 
+                                                name = "RdYlBu")))(length(breaksList)),
+  breaks = breaksList,
+  border_color = F)
+
+ggarrange(heat_baseline[[4]], heat_12m[[4]])
+```
+
+
+#### Gene set enrichment analysis
+```{r echo = F}
+## C2 category is according to canonical pathways: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
+geneSets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG")
+### filter background to only include genes that we assessed
+geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
+geneSets <- geneSets[geneSets$gene_symbol %in% names(sce_PT),]
+m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
+stats <- at$pvalue_lineage1_condition12_months_post_surgery
+names(stats) <- rownames(at)
+eaRes <- fgsea(pathways = m_list, stats = na.omit(stats))
+ooEA <- order(eaRes$pval, decreasing = FALSE)
+kable(head(eaRes[ooEA, 1:7], n = 20))
+
+statsCond <- ct$pvalue
+names(statsCond) <- rownames(ct)
+eaRes <- fgsea(pathways = m_list, stats = na.omit(statsCond))
+ooEA <- order(eaRes$pval, decreasing = FALSE)
+kable(head(eaRes[ooEA, 1:7], n = 20))
+```
+
