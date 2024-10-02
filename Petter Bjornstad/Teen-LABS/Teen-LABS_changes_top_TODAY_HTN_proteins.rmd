@@ -1,0 +1,140 @@
+---
+title: "Teen-LABS: Changes in top proteins associated with loss of glycemic control in TODAY"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r libraries,echo=FALSE, include=F}
+library(knitr)
+library(tidyverse)
+library(Hmisc)
+library(readxl)
+library(RColorBrewer)
+library(ggpubr)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+```
+
+```{r clean data,echo=FALSE}
+load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Proteomics HTN/copy_of_old_analysis_dataset_for_HTN_response.RData")
+df <- df[!is.na(df$htn),]
+df <- df %>% filter(visit == "baseline")
+df$htn <- droplevels(df$htn)
+prot_include <- c("WFKN2","SEZ6L","NCAM-120","NCAM1","SCG3","Aminoacylase-1",
+"WFKN2","ESPN","PURA1","SERB","CHL1","PEDF","LSAMP",
+"Growth hormone receptor","OFUT1")
+seq_include <- c("seq.13408.23","seq.19563.3","seq.4498.62",
+"seq.20161.41","seq.7957.2","seq.3343.1","seq.3235.50","seq.24957.6",
+"seq.13998.26","seq.24681.2","seq.8958.51","seq.7735.17","seq.2999.6",
+"seq.2948.58","seq.5634.39")
+top_htn <- top_htn_df %>%
+  filter(AptName %in% seq_include) %>%
+  slice_max(abs(log(estimate)), n = 21) %>%
+  pull(AptName)
+
+
+# read in estimated marginal means
+emmdf <- read_xlsx("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/Teen LABS emmeans.xlsx")
+emmdf_keep <- emmdf %>% filter(AptName %in% seq_include)
+emmdf_keep$uniqname <- paste0(emmdf_keep$Target,"_",emmdf_keep$AptName)  
+
+```
+
+```{r,echo=FALSE}
+p <- ggplot(emmdf_keep, aes(x=visit, y=emmean, colour=Target, group=uniqname)) +
+    geom_line() + 
+    geom_errorbar(aes(ymin=emmean-SE, ymax=emmean+SE), width=.1) +  
+    xlab("") +
+    ylab("Estimated marginal mean") + theme_bw() 
+png('/Users/pylell/Dropbox/TODAY glycemic manuscript [shared]/Analysis output/Teen-LABS_changes_top_TODAY_glycemia_proteins.png', res = 300, width = 10, height = 10, units = "in")
+p
+dev.off()
+
+p <- NULL
+# loop through top 10 proteins and make separate plot for each
+for (i in seq_include) {
+  p[[i]] <- ggplot(emmdf_keep[emmdf_keep$AptName == i,], aes(x=visit, y=emmean, colour=Target, group=uniqname)) +
+    geom_line() + 
+    geom_errorbar(aes(ymin=emmean-SE, ymax=emmean+SE), width=.1) +  
+    xlab("") +
+    ylab("Mean") + theme_bw() + theme(legend.position = "top") + scale_color_discrete(name="")
+}
+
+panel_p <- ggarrange(p[["seq.13408.23"]],p[["seq.3235.50"]],
+                     p[["seq.19563.3"]],p[["seq.4498.62"]],p[["seq.20161.41"]],p[["seq.7957.2"]],
+                     p[["seq.3343.1"]],p[["seq.24957.6"]],p[["seq.13998.26"]],p[["seq.24681.2"]],
+                     p[["seq.8958.51"]],p[["seq.7735.17"]],p[["seq.2999.6"]],p[["seq.2948.58"]],p[["seq.5634.39"]],
+                     ncol = 3, nrow = 5)
+png('/Users/pylell/Dropbox/TODAY HTN and DKD output/Teen-LABS_changes_top_TODAY_HTN_proteins.png', res = 300, width = 15, height = 10, units = "in")
+panel_p
+dev.off()
+```
+
+```{r,echo=FALSE}
+vars <- c("HBA1C", "bmi")
+
+# Parallel processing
+rows <- lapply(vars, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|ID)"))
+  m <- lmer(f, data = tldata)
+  emm <- emmeans(m, specs = ~visit)
+  # Contrast not necessary with current parameterization, but nice to have written
+  c <- contrast(emm,
+    method =
+      list("Year 1 - Month 1" = c(0, 0, 1, 0, 0, 0, 0) - c(1, 0, 0, 0, 0, 0, 0))
+  )
+  c <- as.data.frame(c)
+  c$AptName <- y
+  return(c)
+})
+
+means <- lapply(vars, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|ID)"))
+  m <- lmer(f, data = tldata)
+  emm <- emmeans(m, specs = ~visit)
+  # Contrast not necessary with current parameterization, but nice to have written
+  c <- contrast(emm,
+    method =
+      list("Year 1 - Month 1" = c(0, 0, 1, 0, 0, 0, 0) - c(1, 0, 0, 0, 0, 0, 0))
+  )
+  c <- as.data.frame(c)
+  c$AptName <- y
+  return(emm)
+})
+
+lmm_res <- do.call(rbind, rows)
+
+means_res <- NULL
+for (i in 1:2) {
+  temp <- summary(means[[i]])
+  a <- vars[i]
+  a <- rep(a,7)
+  temp <- cbind(a, temp)
+  means_res <- rbind(means_res, temp)
+}
+
+pclin <- NULL
+# loop through top 10 proteins and make separate plot for each
+for (i in vars) {
+  pclin[[i]] <- ggplot(means_res[means_res$a == i,], aes(x=visit, y=emmean, colour=a, group=a)) +
+    geom_line() + 
+    geom_errorbar(aes(ymin=emmean-SE, ymax=emmean+SE), width=.1) +  
+    xlab("") +
+    ylab("Mean") + theme_bw() + theme(legend.position = "top") + scale_color_discrete(name="")
+}
+
+panel_pclin <- ggarrange(pclin[[1]],pclin[[2]], ncol = 2, nrow = 2)
+png('/Users/pylell/Dropbox/TODAY glycemic manuscript [shared]/Analysis output/Teen-LABS_clinical_vars.png', res = 300, width = 8, height = 10, units = "in")
+panel_pclin
+dev.off()
+
+```
