@@ -1503,7 +1503,7 @@ levels(data$cv_fitnesstesting_yn.factor) <- c("Yes", "No")
 levels(data$cv_exerciseplan.factor) <- c("Yes", "No", "No, but referred to a exercise specialist", "Unknown/not recorded")
 levels(data$clinical_visit_complete.factor) <- c("Incomplete", "Unverified", "Complete")
 # Label factor variables as well
-
+factors <- which(duplicated(sub("\\.factor", "", colnames(data))))
 # Create lists of variables for analysis aims
 aim1_vars <- c(
   "record_number", "redcap_repeat_instrument", "redcap_repeat_instance",
