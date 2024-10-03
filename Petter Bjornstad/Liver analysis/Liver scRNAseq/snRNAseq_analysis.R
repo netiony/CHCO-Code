@@ -1,6 +1,7 @@
 #snRNAseq Analysis ----
 #1. Load Libraries ----
-library(tidyverse)
+# library(tidyverse)
+library(tidyr)
 library(BiocManager)
 library(arsenal)
 library(dplyr)
@@ -68,3 +69,4 @@ DimPlot(so_liver_sn, reduction = "umap")
 
 #ssh hampsonh@10.45.122.105
 #Yo8EJh2iSHhyT8hyXjN7
+
