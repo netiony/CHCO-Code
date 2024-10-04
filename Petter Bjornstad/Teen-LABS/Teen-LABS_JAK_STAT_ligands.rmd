@@ -19,6 +19,10 @@ library(readxl)
 library(RColorBrewer)
 library(ggplot2)
 library(ggpubr)
+library(psych)
+library(corrplot)
+library(gtools)
+library(ggpubr)
 knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
 ```
 
@@ -27,20 +31,143 @@ knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
 load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/analysis_dataset.RData")
 # Tim already log transformed proteins when creating dataframe
 
-
 # keep only the proteins we need
 analyte_igf <- analyte_info %>% filter(UniProt %in% c("P10912", "P01236", "P41159", "P60568", "P05231", "P29459|P29460",
                                                       "P29460|Q9NPF7", "P01562", "P05014", "P01569", "P05013", "P05013",
                                                       "P01567", 
                                                       "P32881", "P01562", "P01566", "P01567", "P01569", "P05013", "P05014"))
 apt_keep <- analyte_igf$AptName
-df_keep <- df %>% select(all_of(c("ID", "visit", apt_keep)))
+df_keep <- df %>% select(all_of(c("ID", "visit", "UACRATIO", "eGFR.fas_cr_cysc", apt_keep)))
 df_keep <- df_keep %>% filter(visit %in% c("Month 1", "Year 1"))
 df_wide <- reshape(df_keep, timevar = "visit", idvar = "ID", direction = "wide")
 
 # not sure if I'll need this
 # emmdf_keep$uniqname <- paste0(emmdf_keep$Target,"_",emmdf_keep$AptName)  
 
+# create a df with deltas
+deltas <- NULL
+vars_for_deltas <- colnames(df_keep)
+vars_for_deltas <- vars_for_deltas[-c(1:2)]
+for (i in vars_for_deltas) {
+  column_name <- paste0(i, "_delta")
+  year1_name <- paste0(i, ".Year 1")
+  month1_name <- paste0(i, ".Month 1")
+  df_wide[[column_name]] <- as.numeric(as.character(df_wide[[year1_name]])) - as.numeric(as.character(df_wide[[month1_name]]))
+}
+
+apt_keep_deltas <- NULL
+for (i in 1:length(apt_keep)) {
+  apt_keep_deltas[i] <- paste0(apt_keep[[i]], "_delta")
+}
+```
+
+```{r, include=FALSE}
+# need to modify this code to make sure I am using the protein deltas
+corr_plot_modified_nodict <- function(data, X, Y, cor_method = "spearman", adj_var = NULL, 
+                               method = "color", insig = "pch", coef_col = NULL,
+                               pch = 4, pch.col = "black", pch.cex = 0, colnames_M, rownames_M) {
+  prot_heatmap <- analyte_info %>%
+  filter(AptName %in% apt_keep) %>%
+  pull(AptName)
+  analytes_temp <- analyte_info
+  analytes_temp$Target_apt <- paste0(analytes_temp$Target, " (", analytes_temp$AptName, ")")
+  TA <- analytes_temp$Target_apt[match(prot_heatmap, analytes_temp$AptName)]
+  colnames(Y) <- TA
+  n_cols = length(Y)
+  M <- cor(y = Y,
+           x = X,
+           use = "pairwise.complete.obs",
+           method = cor_method)
+  M <- M[,order(colnames(M))]
+  if (!is.na(adj_var)){
+    x_vars <- rep(X, times = length(Y))
+    x_coord <- rep(seq(1,length(Y)), each = length(X))
+    y_vars <- rep(Y, each = length(X))
+    y_coord <- rep(seq(length(X),1), times = length(Y))
+    lm_extracted <- data.frame(yName = character(0),
+                               xName = character(0),
+                               x = numeric(0),
+                               y = numeric(0),
+                               adj_var = character(0),
+                               adj_x_coef = numeric(0),
+                               adj_x_pval = numeric(0))
+    for (i in 1:length(x_vars)) {
+      if(x_vars[i] != y_vars[i]) {
+        lm_formula <- as.formula(paste0(y_vars[i], "~", x_vars[i], "+", adj_var))
+        lm_model <- lm(lm_formula, data = data)
+        lm_summary <- summary(lm_model)
+        lm_coef <- lm_summary$coefficient[x_vars[i], "Estimate"]
+        lm_p_val <- lm_summary$coefficient[x_vars[i], "Pr(>|t|)"]
+        lm_extracted <- rbind(lm_extracted,
+                              data.frame(
+                                yName = y_vars[i],
+                                xName = x_vars[i],
+                                x = x_coord[i],
+                                y = y_coord[i],
+                                adj_var = adj_var,
+                                adj_x_coef = lm_coef,
+                                adj_x_pval = lm_p_val))
+      }
+    }
+  }
+  
+  correlation_p_value <- correlation_p_value_matrix(data, relevant_vars = c(colnames(Y),colnames(X)), n_cols = n_cols, cor_method = cor_method, Y=Y, X=X)
+
+  corrplot(M,
+           p.mat = correlation_p_value,
+           method = method,
+           tl.col = "black",
+           tl.srt = 45,
+           tl.cex = 1.2,
+           insig = insig,
+           addCoef.col = coef_col,
+           addgrid.col = 'lightgray',
+           number.digits = 2,
+           pch.col = pch.col, 
+           pch = pch,
+           pch.cex = pch.cex)$corrPos -> p1
+  p1_sub <- subset(p1, p.value <= 0.05)
+  p1_sub2 <- subset(p1, p.value <= 0.05 & abs(corr) >= 0.7)
+  
+  if (nrow(p1) > 0) {
+    graphics::text(p1$x, p1$y, sprintf("%.2f", p1$corr), adj = c(0.5, 0), cex=1.2)
+    if (nrow(p1_sub > 0)) {
+      graphics::text(p1_sub$x, p1_sub$y, stars.pval(p1_sub$p.value), adj = c(0.5, 2), cex=1.2)
+    }
+  }
+  if (nrow(p1_sub2) > 0) {
+    graphics::text(p1_sub2$x, p1_sub2$y, sprintf("%.2f", p1_sub2$corr), col = "white", adj = c(0.5, 0), cex=1.2)
+    graphics::text(p1_sub2$x, p1_sub2$y, stars.pval(p1_sub2$p.value), col = "white", adj = c(0.5, 2), cex=1.2)
+  }
+  if (!is.na(adj_var)) {
+    lm_extracted <- subset(lm_extracted, adj_x_pval <= 0.05)
+    if (nrow(lm_extracted) > 0){
+      graphics::rect(xleft = lm_extracted$x-.45, 
+                     ybottom = lm_extracted$y-.45,
+                     xright = lm_extracted$x+.45,
+                     ytop = lm_extracted$y+.45)
+    }
+  }
+}
+
+
+correlation_p_value_matrix <- function(data, relevant_vars, n_cols, cor_method = "spearman", Y=Y, X=X) {
+  analytes_temp <- analyte_info
+  analytes_temp$Target_apt <- paste0(analytes_temp$Target, " (", analytes_temp$AptName, ")")
+  # Filter relevant variables for the correlation matrix
+  #relevant_vars_apt <- analytes_temp$AptName[match(colnames(Y), analytes_temp$Target_apt)]
+  Y <- Y[,order(colnames(Y))]
+  dat_correlation <- cbind(Y,X) %>%
+    dplyr::select(all_of(relevant_vars))
+    # Compute p-values 
+  res2 <- Hmisc::rcorr(as.matrix(dat_correlation),
+                       type = cor_method)
+  corr_pval <- as.data.frame(res2$P) %>%
+    dplyr::select(all_of(relevant_vars[1:n_cols]))
+  corr_pval = corr_pval[(n_cols + 1):nrow(corr_pval),]
+  corr_pval <- corr_pval[,order(colnames(corr_pval))]
+  return(as.matrix(corr_pval))
+}
 ```
 
 ```{r include=FALSE}
@@ -122,6 +249,21 @@ grpbox <- ggarrange(p_seq.10967.12,p_seq.2585.2,
                     common.legend = T)
 png(height = 3000, width = 2500, file = "/Users/pylell/Dropbox/IMPROVE, Teen-LABS, TODAY combined analysis/Teen-LABS results/Proteomics/Teen-LABS_JAK_STAT_ligands.png", res = 170)
 grpbox
+dev.off()
+```
+
+```{r include=FALSE}
+colnames_M <- analyte_igf %>%
+  filter(AptName %in% apt_keep) %>%
+  pull(Target)
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Dropbox/IMPROVE, Teen-LABS, TODAY combined analysis/Teen-LABS results/Proteomics/TeenLABS_JAK_STAT_UACR_eGFR_heatmap.png", res = 170)
+corr_plot_modified_nodict(data=df_wide, 
+                   Y=df_wide[,apt_keep_deltas], 
+                 X=df_wide[,c("UACRATIO_delta","eGFR.fas_cr_cysc_delta")],
+                 cor_method="spearman", adj_var = NA,
+                 colnames_M=colnames_M,
+                 rownames_M=c("Change in UACR","Change in eGFR"))
 dev.off()
 ```
 
