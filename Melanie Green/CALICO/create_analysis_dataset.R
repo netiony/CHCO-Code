@@ -1,5 +1,11 @@
 library(redcapAPI)
 library(tidyverse)
+home_dir <- switch(Sys.info()["sysname"],
+  "Darwin" = "/Users/timvigers/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/Vigers/BDC/Janet Snell-Bergeon/CALICO",
+  "Windows" = "C:/Users/timvigers/OneDrive - The University of Colorado Denver/Vigers/BDC/Janet Snell-Bergeon/CALICO",
+  "Linux" = "/home/timvigers/OneDrive/Vigers/BDC/Janet Snell-Bergeon/CALICO"
+)
+setwd(home_dir)
 # Define variable sets
 # Demographics
 demo_vars <- c(
@@ -52,10 +58,38 @@ df <- exportRecordsTyped(rcon,
   ),
   na = list(number = isMissingSpecial, radio = isMissingSpecial)
 )
-# Fix labels
-attr(df$race___unk, "label") <- "Race (choice=Unknown/Not recorded)"
-attr(df$race___na, "label") <- "Race (choice=Not applicable)"
-attr(df$race___oth, "label") <- "Race (choice=Other)"
-attr(df$race___pm, "label") <- "Race (choice=Premenarchal)"
+# Fill down age at diagnosis column
+df <- df %>%
+  group_by(record_number) %>%
+  fill(pcosdx_age)
+# Age group
+df$age_group <- cut(df$pcosdx_age, c(-Inf, 15, Inf),
+  right = F, labels = c("< 15 years", ">= 15 years")
+)
+# Obesity categories
+# Convert columns to numeric
+df$cv_a1c <- suppressWarnings(as.numeric(df$cv_a1c))
+# Fix/add labels
+attr(df$age_group, "label") <- "Age Group at Diagnosis"
+labels(df[, grep("___unk", colnames(df))]) <-
+  sub(
+    "choice=NA", "choice=Unknown/Not recorded",
+    labels(df[, grep("___unk", colnames(df))])
+  )
+labels(df[, grep("___na", colnames(df))]) <-
+  sub(
+    "choice=NA", "choice=Not applicable",
+    labels(df[, grep("___na", colnames(df))])
+  )
+labels(df[, grep("___oth", colnames(df))]) <-
+  sub(
+    "choice=NA", "choice=Other",
+    labels(df[, grep("___oth", colnames(df))])
+  )
+labels(df[, grep("___pm", colnames(df))]) <-
+  sub(
+    "choice=NA", "choice=Premenarchal",
+    labels(df[, grep("___pm", colnames(df))])
+  )
 # Save
-save(df, demo_vars, aim1_vars, file = "/Users/timvigers/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/Vigers/BDC/Janet Snell-Bergeon/CALICO/Data_Clean/analysis_data.RData")
+save(df, demo_vars, aim1_vars, file = "./Data_Clean/analysis_data.RData")
