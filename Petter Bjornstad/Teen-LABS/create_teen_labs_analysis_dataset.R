@@ -104,6 +104,49 @@ df$diab_resolved <- factor(df$diab_resolved,
   labels = c("No", "Yes", "Non-diabetic")
 )
 
+# calculate QCR values for FAS equations
+df$age <- floor(df$age)
+df$qcr[df$age==8] <- 0.46
+df$qcr[df$age==9] <- 0.49
+df$qcr[df$age==10] <- 0.51 
+df$qcr[df$age==11] <- 0.53 
+df$qcr[df$age==12] <- 0.57
+df$qcr[df$age==13] <- 0.59
+df$qcr[df$age==14] <- 0.61
+# females
+df$qcr[df$age==15 & df$SEX=="Female"] <- 0.64
+# males
+df$qcr[df$age==15 & df$SEX=="Male"] <- 0.72
+# females
+df$qcr[df$age==16 & df$SEX=="Female"] <- 0.67
+# males
+df$qcr[df$age==16 & df$SEX=="Male"] <- 0.78
+# females
+df$qcr[df$age==17 & df$SEX=="Female"] <- 0.69
+# males
+df$qcr[df$age==17 & df$SEX=="Male"] <- 0.82
+# females
+df$qcr[df$age==18 & df$SEX=="Female"] <- 0.69
+# males
+df$qcr[df$age==18 & df$SEX=="Male"] <- 0.85
+# females
+df$qcr[df$age==19 & df$SEX=="Female"] <- 0.70
+# males
+df$qcr[df$age==19 & df$SEX=="Male"] <- 0.88
+# females
+df$qcr[df$age>19 & df$SEX=="Female"] <- 0.70
+# males
+df$qcr[df$age>19 & df$SEX=="Male"] <- 0.90
+
+# eGFR FAS creatinine
+df$eGFR.fas_cr <-107.3/(df$CREAS/df$qcr)
+
+# eGFR FAS combined creatinine and cystatin-C
+df$f1 <- df$CREAS/df$qcr
+df$f2 <- 1-0.5
+df$f3 <- df$CYSC/0.82
+df$eGFR.fas_cr_cysc <- 107.3 / ((0.5*df$f1) + (df$f2*df$f3))
+
 # read in NAFLD data
 nafld <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/Pyle NAFLD 02_06_24.csv")
 nafld <- unique(nafld)
