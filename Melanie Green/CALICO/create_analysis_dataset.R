@@ -42,6 +42,20 @@ aim1_vars <- c(
   "cv_medications___unk", "cv_medications___na", "cv_medications___oth",
   "cv_medications___pm"
 )
+# LARC for BCH
+larc_vars <- c(
+  "cv_type_of_clinic", "cv_mdc_specialties___1", "cv_mdc_specialties___2",
+  "cv_mdc_specialties___3", "cv_mdc_specialties___4", "cv_mdc_specialties___5",
+  "cv_mdc_specialties___6", "cv_mdc_specialties___60",
+  "cv_mdc_specialties___unk", "cv_mdc_specialties___na",
+  "cv_mdc_specialties___oth", "cv_mdc_specialties___pm", "cv_medications___10",
+  "cv_medications___11", "cv_weight", "cv_bmi", "cv_acneface",
+  "cv_hirsutism_num", "cv_hirsutism_cat", "cv_menfreq", "race___1", "race___2",
+  "race___3", "race___4", "race___5", "race___60", "race___unk", "race___na",
+  "race___oth", "race___pm", "ethnicity", "insur_type", "cv_genderid",
+  "cv_genderid_other", "cv_sexuallyactive", "cv_sexualpref",
+  "cv_monthssincepcosdx", "cv_hgb", "cv_ldl", "cv_hdl", "cv_sbp", "cv_dbp"
+)
 # Open REDCap
 unlockREDCap(c(rcon = "CALICO"),
   keyring = "API_KEYs",
@@ -53,7 +67,7 @@ isMissingSpecial <- function(x, ...) {
   is.na(x) | x == "" | x == "UNK" | x == "OTH" | x == "NA" | x == "PM"
 }
 df <- exportRecordsTyped(rcon,
-  fields = c(demo_vars, aim1_vars), warn_zero_coded = F,
+  fields = c(demo_vars, aim1_vars, larc_vars), warn_zero_coded = F,
   api_param = list(
     filterLogic = "[history_complete] = 2 || [clinical_visit_complete] = 2"
   ),
@@ -89,16 +103,27 @@ df$combined_race <- apply(
   }
 )
 df$combined_race <- factor(df$combined_race)
-# Fill down demographic columns
+# LARC
+df$larc <- df$cv_medications___10 == "Checked" |
+  df$cv_medications___11 == "Checked"
+df$larc <- factor(df$larc, levels = c(F, T), labels = c("No", "Yes"))
+# Ever on LARC vs. never
+larc_users <- unique(df$record_number[df$larc == "Yes"])
+df$larc_ever <- "No"
+df$larc_ever[df$record_number %in% larc_users] <- "Yes"
+df$larc_ever <- factor(df$larc_ever, levels = c("No", "Yes"))
+# Fill down select columns
 df <- df %>%
   group_by(record_number) %>%
-  fill(combined_race, ethnicity, pcosdx_age)
-# Age group
+  fill(combined_race, ethnicity, pcosdx_age, larc_ever) %>%
+  ungroup()
+# Age group at diagnosis
 df$age_group <- cut(df$pcosdx_age, c(-Inf, 15, Inf),
   right = F, labels = c("< 15 years", ">= 15 years")
 )
 # Convert columns to numeric
 df$cv_a1c <- suppressWarnings(as.numeric(df$cv_a1c))
+df$redcap_repeat_instance <- as.numeric(df$redcap_repeat_instance)
 # Fix/add labels
 label(df$ethnicity) <- "Ethnicity"
 label(df$pcosdx_age) <- "Age at time of PCOS diagnosis"
@@ -106,6 +131,8 @@ label(df$age_group) <- "Age Group at Diagnosis"
 label(df$combined_race) <- "Race"
 label(df$Obesity) <- "Obesity Status"
 label(df$cv_a1c) <- "HbA1C"
+label(df$larc) <- "On LARC"
+label(df$larc_ever) <- "LARC Ever User"
 label(df[, grep("___unk", colnames(df))]) <-
   as.list(sub(
     "choice=NA", "choice=Unknown/Not recorded",
@@ -127,4 +154,4 @@ label(df[, grep("___pm", colnames(df))]) <-
     label(df[, grep("___pm", colnames(df))])
   ))
 # Save
-save(df, demo_vars, aim1_vars, file = "./Data_Clean/analysis_data.RData")
+save(df, demo_vars, aim1_vars, larc_vars, file = "./Data_Clean/analysis_data.RData")
