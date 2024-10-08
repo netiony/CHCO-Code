@@ -16,7 +16,7 @@ demo_vars <- c(
 )
 # Aim 1 for Melanie
 aim1_vars <- c(
-  "cv_age", "cv_bmi", "cv_bmi_percentile", "cv_bmi_z",
+  "cv_bmi", "cv_bmi_percentile", "cv_bmi_z",
   "cv_hirsutism_num", "cv_hirsutism_cat", "cv_acneface",
   "cv_acneother___1", "cv_acneother___2", "cv_acneother___0",
   "cv_acneother___unk", "cv_acneother___na", "cv_acneother___oth",
@@ -75,14 +75,18 @@ df <- exportRecordsTyped(rcon,
 )
 # Obesity categories
 df <- df %>%
-  mutate(Obesity = case_when(
-    !is.na(cv_bmi_percentile) & cv_bmi_percentile >= 95 ~ "Yes",
-    !is.na(cv_bmi_percentile) & cv_bmi_percentile < 95 ~ "No",
-    is.na(cv_bmi_percentile) & cv_bmi >= 30 ~ "Yes",
-    is.na(cv_bmi_percentile) & cv_bmi < 30 ~ "Yes",
+  mutate(
+    Obesity_perc = case_when(
+    !is.na(cv_bmi_percentile) & cv_bmi_percentile >= 85 ~ "Yes",
+    !is.na(cv_bmi_percentile) & cv_bmi_percentile < 85 ~ "No",
+    is.na(cv_bmi_percentile) & cv_bmi >= 25 ~ "Yes",
+    is.na(cv_bmi_percentile) & cv_bmi < 25 ~ "No",
     .default = NA
-  ))
-df$Obesity <- factor(df$Obesity, levels = c("No", "Yes"))
+  ),
+  Obesity_raw = ifelse(cv_bmi >= 25,"Yes","No")
+  )
+df$Obesity_perc <- factor(df$Obesity_perc, levels = c("No", "Yes"))
+df$Obesity_raw <- factor(df$Obesity_raw, levels = c("No", "Yes"))
 # Combined race column
 races <- c(
   "Caucasian", "African American", "Asian", "Pacific Islander",
@@ -129,7 +133,8 @@ label(df$ethnicity) <- "Ethnicity"
 label(df$pcosdx_age) <- "Age at time of PCOS diagnosis"
 label(df$age_group) <- "Age Group at Diagnosis"
 label(df$combined_race) <- "Race"
-label(df$Obesity) <- "Obesity Status"
+label(df$Obesity_perc) <- "Obesity Status (by percentile and raw value)"
+label(df$Obesity_raw) <- "Obesity Status (by raw value)"
 label(df$cv_a1c) <- "HbA1C"
 label(df$larc) <- "On LARC"
 label(df$larc_ever) <- "LARC Ever User"
