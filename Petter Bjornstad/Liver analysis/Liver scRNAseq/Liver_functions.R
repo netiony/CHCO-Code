@@ -256,3 +256,4 @@ add_direction <- function(df) {
   df$direction <- factor(df$direction, levels = c("Downregulated", "Upregulated", "NS") )
   return(df)
 }
+
