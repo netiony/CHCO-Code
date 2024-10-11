@@ -12,7 +12,8 @@ dat <- harm_dat %>%
   dplyr::mutate(pah_coerce = (coalesce(pah_raw, pah_bsa, pah_clear_abs, pah_clear_bsa))) %>%
   filter(!is.na(kit_id)) %>%
   filter(!is.na(pah_coerce)) %>%
-  dplyr::select(record_id, group, visit, sex, age, race, ethnicity, weight, height, bmi, hba1c, acr_u)
+  dplyr::select(record_id, cryostor_id, group, visit, sex, age, race, ethnicity, weight, height, bmi, hba1c, acr_u, sglt2i_ever, sglti_timepoint) %>%
+  filter(record_id !="RH-60-T")
 
 write.csv(dat, "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/renal_clearance_biopsy.csv",
           row.names = F, na = "")
