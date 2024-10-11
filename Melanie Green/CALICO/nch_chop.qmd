@@ -17,15 +17,15 @@ format:
     theme:
       light: flatly
       dark: darkly
-bibliography: /Users/timvigers/Documents/Miscellaneous/zotero.bib
-csl: /Users/timvigers/GitHub/styles/american-medical-association.csl
+bibliography: C:/Users/timvigers/Dropbox/Miscellaneous/zotero.bib
+csl: C:/Users/timvigers/Documents/GitHub/styles/american-medical-association.csl
 editor: source
 ---
 
 ```{r setup}
 #| include: false
 library(tidyverse)
-library(gtsummary)
+library(arsenal)
 home_dir <- switch(Sys.info()["sysname"],
   "Darwin" = "/Users/timvigers/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/Vigers/BDC/Janet Snell-Bergeon/CALICO",
   "Windows" = "C:/Users/timvigers/OneDrive - The University of Colorado Denver/Vigers/BDC/Janet Snell-Bergeon/CALICO",
@@ -36,106 +36,143 @@ knitr::opts_knit$set(root.dir = home_dir)
 
 ```{r data import}
 #| include: false
-# Import data
-source("/Users/timvigers/GitHub/CHCO-Code/Melanie Green/CALICO/nch_chop_import.r")
+# Load data
+load("./Data_Clean/analysis_data.RData")
+# Basic formula for tables
+f <- as.formula(paste(
+  "~",
+  paste(c(aim1_vars, "mental_health_screening", "Region"), collapse = "+")
+))
+f <- update(f, . ~ . - pcosdx_obesitydx_age - pcosdx_obesitydx_earliestage)
+# Set table options
+mycontrols <-
+  tableby.control(numeric.stats = c("Nmiss2", "meansd", "medianq1q3", "range"))
+# First visit only
+cv1 <- df %>%
+  group_by(record_number) %>%
+  slice_min(redcap_repeat_instance) %>%
+  ungroup()
+# Filter per updated "analysis plan"
+cv1 <- cv1 %>%
+  filter(
+    !is.na(pcosdx_irregular_menses) &
+      pcosdx_irregular_menses != "Unknown/Not recorded",
+    pcosdx_hyperandrogenism != "Unknown/Not recorded"
+  )
 ```
 
-```{r data cleaning}
-#| message: false
-#| warning: false
-# Label "*.factor" columns
-factors <-
-  colnames(data)[which(duplicated(sub("\\.factor", "", colnames(data))))]
-factor_labels <- sapply(factors, function(c) {
-  label(data[, sub("\\.factor", "", c)])
-})
-label(data[, factors]) <- as.list(factor_labels)
-# Convert all "UNK" to NA
-data[which(data == "UNK", arr.ind = T)] <- NA
-data[which(data == "OTH", arr.ind = T)] <- NA
-# Combine therapy variables
-data$therapy_yes_no <- apply(
-  data[, grep("mentalhealthcounseling___.*\\.factor", colnames(data))], 1,
-  function(r) {
-    if (all(is.na(r))) {
-      return(NA)
-    } else if (any(r[1:3] == "Checked")) {
-      return("Yes")
-    } else if (r[4] == "Checked") {
-      return("Documented none")
-    } else if (any(r[5:6] == "Checked")) {
-      return("Unknown/Not recorded/Not applicable")
-    } else if (r[7] == "Checked") {
-      return("Other")
-    } else if (r[8] == "Checked") {
-      return("Premenarchal")
-    } else {
-      return(NA)
-    }
-  }
-)
-label(data$therapy_yes_no) <-
-  "Any mental health counseling in the 12 months prior to this visit (Combined)"
-# Convert to numeric
-num_vars <- c(
-  "cv_weight", "cv_height", "cv_bmi_percentile", "cv_bmi_z", "cv_sbp", "cv_dbp",
-  "cv_hirsutism_num","cv_ft_uln","cv_tt_uln","cv_a1c"
-)
-data[, num_vars] <- lapply(data[, num_vars], function(c) {
-  mode(c) <- "numeric"
-  return(c)
-})
-```
+# Demographics
 
-# Data cleaning
-
-- Values of "UNK" and "OTH" were converted to missing values.
-
-# Baseline
-
-- Baseline visit was defined as each participant's first non-repeating visit (i.e. missing a value for the `redcap_repeat_instrument` variable).
-
-- The table below is also limited to records where the `history_complete` variable is "Complete."
-
-```{r}
+```{r results='asis'}
 #| label: tbl-table-1
-#| tbl-cap: Participant characteristics at baseline
-data %>%
-  filter(
-    is.na(redcap_repeat_instrument.factor),
-    history_complete.factor == "Complete"
-  ) %>%
-  select(-c(
-    record_number, redcap_repeat_instance, redcap_repeat_instrument.factor,
-    history_complete.factor
-  ), -all_of(sub("\\.factor", "", factors))) %>%
-  select(where(~ sum(!is.na(.x)) > 0)) %>%
-  relocate(contains("_other"), .after = last_col()) %>%
-  relocate(therapy_yes_no,
-    .after = pcosdx_mentalhealthcounseling___pm.factor
-  ) %>%
-  tbl_summary(missing_text = "(Missing)")
+#| tbl-cap: Participant demographics
+f1 <-
+  as.formula(paste0("~", paste0(c(demo_vars, "combined_race"), collapse = "+")))
+t1 <- tableby(f1, data = cv1, control = mycontrols)
+summary(t1, labelTranslations = labels(df), pfootnote = T)
 ```
 
-# First clinic visit
+# By age
 
-- First clinic visit was each participant's first repeating visit (i.e. the `redcap_repeat_instance` variable equals 1).
+```{r results='asis'}
+#| label: tbl-table-1-age
+#| tbl-cap: Stratified by age group at diagnosis
+t1_age <- tableby(update(f, age_group ~ .), data = cv1, control = mycontrols)
+summary(t1_age, labelTranslations = labels(df), pfootnote = T)
+```
 
-- The table below is also limited to records where the `clinical_visit_complete` variable is "Complete."
+# By obesity
+
+## Based on percentile and raw value
+
+```{r results='asis'}
+#| label: tbl-table-1-obese-perc
+#| tbl-cap: Stratified by obesity (percentile and raw value)
+t1_bmi <- tableby(update(f, Obesity_perc ~ .), data = cv1, control = mycontrols)
+summary(t1_bmi, labelTranslations = labels(df), pfootnote = T)
+```
+
+For those with a BMI percentile included in the dataset, participants with a BMI percentile $\geq$ 85 were considered have obesity. For those with a missing value for BMI percentile, those with a raw BMI value $\geq$ 25 were considered to have obesity. 
+
+## Based on raw value only
+
+```{r results='asis'}
+#| label: tbl-table-1-obese-raw
+#| tbl-cap: Stratified by obesity (raw value only)
+t1_bmi <- tableby(update(f, Obesity_raw ~ .), data = cv1, control = mycontrols)
+summary(t1_bmi, labelTranslations = labels(df), pfootnote = T)
+```
+
+# By race
+
+```{r results='asis'}
+#| label: tbl-table-1-race
+#| tbl-cap: Stratified by race
+t1_race <- tableby(update(f, combined_race ~ .),
+  data = cv1, control = mycontrols
+)
+summary(t1_race, labelTranslations = labels(df), pfootnote = T)
+```
+
+# By ethnicity
+
+```{r results='asis'}
+#| label: tbl-table-1-ethnicity
+#| tbl-cap: Stratified by ethnicity
+t1_eth <- tableby(update(f, ethnicity ~ .), data = cv1, control = mycontrols)
+summary(t1_eth, labelTranslations = labels(df), pfootnote = T)
+```
+
+# By specialty
+
+```{r results='asis'}
+#| label: tbl-table-1-specialty
+#| tbl-cap: Stratified by specialty at diagnosis
+t1_spec <- tableby(update(f, pcosdx_specialty ~ .),
+  data = cv1, control = mycontrols
+)
+summary(t1_spec, labelTranslations = labels(df), pfootnote = T)
+```
+
+# Age when obesity started by mental health diagnoses
 
 ```{r}
-#| label: tbl-table-2
-#| tbl-cap: Participant characteristics at first clinic visit
-data %>%
-  filter(
-    clinical_visit_complete.factor == "Complete",
-    redcap_repeat_instance == 1
-  ) %>%
-  select(-c(
-    record_number, redcap_repeat_instance, redcap_repeat_instrument.factor,
-    history_complete.factor
-  ), -all_of(sub("\\.factor", "", factors))) %>%
-  select(where(~ sum(!is.na(.x)) > 0)) %>%
-  relocate(contains("_other"), .after = last_col()) %>%
-  tbl_summary(missing_text = "(Missing)")
+f <- as.formula("~ pcosdx_obesitydx_age_combined")
+```
+
+Presence or absence of a given mental health diagnosis was based on the past medical history and new diagnosis fields in REDCap. For example, a participant was assumed to have depression if they checked `pcosdx_pmh___16` or `cv_newdx___16` at any visit.
+
+## Depression
+
+```{r results='asis'}
+t1_dep <- tableby(update(f, depression ~ .), data = cv1, control = mycontrols)
+summary(t1_dep, labelTranslations = labels(df), pfootnote = T)
+```
+
+## Anxiety
+
+```{r results='asis'}
+t1_anx <- tableby(update(f, anxiety ~ .), data = cv1, control = mycontrols)
+summary(t1_anx, labelTranslations = labels(df), pfootnote = T)
+```
+
+## Binge eating disorder
+
+```{r results='asis'}
+t1_bed <- tableby(update(f, bed ~ .), data = cv1, control = mycontrols)
+summary(t1_bed, labelTranslations = labels(df), pfootnote = T)
+```
+
+## Restrictive eating disorder
+
+```{r results='asis'}
+t1_red <- tableby(update(f, red ~ .), data = cv1, control = mycontrols)
+summary(t1_red, labelTranslations = labels(df), pfootnote = T)
+```
+
+## ADHD
+
+```{r results='asis'}
+t1_adhd <- tableby(update(f, adhd ~ .), data = cv1, control = mycontrols)
+summary(t1_adhd, labelTranslations = labels(df), pfootnote = T)
 ```

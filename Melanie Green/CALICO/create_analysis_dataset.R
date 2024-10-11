@@ -207,6 +207,23 @@ df$mental_health_screening <-
 df$mental_health_screening <- factor(df$mental_health_screening,
   levels = 0:1, labels = c("No", "Yes")
 )
+# Combine two earliest obesity noticed columns
+df$pcosdx_obesitydx_age_combined <-
+  coalesce(df$pcosdx_obesitydx_age, df$pcosdx_obesitydx_earliestage)
+label(df$pcosdx_obesitydx_age_combined) <-
+  "Earliest age that overweight/obesity was noted?"
+# Categorize
+df$pcosdx_obesitydx_age_combined_cat <- cut(
+  df$pcosdx_obesitydx_age_combined,
+  c(-Inf, 5, 10, 15, Inf),
+  labels = c("<= 5", ">5 and <= 10", ">10 and <= 15", ">= 15")
+)
+label(df$pcosdx_obesitydx_age_combined_cat) <-
+  "Earliest age group that overweight/obesity was noted?"
+aim1_vars <- c(
+  aim1_vars, "pcosdx_obesitydx_age_combined",
+  "pcosdx_obesitydx_age_combined_cat"
+)
 # Region
 df$Region <- df$site
 levels(df$Region) <- c(
@@ -214,6 +231,37 @@ levels(df$Region) <- c(
   "Midwest", "Northeast", "Southeast", "West", "Southeast", "Southeast",
   "Midwest", "Southeast", "Midwest", "Southwest", "Southwest"
 )
+# Mental health diagnosis variables
+df <- df %>%
+  group_by(record_number) %>%
+  mutate(
+    depression =
+      factor(any(cv_newdx___16 == "Checked" | pcosdx_pmh___16 == "Checked"),
+        levels = c(F, T), labels = c("No", "Yes")
+      ),
+    anxiety =
+      factor(any(cv_newdx___15 == "Checked" | pcosdx_pmh___15 == "Checked"),
+        levels = c(F, T), labels = c("No", "Yes")
+      ),
+    bed =
+      factor(any(cv_newdx___17 == "Checked" | pcosdx_pmh___17 == "Checked"),
+        levels = c(F, T), labels = c("No", "Yes")
+      ),
+    red =
+      factor(any(cv_newdx___18 == "Checked" | pcosdx_pmh___18 == "Checked"),
+        levels = c(F, T), labels = c("No", "Yes")
+      ),
+    adhd =
+      factor(any(cv_newdx___19 == "Checked" | pcosdx_pmh___19 == "Checked"),
+        levels = c(F, T), labels = c("No", "Yes")
+      )
+  ) %>%
+  ungroup()
+label(df$depression) <- "Depression?"
+label(df$anxiety) <- "Anxiety?"
+label(df$bed) <- "Binge Eating Disorder?"
+label(df$red) <- "Restrictive Eating Disorder?"
+label(df$adhd) <- "ADHD?"
 # LARC
 df$larc <- df$cv_medications___10 == "Checked" |
   df$cv_medications___11 == "Checked"
