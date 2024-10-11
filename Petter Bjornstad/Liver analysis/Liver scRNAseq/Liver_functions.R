@@ -4,8 +4,8 @@ genes <- c(
   "ACO1", "ACO2", "IDH1", "IDH2", "IDH3A", "IDH3B", "IDH3G", "OGDH", "OGDHL",
   "SUCLA2", "SUCLG1", "SUCLG2", "SDHA", "FH", "MDH1", "MDH2",  "CS"
 )
-genes = sort(genes)
-all.genes = rownames(so)
+# genes = sort(genes)
+# all.genes = rownames(so)
 
 acetylcoa_genes <- c(
   "PDHA1", "PDHB", "ACADM", "ACADS", "ACADL", "BCAT1", "BCAT2", "GOT1", "GOT2", 
@@ -256,3 +256,4 @@ add_direction <- function(df) {
   df$direction <- factor(df$direction, levels = c("Downregulated", "Upregulated", "NS") )
   return(df)
 }
+
