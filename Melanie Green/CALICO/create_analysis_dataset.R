@@ -70,6 +70,97 @@ aim1_vars <- c(
   "cv_medications___31", "cv_medications___60", "cv_medications___0",
   "cv_medications___unk", "pcosdx_specialty"
 )
+# NCH/CHOP variables
+nch_chop_vars <- c(
+  "pcosdx_pmh___1", "pcosdx_pmh___2", "pcosdx_pmh___3", "pcosdx_pmh___4",
+  "pcosdx_pmh___5", "pcosdx_pmh___6", "pcosdx_pmh___29", "pcosdx_pmh___7",
+  "pcosdx_pmh___8", "pcosdx_pmh___9", "pcosdx_pmh___10", "pcosdx_pmh___11",
+  "pcosdx_pmh___12", "pcosdx_pmh___22", "pcosdx_pmh___13", "pcosdx_pmh___14",
+  "pcosdx_pmh___15", "pcosdx_pmh___16", "pcosdx_pmh___23", "pcosdx_pmh___24",
+  "pcosdx_pmh___17", "pcosdx_pmh___18", "pcosdx_pmh___19", "pcosdx_pmh___20",
+  "pcosdx_pmh___21", "pcosdx_pmh___60", "pcosdx_pmh___0", "pcosdx_pmh___unk",
+  "pcosdx_pmh___na", "pcosdx_pmh___oth", "pcosdx_pmh___pm",
+  "pcosdx_obesitydx_age", "pcosdx_obesitydx_earliestage",
+  "pcosdx_t1ddx_age", "pcosdx_t2ddx_age", "pcosdx_osadx_age",
+  "pcosdx_anxietydx_age", "pcosdx_depressiondx_age",
+  "pcosdx_bingedx_age", "pcosdx_restrictdx_age", "pcosdx_adhddx_age",
+  "pcosdx_mhhosp_age", "pcosdx_siattempt_age", "pcosdx_surghx_bariatric",
+  "pcosdx_surghx_pilonidal", "pcosdx_surghx_hidradenitis", "pastmeds___1",
+  "pastmeds___2", "pastmeds___3", "pastmeds___4", "pastmeds___5",
+  "pastmeds___6", "pastmeds___7", "pastmeds___8", "pastmeds___9",
+  "pastmeds___10", "pastmeds___11", "pastmeds___12", "pastmeds___13",
+  "pastmeds___14", "pastmeds___15", "pastmeds___16", "pastmeds___60",
+  "pastmeds___0", "pastmeds___unk", "pastmeds___na", "pastmeds___oth",
+  "pastmeds___pm", "pcosdx_mentalhealthcounseling___1",
+  "pcosdx_mentalhealthcounseling___2", "pcosdx_mentalhealthcounseling___3",
+  "pcosdx_mentalhealthcounseling___0", "pcosdx_mentalhealthcounseling___unk",
+  "pcosdx_mentalhealthcounseling___na", "pcosdx_mentalhealthcounseling___oth",
+  "pcosdx_mentalhealthcounseling___pm", "pcosdx_dietarycounseling___1",
+  "pcosdx_dietarycounseling___2", "pcosdx_dietarycounseling___0",
+  "pcosdx_dietarycounseling___unk", "pcosdx_dietarycounseling___na",
+  "pcosdx_dietarycounseling___oth", "pcosdx_dietarycounseling___pm",
+  "pcosdx_exercising_teachingplan___1", "pcosdx_exercising_teachingplan___2",
+  "pcosdx_exercising_teachingplan___0", "pcosdx_exercising_teachingplan___unk",
+  "pcosdx_exercising_teachingplan___na", "pcosdx_exercising_teachingplan___oth",
+  "pcosdx_exercising_teachingplan___pm", "pcosdx_age",
+  "pcosdx_irregular_menses", "pcosdx_hyperandrogenism", "cv_type_of_clinic",
+  "cv_mdc_specialties___1", "cv_mdc_specialties___2", "cv_mdc_specialties___3",
+  "cv_mdc_specialties___4", "cv_mdc_specialties___5", "cv_mdc_specialties___6",
+  "cv_mdc_specialties___60", "cv_mdc_specialties___unk",
+  "cv_mdc_specialties___na", "cv_mdc_specialties___oth",
+  "cv_mdc_specialties___pm", "cv_monthssincepcosdx", "cv_newdx___3",
+  "cv_newdx___4", "cv_newdx___5", "cv_newdx___6", "cv_newdx___29",
+  "cv_newdx___7", "cv_newdx___8", "cv_newdx___9", "cv_newdx___10",
+  "cv_newdx___11", "cv_newdx___12", "cv_newdx___22", "cv_newdx___13",
+  "cv_newdx___14", "cv_newdx___15", "cv_newdx___16", "cv_newdx___27",
+  "cv_newdx___28", "cv_newdx___17", "cv_newdx___18", "cv_newdx___19",
+  "cv_newdx___20", "cv_newdx___21", "cv_newdx___23", "cv_newdx___24",
+  "cv_newdx___25", "cv_newdx___26", "cv_newdx___60", "cv_newdx___0",
+  "cv_newdx___unk", "cv_newdx___na", "cv_newdx___oth", "cv_newdx___pm",
+  "cv_cysticacnedx_age", "cv_obesitydx_age", "cv_anxietydx_age",
+  "cv_depressiondx_age", "cv_bingedx_age", "cv_restrictdx_age", "cv_adhddx_age",
+  "cv_mh_hospital_age", "cv_si_attempt_age", "cv_othermedical",
+  "cv_other_age_2", "cv_medications___1", "cv_medications___2",
+  "cv_medications___3", "cv_medications___4", "cv_medications___5",
+  "cv_medications___6", "cv_medications___7", "cv_medications___8",
+  "cv_medications___9", "cv_medications___10", "cv_medications___11",
+  "cv_medications___12", "cv_medications___13", "cv_medications___14",
+  "cv_medications___15", "cv_medications___16", "cv_medications___17",
+  "cv_medications___18", "cv_medications___19", "cv_medications___20",
+  "cv_medications___21", "cv_medications___22", "cv_medications___23",
+  "cv_medications___32", "cv_medications___24", "cv_medications___25",
+  "cv_medications___26", "cv_medications___27", "cv_medications___28",
+  "cv_medications___29", "cv_medications___30", "cv_medications___31",
+  "cv_medications___60", "cv_medications___0", "cv_medications___unk",
+  "cv_medications___na", "cv_medications___oth", "cv_medications___pm",
+  "cv_meds_diabetes2", "cv_weight", "cv_height", "cv_bmi", "cv_bmi_percentile",
+  "cv_bmi_z", "cv_sbp", "cv_dbp", "cv_genderid", "cv_hirsutism_num",
+  "cv_hirsutism_cat", "cv_acneface", "cv_acneother___1", "cv_acneother___2",
+  "cv_acneother___0", "cv_acneother___unk", "cv_acneother___na",
+  "cv_acneother___oth", "cv_acneother___pm", "cv_acanthosisneck",
+  "cv_hydradinitis", "cv_alopecia", "cv_ft", "cv_ft_uln", "cv_ft_perc", "cv_tt",
+  "cv_tt_assay", "cv_tt_uln", "cv_tt_perc", "cv_a1c", "cv_mood", "cv_phq2",
+  "cv_phq8", "cv_phq9", "cv_cesd20", "cv_newmeds___1", "cv_newmeds___2",
+  "cv_newmeds___3", "cv_newmeds___4", "cv_newmeds___5", "cv_newmeds___6",
+  "cv_newmeds___7", "cv_newmeds___8", "cv_newmeds___9", "cv_newmeds___10",
+  "cv_newmeds___11", "cv_newmeds___12", "cv_newmeds___13", "cv_newmeds___14",
+  "cv_newmeds___15", "cv_newmeds___16", "cv_newmeds___17", "cv_newmeds___18",
+  "cv_newmeds___19", "cv_newmeds___20", "cv_newmeds___21", "cv_newmeds___22",
+  "cv_newmeds___23", "cv_newmeds___32", "cv_newmeds___24", "cv_newmeds___25",
+  "cv_newmeds___26", "cv_newmeds___27", "cv_newmeds___28", "cv_newmeds___29",
+  "cv_newmeds___30", "cv_newmeds___31", "cv_newmeds___60", "cv_newmeds___na",
+  "cv_newmeds___unk", "cv_newmeds___oth", "cv_newmeds___pm",
+  "cv_newmeds_diabetes", "cv_newcont_metforminformulation",
+  "cv_newcont_metformindose", "cv_newcont_metformin_otherdose",
+  "cv_newcont_metforminfreq", "cv_referrals___1", "cv_referrals___2",
+  "cv_referrals___3", "cv_referrals___4", "cv_referrals___5",
+  "cv_referrals___6", "cv_referrals___7", "cv_referrals___8",
+  "cv_referrals___9", "cv_referrals___10", "cv_referrals___11",
+  "cv_referrals___12", "cv_referrals___60", "cv_referrals___na",
+  "cv_referrals___unk", "cv_referrals___oth", "cv_referrals___pm",
+  "cv_referrals_reason", "cv_dietarycounseling", "cv_exerciseplan",
+  "cv_phq2_score", "cv_phq8_score", "cv_phq9_score", "cv_cesd_score"
+)
 # LARC for BCH
 larc_vars <- c(
   "cv_type_of_clinic", "cv_mdc_specialties___1", "cv_mdc_specialties___2",
@@ -232,11 +323,18 @@ levels(df$Region) <- c(
   "Midwest", "Southeast", "Midwest", "Southwest", "Southwest"
 )
 # Mental health diagnosis variables
+# df$cv_phq2_score[is.na(df$cv_phq2)] <- NA
+# df$cv_phq8_score[is.na(df$cv_phq8)] <- NA
+# df$cv_phq9_score[is.na(df$cv_phq9)] <- NA
+# df$cv_cesd_score[is.na(df$cv_cesd20)] <- NA
 df <- df %>%
   group_by(record_number) %>%
   mutate(
     depression =
-      factor(any(cv_newdx___16 == "Checked" | pcosdx_pmh___16 == "Checked"),
+      factor(
+        any(cv_newdx___16 == "Checked" | pcosdx_pmh___16 == "Checked" |
+          cv_phq2_score == 1 | cv_phq8_score == 1 | cv_phq9_score |
+          cv_cesd_score == 1),
         levels = c(F, T), labels = c("No", "Yes")
       ),
     anxiety =
@@ -290,13 +388,14 @@ label(df$Obesity_raw) <- "Obesity Status (by raw value)"
 label(df$cv_a1c) <- "HbA1C"
 label(df$larc) <- "On LARC"
 label(df$larc_ever) <- "LARC Ever User"
-label(df$mental_health_screening) <- "PHQ-2, PHQ-8, PHQ-9 or CED-S Score Available?"
+label(df$mental_health_screening) <-
+  "PHQ-2, PHQ-8, PHQ-9 or CED-S Score Available?"
 label(df[, grep("___unk", colnames(df))]) <-
   as.list(sub(
     "choice=NA", "choice=Unknown/Not recorded",
     label(df[, grep("___unk", colnames(df))])
   ))
 # Save
-save(df, demo_vars, aim1_vars, larc_vars, ses_vars,
+save(df, demo_vars, aim1_vars, nch_chop_vars, larc_vars, ses_vars,
   file = "./Data_Clean/analysis_data.RData"
 )
