@@ -1,0 +1,211 @@
+---
+title: "RFA DK-25-022"
+author: "Ye Ji Choi"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    embed-resources: true
+---
+
+ 
+## Table of data of interest
+
+* Number of cores obtained
+
+* Average length of the cores (in cm)
+
+* Average time between harvest and placing in LM, EM, Hypothermosol/Cryostor, Cryomold/OCT RNAlater.
+
+* The number of participants we have also obtained snap frozen LN samples.
+ 
+If possible, it would also be great to visualize enrollment over time to show our success in recruiting for these types of studies.
+
+```{r echo = F, include = F}
+library(dplyr)
+library(arsenal)
+library(ggplot2)
+library(purrr)
+library(REDCapR)
+library(tidyr)
+```
+
+```{r echo = F, include = F}
+# gather tokens for REDCap read
+api_tok <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+attempt_tok <- api_tok[api_tok$Study == "ATTEMPT",]$Token
+panda_tok <- api_tok[api_tok$Study == "PANDA",]$Token
+croc_tok <- api_tok[api_tok$Study == "CROCODILE",]$Token
+
+# uri for REDCap
+uri <- "https://redcap.ucdenver.edu/api/"
+
+# read from REDCap
+attempt <- redcap_read(redcap_uri = uri, token = attempt_tok)$data %>%
+  dplyr::rename(record_id = "subject_id") %>%
+  mutate(visit = case_when(redcap_event_name == "visit_2_arm_1" ~ "BL",
+                           redcap_event_name == "visit_3_arm_1" ~ "FU")) %>% 
+  group_by(record_id) %>% fill(mrn, .direction = "down") %>% ungroup()
+  
+attempt$record_id <- as.character(attempt$record_id)
+panda <- redcap_read(redcap_uri = uri, token = panda_tok)$data %>% 
+  group_by(record_id) %>% fill(mrn, .direction = "down") %>% ungroup()
+croc <- redcap_read(redcap_uri = uri, token = croc_tok)$data %>%
+  mutate(record_id = case_when(record_id < 10 ~ paste0("CRC-0", record_id),
+                               T ~ paste0("CRC-", record_id)))
+attempt$study = paste0("ATTEMPT-", attempt$visit)
+attempt$study <- factor(attempt$study, levels = c("ATTEMPT-BL", "ATTEMPT-FU"))
+panda$study = "PANDA"
+croc$study = "CROCODILE"
+```
+
+```{r echo = F, include=F}
+# biopsy stats
+# subset to vars of interest
+attempt_biopsy <- attempt %>%
+  select(record_id, mrn, study, redcap_event_name, starts_with("bx_"), kidney_side, passes_attempt, starts_with("pass"),
+         starts_with("diagnostic"), starts_with("core"), starts_with("hypo"), starts_with("oct"),
+         starts_with("rna"), starts_with("cryo"))
+
+panda_biopsy <- panda %>%
+  select(record_id, mrn, study, redcap_event_name, starts_with("bx_"), kidney_side, passes_attempt, starts_with("pass"),
+         starts_with("diagnostic"), starts_with("core"), starts_with("hypo"), starts_with("oct"),
+         starts_with("rna"), starts_with("cryo"))
+
+croc_biopsy <- croc %>%
+  select(record_id, mrn, study, starts_with("bx_"), kidney_side, passes_attempt, starts_with("pass"),
+         starts_with("diagnostic"), starts_with("core"), starts_with("hypo"), starts_with("oct"),
+         starts_with("rna"), starts_with("cryo"))
+
+# merge all three df and calculate vars of interest
+t1d_biopsy_dat <- full_join(attempt_biopsy, panda_biopsy) %>%
+  full_join(croc_biopsy) %>%
+  filter(!is.na(bx_date)) %>%
+  mutate(avg_pass_core_cm = rowMeans(select(., c("pass1_core_cm", "pass2_core_cm", "pass3_core_cm", "pass4_core_cm")), na.rm = TRUE),
+         core_n = rowSums(select(., c("pass1_tissue_yn", "pass2_tissue_yn", "pass3_tissue_yn","pass4_tissue_yn")), na.rm = TRUE),
+         ln2_yn = case_when(!is.na(bx_ln2_id) ~ "Yes", T ~ "No"), 
+         time_to_diagnostic_formalin = case_when(diagnostic_pass == 1 ~ as.numeric(difftime(diagnostic_formalin_time, pass1_time, units = "mins")),
+                                                 diagnostic_pass == 2 ~ as.numeric(difftime(diagnostic_formalin_time, pass2_time, units = "mins")),
+                                                 diagnostic_pass == 3 ~ as.numeric(difftime(diagnostic_formalin_time, pass3_time, units = "mins")),
+                                                 diagnostic_pass == 4 ~ as.numeric(difftime(diagnostic_formalin_time, pass4_time, units = "mins"))),
+         time_to_diagnostic_glut = case_when(diagnostic_pass == 1 ~ as.numeric(difftime(diagnostic_glut_time, pass1_time, units = "mins")),
+                                             diagnostic_pass == 2 ~ as.numeric(difftime(diagnostic_glut_time, pass2_time, units = "mins")),
+                                             diagnostic_pass == 3 ~ as.numeric(difftime(diagnostic_glut_time, pass3_time, units = "mins")),
+                                             diagnostic_pass == 4 ~ as.numeric(difftime(diagnostic_glut_time, pass4_time, units = "mins"))),
+         time_to_oct = case_when(oct_pass == 1 ~ as.numeric(difftime(oct_time, pass1_time, units = "mins")),
+                                 oct_pass == 2 ~ as.numeric(difftime(oct_time, pass2_time, units = "mins")),
+                                 oct_pass == 3 ~ as.numeric(difftime(oct_time, pass3_time, units = "mins")),
+                                 oct_pass == 4 ~ as.numeric(difftime(oct_time, pass4_time, units = "mins"))),
+         time_to_hypo = case_when(cryo_hypo_pass == 1 ~ as.numeric(difftime(hypo_time, pass1_time, units = "mins")),
+                                  cryo_hypo_pass == 2 ~ as.numeric(difftime(hypo_time, pass2_time, units = "mins")),
+                                  cryo_hypo_pass == 3 ~ as.numeric(difftime(hypo_time, pass3_time, units = "mins")),
+                                  cryo_hypo_pass == 4 ~ as.numeric(difftime(hypo_time, pass4_time, units = "mins"))),
+         time_to_cryo = case_when(cryo_hypo_pass == 1 ~ as.numeric(difftime(cryo_time, pass1_time, units = "mins")),
+                                  cryo_hypo_pass == 2 ~ as.numeric(difftime(cryo_time, pass2_time, units = "mins")),
+                                  cryo_hypo_pass == 3 ~ as.numeric(difftime(cryo_time, pass3_time, units = "mins")),
+                                  cryo_hypo_pass == 4 ~ as.numeric(difftime(cryo_time, pass4_time, units = "mins"))),
+          time_to_rna = case_when(rna_pass == 1 ~ as.numeric(difftime(rna_time, pass1_time, units = "mins")),
+                                  rna_pass == 2 ~ as.numeric(difftime(rna_time, pass2_time, units = "mins")),
+                                  rna_pass == 3 ~ as.numeric(difftime(rna_time, pass3_time, units = "mins")),
+                                  rna_pass == 4 ~ as.numeric(difftime(rna_time, pass4_time, units = "mins"))))
+```
+### Combined
+```{r echo = F, results = 'asis'}
+t1d_biopsy_dat$core_n_cat <- factor(t1d_biopsy_dat$core_n)
+labs <- list(core_n = "Number of cores collected", 
+             core_n_cat = "Number of cores collected",
+             avg_pass_core_cm = "Avg core length (cm)",
+             time_to_diagnostic_formalin = "Time to diagnostic (formalin)",
+             time_to_diagnostic_glut = "Time to diagnostic (glut)", 
+             time_to_oct = "Time to OCT",
+             time_to_hypo = "Time to hypothermasol", 
+             time_to_cryo = "Time to cryostor", 
+             time_to_rna = "Time to RNALater", 
+             ln2_yn = "LN2 collected")
+
+summary(arsenal::tableby(study ~ core_n + core_n_cat + avg_pass_core_cm + time_to_diagnostic_formalin + time_to_diagnostic_glut + time_to_oct +
+                           time_to_hypo + time_to_cryo + time_to_rna + ln2_yn, data = t1d_biopsy_dat), 
+        labelTranslations = labs, test = F)
+```
+### ATTEMPT
+```{r echo = F, results = 'asis'}
+attempt_only_dat <- t1d_biopsy_dat %>%
+  arrange(desc(study)) %>%
+  distinct(mrn, .keep_all = T) %>%
+  filter(grepl("ATTEMPT", study)) 
+
+summary(arsenal::tableby(study ~ core_n + core_n_cat + avg_pass_core_cm + time_to_diagnostic_formalin + time_to_diagnostic_glut + time_to_oct +
+                           time_to_hypo + time_to_cryo + time_to_rna + ln2_yn, data = subset(t1d_biopsy_dat, grepl("ATTEMPT", study))), 
+        labelTranslations = labs, test = F)
+```
+
+## Visualize enrollment over time
+```{r echo = F, warning = F}
+attempt_screening <- attempt[!is.na(attempt$consent_date),]
+croc_screening <- croc[!is.na(croc$consent_date),]
+panda_screening <- panda[!is.na(panda$consent_date),]
+
+attempt_screening_n <- nrow(attempt_screening)
+croc_screening_n <- nrow(croc_screening)
+panda_screening_n <- nrow(panda_screening)
+
+consent_dates <- data.frame(study = c(rep("ATTEMPT", attempt_screening_n), rep("CROCODILE", croc_screening_n), rep("PANDA", panda_screening_n)),
+                     consent_date = c(attempt_screening$consent_date, croc_screening$consent_date, panda_screening$consent_date))
+```
+
+```{r echo = F, warning = F}
+ggplot(consent_dates, aes(x = consent_date, fill = study)) +
+  geom_histogram(binwidth = 30, color = "white",
+                 position = "stack") +
+  labs(x = "Consent Date", 
+       y = "Frequency", 
+       title = "Enrollment of T1D over time",
+       fill = "Study") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 16)) + 
+  scale_fill_manual(values = c("#1d2d44","#3e5c76", "#748cab"))
+```
+
+
+```{r echo = F, warning=F}
+# Convert consent_date to Date type if not already
+consent_dates <- consent_dates %>%
+  mutate(consent_date = as.Date(consent_date))
+
+# Calculate cumulative count by date for each study
+consent_dates <- consent_dates %>%
+  arrange(consent_date) %>%
+  group_by(consent_date) %>%
+  dplyr::summarise(count = n()) %>%
+  ungroup() %>%
+  mutate(cumulative_count = cumsum(count))
+
+# Plot cumulative count over time
+ggplot(consent_dates, aes(x = consent_date, y = cumulative_count)) +
+  geom_line(size = 1.3, color = "#748cab") +
+  labs(x = "Consent Date", 
+       y = "Cumulative Frequency", 
+       title = "Cumulative Enrollment of T1D over Time",
+       color = "Study") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 16))
+```
+
+For the safety data – we can pull from our safety officer report / continuous review to COMIRB (protocol deviation log). Leena can help. This will be descriptive only, and just a small table in the grant. For the MRIs, I think we primarily want to demonstrate feasibility of the multiparametric MR imaging, and report the number of participants with the sequences (R2*, ASL, ADC, T1 mapping, TKV). I am open to any way of showing this. Ian can provide feedback on OCT and how to best demonstrate those data.
+
+
+## Summary of safety and tolerability data
+
+
+## Kidney MRIs
+
+showcase the kidney MRIs (i.e., number, and what time of sequences)
+
+
+## Ian’s OCT data
+
