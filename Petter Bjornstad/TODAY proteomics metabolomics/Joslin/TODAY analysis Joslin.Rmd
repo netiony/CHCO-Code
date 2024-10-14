@@ -91,16 +91,15 @@ base[,seq] <- apply(base[,seq],2,as.numeric)
 no_var = caret::nearZeroVar(base[,seq])
 # none
 
-# log transform
-#base_log <- base %>% modify_if(is_seq(names(.)), log)
-
 # read in the proteins from the Joslin analysis and subset Soma data to those proteins
 mma <- openxlsx::readWorkbook("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Joslin collaboration/mma.xlsx")
 analyte_keep <- analytes %>% filter(EntrezGeneSymbol %in% mma$EntrezGeneSymbol)
 apt_keep <- analyte_keep$AptName
 base_keep <- base %>% select(all_of(c("releaseid", "MAC", "AGEBASE", "HbA1c", "dxtime", "EstCreatClear", apt_keep)))
 
-### NOT SURE IF I SHOULD LOG TRANSFORM???
+# log transform
+base_log <- base_keep %>% modify_if(is_seq(names(.)), log)
+seq <- is_seq(names(base_keep))
 ```
 
 ```{r functions}
@@ -129,24 +128,52 @@ cor_and_plot_soma <- function(data, vars) {
 ```
 
 ```{r, include=FALSE}
+# Spearman correlations and FDR adjusted p-values
 res <- cor_and_plot_soma(data = base_keep, vars = apt_keep)
 
-# Macroalbuminuria
-result_MAC <- NULL
+# fold changes
+MAC_contrast <- ifelse(base_keep$MAC==1,1,0)
+MAC_contrast <- cbind(rep(1,nrow(base_keep)),MAC_contrast)
+# moderated t-tests with and without FDR adjustment
+ymat <- t(base_log[,seq])
+fit <- lmFit(ymat,MAC_contrast)
+fit <- eBayes(fit)
+results_MAC <- topTable(fit,coef = 2,number = nrow(ymat))
+results_MAC$AptName <- row.names(results_MAC)
+results_MAC <- merge(results_MAC,analytes,by="AptName",all.x = T, all.y = F)
+results_MAC <- results_MAC[order(results_MAC$P.Value),] 
+
+# logistic regression - unadjusted
+result_lr_MAC <- NULL
 predictors <- colnames(base_log[seq])
 for (i in 1:length(predictors)) {
-  form <- paste0("Surv(DAYSTOMAC, MAC)~",predictors[i],"+HbA1c+log_trig+sbp+si_1_ins0")
-  mod <- coxph(data = base_log_scale, formula = as.formula(form))
+  form <- paste0("MAC~",predictors[i])
+  mod <- glm(data = base_log, formula = as.formula(form))
   tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
-  tidymod <- tidymod[1,]
-  result_MAC <- rbind(result_MAC,tidymod)
+  tidymod <- tidymod[2,]
+  result_lr_MAC <- rbind(result_lr_MAC,tidymod)
 }
-result_MAC$adj.p.value <- p.adjust(result_MAC$p.value, "fdr")
-result_MAC$AptName <- result_MAC$term
-result_MAC$term <- NULL
-result_MAC <- merge(result_MAC,analytes,by="AptName",all.x = T, all.y = F)
-result_MAC <- result_MAC[order(result_MAC$p.value),] 
+result_lr_MAC$adj.p.value <- p.adjust(result_lr_MAC$p.value, "fdr")
+result_lr_MAC$AptName <- result_lr_MAC$term
+result_lr_MAC$term <- NULL
+result_lr_MAC <- merge(result_lr_MAC,analytes,by="AptName",all.x = T, all.y = F)
+result_lr_MAC <- result_lr_MAC[order(result_lr_MAC$p.value),] 
 
+# logistic regression - adjusted
+result_lr_MAC_adj <- NULL
+predictors <- colnames(base_log[seq])
+for (i in 1:length(predictors)) {
+  form <- paste0("MAC~",predictors[i],"+AGEBASE+HbA1c+dxtime+EstCreatClear")
+  mod <- glm(data = base_log, formula = as.formula(form))
+  tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
+  tidymod <- tidymod[2,]
+  result_lr_MAC_adj <- rbind(result_lr_MAC_adj,tidymod)
+}
+result_lr_MAC_adj$adj.p.value <- p.adjust(result_lr_MAC_adj$p.value, "fdr")
+result_lr_MAC_adj$AptName <- result_lr_MAC_adj$term
+result_lr_MAC_adj$term <- NULL
+result_lr_MAC_adj <- merge(result_lr_MAC_adj,analytes,by="AptName",all.x = T, all.y = F)
+result_lr_MAC_adj <- result_lr_MAC_adj[order(result_lr_MAC_adj$p.value),] 
 
 # write all results to file
 wb <- createWorkbook()
