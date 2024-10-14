@@ -17,15 +17,19 @@ format:
     theme:
       light: flatly
       dark: darkly
-bibliography: C:/Users/timvigers/Dropbox/Miscellaneous/zotero.bib
-csl: C:/Users/timvigers/Documents/GitHub/styles/american-medical-association.csl
+bibliography: /Users/timvigers/Dropbox/Miscellaneous/zotero.bib
+csl: /Users/timvigers/GitHub/styles/american-medical-association.csl
 editor: source
 ---
 
 ```{r setup}
 #| include: false
 library(tidyverse)
-library(gtsummary)
+library(arsenal)
+library(lmerTest)
+library(performance)
+library(emmeans)
+library(gt)
 home_dir <- switch(Sys.info()["sysname"],
   "Darwin" = "/Users/timvigers/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/Vigers/BDC/Janet Snell-Bergeon/CALICO",
   "Windows" = "C:/Users/timvigers/OneDrive - The University of Colorado Denver/Vigers/BDC/Janet Snell-Bergeon/CALICO",
@@ -38,6 +42,16 @@ knitr::opts_knit$set(root.dir = home_dir)
 #| include: false
 # Load data
 load("./Data_Clean/analysis_data.RData")
+# Set table options
+mycontrols <-
+  tableby.control(numeric.stats = c("Nmiss2", "meansd", "medianq1q3", "range"))
+# First visit only
+cv1 <- df %>%
+  group_by(record_number) %>%
+  slice_min(redcap_repeat_instance) %>%
+  ungroup()
+# Remove impossible values
+df$cv_monthssincepcosdx[which(df$cv_monthssincepcosdx == 12019.6)] <- NA
 ```
 
 # Data cleaning
@@ -46,18 +60,23 @@ load("./Data_Clean/analysis_data.RData")
 
 - There are 10 participants who were started on either implant or IUD at a clinic visit, but who don't have the medication listed at the next visit. For the purposes of these analysis, I assumed that the new medications fields should be ignored and that the current medications field better reflects who was actually on LARC.
 
+- Months since PCOS diagnosis was used as the time variable in longitudinal analyses, and was treated as a continuous variable.
+
+- CHOP2024-34 has a months since PCOS diagnosis value of 12019.6, which is excluded from these analyses.
+
+- Has COL-1638 really had PCOS for 19 years? That seems like an outlier.
+
 # Demographics
 
 ```{r results='asis'}
 #| label: tbl-table-1
-#| tbl-cap: Participant demographics at first visit
-df %>%
-  filter(is.na(df$redcap_repeat_instrument)) %>%
-  select(larc_ever, all_of(demo_vars), combined_race) %>%
-  tbl_summary(by = larc_ever, missing_text = "Missing") %>%
-  add_overall() %>%
-  add_p(test.args = all_tests("fisher.test") ~ list(simulate.p.value = T)) %>%
-  separate_p_footnotes()
+#| tbl-cap: Participant demographics by LARC use at first visit
+f <- as.formula(paste0(
+  "larc_ever ~ ",
+  paste0(c(demo_vars, "combined_race"), collapse = "+")
+))
+t1 <- tableby(f, data = cv1, control = mycontrols)
+summary(t1, labelTranslations = labels(df), pfootnote = T)
 ```
 
 # Mixed models
@@ -68,16 +87,46 @@ df %>%
 2. How many visits do we want to look at?
 3. Do we want a different x-axis like time from diagnosis?
 
+### Spaghetti plot
+
 ```{r}
-# Plot
+#| warning: false
 df %>%
-  filter(redcap_repeat_instrument == "Clinical Visit") %>%
+  filter(!is.na(larc)) %>%
   ggplot(aes(
-    x = factor((redcap_repeat_instance)), y = cv_weight, group = record_number,
+    x = cv_monthssincepcosdx, y = cv_weight, group = record_number,
     color = larc
   )) +
-  geom_line(alpha = 0.1) +
-  geom_smooth(aes(group = larc), se = F) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On LARC?") +
   theme_bw()
-# Model
+```
+
+### Model results
+
+```{r}
+# Fit mixed model
+mod <-
+  lmer(cv_weight ~ cv_monthssincepcosdx * larc + (1 | record_number), data = df)
+# Model plot
+mod_df <- mod@frame
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA)
+ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_weight, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = larc, color = larc)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On LARC?") +
+  theme_classic()
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "larc", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
 ```
