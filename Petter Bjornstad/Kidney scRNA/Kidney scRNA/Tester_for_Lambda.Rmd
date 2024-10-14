@@ -1,0 +1,388 @@
+---
+title: "Tester for Lambda"
+author: "Hailey Hampson"
+date: "2024-10-09"
+output: html_document
+---
+#1. Set Up Libraries & Directories
+```{r Set up, echo=F, include = F}
+# Function to install and load packages
+install_and_load <- function(package_name) {
+  if (!requireNamespace(package_name, quietly = TRUE)) {
+    install.packages(package_name)
+  }
+  library(package_name, character.only = TRUE)
+}
+
+# Load required packages
+install_and_load("tidyverse")
+install_and_load("tidyr")
+install_and_load("BiocManager")
+install_and_load("arsenal")
+install_and_load("dplyr")
+install_and_load("ggplot2")
+install_and_load("ggrepel")
+install_and_load("Seurat")
+install_and_load("future")
+install_and_load("colorspace")
+install_and_load("patchwork")
+install_and_load("ggdendro")
+install_and_load("cowplot")
+install_and_load("ggpubr")
+install_and_load("rstatix")
+install_and_load("table1")
+install_and_load("Biobase")
+install_and_load("ReactomeGSA")
+install_and_load("GSEABase")
+install_and_load("msigdbr")
+install_and_load("kableExtra")
+install_and_load("knitr")
+  # if (!requireNamespace('BiocManager', quietly = TRUE))
+  #   install.packages('BiocManager')
+  # 
+  # BiocManager::install('EnhancedVolcano')
+
+#Increase Memory
+mem.maxVSize(64000000000)
+
+#Set up directories
+# dir.dat <- c("/Users/hhampson/Dropbox/Bjornstad data")
+dir.dat <- c("/Desktop/Peds/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/data_raw")
+# dir.meta.dat <- c("/Desktop/Peds/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean")
+dir.dat2 <- c("/Users/hhampson/Dropbox/Bjornstad data/Clinical data")
+# "smb://ucdenver.pvt/som/PEDS/RI%20Biostatistics%20Core/Shared/Shared%20Projects/Laura/Peds%20Endo/Petter%20Bjornstad/Data%20Harmonization/"
+# smb://ucdenver.pvt/som/PEDS/RI%20Biostatistics%20Core/Shared/Shared%20Projects/Laura/Peds%20Endo/Petter%20Bjornstad/scRNA
+# dir.home <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Kidney scRNA/Kidney scRNA")
+
+#Load functions
+# source(fs::path(dir.home,"Kidney_Functions.R"))
+source("Kidney_Functions.R")
+```
+
+#2. Load & Format scRNAseq Data 
+```{r echo = F}
+# Kidney scRNA data processing
+# so_kidney_sc <- readRDS(fs::path(dir.dat,"Kidney scRNA","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
+# so_kidney_sc <- readRDS(fs::path(dir.dat,"PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
+so_kidney_sc <- readRDS("/Desktop/Peds/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/data_raw/PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS")
+
+# Add missing covariate meta data to Seurat object
+# meta_raw <- read.csv(fs::path(dir.dat,"Clinical Data","renal_clearance_biopsy.csv"))
+# meta_raw <- read.csv(fs::path(dir.dat2,"renal_clearance_biopsy.csv"))
+meta_raw <- read.csv("/Users/hhampson/Dropbox/Bjornstad data/Clinical data/renal_clearance_biopsy.csv")
+
+#Filter out meta data participants without sc 
+record_ids <- unique(so_kidney_sc@meta.data$record_id)
+meta_raw <- meta_raw %>% 
+  filter(record_id %in% record_ids) %>% 
+  dplyr::select(-record_id)
+
+# #Create study id to filter to in so
+# so_kidney_sc@meta.data <- so_kidney_sc@meta.data %>% 
+#   mutate(study = case_when(grepl("CRC",record_id) ~ "CRC",
+#                            grepl("RH",record_id) ~ "RH",
+#                            grepl("IT",record_id) ~ "IT"))
+
+#Merge new metadata with 
+meta_kidney_sc <-  tidylog::left_join(so_kidney_sc@meta.data, meta_raw,by="cryostor_id")
+
+#Check there are no duplicates
+length(which(duplicated(meta_kidney_sc$barcode)))
+
+#Add rownames back to metadata to merge back into saurat object 
+rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+
+# Add new meta data to so 
+so_kidney_sc <- AddMetaData(so_kidney_sc, meta_kidney_sc)
+
+#Filter to baseline visits only
+so_kidney_sc <- subset(so_kidney_sc, visit == "baseline")
+
+# so_kidney_sc <- subset(so_kidney_sc, record_id=="CRC" | grepl("CRC",record_id) | grepl("RH",record_id) | grepl("IT",record_id))
+# meta_kidney_sc <-  meta_kidney_sc %>%
+#   filter(grepl("CRC",record_id) | grepl("RH",record_id) | grepl("IT",record_id))
+
+so_kidney_sc <- NormalizeData(so_kidney_sc)
+so_kidney_sc <- ScaleData(so_kidney_sc)
+# # PCA
+# so_kidney_sc <- RunPCA(so_kidney_sc, features = VariableFeatures(object = so_kidney_sc))
+# ElbowPlot(so_kidney_sc)
+# # Cluster cells
+# so_kidney_sc <- FindNeighbors(so_kidney_sc)
+# so_kidney_sc <- FindClusters(so_kidney_sc)
+# # Perform UMAP and tSNE
+# so_kidney_sc <- RunUMAP(so_kidney_sc, dims = 1:15)
+# DimPlot(so_kidney_sc, reduction = "umap") 
+```
+
+
+#3. Examine Descriptive Statistics by Characteristics of Interest (Sex & SGLT2i Status)
+## Sex (M/F)
+### Descriptive table
+```{r echo = F}
+# Descriptive stats
+kidney_meta_raw_sc <- meta_kidney_sc %>%
+  filter(cryostor_id!="")
+form <- paste("sex", paste(colnames(kidney_meta_raw_sc)[c(15,18:27)], collapse = " + "), sep = " ~ ")
+
+summary(arsenal::tableby(formula = as.formula(form), data = kidney_meta_raw_sc, test = F))
+
+```
+
+
+## SGLT2i Y/N
+### Descriptive table
+```{r echo = F}
+# Descriptive stats
+# kidney_meta_raw_sc <- meta_raw %>%
+#   filter(cryostor_id!="")
+form <- paste("sglt2i_ever", paste(colnames(kidney_meta_raw_sc)[c(15,18:27)], collapse = " + "), sep = " ~ ")
+
+summary(arsenal::tableby(formula = as.formula(form), data = kidney_meta_raw_sc, test = F))
+
+```
+
+#4. Visualize using UMAPs Stratified by Characteristics of Interest (Sex & SGLT2i Status)
+## Stratified UMAP scRNA 
+### a. Sex
+```{r echo = F}
+so_kidney_sc <- RunUMAP(so_kidney_sc, dims = 1:15)
+DimPlot(so_kidney_sc, reduction = "umap", group.by = "sex") 
+
+```
+
+### b. SGLT2is
+```{r echo = F}
+so_kidney_sc <- RunUMAP(so_kidney_sc, dims = 1:15)
+DimPlot(so_kidney_sc, reduction = "umap", group.by = "sglt2i_ever") 
+
+```
+
+
+#5. Differential Expression of Genes by Group for All Disease Types
+## Top 2000 genes by Sex
+```{r}
+#Sex
+de.markers(so_kidney_sc, NULL, "sex", id1 = "Female", id2 = "Male", NULL, "_top")
+m_top <- m_top %>% head(2000)
+
+```
+
+#Top 2000 genes by SGLT2is
+```{r}
+#SGLT2is
+de.markers(so_kidney_sc, NULL, "sglt2i_ever", id1 = "No", id2 = "Yes", NULL, "_top")
+m_top <- m_top %>% head(2000)
+
+```
+
+
+### By Sex & SGLT2is
+```{r}
+# so_kidney_sc@meta.data$hepatocyte <- ifelse(grepl("Hepatocyte",meta_liver_sc$celltype),"Hepatocyte","Non-Hepatocyte")
+genes <- unique(rownames(so_kidney_sc))
+Idents(so_kidney_sc) <- so_kidney_sc$celltype_rpca
+
+#Sex
+de.markers(so_kidney_sc, genes, "sex", id2 = "Female", id1 = "Male", "MON", "")
+de.markers(so_kidney_sc, genes, "sex", id2 = "Female", id1 = "Male", "MAC", "")
+de.markers(so_kidney_sc, genes, "sex", id2 = "Female", id1 = "Male", "EC-GC", "")
+de.markers(so_kidney_sc, genes, "sex", id2 = "Female", id1 = "Male", "EC-LYM", "")
+de.markers(so_kidney_sc, genes, "sex", id2 = "Female", id1 = "Male", "EC-AEA", "")
+de.markers(so_kidney_sc, genes, "sex", id2 = "Female", id1 = "Male", "EC-PTC", "")
+
+#SGLT2is
+de.markers(so_kidney_sc, genes, "sglt2i_ever", id2 = "No", id1 = "Yes", "MON", "")
+de.markers(so_kidney_sc, genes, "sglt2i_ever", id2 = "No", id1 = "Yes", "MAC", "")
+de.markers(so_kidney_sc, genes, "sglt2i_ever", id2 = "No", id1 = "Yes", "EC-GC", "")
+de.markers(so_kidney_sc, genes, "sglt2i_ever", id2 = "No", id1 = "Yes", "EC-LYM", "")
+de.markers(so_kidney_sc, genes, "sglt2i_ever", id2 = "No", id1 = "Yes", "EC-AEA", "")
+de.markers(so_kidney_sc, genes, "sglt2i_ever", id2 = "No", id1 = "Yes", "EC-PTC", "")
+```
+
+## Figures
+### By Sex & SGLT2is
+```{r}
+# Idents(so_kidney_sc) <- so_kidney_sc$celltype_rpca
+# #Sex
+# pt.plot_table <- dp.formatted(seurat_object = so_kidney_sc, genes = genes, group.by = "sex",
+#                               celltype = NULL, m = m)
+# pt.plot_table <- dp.formatted(seurat_object = so_kidney_sc, genes = genes, group.by = "sex",
+#                               celltype = "MON", m = m)
+# pt.plot_table <- dp.formatted(seurat_object = so_kidney_sc, genes = genes, group.by = "sex",
+#                               celltype = "MAC", m = m)
+# pt.plot_table <- dp.formatted(seurat_object = so_kidney_sc, genes = genes, group.by = "sex",
+#                               celltype = "EC-GC", m = m)
+# pt.plot_table <- dp.formatted(seurat_object = so_kidney_sc, genes = genes, group.by = "sex",
+#                               celltype = "EC_LYM", m = m)
+# pt.plot_table <- dp.formatted(seurat_object = so_kidney_sc, genes = genes, group.by = "sex",
+#                               celltype = "EC-AEA", m = m)
+# pt.plot_table <- dp.formatted(seurat_object = so_kidney_sc, genes = genes, group.by = "sex",
+#                               celltype = "EC-PTC", m = m)
+# 
+# #SGLT2is
+# pt.plot_table <- dp.formatted(seurat_object = so_kidney_sc, genes = genes, group.by = "sglt2i_ever",
+#                               celltype = NULL, m = m)
+# pt.plot_table <- dp.formatted(seurat_object = so_kidney_sc, genes = genes, group.by = "sglt2i_ever",
+#                               celltype = "MON", m = m)
+# pt.plot_table <- dp.formatted(seurat_object = so_kidney_sc, genes = genes, group.by = "sglt2i_ever",
+#                               celltype = "MAC", m = m)
+# pt.plot_table <- dp.formatted(seurat_object = so_kidney_sc, genes = genes, group.by = "sglt2i_ever",
+#                               celltype = "EC-GC", m = m)
+# pt.plot_table <- dp.formatted(seurat_object = so_kidney_sc, genes = genes, group.by = "sglt2i_ever",
+#                               celltype = "EC_LYM", m = m)
+# pt.plot_table <- dp.formatted(seurat_object = so_kidney_sc, genes = genes, group.by = "sglt2i_ever",
+#                               celltype = "EC-AEA", m = m)
+# pt.plot_table <- dp.formatted(seurat_object = so_kidney_sc, genes = genes, group.by = "sglt2i_ever",
+#                               celltype = "EC-PTC", m = m)
+
+```
+
+#6. Differential Expression of Genes by Group Stretified by Disease Status (HC/OB/T1/T2)
+##a. Healthy Controls
+
+```{r subset by disease status}
+#Filter to HC only
+so_HC <- subset(so_kidney_sc, group == "Lean Control")
+
+#Filter to OB only
+so_OB <- subset(so_kidney_sc, group == "Obese Control")
+
+#Filter to T1 only
+so_T1 <- subset(so_kidney_sc, group == "Type 1 Diabetes")
+
+#Filter to T2 only
+so_T2 <- subset(so_kidney_sc, group == "Type 2 Diabetes")
+```
+
+### Sex
+```{r echo = F}
+#HC
+so_HC <- RunUMAP(so_HC, dims = 1:15)
+DimPlot(so_HC, reduction = "umap", group.by = "sex") 
+
+#OB
+so_OB <- RunUMAP(so_OB, dims = 1:15)
+DimPlot(so_OB, reduction = "umap", group.by = "sex") 
+
+#T1
+so_T1 <- RunUMAP(so_T1, dims = 1:15)
+DimPlot(so_T1, reduction = "umap", group.by = "sex") 
+
+#T2
+so_T2 <- RunUMAP(so_T2, dims = 1:15)
+DimPlot(so_T2, reduction = "umap", group.by = "sex") 
+
+```
+
+### SGLT2is
+```{r echo = F}
+#HC
+so_HC <- RunUMAP(so_HC, dims = 1:15)
+DimPlot(so_HC, reduction = "umap", group.by = "sglt2i_ever") 
+
+#OB
+so_OB <- RunUMAP(so_OB, dims = 1:15)
+DimPlot(so_OB, reduction = "umap", group.by = "sglt2i_ever") 
+
+#T1
+so_T1 <- RunUMAP(so_T1, dims = 1:15)
+DimPlot(so_T1, reduction = "umap", group.by = "sglt2i_ever") 
+
+#T2
+so_T2 <- RunUMAP(so_T2, dims = 1:15)
+DimPlot(so_T2, reduction = "umap", group.by = "sglt2i_ever") 
+
+```
+
+
+## Differential Expression by Group
+
+## Top 2000 genes
+```{r}
+#Sex
+#HC
+de.markers(so_HC, NULL, "sex", id1 = "Female", id2 = "Male", NULL, "_top")
+m_top <- m_top %>% head(2000)
+#OB
+de.markers(so_OB, NULL, "sex", id1 = "Female", id2 = "Male", NULL, "_top")
+m_top <- m_top %>% head(2000)
+#T1
+de.markers(so_T1, NULL, "sex", id1 = "Female", id2 = "Male", NULL, "_top")
+m_top <- m_top %>% head(2000)
+#T2
+de.markers(so_T2, NULL, "sex", id1 = "Female", id2 = "Male", NULL, "_top")
+m_top <- m_top %>% head(2000)
+
+#SGLT2is
+#T2
+de.markers(so_T2, NULL, "sglt2i_ever", id1 = "No", id2 = "Yes", NULL, "_top")
+m_top <- m_top %>% head(2000)
+
+```
+
+
+### By Sex & SGLT2is
+###HC
+```{r}
+genes <- unique(rownames(so_HC))
+Idents(so_HC) <- so_HC$celltype_rpca
+
+#Sex
+de.markers(so_HC, genes, "sex", id2 = "Female", id1 = "Male", "MON", "")
+de.markers(so_HC, genes, "sex", id2 = "Female", id1 = "Male", "MAC", "")
+de.markers(so_HC, genes, "sex", id2 = "Female", id1 = "Male", "EC-GC", "")
+# de.markers(so_HC, genes, "sex", id2 = "Female", id1 = "Male", "EC-LYM", "")
+de.markers(so_HC, genes, "sex", id2 = "Female", id1 = "Male", "EC-AEA", "")
+de.markers(so_HC, genes, "sex", id2 = "Female", id1 = "Male", "EC-PTC", "")
+```
+
+###OB
+```{r}
+genes <- unique(rownames(so_OB))
+Idents(so_OB) <- so_OB$celltype_rpca
+
+#Sex
+de.markers(so_OB, genes, "sex", id2 = "Female", id1 = "Male", "MON", "")
+de.markers(so_OB, genes, "sex", id2 = "Female", id1 = "Male", "MAC", "")
+de.markers(so_OB, genes, "sex", id2 = "Female", id1 = "Male", "EC-GC", "")
+de.markers(so_OB, genes, "sex", id2 = "Female", id1 = "Male", "EC-LYM", "")
+de.markers(so_OB, genes, "sex", id2 = "Female", id1 = "Male", "EC-AEA", "")
+de.markers(so_OB, genes, "sex", id2 = "Female", id1 = "Male", "EC-PTC", "")
+```
+
+###T1
+```{r}
+genes <- unique(rownames(so_T1))
+Idents(so_T1) <- so_T1$celltype_rpca
+
+#Sex
+de.markers(so_T1, genes, "sex", id2 = "Female", id1 = "Male", "MON", "")
+de.markers(so_T1, genes, "sex", id2 = "Female", id1 = "Male", "MAC", "")
+de.markers(so_T1, genes, "sex", id2 = "Female", id1 = "Male", "EC-GC", "")
+de.markers(so_T1, genes, "sex", id2 = "Female", id1 = "Male", "EC-LYM", "")
+de.markers(so_T1, genes, "sex", id2 = "Female", id1 = "Male", "EC-AEA", "")
+de.markers(so_T1, genes, "sex", id2 = "Female", id1 = "Male", "EC-PTC", "")
+```
+
+###T2
+```{r}
+genes <- unique(rownames(so_T2))
+Idents(so_T2) <- so_T2$celltype_rpca
+
+#Sex
+de.markers(so_T2, genes, "sex", id2 = "Female", id1 = "Male", "MON", "")
+de.markers(so_T2, genes, "sex", id2 = "Female", id1 = "Male", "MAC", "")
+de.markers(so_T2, genes, "sex", id2 = "Female", id1 = "Male", "EC-GC", "")
+de.markers(so_T2, genes, "sex", id2 = "Female", id1 = "Male", "EC-LYM", "")
+de.markers(so_T2, genes, "sex", id2 = "Female", id1 = "Male", "EC-AEA", "")
+de.markers(so_T2, genes, "sex", id2 = "Female", id1 = "Male", "EC-PTC", "")
+
+#SGLT2is
+de.markers(so_T2, genes, "sglt2i_ever", id2 = "No", id1 = "Yes", "MON", "")
+de.markers(so_T2, genes, "sglt2i_ever", id2 = "No", id1 = "Yes", "MAC", "")
+de.markers(so_T2, genes, "sglt2i_ever", id2 = "No", id1 = "Yes", "EC-GC", "")
+de.markers(so_T2, genes, "sglt2i_ever", id2 = "No", id1 = "Yes", "EC-LYM", "")
+de.markers(so_T2, genes, "sglt2i_ever", id2 = "No", id1 = "Yes", "EC-AEA", "")
+de.markers(so_T2, genes, "sglt2i_ever", id2 = "No", id1 = "Yes", "EC-PTC", "")
+```
