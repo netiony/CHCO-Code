@@ -1,0 +1,397 @@
+---
+title: "TODAY - JAK-STAT ligands"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r libraries,echo=FALSE, include=F}
+library(knitr)
+library(tidyverse)
+library(Hmisc)
+library(readxl)
+library(RColorBrewer)
+library(ggplot2)
+library(ggpubr)
+library(psych)
+library(corrplot)
+library(gtools)
+library(ggpubr)
+library(svglite)
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+
+knitr::opts_chunk$set(echo = FALSE)
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "E:/Petter Bjornstad/TODAY subaward"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  home_dir = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward"
+}
+knitr::opts_knit$set(root.dir = home_dir)
+```
+
+
+```{r, include=FALSE}
+setwd(home_dir)
+# load somalogic data, with QC samples already excluded
+load("./Somalogic data raw/soma.Rdata")
+
+# load analyte info
+load("./Somalogic data raw/analytes.Rdata")
+
+# load comorbidity data
+load("./Clinical data/comorb.Rdata")
+
+# load baseline risk factors
+load("./Clinical data/TODAY/baserisk.Rdata")
+
+# load year 10 covariates
+load("./Clinical data/TODAY/yr10risk.Rdata")
+
+# take only the baseline soma samples
+# can we just take the earliest or is it possible someone would have a follow-up sample but not baseline?
+# probably can take the first and then check the years to make sure compatible with TODAY
+base <- soma %>% arrange(releaseid,Date.Drawn) %>% dplyr::group_by(releaseid) %>% dplyr::filter(row_number()==1)
+# these 3 release IDs have first sample after end of recruitment, so they must be missing the baseline visit
+base <- base %>% filter(!releaseid %in% c("65-85903","65-47984","65-25901"))
+
+# the above section of code used to work but seems to have broken....this should accomplish the same thing?
+#base <- soma %>% filter(visit==1)
+
+# merge in complication data
+base <- left_join(base, comorb, by="releaseid")
+# this was previously:
+# base <- merge(base, comorb, by="releaseid",all.x=T, all.y=F)
+
+# merge in baseline risk factors
+base <- left_join(base, baserisk, by="releaseid")
+# this was previously:
+#base <- merge(base, baserisk, by="releaseid",all.x=T, all.y=F)
+
+# log transform UAlbCreat
+base$log_UAlbCreat <- log(base$UAlbCreat + 0.0000001)
+
+# identify columns corresponding to proteins
+#is_seq <- function(.x) grepl("^seq\\.[0-9]{4}", .x) # regex for analytes
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(base))
+
+# convert to numeric
+base[,seq] <- apply(base[,seq],2,as.numeric)
+
+# are there proteins with low variability?
+no_var = caret::nearZeroVar(base[,seq])
+# none
+
+# log transform
+base_log <- base %>% modify_if(is_seq(names(.)), log)
+
+# scale by SD
+base_log_scale <- base_log
+predictors <- colnames(base_log[seq])
+for (i in 1:length(predictors)) {
+  base_log_scale[,paste0(predictors[i])] <- base_log_scale[,paste0(predictors[i])]/sd(unlist(base_log[,paste0(predictors[i])]))
+}
+
+analyte_info <- analytes
+
+# find follow-up samples
+fup <- soma %>% anti_join(base, soma, by=c("releaseid","Date.Drawn"))
+
+# merge in nephropathy data
+fup <- left_join(fup, comorb, by="releaseid")
+
+# merge in year 10 covariates
+fup <- left_join(fup, yr10risk, by="releaseid")
+
+# identify columns corresponding to proteins and convert to numeric
+fup <- fup %>%
+       mutate(across(starts_with("seq"),
+              ~ as.numeric(as.character(.))))
+
+# log transform
+fup_log <- fup %>% modify_if(is_seq(names(.)), log)
+
+# create df of changes in proteins
+base_for_deltas <- base
+base_for_deltas <- base_for_deltas %>% filter(releaseid %in% fup_log$releaseid)
+base_for_deltas <- base_for_deltas %>% modify_if(is_seq(names(.)), log)
+fup_log <- fup_log %>% filter(releaseid %in% base_for_deltas$releaseid)
+fup_log <- fup_log %>% arrange(releaseid)
+base_for_deltas <- base_for_deltas %>% arrange(releaseid)
+a <- fup_log %>% select(starts_with("seq"))
+b <- base_for_deltas %>% ungroup() %>% select(starts_with("seq"))
+deltas <- as.data.frame(a) - as.data.frame(b)
+deltas <- cbind(base$releaseid, base)
+colnames(deltas)[[1]] <- "releaseid"
+
+# get change in UACR and eGFR
+base_uacr_egfr <- base %>% select(releaseid, visit, EstCreatClear, UAlbCreat)
+fup_uacr_egfr <- fup %>% select(releaseid, visit, estcreatclear, ualbcreat)
+names(fup_uacr_egfr) <- c("releaseid", "EstCreatClear","UAlbCreat")
+all_uacr_egfr <- rbind(base_uacr_egfr, fup_uacr_egfr)
+
+# trying to create a long file, not sure why ...4 is forming
+# then turn to wide
+# merge with deltas
+```
+
+```{r clean data,echo=FALSE}
+# keep only the proteins we need
+analyte_igf <- analyte_info %>% filter(UniProt %in% c("P10912", "P01236", "P41159", "P60568", "P05231", "P29459|P29460",
+                                                      "P29460|Q9NPF7", "P01562", "P05014", "P01569", "P05013", "P05013",
+                                                      "P01567", 
+                                                      "P32881", "P01562", "P01566", "P01567", "P01569", "P05013", "P05014"))
+apt_keep <- analyte_igf$AptName
+
+df <- base_log_scale
+# stopped here - this won't work because we're not looking at changes
+df_keep <- df %>% select(all_of(c("ID", "visit", "UACRATIO", "eGFR.fas_cr_cysc", apt_keep)))
+df_keep <- df_keep %>% filter(visit %in% c("Month 1", "Year 1"))
+df_wide <- reshape(df_keep, timevar = "visit", idvar = "ID", direction = "wide")
+
+# not sure if I'll need this
+# emmdf_keep$uniqname <- paste0(emmdf_keep$Target,"_",emmdf_keep$AptName)  
+
+# create a df with deltas
+deltas <- NULL
+vars_for_deltas <- colnames(df_keep)
+vars_for_deltas <- vars_for_deltas[-c(1:2)]
+for (i in vars_for_deltas) {
+  column_name <- paste0(i, "_delta")
+  year1_name <- paste0(i, ".Year 1")
+  month1_name <- paste0(i, ".Month 1")
+  df_wide[[column_name]] <- as.numeric(as.character(df_wide[[year1_name]])) - as.numeric(as.character(df_wide[[month1_name]]))
+}
+
+apt_keep_deltas <- NULL
+for (i in 1:length(apt_keep)) {
+  apt_keep_deltas[i] <- paste0(apt_keep[[i]], "_delta")
+}
+```
+
+```{r, include=FALSE}
+# need to modify this code to make sure I am using the protein deltas
+corr_plot_modified_nodict <- function(data, X, Y, cor_method = "spearman", adj_var = NULL, 
+                               method = "color", insig = "pch", coef_col = NULL,
+                               pch = 4, pch.col = "black", pch.cex = 0, colnames_M, rownames_M) {
+  prot_heatmap <- analyte_info %>%
+  filter(AptName %in% apt_keep) %>%
+  pull(AptName)
+  analytes_temp <- analyte_info
+  analytes_temp$Target_apt <- paste0(analytes_temp$Target, " (", analytes_temp$AptName, ")")
+  TA <- analytes_temp$Target_apt[match(prot_heatmap, analytes_temp$AptName)]
+  colnames(Y) <- TA
+  n_cols = length(Y)
+  M <- cor(y = Y,
+           x = X,
+           use = "pairwise.complete.obs",
+           method = cor_method)
+  M <- M[,order(colnames(M))]
+  if (!is.na(adj_var)){
+    x_vars <- rep(X, times = length(Y))
+    x_coord <- rep(seq(1,length(Y)), each = length(X))
+    y_vars <- rep(Y, each = length(X))
+    y_coord <- rep(seq(length(X),1), times = length(Y))
+    lm_extracted <- data.frame(yName = character(0),
+                               xName = character(0),
+                               x = numeric(0),
+                               y = numeric(0),
+                               adj_var = character(0),
+                               adj_x_coef = numeric(0),
+                               adj_x_pval = numeric(0))
+    for (i in 1:length(x_vars)) {
+      if(x_vars[i] != y_vars[i]) {
+        lm_formula <- as.formula(paste0(y_vars[i], "~", x_vars[i], "+", adj_var))
+        lm_model <- lm(lm_formula, data = data)
+        lm_summary <- summary(lm_model)
+        lm_coef <- lm_summary$coefficient[x_vars[i], "Estimate"]
+        lm_p_val <- lm_summary$coefficient[x_vars[i], "Pr(>|t|)"]
+        lm_extracted <- rbind(lm_extracted,
+                              data.frame(
+                                yName = y_vars[i],
+                                xName = x_vars[i],
+                                x = x_coord[i],
+                                y = y_coord[i],
+                                adj_var = adj_var,
+                                adj_x_coef = lm_coef,
+                                adj_x_pval = lm_p_val))
+      }
+    }
+  }
+  
+  correlation_p_value <- correlation_p_value_matrix(data, relevant_vars = c(colnames(Y),colnames(X)), n_cols = n_cols, cor_method = cor_method, Y=Y, X=X)
+
+  corrplot(M,
+           p.mat = correlation_p_value,
+           method = method,
+           tl.col = "black",
+           tl.srt = 45,
+           tl.cex = 1.2,
+           insig = insig,
+           addCoef.col = coef_col,
+           addgrid.col = 'lightgray',
+           number.digits = 2,
+           pch.col = pch.col, 
+           pch = pch,
+           pch.cex = pch.cex)$corrPos -> p1
+  p1_sub <- subset(p1, p.value <= 0.05)
+  p1_sub2 <- subset(p1, p.value <= 0.05 & abs(corr) >= 0.7)
+  
+  if (nrow(p1) > 0) {
+    graphics::text(p1$x, p1$y, sprintf("%.2f", p1$corr), adj = c(0.5, 0), cex=1.2)
+    if (nrow(p1_sub > 0)) {
+      graphics::text(p1_sub$x, p1_sub$y, stars.pval(p1_sub$p.value), adj = c(0.5, 2), cex=1.2)
+    }
+  }
+  if (nrow(p1_sub2) > 0) {
+    graphics::text(p1_sub2$x, p1_sub2$y, sprintf("%.2f", p1_sub2$corr), col = "white", adj = c(0.5, 0), cex=1.2)
+    graphics::text(p1_sub2$x, p1_sub2$y, stars.pval(p1_sub2$p.value), col = "white", adj = c(0.5, 2), cex=1.2)
+  }
+  if (!is.na(adj_var)) {
+    lm_extracted <- subset(lm_extracted, adj_x_pval <= 0.05)
+    if (nrow(lm_extracted) > 0){
+      graphics::rect(xleft = lm_extracted$x-.45, 
+                     ybottom = lm_extracted$y-.45,
+                     xright = lm_extracted$x+.45,
+                     ytop = lm_extracted$y+.45)
+    }
+  }
+}
+
+
+correlation_p_value_matrix <- function(data, relevant_vars, n_cols, cor_method = "spearman", Y=Y, X=X) {
+  analytes_temp <- analyte_info
+  analytes_temp$Target_apt <- paste0(analytes_temp$Target, " (", analytes_temp$AptName, ")")
+  # Filter relevant variables for the correlation matrix
+  #relevant_vars_apt <- analytes_temp$AptName[match(colnames(Y), analytes_temp$Target_apt)]
+  Y <- Y[,order(colnames(Y))]
+  dat_correlation <- cbind(Y,X) %>%
+    dplyr::select(all_of(relevant_vars))
+    # Compute p-values 
+  res2 <- Hmisc::rcorr(as.matrix(dat_correlation),
+                       type = cor_method)
+  corr_pval <- as.data.frame(res2$P) %>%
+    dplyr::select(all_of(relevant_vars[1:n_cols]))
+  corr_pval = corr_pval[(n_cols + 1):nrow(corr_pval),]
+  corr_pval <- corr_pval[,order(colnames(corr_pval))]
+  return(as.matrix(corr_pval))
+}
+```
+
+```{r include=FALSE}
+# write a function to make each panel of the plot
+panel_in_boxplot <- function(data, seq, month1var, year1var) {
+  comparison_groups <- list(c("before", "after"))
+  analytes_temp <- analyte_info
+  analytes_temp$Target_apt <- paste0(analytes_temp$Target, " (", analytes_temp$AptName, ")")
+  TA <- analytes_temp$Target_apt[match(seq, analytes_temp$AptName)]  
+  before <-  data %>% select(all_of(month1var)) 
+  after <-  data %>% select(all_of(year1var))
+  ba <- cbind(before, after)
+  complete_check <- complete.cases(ba)
+  ba <- ba[complete_check,]
+  before <- as.numeric(ba[,1])
+  after <- as.numeric(ba[,2])
+  d <- data.frame(before = before, after = after)
+  p <- ggpaired(d,
+        cond1 = "before", cond2 = "after",
+        line.color = NA)  +
+  geom_boxplot(fill = "#fcb1a6") +  
+  labs(x = NULL,
+       y = TA) + 
+  theme(axis.title.x = element_text(size = 16),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 14,
+                                   angle = 0), 
+        legend.text = element_text(size = 16)) +
+        #,
+   #     panel.background = element_rect(fill = "#f2e9e4",
+    #                                    color = "grey")) + 
+  scale_fill_manual(values = c("#c2dfe3", "#fff9ec",
+                                "#fcb1a6", "#fb6376")) +
+  scale_x_discrete(labels = c("Month 1", "Year 1")) +
+  stat_compare_means(comparisons = comparison_groups,
+                     paired = TRUE,
+                     method = "wilcox.test",
+                     label = "p.signif", size = 4, vjust = -2) + 
+  # stat_compare_means(paired = TRUE,
+  #                   method = "wilcox.test",
+  #                   aes(label = paste0("p",scales::label_pvalue(add_p = TRUE)(..p..)),),
+  #   parse = TRUE, size = 4, vjust = -2) +  
+    
+  scale_y_continuous(expand = expansion(mult = c(0, 0.3)))
+}
+
+# function call for above template
+p_seq.10967.12 <- panel_in_boxplot(data = df_wide, seq = "seq.10967.12", month1var = "seq.10967.12.Month 1", year1var = "seq.10967.12.Year 1")
+p_seq.10365.132 <- panel_in_boxplot(data = df_wide, seq = "seq.10365.132", month1var = "seq.10365.132.Month 1", year1var = "seq.10365.132.Year 1")
+p_seq.10367.62 <- panel_in_boxplot(data = df_wide, seq = "seq.10367.62", month1var = "seq.10367.62.Month 1", year1var = "seq.10367.62.Year 1")
+p_seq.2573.20 <- panel_in_boxplot(data = df_wide, seq = "seq.2573.20", month1var = "seq.2573.20.Month 1", year1var = "seq.2573.20.Year 1")
+p_seq.2575.5 <- panel_in_boxplot(data = df_wide, seq = "seq.2575.5", month1var = "seq.2575.5.Month 1", year1var = "seq.2575.5.Year 1")
+p_seq.2585.2 <- panel_in_boxplot(data = df_wide, seq = "seq.2585.2", month1var = "seq.2585.2.Month 1", year1var = "seq.2585.2.Year 1")
+p_seq.2948.58 <- panel_in_boxplot(data = df_wide, seq = "seq.2948.58", month1var = "seq.2948.58.Month 1", year1var = "seq.2948.58.Year 1")
+p_seq.3070.1 <- panel_in_boxplot(data = df_wide, seq = "seq.3070.1", month1var = "seq.3070.1.Month 1", year1var = "seq.3070.1.Year 1")
+p_seq.4673.13 <- panel_in_boxplot(data = df_wide, seq = "seq.4673.13", month1var = "seq.4673.13.Month 1", year1var = "seq.4673.13.Year 1")
+p_seq.8484.24 <- panel_in_boxplot(data = df_wide, seq = "seq.8484.24", month1var = "seq.8484.24.Month 1", year1var = "seq.8484.24.Year 1")
+p_seq.14129.1 <- panel_in_boxplot(data = df_wide, seq = "seq.14129.1", month1var = "seq.14129.1.Month 1", year1var = "seq.14129.1.Year 1")
+p_seq.5733.61 <- panel_in_boxplot(data = df_wide, seq = "seq.5733.61", month1var = "seq.5733.61.Month 1", year1var = "seq.5733.61.Year 1")
+
+# trying other IFNA
+p_seq.6214.84 <- panel_in_boxplot(data = df_wide, seq = "seq.6214.84", month1var = "seq.6214.84.Month 1", year1var = "seq.6214.84.Year 1")
+p_seq.18389.11 <- panel_in_boxplot(data = df_wide, seq = "seq.18389.11", month1var = "seq.18389.11.Month 1", year1var = "seq.18389.11.Year 1")
+p_seq.14128.121 <- panel_in_boxplot(data = df_wide, seq = "seq.14128.121", month1var = "seq.14128.121.Month 1", year1var = "seq.14128.121.Year 1")
+p_seq.5733.61 <- panel_in_boxplot(data = df_wide, seq = "seq.5733.61", month1var = "seq.5733.61.Month 1", year1var = "seq.5733.61.Year 1")
+p_seq.6210.100 <- panel_in_boxplot(data = df_wide, seq = "seq.6210.100", month1var = "seq.6210.100.Month 1", year1var = "seq.6210.100.Year 1")
+p_seq.5714.88 <- panel_in_boxplot(data = df_wide, seq = "seq.5714.88", month1var = "seq.5714.88.Month 1", year1var = "seq.5714.88.Year 1")
+p_seq.15405.23 <- panel_in_boxplot(data = df_wide, seq = "seq.15405.23", month1var = "seq.15405.23.Month 1", year1var = "seq.15405.23.Year 1")
+p_seq.7268.12 <- panel_in_boxplot(data = df_wide, seq = "seq.7268.12", month1var = "seq.7268.12.Month 1", year1var = "seq.7268.12.Year 1")
+
+# arrange
+grpbox <- ggarrange(p_seq.10967.12,p_seq.2585.2,
+                    p_seq.2575.5,p_seq.8484.24,
+                    p_seq.10365.132,p_seq.10367.62,
+                    p_seq.2573.20,p_seq.2948.58,
+                    p_seq.3070.1,p_seq.4673.13,
+                    p_seq.14129.1,p_seq.5733.61,
+                    nrow = 6, ncol = 2,
+                    common.legend = T)
+png(height = 3000, width = 2500, file = "/Users/pylell/Dropbox/IMPROVE, Teen-LABS, TODAY combined analysis/Teen-LABS results/Proteomics/Teen-LABS_JAK_STAT_ligands.png", res = 170)
+grpbox
+dev.off()
+```
+
+```{r include=FALSE}
+colnames_M <- analyte_igf %>%
+  filter(AptName %in% apt_keep) %>%
+  pull(Target)
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Dropbox/IMPROVE, Teen-LABS, TODAY combined analysis/Teen-LABS results/Proteomics/TeenLABS_JAK_STAT_UACR_eGFR_heatmap.png", res = 170)
+corr_plot_modified_nodict(data=df_wide, 
+                   Y=df_wide[,apt_keep_deltas], 
+                 X=df_wide[,c("UACRATIO_delta","eGFR.fas_cr_cysc_delta")],
+                 cor_method="spearman", adj_var = NA,
+                 colnames_M=colnames_M,
+                 rownames_M=c("Change in UACR","Change in eGFR"))
+dev.off()
+
+svg(height = 3000, width = 2500, file = "/Users/pylell/Dropbox/IMPROVE, Teen-LABS, TODAY combined analysis/Teen-LABS results/Proteomics/TeenLABS_JAK_STAT_UACR_eGFR_heatmap.svg")
+corr_plot_modified_nodict(data=df_wide, 
+                   Y=df_wide[,apt_keep_deltas], 
+                 X=df_wide[,c("UACRATIO_delta","eGFR.fas_cr_cysc_delta")],
+                 cor_method="spearman", adj_var = NA,
+                 colnames_M=colnames_M,
+                 rownames_M=c("Change in UACR","Change in eGFR"))
+dev.off()
+
+# can we make this an svg or editable pdf?
+# TODAY, IMPROVE?
+```
+

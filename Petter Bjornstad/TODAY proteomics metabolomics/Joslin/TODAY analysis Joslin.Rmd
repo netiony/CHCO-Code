@@ -91,22 +91,21 @@ base[,seq] <- apply(base[,seq],2,as.numeric)
 no_var = caret::nearZeroVar(base[,seq])
 # none
 
-# log transform
-#base_log <- base %>% modify_if(is_seq(names(.)), log)
-
 # read in the proteins from the Joslin analysis and subset Soma data to those proteins
 mma <- openxlsx::readWorkbook("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Joslin collaboration/mma.xlsx")
 analyte_keep <- analytes %>% filter(EntrezGeneSymbol %in% mma$EntrezGeneSymbol)
 apt_keep <- analyte_keep$AptName
 base_keep <- base %>% select(all_of(c("releaseid", "MAC", "AGEBASE", "HbA1c", "dxtime", "EstCreatClear", apt_keep)))
 
-### NOT SURE IF I SHOULD LOG TRANSFORM???
+# log transform
+base_log <- base_keep %>% modify_if(is_seq(names(.)), log)
+seq <- is_seq(names(base_keep))
 ```
 
 ```{r functions}
 cor_and_plot_soma <- function(data, vars) {
   # Format matrix
-  analytes_temp <- analytes
+  analytes_temp <- analyte_keep
   analytes_temp$Target_apt <- paste0(analytes_temp$Target, " (", analytes_temp$AptName, ")")
   d <- data[, c(vars, "MAC")]
   n <- c(
@@ -123,63 +122,70 @@ cor_and_plot_soma <- function(data, vars) {
   M_MAC_p <- M$p[,"MAC"]
   M_MAC_p <- M_MAC_p[-696]
   res <- cbind(M_MAC_r, M_MAC_p)
-  colnames(res) <- c("corr_MAC", "P_corr_MAC")
+  res <- cbind(res, analytes_temp$AptName, analytes_temp$Target, analytes_temp$UniProt, analytes_temp$EntrezGeneID)
+  colnames(res) <- c("corr_MAC", "P_corr_MAC", "AptName", "Target", "UniProt", "EntrezGeneID")
   return(res)
 }
 ```
 
 ```{r, include=FALSE}
+# Spearman correlations and FDR adjusted p-values
 res <- cor_and_plot_soma(data = base_keep, vars = apt_keep)
 
-# Macroalbuminuria
-result_MAC <- NULL
+# fold changes
+MAC_contrast <- ifelse(base_keep$MAC==1,1,0)
+MAC_contrast <- cbind(rep(1,nrow(base_keep)),MAC_contrast)
+# moderated t-tests with and without FDR adjustment
+ymat <- t(base_log[,seq])
+fit <- lmFit(ymat,MAC_contrast)
+fit <- eBayes(fit)
+results_MAC <- topTable(fit,coef = 2,number = nrow(ymat))
+results_MAC$AptName <- row.names(results_MAC)
+results_MAC <- merge(results_MAC,analytes,by="AptName",all.x = T, all.y = F)
+results_MAC <- results_MAC[order(results_MAC$P.Value),] 
+
+# logistic regression - unadjusted
+result_lr_MAC <- NULL
 predictors <- colnames(base_log[seq])
 for (i in 1:length(predictors)) {
-  form <- paste0("Surv(DAYSTOMAC, MAC)~",predictors[i],"+HbA1c+log_trig+sbp+si_1_ins0")
-  mod <- coxph(data = base_log_scale, formula = as.formula(form))
+  form <- paste0("MAC~",predictors[i])
+  mod <- glm(data = base_log, formula = as.formula(form))
   tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
-  tidymod <- tidymod[1,]
-  result_MAC <- rbind(result_MAC,tidymod)
+  tidymod <- tidymod[2,]
+  result_lr_MAC <- rbind(result_lr_MAC,tidymod)
 }
-result_MAC$adj.p.value <- p.adjust(result_MAC$p.value, "fdr")
-result_MAC$AptName <- result_MAC$term
-result_MAC$term <- NULL
-result_MAC <- merge(result_MAC,analytes,by="AptName",all.x = T, all.y = F)
-result_MAC <- result_MAC[order(result_MAC$p.value),] 
+result_lr_MAC$adj.p.value <- p.adjust(result_lr_MAC$p.value, "fdr")
+result_lr_MAC$AptName <- result_lr_MAC$term
+result_lr_MAC$term <- NULL
+result_lr_MAC <- merge(result_lr_MAC,analytes,by="AptName",all.x = T, all.y = F)
+result_lr_MAC <- result_lr_MAC[order(result_lr_MAC$p.value),] 
 
+# logistic regression - adjusted
+result_lr_MAC_adj <- NULL
+predictors <- colnames(base_log[seq])
+for (i in 1:length(predictors)) {
+  form <- paste0("MAC~",predictors[i],"+AGEBASE+HbA1c+dxtime+EstCreatClear")
+  mod <- glm(data = base_log, formula = as.formula(form))
+  tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
+  tidymod <- tidymod[2,]
+  result_lr_MAC_adj <- rbind(result_lr_MAC_adj,tidymod)
+}
+result_lr_MAC_adj$adj.p.value <- p.adjust(result_lr_MAC_adj$p.value, "fdr")
+result_lr_MAC_adj$AptName <- result_lr_MAC_adj$term
+result_lr_MAC_adj$term <- NULL
+result_lr_MAC_adj <- merge(result_lr_MAC_adj,analytes,by="AptName",all.x = T, all.y = F)
+result_lr_MAC_adj <- result_lr_MAC_adj[order(result_lr_MAC_adj$p.value),] 
 
 # write all results to file
 wb <- createWorkbook()
-addWorksheet(wb,"MAC CPH")
-writeData(wb,"MAC CPH",result_MAC,rowNames = F)
-addWorksheet(wb,"MIC CPH")
-writeData(wb,"MIC CPH",result_MIC,rowNames = F)
-addWorksheet(wb,"MIC.OR.MAC CPH")
-writeData(wb,"MIC.OR.MAC CPH",result_MIC.OR.MAC,rowNames = F)
-addWorksheet(wb,"HYP CPH")
-writeData(wb,"HYP CPH",result_HYP,rowNames = F)
-addWorksheet(wb,"RAPID CPH")
-writeData(wb,"RAPID CPH",result_RAPID,rowNames = F)
-addWorksheet(wb,"HTN with SBP CPH")
-writeData(wb,"HTN with SBP CPH",results_htn_bp,rowNames = F)
-addWorksheet(wb,"HTN CPH")
-writeData(wb,"HTN CPH",result_HTN,rowNames = F)
-addWorksheet(wb,"HTN with UACR CPH")
-writeData(wb,"HTN with UACR CPH",results_htn_uacr,rowNames = F)
-addWorksheet(wb,"HTN with eGFR CPH")
-writeData(wb,"HTN with eGFR CPH",results_htn_egfr,rowNames = F)
-addWorksheet(wb,"NEURO CPH")
-writeData(wb,"NEURO CPH",result_NEURO,rowNames = F)
-addWorksheet(wb,"RETINO CPH")
-writeData(wb,"RETINO CPH",result_RETINO,rowNames = F)
-addWorksheet(wb,"GLYC CPH")
-writeData(wb,"GLYC CPH",result_GLYC,rowNames = F)
-addWorksheet(wb,"GLYC with A1c CPH")
-writeData(wb,"GLYC with A1c CPH",results_glyc_a1c,rowNames = F)
-saveWorkbook(wb,"./Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx",overwrite = TRUE)
-saveWorkbook(wb,"/Users/pylell/Dropbox/TODAY HTN and DKD output/TODAY somalogic Cox models scaled baseline adjusted.xlsx",overwrite = TRUE)
-saveWorkbook(wb,"/Users/pylell/Dropbox/TODAY glycemic manuscript [shared]/Analysis output/TODAY somalogic Cox models scaled baseline adjusted.xlsx",overwrite = TRUE)
-
-
+addWorksheet(wb,"Spearman corr")
+writeData(wb,"Spearman corr",res,rowNames = F)
+addWorksheet(wb,"LogFC")
+writeData(wb,"LogFC",results_MAC,rowNames = F)
+addWorksheet(wb,"Unadjusted GLM")
+writeData(wb,"Unadjusted GLM",result_lr_MAC,rowNames = F)
+addWorksheet(wb,"Adjusted GLM")
+writeData(wb,"Adjusted GLM",result_lr_MAC_adj,rowNames = F)
+saveWorkbook(wb,"./Joslin collaboration/TODAY macroalbuminuria results.xlsx",overwrite = TRUE)
 ```
 
