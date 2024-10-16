@@ -276,7 +276,8 @@ save(baserisk,file = "./Clinical data/TODAY/baserisk.Rdata")
 
 # CBL
 CBL_TODAY2 <- read.csv("./Clinical data/TODAY2/CBL.csv")
-CBL_TODAY2_KEEP <- CBL_TODAY2 %>% filter(pvisit=="P120") %>% select(releaseid, hba1c, trig)
+CBL_TODAY2_KEEP <- CBL_TODAY2 %>% filter(pvisit=="P120") %>% select(releaseid, hba1c, trig, 
+                                                                    estcreatclear, ualbcreat)
 
 # INS 
 # insulin was measured at 9 year visit not 10 year
@@ -284,7 +285,7 @@ INS_TODAY2 <- read.csv("./Clinical data/TODAY2/CBL.csv")
 INS_TODAY2_KEEP <- INS_TODAY2 %>% filter(pvisit=="P108") %>% select(releaseid, ins)
 
 # ADDCBL
-#ADDCBL_TODAY2 <- read.csv("./Clinical data/TODAY2/ADDCBL.csv")
+ADDCBL_TODAY2 <- read.csv("./Clinical data/TODAY2/ADDCBL.csv")
 
 # VISIT
 VISIT_TODAY2 <- read.csv("./Clinical data/TODAY2/VISIT.csv")

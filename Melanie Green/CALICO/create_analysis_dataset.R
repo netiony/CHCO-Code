@@ -45,30 +45,25 @@ demo_vars <- c(
 )
 # Aim 1 for Melanie
 aim1_vars <- c(
-  "cv_bmi", "cv_bmi_percentile", "cv_bmi_z",
-  "pcosdx_obesitydx_age",
-  "cv_hirsutism_num", "cv_hirsutism_cat", "cv_acneface",
-  "cv_acneother___1", "cv_acneother___2", "cv_acneother___0",
-  "cv_acneother___unk", "cv_ft", "cv_ft_perc",
-  "cv_tt", "cv_tt_perc", "cv_dheas",
-  "cv_dheas_perc", "cv_androstendione", "cv_androstendione_perc",
-  "cv_lh", "cv_fsh", "cv_amh",
-  "cv_a1c", "cv_tg", "cv_hdl",
-  "cv_shbg", "cv_alt", "cv_fbg",
-  "cv_fastinsulin", "cv_2hrglucoseogtt", "cv_acanthosisneck",
-  "cv_waist", "cv_osa_sx", "cv_medications___1",
-  "cv_medications___2", "cv_medications___3", "cv_medications___4",
-  "cv_medications___5", "cv_medications___6", "cv_medications___7",
-  "cv_medications___8", "cv_medications___9", "cv_medications___10",
-  "cv_medications___11", "cv_medications___12", "cv_medications___13",
-  "cv_medications___14", "cv_medications___15", "cv_medications___16",
-  "cv_medications___17", "cv_medications___18", "cv_medications___19",
-  "cv_medications___20", "cv_medications___21", "cv_medications___22",
-  "cv_medications___23", "cv_medications___32", "cv_medications___24",
-  "cv_medications___25", "cv_medications___26", "cv_medications___27",
-  "cv_medications___28", "cv_medications___29", "cv_medications___30",
-  "cv_medications___31", "cv_medications___60", "cv_medications___0",
-  "cv_medications___unk", "pcosdx_specialty"
+  "cv_bmi", "cv_bmi_percentile", "cv_bmi_z", "cv_hirsutism_num",
+  "cv_hirsutism_cat", "cv_acneface", "cv_acneother___1", "cv_acneother___2",
+  "cv_acneother___0", "cv_acneother___unk", "cv_ft", "cv_ft_perc", "cv_tt",
+  "cv_tt_perc", "cv_dheas", "cv_dheas_perc", "cv_androstendione",
+  "cv_androstendione_perc", "cv_lh", "cv_fsh", "cv_amh", "cv_a1c", "cv_tg",
+  "cv_hdl", "cv_shbg", "cv_alt", "cv_fbg", "cv_fastinsulin",
+  "cv_2hrglucoseogtt", "cv_acanthosisneck", "cv_waist", "cv_osa_sx",
+  "cv_medications___1", "cv_medications___2", "cv_medications___3",
+  "cv_medications___4", "cv_medications___5", "cv_medications___6",
+  "cv_medications___7", "cv_medications___8", "cv_medications___9",
+  "cv_medications___10", "cv_medications___11", "cv_medications___12",
+  "cv_medications___13", "cv_medications___14", "cv_medications___15",
+  "cv_medications___16", "cv_medications___17", "cv_medications___18",
+  "cv_medications___19", "cv_medications___20", "cv_medications___21",
+  "cv_medications___22", "cv_medications___23", "cv_medications___32",
+  "cv_medications___24", "cv_medications___25", "cv_medications___26",
+  "cv_medications___27", "cv_medications___28", "cv_medications___29",
+  "cv_medications___30", "cv_medications___31", "cv_medications___60",
+  "cv_medications___0", "cv_medications___unk"
 )
 # NCH/CHOP variables
 nch_chop_vars <- c(
@@ -386,8 +381,8 @@ label(df$combined_race) <- "Race"
 label(df$Obesity_perc) <- "Obesity Status (by percentile and raw value)"
 label(df$Obesity_raw) <- "Obesity Status (by raw value)"
 label(df$cv_a1c) <- "HbA1C"
-label(df$larc) <- "On LARC"
-label(df$larc_ever) <- "LARC Ever User"
+label(df$larc) <- "On LARC?"
+label(df$larc_ever) <- "LARC Ever Used?"
 label(df$mental_health_screening) <-
   "PHQ-2, PHQ-8, PHQ-9 or CED-S Score Available?"
 label(df[, grep("___unk", colnames(df))]) <-

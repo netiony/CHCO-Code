@@ -1,5 +1,6 @@
 library(readxl)
 library(blockrand)
+library(dplyr)
 
 set.seed(1234586444)
 
@@ -8,15 +9,23 @@ set.seed(1234586444)
 # there are two other strata (<25, 25 - <35), this randomization sequence was done previously
 # will generate a sequence of 80 assignments just in case
 
-rand <- blockrand(n=80, levels = c(1:2), block.sizes = 2)
+# MALES
+rand_males <- blockrand(n=80, levels = c(1:2), block.sizes = 2)
+rand_males$treatment_char <- ifelse(rand_males$treatment == "1", "Placebo", "Semaglutide")
+rand_males$sex <- "Male"
 
-# need to update below - going to email Sam and ask him if he cares if 1 = placebo and 2 = sema 
-# i.e., does he want it to match what he is already using
-rand$treatment_char <- ifelse(rand$treatment == "1", "Placebo", "Semaglutide")
+# FEMALES
+rand_females <- blockrand(n=80, levels = c(1:2), block.sizes = 2)
+rand_females$treatment_char <- ifelse(rand_females$treatment == "1", "Placebo", "Semaglutide")
+rand_females$sex <- "Female"
+
+rand <- rbind(rand_males, rand_females)
+rand <- rand %>% select(id, treatment, treatment_char, sex)
+colnames(rand) <- c("Participant Number", "Arm (num)", "Arm (char)", "Sex")
 
 # output
 write.csv(rand, 
-          "/Volumes/pylell/T1-DISCO/randomization_sequence_BMI_35-45.csv",
+          "/Volumes/pylell/T1-DISCO/rand_sequence_BMI_35-45.csv",
           row.names = F)
 
 
