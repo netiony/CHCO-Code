@@ -41,7 +41,7 @@ df <- full_join(history, clinic, by = join_by(record_number)) %>%
 demo_vars <- c(
   "site", "pcosdx_age", "race___1", "race___2", "race___3", "race___4",
   "race___5", "race___60", "race___unk", "ethnicity", "insur_type",
-  "pcosdx_irregular_menses", "pcosdx_anxietydx_age"
+  "pcosdx_irregular_menses", "pcosdx_anxietydx_age", "pcosdx_menarche"
 )
 # Aim 1 for Melanie
 aim1_vars <- c(
@@ -318,10 +318,6 @@ levels(df$Region) <- c(
   "Midwest", "Southeast", "Midwest", "Southwest", "Southwest"
 )
 # Mental health diagnosis variables
-# df$cv_phq2_score[is.na(df$cv_phq2)] <- NA
-# df$cv_phq8_score[is.na(df$cv_phq8)] <- NA
-# df$cv_phq9_score[is.na(df$cv_phq9)] <- NA
-# df$cv_cesd_score[is.na(df$cv_cesd20)] <- NA
 df <- df %>%
   group_by(record_number) %>%
   mutate(
@@ -359,6 +355,18 @@ label(df$adhd) <- "ADHD?"
 df$larc <- df$cv_medications___10 == "Checked" |
   df$cv_medications___11 == "Checked"
 df$larc <- factor(df$larc, levels = c(F, T), labels = c("No", "Yes"))
+# Age at LARC start, etc.
+df <- df %>%
+  group_by(record_number) %>%
+  mutate(age_first_larc = first(na.omit(cv_age[larc == "Yes"]))) %>%
+  ungroup() %>%
+  mutate(
+    time_pcos_to_first_larc = age_first_larc - pcosdx_age,
+    time_menarche_to_first_larc = age_first_larc - pcosdx_menarche
+  )
+label(df$age_first_larc) <- "Age at First LARC"
+label(df$time_pcos_to_first_larc) <- "Years From PCOS Dx to First LARC"
+label(df$time_menarche_to_first_larc) <- "Years From Menarche to First LARC"
 # Ever on LARC vs. never
 larc_users <- unique(df$record_number[df$larc == "Yes"])
 df$larc_ever <- "No"
