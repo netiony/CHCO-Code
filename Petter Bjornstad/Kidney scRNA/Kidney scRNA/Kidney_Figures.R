@@ -92,7 +92,7 @@ dev.off()
 cell_types <- c("MON","MAC","EC-GC","EC-AEA","EC-PTC")
 pdf(file = fs::path(dir.home,"Results_and_Figures","Volcano_bySex_byCelltypes.pdf"),width=15,height=8)
 for (cell in cell_types){
-  de.markers(so_kidney_sc, genes, "sex", id2 = "Female", id1 = "Male", cell, "_top")
+  de.markers(so_kidney_sc, genes, "sex", id1 = "Female", id2 = "Male", cell, "_top")
   m_top <- m_top %>% head(2000)
   top_genes <- rbind(
     m_top %>% arrange(desc(avg_log2FC)) %>% head(10),  # Top 10 positive log2FC
@@ -136,7 +136,7 @@ dev.off()
 cell_types <- c("MON","MAC","EC-GC","EC-AEA","EC-PTC")
 pdf(file = fs::path(dir.home,"Results_and_Figures","Volcano_bySGLT2i_byCelltypes.pdf"),width=15,height=8)
 for (cell in cell_types){
-  de.markers(so_kidney_sc, genes, "sglt2i_ever", id2 = "Yes", id1 = "No", cell, "_top")
+  de.markers(so_kidney_sc, genes, "sglt2i_ever", id1 = "Yes", id2 = "No", cell, "_top")
   m_top <- m_top %>% head(2000)
   significant_genes <- m_top %>% filter(p_val_adj < 0.05)
   
@@ -176,7 +176,7 @@ dev.off()
 cell_types <- c("MON","MAC","EC-GC","EC-AEA","EC-PTC")
 pdf(file = fs::path(dir.home,"Results_and_Figures","Volcano_bySex_byCelltypes_HC.pdf"),width=15,height=8)
 for (cell in cell_types){
-  de.markers(so_HC, genes, "sex", id2 = "Female", id1 = "Male", cell, "_top")
+  de.markers(so_HC, genes, "sex", id1 = "Female", id2 = "Male", cell, "_top")
   m_top <- m_top %>% head(2000)
   top_genes <- rbind(
     m_top %>% arrange(desc(avg_log2FC)) %>% head(10),  # Top 10 positive log2FC
@@ -219,7 +219,7 @@ dev.off()
 cell_types <- c("MON","MAC","EC-GC","EC-AEA","EC-PTC")
 pdf(file = fs::path(dir.home,"Results_and_Figures","Volcano_bySex_byCelltypes_OB.pdf"),width=15,height=8)
 for (cell in cell_types){
-  de.markers(so_OB, genes, "sex", id2 = "Female", id1 = "Male", cell, "_top")
+  de.markers(so_OB, genes, "sex", id1 = "Female", id2 = "Male", cell, "_top")
   m_top <- m_top %>% head(2000)
   top_genes <- rbind(
     m_top %>% arrange(desc(avg_log2FC)) %>% head(10),  # Top 10 positive log2FC
@@ -262,7 +262,7 @@ dev.off()
 cell_types <- c("MON","MAC","EC-GC","EC-AEA","EC-PTC")
 pdf(file = fs::path(dir.home,"Results_and_Figures","Volcano_bySex_byCelltypes_T1.pdf"),width=15,height=8)
 for (cell in cell_types){
-  de.markers(so_T1, genes, "sex", id2 = "Female", id1 = "Male", cell, "_top")
+  de.markers(so_T1, genes, "sex", id1 = "Female", id2 = "Male", cell, "_top")
   m_top <- m_top %>% head(2000)
   top_genes <- rbind(
     m_top %>% arrange(desc(avg_log2FC)) %>% head(10),  # Top 10 positive log2FC
@@ -306,7 +306,7 @@ dev.off()
 cell_types <- c("MON","MAC","EC-GC","EC-AEA","EC-PTC")
 pdf(file = fs::path(dir.home,"Results_and_Figures","Volcano_bySex_byCelltypes_T2.pdf"),width=15,height=8)
 for (cell in cell_types){
-  de.markers(so_T2, genes, "sex", id2 = "Female", id1 = "Male", cell, "_top")
+  de.markers(so_T2, genes, "sex", id1 = "Female", id2 = "Male", cell, "_top")
   m_top <- m_top %>% head(2000)
   top_genes <- rbind(
     m_top %>% arrange(desc(avg_log2FC)) %>% head(10),  # Top 10 positive log2FC
@@ -349,7 +349,7 @@ dev.off()
 cell_types <- c("MON","MAC","EC-GC","EC-AEA","EC-PTC")
 pdf(file = fs::path(dir.home,"Results_and_Figures","Volcano_bySGLT2i_byCelltypes_T2.pdf"),width=15,height=8)
 for (cell in cell_types){
-  de.markers(so_T2, genes, "sglt2i_ever", id2 = "Yes", id1 = "No", cell, "_top")
+  de.markers(so_T2, genes, "sglt2i_ever", id1 = "Yes", id2 = "No", cell, "_top")
   m_top <- m_top %>% head(2000)
   top_genes <- rbind(
     m_top %>% arrange(desc(avg_log2FC)) %>% head(10),  # Top 10 positive log2FC
@@ -401,7 +401,7 @@ writeData(wb,"By_SGLT2i",r2,rowNames = T)
 cell_types <- c("MON","MAC","EC-GC","EC-AEA","EC-PTC")
 #By cell for sex
 for (cell in cell_types){
-  de.markers(so_kidney_sc, genes, "sex", id2 = "Female", id1 = "Male", cell, "_top")
+  de.markers(so_kidney_sc, genes, "sex", id1 = "Female", id2 = "Male", cell, "_top")
   r <- m_top 
   name <- paste0("By_Sex_in_",cell,"_cells")
   addWorksheet(wb,name)
@@ -409,7 +409,7 @@ for (cell in cell_types){
 }
 #By cell for SGLT2is
 for (cell in cell_types){
-  de.markers(so_kidney_sc, genes, "sglt2i_ever", id2 = "Yes", id1 = "No", cell, "_top")
+  de.markers(so_kidney_sc, genes, "sglt2i_ever", id1 = "Yes", id2 = "No", cell, "_top")
   r <- m_top 
   name <- paste0("By_SGLT2i_in_",cell,"_cells")
   addWorksheet(wb,name)
@@ -417,7 +417,7 @@ for (cell in cell_types){
 }
 #HC by cell for sex
 for (cell in cell_types){
-  de.markers(so_HC, genes, "sex", id2 = "Female", id1 = "Male", cell, "_top")
+  de.markers(so_HC, genes, "sex", id1 = "Female", id2 = "Male", cell, "_top")
   r <- m_top 
   name <- paste0("HC_By_Sex_in_",cell,"_cells")
   addWorksheet(wb,name)
@@ -425,7 +425,7 @@ for (cell in cell_types){
 }
 #OB by cell for sex
 for (cell in cell_types){
-  de.markers(so_OB, genes, "sex", id2 = "Female", id1 = "Male", cell, "_top")
+  de.markers(so_OB, genes, "sex", id1 = "Female", id2 = "Male", cell, "_top")
   r <- m_top 
   name <- paste0("OB_By_Sex_in_",cell,"_cells")
   addWorksheet(wb,name)
@@ -433,7 +433,7 @@ for (cell in cell_types){
 }
 #T1 by cell for sex
 for (cell in cell_types){
-  de.markers(so_T1, genes, "sex", id2 = "Female", id1 = "Male", cell, "_top")
+  de.markers(so_T1, genes, "sex", id1 = "Female", id2 = "Male", cell, "_top")
   r <- m_top 
   name <- paste0("T1_By_Sex_in_",cell,"_cells")
   addWorksheet(wb,name)
@@ -441,7 +441,7 @@ for (cell in cell_types){
 }
 #T2 by cell for sex
 for (cell in cell_types){
-  de.markers(so_T2, genes, "sex", id2 = "Female", id1 = "Male", cell, "_top")
+  de.markers(so_T2, genes, "sex", id1 = "Female", id2 = "Male", cell, "_top")
   r <- m_top 
   name <- paste0("T2_By_Sex_in_",cell,"_cells")
   addWorksheet(wb,name)
@@ -449,7 +449,7 @@ for (cell in cell_types){
 }
 #T2 by cell for SGLT2i
 for (cell in cell_types){
-  de.markers(so_T2, genes, "sglt2i_ever", id2 = "Yes", id1 = "No", cell, "_top")
+  de.markers(so_T2, genes, "sglt2i_ever", id1 = "Yes", id2 = "No", cell, "_top")
   r <- m_top 
   name <- paste0("T2_By_SGLT2i_in_",cell,"_cells")
   addWorksheet(wb,name)
