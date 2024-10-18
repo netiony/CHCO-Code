@@ -17,13 +17,14 @@ format:
     theme:
       light: flatly
       dark: darkly
-bibliography: /Users/timvigers/Dropbox/Miscellaneous/zotero.bib
+bibliography: /Users/timvigers/Documents/Miscellaneous/zotero.bib
 csl: /Users/timvigers/GitHub/styles/american-medical-association.csl
 editor: source
 ---
 
 ```{r setup}
 #| include: false
+library(Hmisc)
 library(tidyverse)
 library(arsenal)
 library(lmerTest)
@@ -60,10 +61,6 @@ cv1 <- df %>%
 
 - Months since PCOS diagnosis was used as the time variable in longitudinal analyses, and was treated as a continuous variable.
 
-- CHOP2024-34 has a months since PCOS diagnosis value of 12019.6, which is excluded from these analyses.
-
-- Has COL-1638 really had PCOS for 19 years? That seems like an outlier.
-
 # Demographics
 
 ```{r results='asis'}
@@ -82,11 +79,9 @@ summary(t1, labelTranslations = labels(df), pfootnote = T)
 
 # Mixed models
 
-## Weight
+For each continuous outcome, we fit a linear mixed effects model with random effects for participant and time (months from PCOS diagnosis), and an interaction effect between time and LARC status. To evaluate the effect of starting LARC on each outcome, we also fit a linear spline model with years from LARC start as the time variable and a single knot at 0 (LARC start). 
 
-1. Log transform?
-2. How many visits do we want to look at?
-3. Do we want a different x-axis like time from diagnosis?
+## Weight
 
 ### Spaghetti plot
 
@@ -105,10 +100,15 @@ df %>%
 
 ### Model results
 
+#### LARC users vs. non-users
+
 ```{r}
 # Fit mixed model
-mod <-
-  lmer(cv_weight ~ cv_monthssincepcosdx * larc + (1 | record_number), data = df)
+mod <- lmer(
+  cv_weight ~ cv_monthssincepcosdx * larc +
+    (1 + cv_monthssincepcosdx | record_number),
+  data = df
+)
 # Model plot
 mod_df <- mod@frame
 mod_df$ind_pred <- predict(mod)
@@ -130,4 +130,41 @@ mod %>% gtsummary::tbl_regression()
 emt <- emtrends(mod, "larc", var = "cv_monthssincepcosdx")
 gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
 gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+#### Change pre- vs. post-LARC (LARC users only)
+
+```{r}
+# Make a dataset for spline models
+larc_only <- df %>%
+  filter(larc_ever == "Yes") %>%
+  mutate(
+    time_from_first_larc = cv_age - age_first_larc,
+    x = (time_from_first_larc > 0) * time_from_first_larc
+  ) %>%
+  dplyr::select(
+    record_number, redcap_repeat_instance, cv_weight, larc, cv_age,
+    cv_monthssincepcosdx, age_first_larc, time_from_first_larc, x
+  )
+label(larc_only$time_from_first_larc) <- "Time From First LARC"
+label(larc_only$x) <- "Slope Change After LARC"
+# Fit mixed model
+change_mod <- lmer(cv_weight ~ time_from_first_larc + x +
+  (1 + time_from_first_larc | record_number), data = larc_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA)
+ggplot(mod_df, aes(x = time_from_first_larc)) +
+  geom_point(aes(y = cv_weight, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From LARC Start") +
+  theme_classic()
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
 ```
