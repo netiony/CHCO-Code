@@ -79,9 +79,26 @@ summary(t1, labelTranslations = labels(df), pfootnote = T)
 
 # Mixed models
 
-For each continuous outcome, we fit a linear mixed effects model with random effects for participant and time (months from PCOS diagnosis), and an interaction effect between time and LARC status. To evaluate the effect of starting LARC on each outcome, we also fit a linear spline model with years from LARC start as the time variable and a single knot at 0 (LARC start). 
+For each continuous outcome, we fit a linear mixed effects model with random effects for participant and time (months from PCOS diagnosis), and an interaction effect between time and LARC status. To evaluate the effect of starting LARC on each outcome, we also fit a linear spline model with years from LARC start as the time variable and a single knot at 0 (LARC start). If models did not converge or produced serious warnings/errors, only the random effect for participant was included.
 
-## Weight
+```{r}
+# Make a dataset for spline models
+larc_only <- df %>%
+  filter(larc_ever == "Yes") %>%
+  mutate(
+    time_from_first_larc = cv_age - age_first_larc,
+    x = (time_from_first_larc > 0) * time_from_first_larc
+  ) %>%
+  dplyr::select(
+    record_number, redcap_repeat_instance, cv_weight, cv_bmi, cv_hirsutism_num,
+    cv_hgb, cv_ldl, cv_hdl, cv_sbp, cv_dbp, larc, cv_age,
+    cv_monthssincepcosdx, age_first_larc, time_from_first_larc, x
+  )
+label(larc_only$time_from_first_larc) <- "Time From First LARC"
+label(larc_only$x) <- "Slope Change After LARC"
+```
+
+## Weight (kg)
 
 ### Spaghetti plot
 
@@ -130,25 +147,14 @@ mod %>% gtsummary::tbl_regression()
 emt <- emtrends(mod, "larc", var = "cv_monthssincepcosdx")
 gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
 gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+# Check model assumptions
+check_model(mod, re_formula = NA)
 ```
 
 #### Change pre- vs. post-LARC (LARC users only)
 
 ```{r}
-# Make a dataset for spline models
-larc_only <- df %>%
-  filter(larc_ever == "Yes") %>%
-  mutate(
-    time_from_first_larc = cv_age - age_first_larc,
-    x = (time_from_first_larc > 0) * time_from_first_larc
-  ) %>%
-  dplyr::select(
-    record_number, redcap_repeat_instance, cv_weight, larc, cv_age,
-    cv_monthssincepcosdx, age_first_larc, time_from_first_larc, x
-  )
-label(larc_only$time_from_first_larc) <- "Time From First LARC"
-label(larc_only$x) <- "Slope Change After LARC"
-# Fit mixed model
+# Fit mixed model with change point
 change_mod <- lmer(cv_weight ~ time_from_first_larc + x +
   (1 + time_from_first_larc | record_number), data = larc_only)
 # Model plot
@@ -167,4 +173,550 @@ ggplot(mod_df, aes(x = time_from_first_larc)) +
   theme_classic()
 # Model summary
 change_mod %>% gtsummary::tbl_regression()
+# Check model assumptions
+check_model(change_mod, re_formula = NA)
 ```
+
+## BMI
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+df %>%
+  filter(!is.na(larc)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_bmi, group = record_number,
+    color = larc
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On LARC?") +
+  theme_bw()
+```
+
+### Model results
+
+#### LARC users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_bmi ~ cv_monthssincepcosdx * larc +
+    (1 + cv_monthssincepcosdx | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA)
+ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_bmi, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = larc, color = larc)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On LARC?") +
+  theme_classic()
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "larc", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+# Check model assumptions
+check_model(mod, re_formula = NA)
+```
+
+#### Change pre- vs. post-LARC (LARC users only)
+
+```{r}
+# Fit mixed model
+change_mod <- lmer(cv_bmi ~ time_from_first_larc + x +
+  (1 + time_from_first_larc | record_number), data = larc_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA)
+ggplot(mod_df, aes(x = time_from_first_larc)) +
+  geom_point(aes(y = cv_bmi, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From LARC Start") +
+  theme_classic()
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+# Check model assumptions
+check_model(change_mod, re_formula = NA)
+```
+
+## Numerical FGS score
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+df %>%
+  filter(!is.na(larc)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_hirsutism_num, group = record_number,
+    color = larc
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On LARC?") +
+  theme_bw()
+```
+
+### Model results
+
+#### LARC users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_hirsutism_num ~ cv_monthssincepcosdx * larc + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA)
+ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_hirsutism_num, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = larc, color = larc)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On LARC?") +
+  theme_classic()
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "larc", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+# Check model assumptions
+check_model(mod, re_formula = NA)
+```
+
+#### Change pre- vs. post-LARC (LARC users only)
+
+```{r}
+# Fit mixed model
+change_mod <- lmer(cv_hirsutism_num ~ time_from_first_larc + x +
+  (1 + time_from_first_larc | record_number), data = larc_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA)
+ggplot(mod_df, aes(x = time_from_first_larc)) +
+  geom_point(aes(y = cv_hirsutism_num, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From LARC Start") +
+  theme_classic()
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+# Check model assumptions
+check_model(change_mod, re_formula = NA)
+```
+
+## Hemoglobin (g/dL)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+df %>%
+  filter(!is.na(larc)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_hgb, group = record_number,
+    color = larc
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On LARC?") +
+  theme_bw()
+```
+
+### Model results
+
+#### LARC users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(cv_hgb ~ cv_monthssincepcosdx * larc + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA)
+ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_hgb, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = larc, color = larc)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On LARC?") +
+  theme_classic()
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "larc", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+# Check model assumptions
+check_model(mod, re_formula = NA)
+```
+
+#### Change pre- vs. post-LARC (LARC users only)
+
+```{r}
+# Fit mixed model
+change_mod <- lmer(cv_hgb ~ time_from_first_larc + x + (1 | record_number),
+  data = larc_only
+)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA)
+ggplot(mod_df, aes(x = time_from_first_larc)) +
+  geom_point(aes(y = cv_hgb, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From LARC Start") +
+  theme_classic()
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+# Check model assumptions
+check_model(change_mod, re_formula = NA)
+```
+
+## LDL (mg/dL)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+df %>%
+  filter(!is.na(larc)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_ldl, group = record_number,
+    color = larc
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On LARC?") +
+  theme_bw()
+```
+
+### Model results
+
+#### LARC users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(cv_ldl ~ cv_monthssincepcosdx * larc + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA)
+ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_ldl, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = larc, color = larc)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On LARC?") +
+  theme_classic()
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "larc", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+# Check model assumptions
+check_model(mod, re_formula = NA)
+```
+
+#### Change pre- vs. post-LARC (LARC users only)
+
+```{r}
+# Fit mixed model
+change_mod <- lmer(cv_ldl ~ time_from_first_larc + x +
+  (1 + time_from_first_larc | record_number), data = larc_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA)
+ggplot(mod_df, aes(x = time_from_first_larc)) +
+  geom_point(aes(y = cv_ldl, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From LARC Start") +
+  theme_classic()
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+# Check model assumptions
+check_model(change_mod, re_formula = NA)
+``` 
+           
+## HDL (mg/dL)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+df %>%
+  filter(!is.na(larc)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_hdl, group = record_number,
+    color = larc
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On LARC?") +
+  theme_bw()
+```
+
+### Model results
+
+#### LARC users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(cv_hdl ~ cv_monthssincepcosdx * larc + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA)
+ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_hdl, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = larc, color = larc)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On LARC?") +
+  theme_classic()
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "larc", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+# Check model assumptions
+check_model(mod, re_formula = NA)
+```
+
+#### Change pre- vs. post-LARC (LARC users only)
+
+```{r}
+# Fit mixed model
+change_mod <- lmer(cv_hdl ~ time_from_first_larc + x +
+  (1 | record_number), data = larc_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA)
+ggplot(mod_df, aes(x = time_from_first_larc)) +
+  geom_point(aes(y = cv_hdl, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From LARC Start") +
+  theme_classic()
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+# Check model assumptions
+check_model(change_mod, re_formula = NA)
+``` 
+             
+## Systolic BP (mmHg)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+df %>%
+  filter(!is.na(larc)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_sbp, group = record_number,
+    color = larc
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On LARC?") +
+  theme_bw()
+```
+
+### Model results
+
+#### LARC users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(cv_sbp ~ cv_monthssincepcosdx * larc + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA)
+ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_sbp, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = larc, color = larc)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On LARC?") +
+  theme_classic()
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "larc", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+# Check model assumptions
+check_model(mod, re_formula = NA)
+```
+
+#### Change pre- vs. post-LARC (LARC users only)
+
+```{r}
+# Fit mixed model
+change_mod <- lmer(cv_sbp ~ time_from_first_larc + x +
+  (1 | record_number), data = larc_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA)
+ggplot(mod_df, aes(x = time_from_first_larc)) +
+  geom_point(aes(y = cv_sbp, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From LARC Start") +
+  theme_classic()
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+# Check model assumptions
+check_model(change_mod, re_formula = NA)
+```      
+     
+## Diastolic BP (mmHg)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+df %>%
+  filter(!is.na(larc)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_dbp, group = record_number,
+    color = larc
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On LARC?") +
+  theme_bw()
+```
+
+### Model results
+
+#### LARC users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(cv_dbp ~ cv_monthssincepcosdx * larc + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA)
+ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_dbp, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = larc, color = larc)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On LARC?") +
+  theme_classic()
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "larc", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+# Check model assumptions
+check_model(mod, re_formula = NA)
+```
+
+#### Change pre- vs. post-LARC (LARC users only)
+
+```{r}
+# Fit mixed model
+change_mod <- lmer(cv_dbp ~ time_from_first_larc + x +
+  (1 + time_from_first_larc | record_number), data = larc_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA)
+ggplot(mod_df, aes(x = time_from_first_larc)) +
+  geom_point(aes(y = cv_dbp, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From LARC Start") +
+  theme_classic()
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+# Check model assumptions
+check_model(change_mod, re_formula = NA)
+```                  
+             
