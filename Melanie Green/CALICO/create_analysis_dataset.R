@@ -290,11 +290,11 @@ df$combined_race <- apply(
 )
 df$combined_race <- factor(df$combined_race)
 # Mental health screening
-df$mental_health_screening <-
-  rowSums(!is.na(df[, c("cv_phq2", "cv_phq8", "cv_phq9", "cv_cesd20")]))
-df$mental_health_screening <- factor(df$mental_health_screening,
-  levels = 0:1, labels = c("No", "Yes")
-)
+# df$mental_health_screening <-
+#   rowSums(!is.na(df[, c("cv_phq2", "cv_phq8", "cv_phq9", "cv_cesd20")]))
+# df$mental_health_screening <- factor(df$mental_health_screening,
+#   levels = 0:1, labels = c("No", "Yes")
+# )
 # Combine two earliest obesity noticed columns
 df$pcosdx_obesitydx_age_combined <-
   coalesce(df$pcosdx_obesitydx_age, df$pcosdx_obesitydx_earliestage)
@@ -393,13 +393,17 @@ label(df$Obesity_raw) <- "Obesity Status (by raw value)"
 label(df$cv_a1c) <- "HbA1C"
 label(df$larc) <- "On LARC?"
 label(df$larc_ever) <- "LARC Ever Used?"
-label(df$mental_health_screening) <-
-  "PHQ-2, PHQ-8, PHQ-9 or CED-S Score Available?"
+# label(df$mental_health_screening) <-
+#   "PHQ-2, PHQ-8, PHQ-9 or CED-S Score Available?"
 label(df[, grep("___unk", colnames(df))]) <-
   as.list(sub(
     "choice=NA", "choice=Unknown/Not recorded",
     label(df[, grep("___unk", colnames(df))])
   ))
+# Drop unused levels
+l = label(df)
+df = droplevels(df)
+label(df) = as.list(l)
 # Save
 save(df, demo_vars, aim1_vars, nch_chop_vars, larc_vars, ses_vars,
   file = "./Data_Clean/analysis_data.RData"
