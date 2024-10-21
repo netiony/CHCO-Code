@@ -176,7 +176,7 @@ ses_vars <- c(
   "cv_shbg", "cv_fbg", "cv_2hrglucoseogtt", "cv_tg_fasting", "cv_tg", "cv_hdl",
   "cv_ldl", "cv_tc", "cv_alt", "cv_ast", "cv_hirsutism_num", "cv_hirsutism_cat",
   "cv_acneface", "cv_acneother___1", "cv_acneother___2", "cv_acneother___0",
-  "cv_acneother___unk","pcosdx_menarche",
+  "cv_acneother___unk", "pcosdx_menarche",
   "pcosdx_pmh___1", "pcosdx_pmh___2", "pcosdx_pmh___3", "pcosdx_pmh___4",
   "pcosdx_pmh___5", "pcosdx_pmh___6", "pcosdx_pmh___29", "pcosdx_pmh___7",
   "pcosdx_pmh___8", "pcosdx_pmh___9", "pcosdx_pmh___10", "pcosdx_pmh___11",
@@ -381,6 +381,7 @@ df$age_group <- cut(df$pcosdx_age, c(-Inf, 15, Inf),
 # Convert columns to numeric
 df$cv_a1c <- suppressWarnings(as.numeric(df$cv_a1c))
 df$redcap_repeat_instance <- as.numeric(df$redcap_repeat_instance)
+df$pcosdx_age <- as.numeric(df$pcosdx_age)
 # Fix/add labels
 label(df$insur_type) <- "Insurance Type"
 label(df$Region) <- "Region"
@@ -393,6 +394,7 @@ label(df$Obesity_raw) <- "Obesity Status (by raw value)"
 label(df$cv_a1c) <- "HbA1C"
 label(df$larc) <- "On LARC?"
 label(df$larc_ever) <- "LARC Ever Used?"
+label(df$pcosdx_age) <- "Age at time of PCOS diagnosis"
 # label(df$mental_health_screening) <-
 #   "PHQ-2, PHQ-8, PHQ-9 or CED-S Score Available?"
 label(df[, grep("___unk", colnames(df))]) <-
@@ -401,9 +403,9 @@ label(df[, grep("___unk", colnames(df))]) <-
     label(df[, grep("___unk", colnames(df))])
   ))
 # Drop unused levels
-l = label(df)
-df = droplevels(df)
-label(df) = as.list(l)
+l <- label(df)
+df <- droplevels(df)
+label(df) <- as.list(l)
 # Save
 save(df, demo_vars, aim1_vars, nch_chop_vars, larc_vars, ses_vars,
   file = "./Data_Clean/analysis_data.RData"

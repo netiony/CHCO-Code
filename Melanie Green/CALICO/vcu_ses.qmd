@@ -26,6 +26,7 @@ library(Hmisc)
 library(tidyverse)
 library(arsenal)
 library(glmnet)
+library(naniar)
 home_dir <- switch(Sys.info()["sysname"],
   "Darwin" = "/Users/timvigers/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/Vigers/BDC/Janet Snell-Bergeon/CALICO",
   "Windows" = "C:/Users/timvigers/OneDrive - The University of Colorado Denver/Vigers/BDC/Janet Snell-Bergeon/CALICO",
@@ -41,10 +42,6 @@ load("./Data_Clean/analysis_data.RData")
 # Select columns, remove "Other" and "Military" insurance,
 # combine races
 df <- df %>%
-  select(
-    record_number, redcap_repeat_instance, all_of(demo_vars), combined_race,
-    all_of(ses_vars)
-  ) %>%
   filter(!insur_type %in% c("Military", "Other {insur_other}"))
 df$combined_race[df$combined_race == "Pacific Islander"] <- "Other"
 df$combined_race[df$combined_race == "American Indian or Alaska Native"] <-
@@ -174,22 +171,56 @@ summary(t10, labelTranslations = labels(df), pfootnote = T)
 
 # Model selection
 
-## Baseline
-
-### Age at diagnosis
-
 ```{r}
-# List of potential covariates
-xvars <- c(
-  "combined_race", "ethnicity", "cv_acneface", "cv_acneother___1",
-  "cv_acneother___2", "cv_acneother___0", "cv_acneother___unk",
-  "pcosdx_menarche", "pcosdx_irregular_menses", "pcosdx_birthweight_oz",
-  "pcosdx_famhx_parent___27", "pcosdx_famhx___5", "cv_sbp", "cv_dbp", "cv_alt",
-  "cv_tt_perc", "cv_ft_perc"
-)
-# Create X and Y matrices
-X <- df %>%
+# Basic model dataframe
+mod_df <- df %>%
   group_by(record_number) %>%
   slice_min(redcap_repeat_instance) %>%
-  select()
+  select(
+    record_number, pcosdx_age, cv_tt_perc,
+    insur_type, combined_race, ethnicity,
+    pcosdx_birthweight_calc, contains("pcosdx_famhx"), cv_bmi_percentile,
+    cv_sbp, cv_dbp, cv_tc, cv_tg, cv_ast, cv_alt, pcosdx_irregular_menses,
+    pcosdx_pmh___6, contains("cv_acne"), cv_hirsutism_cat, pcosdx_specialty
+  )
+mod_df <- mod_df[, -caret::nearZeroVar(mod_df)]
+mod_df <- as.data.frame(mod_df)
+xvars <- colnames(mod_df)[which(colnames(mod_df) == "insur_type"):ncol(mod_df)]
+# Plot missing
+vis_miss(mod_df)
+gg_miss_var(mod_df, show_pct = T)
+# Basic formula
+f <- as.formula(paste0("~", paste0(xvars, collapse = "+")))
+# Set seed
+set.seed(1017)
+```
+
+Models were selected using 5 fold cross-validation to determine the optimal $\lambda$ value for LASSO regression. Variables with near zero variability were excluded from model selection (for example, parent history of reproductive cancer).
+
+## Age at diagnosis
+
+```{r}
+# X and Y matrices (from basic linear model)
+X <- lm(update(f, pcosdx_age ~ .), mod_df)
+X <- data.frame(X$model)
+Y <- X$pcosdx_age
+X$pcosdx_age <- NULL
+# CV
+cv <- cv.glmnet(data.matrix(X), Y, nfolds = 5)
+# Coefficients
+coef(cv, s = "lambda.min")
+```
+
+## Testosterone percent of normal
+
+```{r}
+# X and Y matrices (from basic linear model)
+X <- lm(update(f, cv_tt_perc ~ .), mod_df)
+X <- data.frame(X$model)
+Y <- X$cv_tt_perc
+X$cv_tt_perc <- NULL
+# CV
+cv <- cv.glmnet(data.matrix(X), Y, nfolds = 5)
+# Coefficients
+coef(cv, s = "lambda.min")
 ```
