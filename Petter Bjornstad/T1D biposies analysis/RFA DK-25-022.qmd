@@ -31,6 +31,10 @@ library(ggplot2)
 library(purrr)
 library(REDCapR)
 library(tidyr)
+library(udpipe)
+library(textrank)
+library(knitr)
+library(stringr)
 ```
 
 ```{r echo = F, include = F}
@@ -49,8 +53,8 @@ attempt <- redcap_read(redcap_uri = uri, token = attempt_tok)$data %>%
   mutate(visit = case_when(redcap_event_name == "visit_2_arm_1" ~ "BL",
                            redcap_event_name == "visit_3_arm_1" ~ "FU")) %>% 
   group_by(record_id) %>% fill(mrn, .direction = "down") %>% ungroup()
-  
 attempt$record_id <- as.character(attempt$record_id)
+
 panda <- redcap_read(redcap_uri = uri, token = panda_tok)$data %>% 
   group_by(record_id) %>% fill(mrn, .direction = "down") %>% ungroup()
 croc <- redcap_read(redcap_uri = uri, token = croc_tok)$data %>%
@@ -60,6 +64,9 @@ attempt$study = paste0("ATTEMPT-", attempt$visit)
 attempt$study <- factor(attempt$study, levels = c("ATTEMPT-BL", "ATTEMPT-FU"))
 panda$study = "PANDA"
 croc$study = "CROCODILE"
+
+# safety data compiled
+safety_dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/T1D RFA/safetyoutcomes_compiled.csv")
 ```
 
 ```{r echo = F, include=F}
@@ -81,10 +88,13 @@ croc_biopsy <- croc %>%
          starts_with("rna"), starts_with("cryo"))
 
 # merge all three df and calculate vars of interest
-t1d_biopsy_dat <- full_join(attempt_biopsy, panda_biopsy) %>%
-  full_join(croc_biopsy) %>%
+t1d_biopsy_dat <- full_join(croc_biopsy, panda_biopsy) %>%
+  group_by(mrn) %>%
+  fill(-(1:3), .direction = "down") %>% ungroup() %>%
+  full_join(attempt_biopsy) %>%
   filter(!is.na(bx_date)) %>%
-  mutate(avg_pass_core_cm = rowMeans(select(., c("pass1_core_cm", "pass2_core_cm", "pass3_core_cm", "pass4_core_cm")), na.rm = TRUE),
+  mutate(across(where(is.character), ~ na_if(., "-9999")),
+         avg_pass_core_cm = rowMeans(select(., c("pass1_core_cm", "pass2_core_cm", "pass3_core_cm", "pass4_core_cm")), na.rm = TRUE),
          core_n = rowSums(select(., c("pass1_tissue_yn", "pass2_tissue_yn", "pass3_tissue_yn","pass4_tissue_yn")), na.rm = TRUE),
          ln2_yn = case_when(!is.na(bx_ln2_id) ~ "Yes", T ~ "No"), 
          time_to_diagnostic_formalin = case_when(diagnostic_pass == 1 ~ as.numeric(difftime(diagnostic_formalin_time, pass1_time, units = "mins")),
@@ -107,11 +117,17 @@ t1d_biopsy_dat <- full_join(attempt_biopsy, panda_biopsy) %>%
                                   cryo_hypo_pass == 2 ~ as.numeric(difftime(cryo_time, pass2_time, units = "mins")),
                                   cryo_hypo_pass == 3 ~ as.numeric(difftime(cryo_time, pass3_time, units = "mins")),
                                   cryo_hypo_pass == 4 ~ as.numeric(difftime(cryo_time, pass4_time, units = "mins"))),
+         time_to_cryo_from_hypo = case_when(cryo_hypo_pass == 1 ~ as.numeric(difftime(cryo_time, hypo_time, units = "mins")-15),
+                                            cryo_hypo_pass == 2 ~ as.numeric(difftime(cryo_time, hypo_time, units = "mins")-15),
+                                            cryo_hypo_pass == 3 ~ as.numeric(difftime(cryo_time, hypo_time, units = "mins")-15),
+                                            cryo_hypo_pass == 4 ~ as.numeric(difftime(cryo_time, hypo_time, units = "mins")-15)),
           time_to_rna = case_when(rna_pass == 1 ~ as.numeric(difftime(rna_time, pass1_time, units = "mins")),
                                   rna_pass == 2 ~ as.numeric(difftime(rna_time, pass2_time, units = "mins")),
                                   rna_pass == 3 ~ as.numeric(difftime(rna_time, pass3_time, units = "mins")),
-                                  rna_pass == 4 ~ as.numeric(difftime(rna_time, pass4_time, units = "mins"))))
+                                  rna_pass == 4 ~ as.numeric(difftime(rna_time, pass4_time, units = "mins")))) %>%
+  distinct(record_id, bx_kit_id, .keep_all = TRUE)
 ```
+
 ### Combined
 ```{r echo = F, results = 'asis'}
 t1d_biopsy_dat$core_n_cat <- factor(t1d_biopsy_dat$core_n)
@@ -122,12 +138,13 @@ labs <- list(core_n = "Number of cores collected",
              time_to_diagnostic_glut = "Time to diagnostic (glut)", 
              time_to_oct = "Time to OCT",
              time_to_hypo = "Time to hypothermasol", 
-             time_to_cryo = "Time to cryostor", 
+             time_to_cryo = "Time to cryostor from harvest", 
+             time_to_cryo_from_hypo = "Time to cryostor from hypothermasol -15",
              time_to_rna = "Time to RNALater", 
              ln2_yn = "LN2 collected")
 
 summary(arsenal::tableby(study ~ core_n + core_n_cat + avg_pass_core_cm + time_to_diagnostic_formalin + time_to_diagnostic_glut + time_to_oct +
-                           time_to_hypo + time_to_cryo + time_to_rna + ln2_yn, data = t1d_biopsy_dat), 
+                           time_to_hypo + time_to_cryo + time_to_cryo_from_hypo + time_to_rna + ln2_yn, data = t1d_biopsy_dat), 
         labelTranslations = labs, test = F)
 ```
 ### ATTEMPT
@@ -142,6 +159,29 @@ summary(arsenal::tableby(study ~ core_n + core_n_cat + avg_pass_core_cm + time_t
         labelTranslations = labs, test = F)
 ```
 
+## Visualize biopsies over time
+```{r echo = F, warning = F}
+attempt_biopsy_n <- nrow(attempt_biopsy)
+croc_biopsy_n <- nrow(croc_biopsy)
+panda_biopsy_n <- nrow(panda_biopsy)
+
+bx_dates <- data.frame(study = c(rep("ATTEMPT", attempt_biopsy_n), rep("CROCODILE", croc_biopsy_n), rep("PANDA", panda_biopsy_n)),
+                     bx_date = c(attempt_biopsy$bx_date, croc_biopsy$bx_date, panda_biopsy$bx_date))
+```
+
+```{r echo = F, warning = F}
+ggplot(bx_dates, aes(x = bx_date, fill = study)) +
+  geom_histogram(binwidth = 30, color = "white",
+                 position = "stack") +
+  labs(x = "Date of Biopsy", 
+       y = "Frequency", 
+       title = "Biopsies of T1D over time",
+       fill = "Study") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 16)) + 
+  scale_fill_manual(values = c("#1d2d44","#3e5c76", "#748cab"))
+```
 ## Visualize enrollment over time
 ```{r echo = F, warning = F}
 attempt_screening <- attempt[!is.na(attempt$consent_date),]
@@ -172,7 +212,7 @@ ggplot(consent_dates, aes(x = consent_date, fill = study)) +
 
 
 ```{r echo = F, warning=F}
-# Convert consent_date to Date type if not already
+# Convert consent_date to Date type
 consent_dates <- consent_dates %>%
   mutate(consent_date = as.Date(consent_date))
 
@@ -200,12 +240,89 @@ For the safety data – we can pull from our safety officer report / continuous 
 
 
 ## Summary of safety and tolerability data
-
+```{r echo = F}
+safety_dat %>%
+  group_by(study, year) %>%
+  summarise(n_events = sum(item != ""), .groups = "drop") %>%
+  ggplot(aes(x = year, y = n_events, fill = study)) +
+  geom_col(color = "white") +
+  labs(x = "Date", 
+       y = "Number of events reported", 
+       fill = "Study") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 16)) + 
+  scale_fill_manual(values = c("#1d2d44","#3e5c76", "#748cab", "#8ecae6"))
+```
+```{r echo = F, results='asis'}
+kable(safety_dat %>% filter(item != ""))
+```
 
 ## Kidney MRIs
 
-showcase the kidney MRIs (i.e., number, and what time of sequences)
+report the number of participants with the sequences (R2*, ASL, ADC, T1 mapping, TKV)
 
+```{r echo = F}
+panda_mri <- panda %>%
+  select(matches("^(adc|bold|volume|pcasl3d|sto2)"))
+croc_mri <- croc %>%
+  select(matches("^(adc|bold|volume|pcasl3d|pasl|sto2)"))
 
+# Function to format the column names and count non-missing values
+summarize_non_missing <- function(df) {
+  df %>%
+    summarise(across(everything(), ~ sum(!is.na(.)), .names = "count_{.col}")) %>%
+    pivot_longer(cols = everything(), names_to = "variable", values_to = "count") %>%
+    mutate(
+      variable = str_replace(variable, "count_", "") %>%
+        str_replace_all("_", " ") %>%
+        str_to_title()
+    )
+}
+
+panda_summary <- summarize_non_missing(panda_mri) %>%
+  mutate(variable = gsub(" L ", " Left ", variable),
+         variable = gsub(" R ", " Right ", variable),
+         measure = case_when(str_detect(variable, "^Adc") ~ "ADC",
+                             str_detect(variable, "^Bold Post") ~ "Post-R2*",
+                             str_detect(variable, "^Bold Pre") ~ "Pre-R2*",
+                             str_detect(variable, "^Pcasl3d") ~ "pCASL 3D",
+                             str_detect(variable, "^Volume") ~ "Kidney Volume",
+                             TRUE ~ "Other"),
+         side = ifelse(str_detect(variable, "Left"), "Left", "Right"),
+         location = str_extract(variable, "(Cortex|Kidney|Medulla)$"),
+         location = ifelse(is.na(location), "", location)) %>%
+  select(measure, side, location, count) %>%
+  group_by(measure) %>%
+  arrange(location, .by_group = T)
+
+croc_summary <- summarize_non_missing(croc_mri) %>%
+  mutate(variable = gsub(" L ", " Left ", variable),
+         variable = gsub(" R ", " Right ", variable),
+         measure = case_when(str_detect(variable, "^Adc") ~ "ADC",
+                             str_detect(variable, "^Bold.*Pf") ~ "Post-R2*",
+                             str_detect(variable, "^Bold.*Bl") ~ "Pre-R2*",
+                             str_detect(variable, "^Pcasl3d") ~ "pCASL 3D",
+                             str_detect(variable, "^Volume") ~ "Kidney Volume",
+                             str_detect(variable, "^Sto2") ~ "StO2",
+                             str_detect(variable, "^Pasl2d") ~ "pASL 2D",
+                             TRUE ~ "Other"),
+         side = ifelse(str_detect(variable, "Left"), "Left", "Right"),
+         location = str_extract(variable, "(Cortex|Kidney|Medulla| C| M)$"),
+         location = case_when(location == " C" ~ "Cortex", location == " M" ~ "Medulla", T ~ location),
+         location = ifelse(is.na(location), "", location)) %>%
+  select(measure, side, location, count) %>%
+  group_by(measure) %>%
+  arrange(location, .by_group = T)
+```
+
+### PANDA
+```{r echo = F, results = 'asis'}
+kable(panda_summary, col.names = c("Measure", "Side", "Location", "N"))
+```
+### CROCODILE
+```{r echo = F, results = 'asis'}
+kable(croc_summary, col.names = c("Measure", "Side", "Location", "N"))
+```
 ## Ian’s OCT data
 
