@@ -1,11 +1,5 @@
----
-title: "OAT scRNA & PAH Clearance"
-author: "Hailey Hampson"
-date: "2024-09-24"
-output: html_document
---- 
-
-```{r libraries, echo=F, include = F}
+#OAT scRNA & PAH Clearance Analysis ----
+#1. Load Libraries ----
 library(tidyverse)
 library(BiocManager)
 library(arsenal)
@@ -31,22 +25,22 @@ library(knitr)
 #Increase Memory
 mem.maxVSize(64000000000)
 
-#Set up directories
+#2. Set up directories----
 dir.dat <- c("/Users/hhampson/Dropbox/Bjornstad data")
 dir.home <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/OATs and PAH/OATs and PAH Clearance")
 
-#Load functions
-source(fs::path(dir.home,"OAT_PAH_Functions.R"))
-```
+#3. Load functions ----
+source(fs::path(dir.home,"2_OAT_Functions.R"))
 
-# scRNA
-```{r echo = F}
-# Kidney scRNA data processing
+#4. Load & Process Data ----
+##a. Kidney scRNA----
 so_kidney_sc <- readRDS(fs::path(dir.dat,"Kidney scRNA","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
 
-# Add missing covariate meta data to Seurat object
+##b. Metadata ----
 meta_raw <- read.csv(fs::path(dir.dat,"Clinical Data","renal_clearance_biopsy.csv"))
+harm_data <- read.csv()
 
+##c. Process Data----
 #Filter out meta data participants without sc 
 ids <- unique(so_kidney_sc@meta.data$cryostor_id)
 meta_raw <- meta_raw %>% 
@@ -73,22 +67,40 @@ so_kidney_sc <- subset(so_kidney_sc, visit != "12_months_post_surgery")
 #Filter to RH/RH2, CROCODILE, and IMPROVE
 so_kidney_sc <- subset(so_kidney_sc, study == "subset")
 
+#Normalize & Scale Data
 so_kidney_sc <- NormalizeData(so_kidney_sc)
 so_kidney_sc <- ScaleData(so_kidney_sc)
-# # PCA
-# so_kidney_sc <- RunPCA(so_kidney_sc, features = VariableFeatures(object = so_kidney_sc))
-# ElbowPlot(so_kidney_sc)
-# # Cluster cells
-# so_kidney_sc <- FindNeighbors(so_kidney_sc)
-# so_kidney_sc <- FindClusters(so_kidney_sc)
-# # Perform UMAP and tSNE
-# so_kidney_sc <- RunUMAP(so_kidney_sc, dims = 1:15)
-# DimPlot(so_kidney_sc, reduction = "umap")
-```
 
-```{r}
+#5. Visualize Data ----
+#Perform PCA
+so_kidney_sc <- RunPCA(so_kidney_sc, features = VariableFeatures(object = so_kidney_sc))
+ElbowPlot(so_kidney_sc)
+# Cluster cells
+so_kidney_sc <- FindNeighbors(so_kidney_sc)
+so_kidney_sc <- FindClusters(so_kidney_sc)
+# Perform UMAP and tSNE
+so_kidney_sc <- RunUMAP(so_kidney_sc, dims = 1:15)
+DimPlot(so_kidney_sc, reduction = "umap")
+
+#UMAPs by Groups 
+#By sglti2
+jpeg(file = fs::path(dir.home,"Results_and_Figures","Umap_by_SGLT2i.jpeg"))
+DimPlot(so_kidney_sc, reduction = "umap", group.by = "sglt2i_ever")
+dev.off()
+#by disease status
+jpeg(file = fs::path(dir.home,"Results_and_Figures","Umap_by_disease_status.jpeg"))
+DimPlot(so_kidney_sc, reduction = "umap", group.by = "group")
+dev.off()
+#General
+jpeg(file = fs::path(dir.home,"Results_and_Figures","Umap.jpeg"))
+DimPlot(so_kidney_sc, reduction = "umap")
+dev.off()
+
+#6. Differential Expression Analysis ----
+#Set Gene Sets
 all.genes = rownames(so_kidney_sc)
 oat.genes <- all.genes[which(grepl("SLC22",all.genes))]
 
-```
+#Differential Expression of SLC22 genes in PT by PAH a
+
 
