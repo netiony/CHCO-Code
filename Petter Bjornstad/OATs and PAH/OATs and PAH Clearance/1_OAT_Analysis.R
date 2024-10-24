@@ -28,7 +28,7 @@ mem.maxVSize(64000000000)
 #2. Set up directories----
 dir.dat <- c("/Users/hhampson/Dropbox/Bjornstad data")
 dir.home <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/OATs and PAH/OATs and PAH Clearance")
-
+dir.dat2 <- c("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean")
 #3. Load functions ----
 source(fs::path(dir.home,"2_OAT_Functions.R"))
 
@@ -38,13 +38,22 @@ so_kidney_sc <- readRDS(fs::path(dir.dat,"Kidney scRNA","PB_90samples_Harmony_rp
 
 ##b. Metadata ----
 meta_raw <- read.csv(fs::path(dir.dat,"Clinical Data","renal_clearance_biopsy.csv"))
-harm_data <- read.csv()
+harm_data <- read.csv(fs::path(dir.dat2,"harmonized_dataset.csv")) %>% 
+  dplyr::select(record_id,cryostor_id,visit,pah_clear_bsa,pah_clear_abs,pah_bsa,
+                pah_bsa_plasma_urine)
 
 ##c. Process Data----
 #Filter out meta data participants without sc 
 ids <- unique(so_kidney_sc@meta.data$cryostor_id)
 meta_raw <- meta_raw %>% 
   filter(cryostor_id %in% ids) 
+ids2 <- unique(so_kidney_sc@meta.data$record_id)
+harm_data <- harm_data %>% 
+  filter(record_id %in% ids2) %>% 
+  filter(!is.na(pah_clear_bsa)) %>% 
+  # filter(visit=="baseline") %>% 
+  dplyr::select(record_id,visit,pah_clear_bsa)
+meta_raw <- tidylog::left_join(meta_raw,harm_data,by=c("record_id","visit"))
 
 #Merge new metadata with 
 meta_kidney_sc <-  tidylog::left_join(so_kidney_sc@meta.data, meta_raw,by="cryostor_id")
