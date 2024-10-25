@@ -91,25 +91,13 @@ so_kidney_sc <- FindClusters(so_kidney_sc)
 so_kidney_sc <- RunUMAP(so_kidney_sc, dims = 1:15)
 DimPlot(so_kidney_sc, reduction = "umap")
 
-#UMAPs by Groups 
-#By sglti2
-jpeg(file = fs::path(dir.home,"Results_and_Figures","Umap_by_SGLT2i.jpeg"))
-DimPlot(so_kidney_sc, reduction = "umap", group.by = "sglt2i_ever")
-dev.off()
-#by disease status
-jpeg(file = fs::path(dir.home,"Results_and_Figures","Umap_by_disease_status.jpeg"))
-DimPlot(so_kidney_sc, reduction = "umap", group.by = "group")
-dev.off()
-#General
-jpeg(file = fs::path(dir.home,"Results_and_Figures","Umap.jpeg"))
-DimPlot(so_kidney_sc, reduction = "umap")
-dev.off()
 
 #6. Differential Expression Analysis ----
 #Set Gene Sets
 all.genes = rownames(so_kidney_sc)
 oat.genes <- all.genes[which(grepl("SLC22",all.genes))]
 
-#Differential Expression of SLC22 genes in PT by PAH a
+
+
 
 
