@@ -1,0 +1,108 @@
+---
+title: "Teen-LABS Somascan analysis"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    code_folding: hide
+---
+
+```{r libraries}
+#| include: false
+library(limma)
+library(clusterProfiler)
+library(ReactomePA)
+library(enrichplot)
+library(Hmisc)
+library(knitr)
+library(tidyverse)
+library(gtsummary)
+library(ggpubr)
+library(nlme)
+library(parallel)
+library(emmeans)
+library(RColorBrewer)
+library(VennDiagram)
+library(broom.mixed)
+#library(xlsx)
+```
+
+```{r clean data}
+# source("/Users/timvigers/GitHub/CHCO-Code/Petter Bjornstad/Teen-LABS/create_teen_labs_analysis_dataset.R")
+load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/analysis_dataset.RData")
+# Tim already log transformed proteins when creating dataframe
+df$map <- NA
+for (i in 1:nrow(df)) {
+  df[i,]$map <- df[i,]$dbp + ((1/3) * (df[i,]$sbp - df[i,]$dbp))
+}
+
+# export baseline and 1 year data for Jeet
+jeet <- df %>% dplyr::select(ID, visit, contains("seq")) %>% dplyr::filter(visit %in% c("Month 1", "Year 1"))
+write.csv(jeet, "/Users/pylell/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/Jeet/teen_labs_proteomics_jeet.csv")
+write.csv(analyte_info, "/Users/pylell/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/Jeet/analyte_info.csv")
+
+# create new variable for UACR in mg/g
+df$CREAU_g_dL <- df$CREAU / 1000
+df$UACRATIO_mg_g <- df$ALBU / df$CREAU_g_dL  
+label(df$UACRATIO_mg_g) <- "UACR (mg/g)"
+
+# recode visit as numeric
+df$visnum <-  
+  case_when(
+  df$visit == "Month 1" ~ 1,
+  df$visit == "Month 6" ~ 6,
+  df$visit == "Year 1" ~ 12,
+  df$visit == "Year 2" ~ 24,
+  df$visit == "Year 3" ~ 36,
+  df$visit == "Year 4" ~ 48,
+  df$visit == "Year 5" ~ 60,
+  .default = NA
+)
+
+```
+
+## Longitudinal mixed models
+
+```{r}
+seqs <- analyte_info$AptName
+# Parallel processing
+cl <- makeForkCluster(8)
+res <- NULL
+# NOTE: this is not working, because res is not defined inside the function
+rows <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0("bmi ~", y, " + visnum +", y,"*visnum"))
+  m <- lme(f, random = ~1|ID, data = df, na.action = na.omit)
+  temp <- coef(summary(m))[4,]
+  temp$protein <- y
+  res <- rbind(res, temp)
+  return(res)
+})
+stopCluster(cl)
+# Save results
+lmm_res <- data.frame(do.call(rbind, rows)) %>%
+  dplyr::select(protein, term, estimate, p.value) %>%
+  filter(term != "(Intercept)")
+lmm_res$AptName <- analyte_info$AptName[match(lmm_res$protein, analyte_info$AptName)]
+lmm_res$protein <- analyte_info$UniProt[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$Target <- analyte_info$Target[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$TargetFullName <- analyte_info$TargetFullName[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$Uniprot <- analyte_info$UniProt[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res <- split.data.frame(lmm_res, lmm_res$term)
+# Write the change from baseline at each visit as a new excel sheet
+names <- names(lmm_res)
+lmm_res <- lapply(names(lmm_res), function(n) {
+  d <- lmm_res[[n]]
+  d <- d[, c("AptName", "protein", "Target", "TargetFullName", "estimate", "p.value")]
+  d$p.value.adj <- p.adjust(d$p.value, method = "fdr")
+  d <- d[order(d$estimate, decreasing = T), ]
+  colnames(d) <- c("AptName", "UniProt", "Target", "TargetFullName", "logFC", "p value", "q value")
+  return(d)
+})
+openxlsx::write.xlsx(lmm_res, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/Teen LABS change_from_m1.xlsx", sheetName=names)
+```
+
