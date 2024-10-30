@@ -255,20 +255,44 @@ ses_vars <- c(
   "cv_referrals___12", "cv_referrals___60",
   "cv_referrals___unk"
 )
-# Obesity categories
+# Weight categories
 df <- df %>%
   mutate(
-    Obesity_perc = case_when(
+    weight_perc = case_when(
+      !is.na(cv_bmi_percentile) & cv_bmi_percentile < 85 ~ "Normal weight",
+      !is.na(cv_bmi_percentile) & cv_bmi_percentile >= 85 &
+        cv_bmi_percentile < 95 ~ "Overweight",
+      !is.na(cv_bmi_percentile) & cv_bmi_percentile >= 95 ~ "Obese",
+      !is.na(cv_bmi) & cv_bmi < 25 ~ "Normal weight",
+      !is.na(cv_bmi) & cv_bmi >= 25 & cv_bmi < 30 ~ "Overweight",
+      !is.na(cv_bmi) & cv_bmi >= 30 ~ "Obese",
+      .default = NA
+    ),
+    weight_raw = cut(cv_bmi,
+      breaks = c(-Inf, 25, 30, Inf), right = F,
+      labels = c("Normal weight", "Overweight", "Obese")
+    )
+  )
+df$weight_perc <- factor(df$weight_perc,
+  levels = c("Normal weight", "Overweight", "Obese")
+)
+df$weight_raw <- factor(df$weight_raw,
+  levels = c("Normal weight", "Overweight", "Obese")
+)
+# Overweight yes no categories
+df <- df %>%
+  mutate(
+    overweight_perc = case_when(
       !is.na(cv_bmi_percentile) & cv_bmi_percentile >= 85 ~ "Yes",
       !is.na(cv_bmi_percentile) & cv_bmi_percentile < 85 ~ "No",
       is.na(cv_bmi_percentile) & cv_bmi >= 25 ~ "Yes",
       is.na(cv_bmi_percentile) & cv_bmi < 25 ~ "No",
       .default = NA
     ),
-    Obesity_raw = ifelse(cv_bmi >= 25, "Yes", "No")
+    overweight_raw = ifelse(cv_bmi >= 25, "Yes", "No")
   )
-df$Obesity_perc <- factor(df$Obesity_perc, levels = c("No", "Yes"))
-df$Obesity_raw <- factor(df$Obesity_raw, levels = c("No", "Yes"))
+df$overweight_perc <- factor(df$overweight_perc, levels = c("No", "Yes"))
+df$overweight_raw <- factor(df$overweight_raw, levels = c("No", "Yes"))
 # Combined race column
 races <- c(
   "Caucasian", "African American", "Asian", "Pacific Islander",
@@ -289,6 +313,27 @@ df$combined_race <- apply(
   }
 )
 df$combined_race <- factor(df$combined_race)
+# Combined family history - luckily the column numbers for family and non-family
+# match up
+hist_labels <- sub(
+  "Non-parent family history \\(include all history, not only from the diagnostic visit\\)\\. Including siblings, first cousins, aunts, uncles, and grandparents. \\(choice\\=",
+  "", as.character(label(df[, grep("pcosdx_famhx___", colnames(df))]))
+)
+hist_labels <- sub("\\)", "", hist_labels)
+hist_labels <- sub(" \\{pcosdx_famhx_family_otherdx\\}", "", hist_labels)
+hist_labels <- paste0("Any family history of ", hist_labels, "?")
+hist_vars <- sub("pcosdx_famhx___", "", colnames(df[, grep(
+  "pcosdx_famhx___", colnames(df)
+)]))
+any_hist <- data.frame(lapply(hist_vars, function(v) {
+  parent <- df[, paste0("pcosdx_famhx_parent___", v)]
+  nonparent <- df[, paste0("pcosdx_famhx___", v)]
+  any <- (parent == "Checked") + (nonparent == "Checked")
+  any <- factor(any, levels = 0:2, labels = c("No", "Yes", "Yes"))
+  return(any)
+}))
+colnames(any_hist) <- paste0("pcosdx_any_famhx___", hist_vars)
+df <- cbind(df, any_hist)
 # Mental health screening
 # df$mental_health_screening <-
 #   rowSums(!is.na(df[, c("cv_phq2", "cv_phq8", "cv_phq9", "cv_cesd20")]))
@@ -389,12 +434,13 @@ label(df$ethnicity) <- "Ethnicity"
 label(df$pcosdx_age) <- "Age at time of PCOS diagnosis"
 label(df$age_group) <- "Age Group at Diagnosis"
 label(df$combined_race) <- "Race"
-label(df$Obesity_perc) <- "Obesity Status (by percentile and raw value)"
-label(df$Obesity_raw) <- "Obesity Status (by raw value)"
+label(df$overweight_perc) <- "Overweight Status (by percentile and raw value)"
+label(df$overweight_raw) <- "Overweight Status (by raw value)"
 label(df$cv_a1c) <- "HbA1C"
 label(df$larc) <- "On LARC?"
 label(df$larc_ever) <- "LARC Ever Used?"
 label(df$pcosdx_age) <- "Age at time of PCOS diagnosis"
+label(df[, paste0("pcosdx_any_famhx___", hist_vars)]) <- as.list(hist_labels)
 # label(df$mental_health_screening) <-
 #   "PHQ-2, PHQ-8, PHQ-9 or CED-S Score Available?"
 label(df[, grep("___unk", colnames(df))]) <-

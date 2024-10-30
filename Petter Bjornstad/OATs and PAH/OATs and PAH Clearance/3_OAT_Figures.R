@@ -17,10 +17,25 @@
 # DimPlot(so_kidney_sc, reduction = "umap")
 # dev.off()
 
+#UMAPs by Groups 
+#By sglti2
+jpeg(file = fs::path(dir.home,"Results_and_Figures","Umap_by_SGLT2i.jpeg"))
+DimPlot(so_kidney_sc, reduction = "umap", group.by = "sglt2i_ever")
+dev.off()
+#by disease status
+jpeg(file = fs::path(dir.home,"Results_and_Figures","Umap_by_disease_status.jpeg"))
+DimPlot(so_kidney_sc, reduction = "umap", group.by = "group")
+dev.off()
+#General
+jpeg(file = fs::path(dir.home,"Results_and_Figures","Umap.jpeg"))
+DimPlot(so_kidney_sc, reduction = "umap")
+dev.off()
+
 #Diff exp by sex
 pdf(file = fs::path(dir.home,"Results_and_Figures","Volcano_bySex_allcells_all_disease.pdf"),width=15,height=10)
-de.markers(so_kidney_sc, NULL, "sex", id1 = "Female", id2 = "Male", NULL, "_top")
-m_top <- m_top %>% head(2000)
+Idents(so_kidney_sc) <- so_kidney_sc$PT
+de.markers(so_kidney_sc, oat.genes, "sglt2i_ever", id2 = "Yes", id1 = "No", "PT", "")
+m_top <- m 
 significant_genes <- m_top %>% filter(p_val_adj < 0.05)
 
 # Select the top 10 positive and top 10 negative log2FC genes that are significant
@@ -34,11 +49,11 @@ p <- EnhancedVolcano(m_top,
                      lab = labels,
                      x = 'avg_log2FC',
                      y = 'p_val_adj',
-                     title = paste0("Differentially Expressed Genes by Sex (Pseudobulk)"),
-                     subtitle = paste0("Positive Log2 FC = Greater Expression in Female vs. Male\n",
+                     title = paste0("Differentially Expressed OAT Genes by SLGT2i (Pseudobulk PT)"),
+                     subtitle = paste0("Positive Log2 FC = Greater Expression in SGLT2i Yes vs. No\n",
                                        "(Significant at FDR-P<0.05, FC Threshold = 0.5)"),
                      pCutoff = 0.05,
-                     FCcutoff = 1.4,
+                     FCcutoff = 0.1,
                      labFace = 'bold',
                      pointSize = 4,
                      labSize = 5,
@@ -89,7 +104,7 @@ dev.off()
 
 #By Cell Types
 #Sex
-cell_types <- c("MON","MAC","EC-GC","EC-AEA","EC-PTC")
+cell_types <- c("PT-1","PT-2","PT-3","PT-4","PT-5")
 pdf(file = fs::path(dir.home,"Results_and_Figures","Volcano_bySex_byCelltypes.pdf"),width=15,height=8)
 for (cell in cell_types){
   de.markers(so_kidney_sc, genes, "sex", id1 = "Female", id2 = "Male", cell, "_top")

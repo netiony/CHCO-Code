@@ -5,6 +5,7 @@ date: "2024-09-24"
 output: html_document
 --- 
 
+#1. Load Libraries & Directories
 ```{r libraries, echo=F, include = F}
 library(tidyverse)
 library(BiocManager)
@@ -27,30 +28,69 @@ library(GSEABase)
 library(msigdbr)
 library(kableExtra)
 library(knitr)
+library(EnhancedVolcano)
+library(MAST)
+library(future)
+library(slingshot)
+library(SingleCellExperiment)
+library(RColorBrewer)
+library(scales)
+library(viridis)
+library(UpSetR)
+library(pheatmap)
+library(fgsea)
+library(tradeSeq)
+library(DescTools)
+# remotes::install_github("dynverse/dynfeature")
+# remotes::install_github("dynverse/dynplot")
+# remotes::install_github("elolab/Totem",force=T)
+library(Totem)
+library(dyndimred)
+library(pushoverr)
 
 #Increase Memory
 mem.maxVSize(64000000000)
 
+# Parallel processing
+# plan(multicore, workers = 16)
+# options(future.globals.maxSize=2e9)
+# options(future.globals.maxSize = NULL)   # 24 GB in bytes
+plan(multisession, workers = 10)
+
 #Set up directories
 dir.dat <- c("/Users/hhampson/Dropbox/Bjornstad data")
 dir.home <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/OATs and PAH/OATs and PAH Clearance")
+dir.dat2 <- c("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean")
 
 #Load functions
-source(fs::path(dir.home,"OAT_PAH_Functions.R"))
+# source(fs::path(dir.home,"OAT_PAH_Functions.R"))
 ```
 
-# scRNA
+#2. Load Data & Format
 ```{r echo = F}
-# Kidney scRNA data processing
+##a. Kidney scRNA----
 so_kidney_sc <- readRDS(fs::path(dir.dat,"Kidney scRNA","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
 
-# Add missing covariate meta data to Seurat object
+##b. Metadata ----
 meta_raw <- read.csv(fs::path(dir.dat,"Clinical Data","renal_clearance_biopsy.csv"))
+harm_data <- read.csv(fs::path(dir.dat2,"harmonized_dataset.csv")) %>% 
+  dplyr::select(record_id,cryostor_id,visit,pah_clear_bsa,pah_clear_abs,pah_bsa,
+                pah_bsa_plasma_urine,group)
 
+##c. Process Data----
 #Filter out meta data participants without sc 
 ids <- unique(so_kidney_sc@meta.data$cryostor_id)
 meta_raw <- meta_raw %>% 
   filter(cryostor_id %in% ids) 
+ids2 <- unique(so_kidney_sc@meta.data$record_id)
+harm_data <- harm_data %>% 
+  filter(record_id %in% ids2) %>% 
+  filter(!is.na(pah_clear_bsa)) %>% 
+  # filter(visit=="baseline") %>% 
+  mutate(diabetes=ifelse(group=="Type 1 Diabetes"|group=="Type 2 Diabetes","Yes","No")) %>% 
+  dplyr::select(record_id,visit,pah_clear_bsa,diabetes,pah_clear_abs,pah_bsa,
+                pah_bsa_plasma_urine)
+meta_raw <- tidylog::left_join(meta_raw,harm_data,by=c("record_id","visit"))
 
 #Merge new metadata with 
 meta_kidney_sc <-  tidylog::left_join(so_kidney_sc@meta.data, meta_raw,by="cryostor_id")
@@ -73,22 +113,149 @@ so_kidney_sc <- subset(so_kidney_sc, visit != "12_months_post_surgery")
 #Filter to RH/RH2, CROCODILE, and IMPROVE
 so_kidney_sc <- subset(so_kidney_sc, study == "subset")
 
+#Normalize & Scale Data
 so_kidney_sc <- NormalizeData(so_kidney_sc)
 so_kidney_sc <- ScaleData(so_kidney_sc)
-# # PCA
-# so_kidney_sc <- RunPCA(so_kidney_sc, features = VariableFeatures(object = so_kidney_sc))
-# ElbowPlot(so_kidney_sc)
-# # Cluster cells
-# so_kidney_sc <- FindNeighbors(so_kidney_sc)
-# so_kidney_sc <- FindClusters(so_kidney_sc)
-# # Perform UMAP and tSNE
-# so_kidney_sc <- RunUMAP(so_kidney_sc, dims = 1:15)
-# DimPlot(so_kidney_sc, reduction = "umap")
+
 ```
 
+#3. Visualize Data 
+```{r Visualize Data}
+#Perform PCA
+so_kidney_sc <- RunPCA(so_kidney_sc, features = VariableFeatures(object = so_kidney_sc))
+ElbowPlot(so_kidney_sc)
+# Cluster cells
+so_kidney_sc <- FindNeighbors(so_kidney_sc)
+so_kidney_sc <- FindClusters(so_kidney_sc)
+# Perform UMAP and tSNE
+so_kidney_sc <- RunUMAP(so_kidney_sc, dims = 1:15)
+DimPlot(so_kidney_sc, reduction = "umap")
+DimPlot(so_kidney_sc, reduction = "umap", group.by = "sglt2i_ever")
+DimPlot(so_kidney_sc, reduction = "umap", group.by = "diabetes")
+DimPlot(so_kidney_sc, reduction = "umap", group.by = "group")
+```
+
+#4. Differential Expression Analysis
 ```{r}
+#Define Gene Sets
 all.genes = rownames(so_kidney_sc)
 oat.genes <- all.genes[which(grepl("SLC22",all.genes))]
 
+#Differential Expression of SLC22 genes in PT by Group
+#Define Proximal Tubule Cells (PT)
+so_kidney_sc@meta.data$PT <- ifelse(grepl("PT",so_kidney_sc$celltype_rpca),"PT","")
+Idents(so_kidney_sc) <- so_kidney_sc$PT
+
+#PAH Clearance Normal vs. Low 
+so_kidney_sc@meta.data$pah_norm <- ifelse(so_kidney_sc@meta.data$pah_clear_bsa>=625,"Normal","Low")
+## Top 2000 genes
+de.markers(so_kidney_sc, oat.genes, "pah_norm", id2 = "Normal", id1 = "Low", "PT", "_top")
+m_top <- m_top %>% head(2000)
+
+# significant_genes <- m_top %>% filter(p_val_adj < 0.05)
+# 
+# # Select the top 10 positive and top 10 negative log2FC genes that are significant
+# top_genes <- rbind(
+#   significant_genes %>% arrange(desc(avg_log2FC)) %>% head(10),  # Top 10 positive log2FC
+#   significant_genes %>% arrange(avg_log2FC) %>% head(10)         # Top 10 negative log2FC
+# )
+# 
+# labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+# p <- EnhancedVolcano(m_top,
+#                      lab = labels,
+#                      x = 'avg_log2FC',
+#                      y = 'p_val_adj',
+#                      title = paste0("Differentially Expressed OAT Genes by PAH Clearance (Pseudobulk PT)"),
+#                      subtitle = paste0("Positive Log2 FC = Greater Expression in PAH Clearance Normal vs. Low\n",
+#                                        "(Significant at FDR-P<0.05, FC Threshold = 0.5)"),
+#                      pCutoff = 0.05,
+#                      FCcutoff = 0.1,
+#                      labFace = 'bold',
+#                      pointSize = 4,
+#                      labSize = 5,
+#                      drawConnectors = TRUE,
+#                      widthConnectors = 1.0,
+#                      colConnectors = 'black',
+#                      legendPosition=NULL,
+#                      boxedLabels = TRUE,
+#                      max.overlaps=20)
+# plot(p)
+
 ```
 
+#5. Model-based Analysis of Single-cell Transcriptomics 
+```{r}
+# Get expression matrix (counts)
+expr_matrix <- as.matrix(GetAssayData(so_kidney_sc, layer = "counts"))
+
+# Extract metadata containing your continuous variable, e.g., PAH clearance
+metadata <- so_kidney_sc@meta.data
+
+# Assuming the rownames of your metadata or expression matrix correspond to unique cell IDs
+metadata$wellKey <- rownames(metadata)
+
+# Create SingleCellAssay object with the updated metadata containing wellKey
+sca <- FromMatrix(exprsArray = expr_matrix, cData = metadata)
+
+#Specify the Regression Model
+zlm_model <- zlm(~ pah_clear_bsa, sca)
+
+#Extract results
+# Test for the effect of PAH clearance
+summary_res <- summary(zlm_model, doLRT='pah_clearance')
+
+# Extract the summary DataFrame
+summary_dt <- summary_res$datatable
+
+# Filtering for significant genes based on a specific threshold (e.g., p < 0.05)
+significant_genes <- summary_dt[summary_dt$component == "H" & summary_dt$`Pr(>Chisq)` < 0.05,]
+
+# Plot the effect of PAH clearance on specific genes
+# Example: Plot gene expression of gene X against PAH clearance
+gene_of_interest <- "GeneX"
+
+ggplot(metadata, aes(x = pah_clearance, y = expr_matrix[gene_of_interest, ])) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(title = paste("Expression of", gene_of_interest, "vs PAH clearance"))
+
+# Include additional covariates like batch or condition
+zlm_model <- zlm(~ pah_clearance + batch + condition, sca)
+
+
+```
+
+#6. Pseudotime Analysis
+```{r pseudotime analysis}
+## Make SO into SCE object for pseudotime analysis
+sce_PT <- as.SingleCellExperiment(subset(so_kidney_sc, PT == "PT"), assay = "RNA")
+rm(harm_data,meta_kidney_sc,meta_raw,so_kidney_sc)
+
+# Totem clustering for trajectory analysis
+gc()
+sce_PT <- PrepareTotem(sce_PT)
+sce_PT <- RunDimRed(object = sce_PT,
+                    dim.red.method = "pca",
+                    dim.red.features = row.names(m_top),
+                    dim.reduction.par.list = list(ndim=5))
+
+## where so@assays$RNA@counts is the normalized expression count
+# gc()
+# dim_red <- dimred_pca(t(subset(so, generaltype == "PT" & celltype != "PT_lowQuality")@assays$RNA@counts), ndim=2)
+dim_red <- reducedDim(sce_PT, type = "pca")
+
+sce_PT <- RunClustering(sce_PT,
+                        k.range = 3:20,
+                        min.cluster.size = 5,
+                        N.clusterings=10000)
+gc()
+viz_cell <- VizCellConnectivity(sce_PT,viz.dim.red = dim_red)
+
+pushover(message = "done w/ VizCellConnectivity")
+
+sce_PT <- SelectClusterings(sce_PT,selection.method = 1,
+                       selection.N.models = 10,
+                       selection.stratified=FALSE,
+                       prior.clustering = NULL)
+VizMST(sce_PT,clustering.names = ReturnTrajNames(sce_PT),viz.dim.red = dim_red)
+```
