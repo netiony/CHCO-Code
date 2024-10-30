@@ -1,0 +1,302 @@
+---
+title: "scRNA discrepancy investigation"
+author: "Ye Ji Choi"
+date: "today"
+date-format: long
+execute: 
+  echo: false
+  warning: false
+  messages: false
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
+    code-fold: true
+    self-contained: true
+    fig-cap-location: top
+    page-layout: full
+editor: source
+---
+
+```{r echo = F}
+library(limma)
+# scRNA discrepancy investigation
+# data from harmonized dataset
+dat <- read.csv("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv") %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+                   .by = c(kit_id)) %>% filter(!is.na(kit_id)) %>%
+  dplyr::mutate(record_id = paste0(record_id, visit))
+
+# Newest iteration of RDS
+so_90 <- readRDS("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/data_raw/PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS")
+so_90_meta <- so_90@meta.data %>%
+  dplyr::mutate(kit_id = gsub("KI", "KL", kit_id),
+                kit_id = toupper(kit_id))
+so_90_meta <- left_join(so_90_meta %>% dplyr::select(1:10), 
+                        dat %>% dplyr::select(c(-cryostor_id))) 
+rownames(so_90_meta) <- so_90_meta$barcode
+so_90 <- AddMetaData(so_90, so_90_meta)
+
+# Last iteration of RDS
+so_68 <- readRDS("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/data_clean/seurat_data_no_computations.RDS")
+so_68_meta <- so_68@meta.data %>%
+  dplyr::select(1:13) %>%
+  plyr::rename(c("KL.ID..kit.number.contains.path.sc.sample." = "kit_id"))
+so_68_meta <- left_join(so_68_meta, dat) 
+rownames(so_68_meta) <- rownames(so_68@meta.data)
+so_68 <- AddMetaData(so_68, so_68_meta)
+
+# IDs included in JCI
+jci_ids <- read.csv("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/T2D scRNA SGLT2i/Data raw/clinical_from_RDS.csv")
+so_90_68_subset <- subset(so_90, cryostor_id %in% so_68$cryostor_id)
+so_90_jci_subset <- subset(so_90, cryostor_id %in% jci_ids$Cryostor.Cryovial.ID)
+so_68_jci_subset <- subset(so_68, cryostor_id %in% jci_ids$Cryostor.Cryovial.ID)
+```
+
+# Count comparison
+```{r echo = F}
+cellcount_so_90 <- ncol(so_90)
+cellcount_so_68 <- ncol(so_68)
+cellcount_so_90_68_subset <- ncol(so_90_68_subset)
+cellcount_so_90_jci_subset <- ncol(so_90_jci_subset)
+cellcount_so_68_jci_subset <- ncol(so_68_jci_subset)
+
+samplecount_so_90 <- length(unique(so_90$record_id))
+samplecount_so_68 <- length(unique(so_68$record_id))
+samplecount_so_90_68_subset <- length(unique(so_90_68_subset$record_id))
+samplecount_so_90_jci_subset <- length(unique(so_90_jci_subset$record_id))
+samplecount_so_68_jci_subset <- length(unique(so_68_jci_subset$record_id))
+
+data.frame(object = c("PB90", "PB68", "PB90 - 68sub", "PB68 - JCIsub", "PB90 - JCIsub"),
+           sample_N = c(samplecount_so_90, samplecount_so_68, samplecount_so_90_68_subset,
+                          samplecount_so_68_jci_subset, samplecount_so_90_jci_subset),
+           cell_N = c(cellcount_so_90, cellcount_so_68, cellcount_so_90_68_subset,
+                          cellcount_so_68_jci_subset, cellcount_so_90_jci_subset))
+
+colnames(so_90_68_subset[,colnames(so_90_68_subset) %nin% colnames(so_68)])
+colnames(so_90_jci_subset[,colnames(so_90_jci_subset) %nin% colnames(so_68_jci_subset)])
+```
+
+```{r echo = F}
+# PB90
+so_90 <- NormalizeData(so_90)
+so_90 <- ScaleData(so_90)
+so_90$celltype_pt <- ifelse(grepl("PT-", so_90$celltype_harmony), "PT",
+                         as.character(so_90$celltype_harmony))
+Idents(so_90) <- so_90$celltype_pt
+so_90$t2d_sglt2i_neg <- ifelse(so_90$group == "Type 2 Diabetes" & so_90$sglt2i_ever == "No", "T2Di(-)", so_90$group)
+so_90$t2d_sglt2i <- ifelse(so_90$group == "Type 2 Diabetes" & so_90$sglt2i_ever == "Yes", "T2Di(+)", so_90$t2d_sglt2i_neg)
+
+# PB68
+so_68 <- NormalizeData(so_68)
+so_68 <- ScaleData(so_68)
+Idents(so_68) <- so_68$LR_clusters
+so_68$t2d_sglt2i_neg <- ifelse(so_68$group == "Type 2 Diabetes" & so_68$sglt2i_ever == "No", "T2Di(-)", so_68$group)
+so_68$t2d_sglt2i <- ifelse(so_68$group == "Type 2 Diabetes" & so_68$sglt2i_ever == "Yes", "T2Di(+)", so_68$t2d_sglt2i_neg)
+
+# PB90 - 68sub
+so_90_68_subset <- NormalizeData(so_90_68_subset)
+so_90_68_subset <- ScaleData(so_90_68_subset)
+so_90_68_subset$celltype_pt <- ifelse(grepl("PT-", so_90_68_subset$celltype_harmony), "PT",
+                         as.character(so_90_68_subset$celltype_harmony))
+Idents(so_90_68_subset) <- so_90_68_subset$celltype_pt
+so_90_68_subset$t2d_sglt2i_neg <- ifelse(so_90_68_subset$group == "Type 2 Diabetes" & so_90_68_subset$sglt2i_ever == "No", "T2Di(-)", so_90_68_subset$group)
+so_90_68_subset$t2d_sglt2i <- ifelse(so_90_68_subset$group == "Type 2 Diabetes" & so_90_68_subset$sglt2i_ever == "Yes", "T2Di(+)", so_90_68_subset$t2d_sglt2i_neg)
+
+# PB68 - JCIsub
+so_68_jci_subset <- NormalizeData(so_68_jci_subset)
+so_68_jci_subset <- ScaleData(so_68_jci_subset)
+Idents(so_68_jci_subset) <- so_68_jci_subset$LR_clusters
+so_68_jci_subset$t2d_sglt2i_neg <- ifelse(so_68_jci_subset$group == "Type 2 Diabetes" & so_68_jci_subset$sglt2i_ever == "No", "T2Di(-)", so_68_jci_subset$group)
+so_68_jci_subset$t2d_sglt2i <- ifelse(so_68_jci_subset$group == "Type 2 Diabetes" & so_68_jci_subset$sglt2i_ever == "Yes", "T2Di(+)", so_68_jci_subset$t2d_sglt2i_neg)
+
+# PB90 - JCIsub
+so_90_jci_subset <- NormalizeData(so_90_jci_subset)
+so_90_jci_subset <- ScaleData(so_90_jci_subset)
+so_90_jci_subset$celltype_pt <- ifelse(grepl("PT-", so_90_jci_subset$celltype_harmony), "PT",
+                         as.character(so_90_jci_subset$celltype_harmony))
+Idents(so_90_jci_subset) <- so_90_jci_subset$celltype_pt
+so_90_jci_subset$t2d_sglt2i_neg <- ifelse(so_90_jci_subset$group == "Type 2 Diabetes" & so_90_jci_subset$sglt2i_ever == "No", "T2Di(-)", so_90_jci_subset$group)
+so_90_jci_subset$t2d_sglt2i <- ifelse(so_90_jci_subset$group == "Type 2 Diabetes" & so_90_jci_subset$sglt2i_ever == "Yes", "T2Di(+)", so_90_jci_subset$t2d_sglt2i_neg)
+```
+
+```{r echo = F}
+source("/home/yejichoi2/Documents/CHCO-Code/Petter Bjornstad/CROCODILE/crocodile_functions.R")
+
+plot_de_markers <- function(so, genes, group_column, id1, id2, subset = NULL, suffix = "_plot") {
+  # Perform differential expression analysis
+  de_results <- de.markers(so, genes, group_column, id1 = id1, id2 = id2, subset, suffix)
+  de_results_name <- paste0("m", suffix)
+  de_results <- get(de_results_name)
+  
+  # Add direction column to the results
+  de_results <- add_direction(de_results)
+  
+  # Plot the results
+  de_plot <- de_results %>%
+    ggplot(aes(x = rownames(.), y = avg_log2FC, fill = direction)) + 
+    geom_col(color = "white") +
+    theme_bw() + 
+    theme(panel.grid = element_blank(),
+          text = element_text(size = 14),
+          axis.text.x = element_text(angle = 70, hjust = 1)) +
+    labs(x = "Transcripts", 
+         y = "Avg Log2FC",
+         fill = "Direction") +
+    scale_fill_manual(values = c("NS" = "grey", "Upregulated" = "#f28482", "Downregulated" = "#457b9d"))
+  
+  return(de_plot)
+}
+```
+
+```{r echo = F}
+glycolysis_genes <- c("PKLR", "PFKFB3", "PFKL", "ALDOC", "HK2", "ENO2", "PGK1", "PGAM1", "TPI1", "GAPDH")
+gluconeogenesis_genes <- c("SLC25A10", "GOT2", "GOT1", "FBP1", "SLC25A11", "PCK1", "MDH1")
+pyruvate_tca <- c("SDHB", "SUCLG1", "PDK2", "ACO2", "IDH3G", "SUCLA2", "HAGH", "PDHB", "LDHA")
+glut_conj <- c("CNDP2", "GSTM4", "GSTT2B", "GSTO1", "GGCT", "GSTM3", "AKR1A1")
+metal_genes <- c("MT1G", "MT1X", "MT1H", "MT2A")
+```
+
+## PB90
+### T2Di(-) vs. HC
+
+Group 1: T2Di(-)
+Group 2: HC
+
+```{r echo = F}
+plot_de_markers(so_90, glycolysis_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_90, gluconeogenesis_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_90, pyruvate_tca, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_90, glut_conj, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_90, metal_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+
+# using limma
+so_90_pt <- subset(so_90, celltype_pt == "PT")
+mm <- model.matrix(~ 0 + so_90$t2d_sglt2i_neg)
+y <- voom(so_90@assays$RNA@counts, mm, plot = T)
+fit <- lmFit(y, mm)
+head(coef(fit))
+contr <- makeContrasts(`t2d_sglt2i_neg.T2Di(-)` - `t2d_sglt2i_neg.Lean Control`, levels = colnames(coef(fit)))
+
+
+```
+### T2Di(+) vs. T2Di(-)
+
+Group 1: T2Di(+)
+Group 2: T2Di(-)
+
+```{r echo = F}
+plot_de_markers(so_90, glycolysis_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_90, gluconeogenesis_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_90, pyruvate_tca, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_90, glut_conj, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_90, metal_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+```
+
+## PB68
+### T2Di(-) vs. HC
+
+Group 1: T2Di(-)
+Group 2: HC
+
+```{r echo = F}
+plot_de_markers(so_68, glycolysis_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_68, gluconeogenesis_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_68, pyruvate_tca, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_68, glut_conj, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_68, metal_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+```
+
+### T2Di(+) vs. T2Di(-)
+
+Group 1: T2Di(+)
+Group 2: T2Di(-)
+
+```{r echo = F}
+plot_de_markers(so_68, glycolysis_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_68, gluconeogenesis_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_68, pyruvate_tca, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_68, glut_conj, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_68, metal_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+```
+
+## PB90 (Subset to 68)
+### T2Di(-) vs. HC
+
+Group 1: T2Di(-)
+Group 2: HC
+
+```{r echo = F}
+plot_de_markers(so_90_68_subset, glycolysis_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_90_68_subset, gluconeogenesis_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_90_68_subset, pyruvate_tca, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_90_68_subset, glut_conj, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_90_68_subset, metal_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+```
+
+### T2Di(+) vs. T2Di(-)
+
+Group 1: T2Di(+)
+Group 2: T2Di(-)
+
+```{r echo = F}
+plot_de_markers(so_90_68_subset, glycolysis_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_90_68_subset, gluconeogenesis_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_90_68_subset, pyruvate_tca, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_90_68_subset, glut_conj, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_90_68_subset, metal_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+```
+
+## PB68 (Subset to JCI 22)
+### T2Di(-) vs. HC
+
+Group 1: T2Di(-)
+Group 2: HC
+
+```{r echo = F}
+plot_de_markers(so_68_jci_subset, glycolysis_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_68_jci_subset, gluconeogenesis_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_68_jci_subset, pyruvate_tca, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_68_jci_subset, glut_conj, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_68_jci_subset, metal_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+```
+### T2Di(+) vs. T2Di(-)
+
+Group 1: T2Di(+)
+Group 2: T2Di(-)
+
+```{r echo = F}
+plot_de_markers(so_68_jci_subset, glycolysis_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_68_jci_subset, gluconeogenesis_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_68_jci_subset, pyruvate_tca, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_68_jci_subset, glut_conj, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_68_jci_subset, metal_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+```
+
+## PB90 (Subset to JCI 22)
+### T2Di(-) vs. HC
+
+Group 1: T2Di(-)
+Group 2: HC
+
+```{r echo = F}
+plot_de_markers(so_90_jci_subset, glycolysis_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_90_jci_subset, gluconeogenesis_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_90_jci_subset, pyruvate_tca, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_90_jci_subset, glut_conj, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+plot_de_markers(so_90_jci_subset, metal_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT", NULL)
+```
+### T2Di(+) vs. T2Di(-)
+
+Group 1: T2Di(+)
+Group 2: T2Di(-)
+
+```{r echo = F}
+plot_de_markers(so_90_jci_subset, glycolysis_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_90_jci_subset, gluconeogenesis_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_90_jci_subset, pyruvate_tca, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_90_jci_subset, glut_conj, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+plot_de_markers(so_90_jci_subset, metal_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT", NULL)
+```

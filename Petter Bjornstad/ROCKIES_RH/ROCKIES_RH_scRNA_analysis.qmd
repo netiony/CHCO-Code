@@ -1,0 +1,1029 @@
+---
+title: "RH/RH2/ROCKIES"
+author: "Ye Ji Choi"
+date: "today"
+date-format: long
+execute: 
+  echo: false
+  warning: false
+  messages: false
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
+    code-fold: true
+    self-contained: true
+    fig-cap-location: top
+    page-layout: full
+editor: source
+---
+
+```{r libraries, message = F}
+#| include: false
+library(Seurat)
+library(future)
+library(tidyverse)
+library(colorspace)
+library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggpubr)
+library(rstatix)
+library(table1)
+library(Biobase)
+library(ReactomeGSA)
+library(GSEABase)
+library(msigdbr)
+library(kableExtra)
+library(knitr)
+library(slingshot); library(SingleCellExperiment)
+```
+
+```{r data-setup, echo = F, message=F}
+# Parallel processing
+plan(multicore, workers = 16)
+options(future.globals.maxSize=2e9)
+so <- readRDS("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/data_raw/PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS")
+source("/home/yejichoi2/Documents/CHCO-Code/Petter Bjornstad/CROCODILE/crocodile_functions.R")
+source("/home/yejichoi2/Documents/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/label_harmonized_function.R")
+dict <- read.csv("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv") %>%
+  dplyr::select(variable_name, label)
+
+dict <- setNames(data.frame(t(dict[ , - 1])), dict[ , 1])
+dict <- dict %>%
+  mutate(sce_PT.slingPseudotime_1 = "Pseudotime",
+         gbm_thick_art_mean = "GBM thickness",
+         p2_raw_m = "M-value",
+         avg_c_k2 = "Cortical K2",
+         bmi = "BMI",
+         diabetes_duration = "Diabetes duration", 
+         hba1c = "HbA1c")
+
+so_meta <- so@meta.data
+dat <- read.csv("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv") %>%
+  filter(study %in% c("RENAL-HEIR", "RENAL-HEIRitage") & group != "Lean Control" | study == "CROCODILE" & group == "Lean Control") %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+                   .by = record_id) %>%
+  mutate(albuminuria_yn = case_when(acr_u < 30 ~ "No", acr_u >= 30 ~ "Yes"),
+         avg_c_f = rowMeans(dplyr::select(., lc_f, rc_f), na.rm = TRUE),
+         avg_c_k1 = rowMeans(dplyr::select(., lc_k1, rc_k1), na.rm = TRUE),
+         avg_c_k2 = rowMeans(dplyr::select(., lc_k2, rc_k2), na.rm = TRUE),
+         avg_c_vb = rowMeans(dplyr::select(., lc_vb, rc_vb), na.rm = TRUE),
+         avg_m_f = rowMeans(dplyr::select(., lm_f, rm_f), na.rm = TRUE),
+         avg_m_k1 = rowMeans(dplyr::select(., lm_k1, rm_k1), na.rm = TRUE),
+         avg_m_k2 = rowMeans(dplyr::select(., lm_k2, rm_k2), na.rm = TRUE),
+         avg_m_vb = rowMeans(dplyr::select(., lm_vb, rm_vb), na.rm = TRUE),
+         avg_pcascl = rowMeans(dplyr::select(., pcasl3d_left, pcasl3d_right), na.rm = TRUE),
+         avg_k_r2_bl = rowMeans(dplyr::select(., bold_l_bl_kidney, bold_r_bl_kidney), na.rm = TRUE),
+         avg_c_r2_bl = rowMeans(dplyr::select(., bold_l_bl_cortex, bold_r_bl_cortex), na.rm = TRUE),
+         avg_m_r2_bl = rowMeans(dplyr::select(., bold_l_bl_medulla, bold_r_bl_medulla), na.rm = TRUE),
+         avg_k_r2_pf = rowMeans(dplyr::select(., bold_l_pf_kidney, bold_r_pf_kidney), na.rm = TRUE),
+         avg_c_r2_pf = rowMeans(dplyr::select(., bold_l_pf_cortex, bold_r_pf_cortex), na.rm = TRUE),
+         avg_m_r2_pf = rowMeans(dplyr::select(., bold_l_pf_medulla, bold_r_pf_medulla), na.rm = TRUE),
+         avg_k_fsoc = rowMeans(dplyr::select(., fsoc_l_kidney, fsoc_r_kidney), na.rm = TRUE),
+         avg_c_fsoc = rowMeans(dplyr::select(., fsoc_l_cortex, fsoc_r_cortex), na.rm = TRUE),
+         avg_m_fsoc = rowMeans(dplyr::select(., fsoc_l_medulla, fsoc_r_medulla), na.rm = TRUE),
+         avg_c_adc = rowMeans(dplyr::select(., adc_left, adc_right), na.rm = TRUE),
+         avg_c_t1 = rowMeans(dplyr::select(., t1_l_cortex, t1_r_cortex), na.rm = TRUE),
+         avg_k_t1 = rowMeans(dplyr::select(., t1_l_kidney, t1_r_kidney), na.rm = TRUE),
+         avg_c_k1_wo_cyst_vw = rowMeans(dplyr::select(., lc_k1_wo_cyst_vw, rc_k1_wo_cyst_vw), na.rm = TRUE),
+         avg_m_k1_wo_cyst_vw = rowMeans(dplyr::select(., lm_k1_wo_cyst_vw, lm_k1_wo_cyst_vw), na.rm = TRUE),
+         avg_c_k2_wo_cyst_vw = rowMeans(dplyr::select(., lc_k2_wo_cyst_vw, rc_k2_wo_cyst_vw), na.rm = TRUE),
+         avg_m_k2_wo_cyst_vw = rowMeans(dplyr::select(., lm_k2_wo_cyst_vw, rm_k2_wo_cyst_vw), na.rm = TRUE),
+         avg_tot_k1_wo_cyst = rowMeans(dplyr::select(., ltot_k1_wo_cyst, rtot_k1_wo_cyst), na.rm = TRUE),
+         avg_tot_k2_wo_cyst = rowMeans(dplyr::select(., ltot_k2_wo_cyst, rtot_k2_wo_cyst), na.rm = TRUE)) %>%
+  dplyr::select(-c(kit_id, cryostor_id))
+so_meta <- left_join(so_meta, dat) 
+rownames(so_meta) <- so_meta$barcode
+so <- AddMetaData(so, so_meta)
+so$group_t2ob <- ifelse(so$group == "Lean Control", "LC", "T2D/OB")
+so$group_t2d <- ifelse(so$group == "Type 2 Diabetes", "T2D", "Non-T2D")
+so <- subset(so, group %in% c("Lean Control", "Obese Control", "Type 2 Diabetes") & !is.nan(so$avg_c_k1))
+```
+
+```{r echo = F, message = F, include = F}
+options(future.globals.maxSize = 3000 * 1024^2)
+# UMAP of single cell RNA sequencing (RH/RH2, CRC)
+so <- NormalizeData(so)
+so <- ScaleData(so)
+ElbowPlot(so)
+so <- RunPCA(so, ncomponents = 10, features = VariableFeatures(object = so))
+so <- FindNeighbors(so)
+so <- FindClusters(so)
+so <- RunUMAP(so, dims = 1:30)
+so <- RunTSNE(so, dimred = "UMAP")
+```
+
+```{r echo = F, message = F}
+DimPlot(object = so, reduction = "umap", group.by = "celltype_rpca", raster = F)
+DimPlot(object = so, reduction = "umap", group.by = "celltype_harmony", raster = F)
+DimPlot(object = so, reduction = "umap", group.by = "group", raster = F)
+```
+
+```{r echo = F}
+# Bar plot with key transcripts of ox phos and TCA cycle stratified by T2D status, albuminuria and SGLT2i (RH/RH2, CRC)
+so$celltype_pt <- ifelse(grepl("PT-", so$celltype_harmony),
+                         "PT",
+                         as.character(so$celltype_harmony))
+Idents(so) <- so$celltype_pt
+so_group_t2ob <- subset(so, group_t2ob == "T2D/OB")
+
+source("/home/yejichoi2/Documents/CHCO-Code/Petter Bjornstad/CROCODILE/crocodile_functions.R")
+
+plot_de_markers <- function(so, genes, group_column, id1, id2, subset = NULL, suffix = "_plot") {
+  # Perform differential expression analysis
+  de_results <- de.markers(so, genes, group_column, id1 = id1, id2 = id2, subset, suffix)
+  de_results_name <- paste0("m", suffix)
+  de_results <- get(de_results_name)
+  
+  # Add direction column to the results
+  de_results <- add_direction(de_results)
+  
+  # Plot the results
+  de_plot <- de_results %>%
+    ggplot(aes(x = rownames(.), y = avg_log2FC, fill = direction)) + 
+    geom_col(color = "white") +
+    theme_bw() + 
+    theme(panel.grid = element_blank(),
+          text = element_text(size = 14),
+          axis.text.x = element_text(angle = 70, hjust = 1)) +
+    labs(x = "Transcripts", 
+         y = "Avg Log2FC",
+         fill = "Direction") +
+    scale_fill_manual(values = c("NS" = "grey", "Upregulated" = "#f28482", "Downregulated" = "#457b9d"))
+  
+  return(de_plot)
+}
+```
+
+# DEG in PT
+## Key transcripts of TCA cycle
+### Combined (T2D + OB + LC)
+#### By T2D status (T2D vs. OB + LC)
+
+Group 1 = "T2D"
+
+Group 2 = "Non-T2D"
+
+**Negative values** indicate that the transcript has a lower expression T2D group compared to non-T2D group.
+
+```{r echo = F}
+plot_de_markers(so, genes, "group_t2d", "T2D", "Non-T2D", "PT","_tca_t2d")
+kable(m_tca_t2d, digits = 3)
+```
+
+#### By T2D status (T2D + OB vs. LC)
+Group 1 = "T2D/OB"
+
+Group 2 = "LC"
+
+**Negative values** indicate that the transcript has a lower expression T2D/OB group compared to LC group.
+
+```{r echo = F}
+plot_de_markers(so, genes, "group_t2ob", id1 = "T2D/OB", id2 = "LC", "PT","_tca_t2ob")
+kable(m_tca_t2ob, digits = 3)
+```
+
+#### By Albuminuria
+
+Group 1 = "Albuminuria"
+
+Group 2 = "Non-albuminuria"
+
+**Negative values** indicate that the transcript has a lower expression Albuminuria group compared to Non-albuminuria group.
+
+```{r echo = F}
+plot_de_markers(so, genes, "elevated_albuminuria", id1 = "Yes", id2 = "No", "PT","_tca_alb")
+kable(m_tca_alb, digits = 3)
+```
+
+#### By SGLT2i (ever)
+
+Group 1 = "Yes"
+
+Group 2 = "No"
+
+**Negative values** indicate that the transcript has a lower expression in the SGLT2i group compared to Non-SGLT2i group.
+
+```{r echo = F}
+plot_de_markers(so, genes, "sglt2i_ever", id1 = "Yes", id2 = "No", "PT","_tca_sglt2i_ever")
+kable(m_tca_sglt2i_ever, digits = 3)
+```
+
+#### By SGLT2i (timepoint)
+
+Group 1 = "Yes"
+
+Group 2 = "No"
+
+**Negative values** indicate that the transcript has a lower expression in the SGLT2i group compared to Non-SGLT2i group.
+
+```{r echo = F}
+# plot_de_markers(so, genes, "sglti_timepoint", id1 = "Yes", id2 = "No", "PT","_tca_sglt2i_timpoint")
+# kable(m_tca_sglt2i_timpoint, digits = 3)
+```
+
+### T2D & OB only (T2D + OB)
+#### By T2D status (T2D vs. OB)
+
+Group 1 = "T2D"
+
+Group 2 = "Obese Control"
+
+**Negative values** indicate that the transcript has a lower expression T2D group compared to Obese group.
+
+```{r echo = F}
+plot_de_markers(so_group_t2ob, genes, "group", id1 = "Type 2 Diabetes", id2 = "Obese Control", "PT","_tca_t2d_t2dob")
+kable(m_tca_t2d_t2dob, digits = 3)
+```
+
+#### By Albuminuria
+
+Group 1 = "Albuminuria"
+
+Group 2 = "Non-Albuminuria"
+
+**Negative values** indicate that the transcript has a lower expression Albuminuria group compared to Non-Albuminuria group.
+
+```{r echo = F}
+plot_de_markers(so_group_t2ob, genes, "elevated_albuminuria", id1 = "Yes", id2 = "No", "PT","_tca_alb_t2dob")
+kable(m_tca_alb_t2dob, digits = 3)
+```
+
+#### By SGLT2i (ever)
+
+Group 1 = "SGLT2i"
+
+Group 2 = "Non-SGLT2i"
+
+**Negative values** indicate that the transcript has a lower expression SGLT2i group compared to Non-SGLT2i group.
+
+```{r echo = F}
+plot_de_markers(so_group_t2ob, genes, "sglt2i_ever", id1 = "Yes", id2 = "No", "PT","_tca_sglt2i_ever_t2dob")
+kable(m_tca_sglt2i_ever_t2dob, digits = 3)
+```
+
+#### By SGLT2i (timepoint)
+
+Group 1 = "SGLT2i"
+
+Group 2 = "Non-SGLT2i"
+
+**Negative values** indicate that the transcript has a lower expression SGLT2i group compared to Non-SGLT2i group.
+
+```{r echo = F}
+# plot_de_markers(so_group_t2ob, genes, "sglti_timepoint", id1 = "Yes", id2 = "No", "PT","_tca_sglt2i_timpoint_t2dob")
+# kable(m_tca_sglt2i_timpoint_t2dob, digits = 3)
+```
+
+
+## Key transcripts of Oxidative Phosphorylation
+### Combined (T2D + OB + LC)
+#### By T2D status (T2D vs. OB + LC)
+
+Group 1 = "T2D"
+
+Group 2 = "Non-T2D"
+
+**Negative values** indicate that the transcript has a lower expression T2D group compared to non-T2D group.
+
+```{r echo = F}
+plot_de_markers(so, oxy_phos_genes, "group_t2d", "T2D", "Non-T2D", "PT","_oxphos_t2d")
+kable(m_oxphos_t2d, digits = 3)
+```
+
+#### By T2D status (T2D + OB vs. LC)
+Group 1 = "T2D/OB"
+
+Group 2 = "LC"
+
+**Negative values** indicate that the transcript has a lower expression T2D/OB group compared to LC group.
+
+```{r echo = F}
+plot_de_markers(so, oxy_phos_genes, "group_t2ob", id1 = "T2D/OB", id2 = "LC", "PT","_oxphos_t2ob")
+kable(m_oxphos_t2ob, digits = 3)
+```
+
+#### By Albuminuria
+
+Group 1 = "Albuminuria"
+
+Group 2 = "Non-albuminuria"
+
+**Negative values** indicate that the transcript has a lower expression Albuminuria group compared to Non-albuminuria group.
+
+```{r echo = F}
+plot_de_markers(so, oxy_phos_genes, "elevated_albuminuria", id1 = "Yes", id2 = "No", "PT","_oxphos_alb")
+kable(m_oxphos_alb, digits = 3)
+```
+
+#### By SGLT2i (ever)
+
+Group 1 = "Yes"
+
+Group 2 = "No"
+
+**Negative values** indicate that the transcript has a lower expression in the SGLT2i group compared to Non-SGLT2i group.
+
+```{r echo = F}
+plot_de_markers(so, oxy_phos_genes, "sglt2i_ever", id1 = "Yes", id2 = "No", "PT","_oxphos_sglt2i_ever")
+kable(m_oxphos_sglt2i_ever, digits = 3)
+```
+
+#### By SGLT2i (timepoint)
+
+Group 1 = "Yes"
+
+Group 2 = "No"
+
+**Negative values** indicate that the transcript has a lower expression in the SGLT2i group compared to Non-SGLT2i group.
+
+```{r echo = F}
+# plot_de_markers(so, oxy_phos_genes, "sglti_timepoint", id1 = "Yes", id2 = "No", "PT","_oxphos_sglt2i_timpoint")
+# kable(m_oxphos_sglt2i_timpoint, digits = 3)
+```
+
+### T2D & OB only (T2D + OB)
+#### By T2D status (T2D vs. OB)
+
+Group 1 = "T2D"
+
+Group 2 = "Obese Control"
+
+**Negative values** indicate that the transcript has a lower expression T2D group compared to Obese group.
+
+```{r echo = F}
+so_group_t2ob <- subset(so, group_t2ob == "T2D/OB")
+plot_de_markers(so_group_t2ob, oxy_phos_genes, "group", id1 = "Type 2 Diabetes", id2 = "Obese Control", "PT","_oxphos_t2d_t2dob")
+kable(m_oxphos_t2d_t2dob, digits = 3)
+```
+
+#### By Albuminuria
+
+Group 1 = "Albuminuria"
+
+Group 2 = "Non-Albuminuria"
+
+**Negative values** indicate that the transcript has a lower expression Albuminuria group compared to Non-Albuminuria group.
+
+```{r echo = F}
+plot_de_markers(so_group_t2ob, oxy_phos_genes, "elevated_albuminuria", id1 = "Yes", id2 = "No", "PT","_oxphos_alb_t2dob")
+kable(m_oxphos_alb_t2dob, digits = 3)
+```
+
+#### By SGLT2i (ever)
+
+Group 1 = "SGLT2i"
+
+Group 2 = "Non-SGLT2i"
+
+**Negative values** indicate that the transcript has a lower expression SGLT2i group compared to Non-SGLT2i group.
+
+```{r echo = F}
+plot_de_markers(so_group_t2ob, oxy_phos_genes, "sglt2i_ever", id1 = "Yes", id2 = "No", "PT","_oxphos_sglt2i_ever_t2dob")
+kable(m_oxphos_sglt2i_ever_t2dob, digits = 3)
+```
+
+#### By SGLT2i (timepoint)
+
+Group 1 = "SGLT2i"
+
+Group 2 = "Non-SGLT2i"
+
+**Negative values** indicate that the transcript has a lower expression SGLT2i group compared to Non-SGLT2i group.
+
+```{r echo = F}
+# plot_de_markers(so_group_t2ob, oxy_phos_genes, "sglti_timepoint", id1 = "Yes", id2 = "No", "PT","_oxphos_sglt2i_timpoint_t2dob")
+# kable(m_oxphos_sglt2i_timpoint_t2dob, digits = 3)
+```
+
+## Key transcripts of Glycolysis
+
+```{r echo = F}
+so$t2d_sglt2i_neg <- ifelse(so$group == "Type 2 Diabetes" & so$sglt2i_ever == "No", "T2Di(-)", so$group)
+so$t2d_sglt2i <- ifelse(so$group == "Type 2 Diabetes" & so$sglt2i_ever == "Yes", "T2Di(+)", so$t2d_sglt2i_neg)
+
+glycolysis_genes <- c("PKLR", "PFKFB3", "PFKL", "ALDOC", "HK2", "ENO2", "PGK1", "PGAM1", "TPI1", "GAPDH")
+```
+
+### JCI (T2Di(-) vs. HC)
+#### By T2D status (T2Di(-) vs HC)
+
+Group 1 = "T2Di(-)"
+
+Group 2 = "HC"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(-) group compared to HC group.
+
+```{r echo = F}
+plot_de_markers(so, glycolysis_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT","_glyc_t2di_hc")
+kable(m_glyc_t2di_hc, digits = 3)
+```
+
+### JCI (T2Di(+) vs. T2Di(-))
+#### By T2D status (T2Di(+) vs T2Di(-))
+
+Group 1 = "T2Di(+)"
+
+Group 2 = "T2Di(-)"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(+) group compared to T2Di(-) group.
+
+```{r echo = F}
+plot_de_markers(so, glycolysis_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT","_glyc_t2di")
+kable(m_glyc_t2di, digits = 3)
+```
+
+## Key transcripts of Gluconeogensesis
+
+```{r echo = F}
+gluconeogenesis_genes <- c("SLC25A10", "GOT2", "GOT1", "FBP1", "SLC25A11", "PCK1", "MDH1")
+```
+
+### JCI (T2Di(-) vs. HC)
+#### By T2D status (T2Di(-) vs HC)
+
+Group 1 = "T2Di(-)"
+
+Group 2 = "HC"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(-) group compared to HC group.
+
+```{r echo = F}
+plot_de_markers(so, gluconeogenesis_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT","_glucogen_t2di_hc")
+kable(m_glucogen_t2di_hc, digits = 3)
+```
+
+### JCI (T2Di(+) vs. T2Di(-))
+#### By T2D status (T2Di(+) vs T2Di(-))
+
+Group 1 = "T2Di(+)"
+
+Group 2 = "T2Di(-)"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(+) group compared to T2Di(-) group.
+
+```{r echo = F}
+plot_de_markers(so, gluconeogenesis_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT","_glucogen_t2di")
+kable(m_glucogen_t2di, digits = 3)
+```
+## Key transcripts of Pyruvate metabolism and TCA cycle
+
+```{r echo = F}
+pyruvate_tca <- c("SDHB", "SUCLG1", "PDK2", "ACO2", "IDH3G", "SUCLA2", "HAGH", "PDHB", "LDHA")
+```
+
+### JCI (T2Di(-) vs. HC)
+#### By T2D status (T2Di(-) vs HC)
+
+Group 1 = "T2Di(-)"
+
+Group 2 = "HC"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(-) group compared to HC group.
+
+```{r echo = F}
+plot_de_markers(so, pyruvate_tca, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT","_pyruvate_tca_t2di_hc")
+kable(m_pyruvate_tca_t2di_hc, digits = 3)
+```
+
+### JCI (T2Di(+) vs. T2Di(-))
+#### By T2D status (T2Di(+) vs T2Di(-))
+
+Group 1 = "T2Di(+)"
+
+Group 2 = "T2Di(-)"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(+) group compared to T2Di(-) group.
+
+```{r echo = F}
+plot_de_markers(so, pyruvate_tca, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT","_pyruvate_tca_t2di")
+kable(m_pyruvate_tca_t2di, digits = 3)
+```
+
+## Key transcripts of Glutathione conjugation
+
+```{r echo = F}
+glut_conj <- c("CNDP2", "GSTM4", "GSTT2B", "GSTO1", "GGCT", "GSTM3", "AKR1A1")
+```
+
+### JCI (T2Di(-) vs. HC)
+#### By T2D status (T2Di(-) vs HC)
+
+Group 1 = "T2Di(-)"
+
+Group 2 = "HC"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(-) group compared to HC group.
+
+```{r echo = F}
+plot_de_markers(so, glut_conj, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT","_glut_conj_t2di_hc")
+kable(m_glut_conj_t2di_hc, digits = 3)
+```
+
+### JCI (T2Di(+) vs. T2Di(-))
+#### By T2D status (T2Di(+) vs T2Di(-))
+
+Group 1 = "T2Di(+)"
+
+Group 2 = "T2Di(-)"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(+) group compared to T2Di(-) group.
+
+```{r echo = F}
+plot_de_markers(so, glut_conj, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT","_glut_conj_t2di")
+kable(m_glut_conj_t2di, digits = 3)
+```
+## Key transcripts of Metallothioneins bind metals
+
+```{r echo = F}
+metal_genes <- c("MT1G", "MT1X", "MT1H", "MT2A")
+```
+
+### JCI (T2Di(-) vs. HC)
+#### By T2D status (T2Di(-) vs HC)
+
+Group 1 = "T2Di(-)"
+
+Group 2 = "HC"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(-) group compared to HC group.
+
+```{r echo = F}
+plot_de_markers(so, metal_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT","_metal_t2di_hc")
+kable(m_metal_t2di_hc, digits = 3)
+```
+
+### JCI (T2Di(+) vs. T2Di(-))
+#### By T2D status (T2Di(+) vs T2Di(-))
+
+Group 1 = "T2Di(+)"
+
+Group 2 = "T2Di(-)"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(+) group compared to T2Di(-) group.
+
+```{r echo = F}
+plot_de_markers(so, metal_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT","_metal_t2di")
+kable(m_metal_t2di, digits = 3)
+```
+
+# DEG in PT (Subset to IDs in old dataset)
+
+```{r echo = F}
+so_old <- readRDS("/run/user/1023/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/data_clean/seurat_data_no_computations.RDS")
+so_oldid_subset <- subset(so, record_id %in% so_old$michigan_id)
+```
+
+## Key transcripts of TCA cycle
+### Combined (T2D + OB + LC)
+#### By T2D status (T2D vs. OB + LC)
+
+Group 1 = "T2D"
+
+Group 2 = "Non-T2D"
+
+**Negative values** indicate that the transcript has a lower expression T2D group compared to non-T2D group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, genes, "group_t2d", "T2D", "Non-T2D", "PT","_tca_t2d")
+kable(m_tca_t2d, digits = 3)
+```
+
+#### By T2D status (T2D + OB vs. LC)
+Group 1 = "T2D/OB"
+
+Group 2 = "LC"
+
+**Negative values** indicate that the transcript has a lower expression T2D/OB group compared to LC group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, genes, "group_t2ob", id1 = "T2D/OB", id2 = "LC", "PT","_tca_t2ob")
+kable(m_tca_t2ob, digits = 3)
+```
+
+#### By Albuminuria
+
+Group 1 = "Albuminuria"
+
+Group 2 = "Non-albuminuria"
+
+**Negative values** indicate that the transcript has a lower expression Albuminuria group compared to Non-albuminuria group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, genes, "elevated_albuminuria", id1 = "Yes", id2 = "No", "PT","_tca_alb")
+kable(m_tca_alb, digits = 3)
+```
+
+#### By SGLT2i (ever)
+
+Group 1 = "Yes"
+
+Group 2 = "No"
+
+**Negative values** indicate that the transcript has a lower expression in the SGLT2i group compared to Non-SGLT2i group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, genes, "sglt2i_ever", id1 = "Yes", id2 = "No", "PT","_tca_sglt2i_ever")
+kable(m_tca_sglt2i_ever, digits = 3)
+```
+
+#### By SGLT2i (timepoint)
+
+Group 1 = "Yes"
+
+Group 2 = "No"
+
+**Negative values** indicate that the transcript has a lower expression in the SGLT2i group compared to Non-SGLT2i group.
+
+```{r echo = F}
+# plot_de_markers(so_oldid_subset, genes, "sglti_timepoint", id1 = "Yes", id2 = "No", "PT","_tca_sglt2i_timpoint")
+# kable(m_tca_sglt2i_timpoint, digits = 3)
+```
+
+### T2D & OB only (T2D + OB)
+#### By T2D status (T2D vs. OB)
+
+Group 1 = "T2D"
+
+Group 2 = "Obese Control"
+
+**Negative values** indicate that the transcript has a lower expression T2D group compared to Obese group.
+
+```{r echo = F}
+# plot_de_markers(so_oldid_subset_group_t2ob, genes, "group", id1 = "Type 2 Diabetes", id2 = "Obese Control", "PT","_tca_t2d_t2dob")
+# kable(m_tca_t2d_t2dob, digits = 3)
+```
+
+#### By Albuminuria
+
+Group 1 = "Albuminuria"
+
+Group 2 = "Non-Albuminuria"
+
+**Negative values** indicate that the transcript has a lower expression Albuminuria group compared to Non-Albuminuria group.
+
+```{r echo = F}
+# plot_de_markers(so_oldid_subset_group_t2ob, genes, "elevated_albuminuria", id1 = "Yes", id2 = "No", "PT","_tca_alb_t2dob")
+# kable(m_tca_alb_t2dob, digits = 3)
+```
+
+#### By SGLT2i (ever)
+
+Group 1 = "SGLT2i"
+
+Group 2 = "Non-SGLT2i"
+
+**Negative values** indicate that the transcript has a lower expression SGLT2i group compared to Non-SGLT2i group.
+
+```{r echo = F}
+# plot_de_markers(so_oldid_subset_group_t2ob, genes, "sglt2i_ever", id1 = "Yes", id2 = "No", "PT","_tca_sglt2i_ever_t2dob")
+# kable(m_tca_sglt2i_ever_t2dob, digits = 3)
+```
+
+#### By SGLT2i (timepoint)
+
+Group 1 = "SGLT2i"
+
+Group 2 = "Non-SGLT2i"
+
+**Negative values** indicate that the transcript has a lower expression SGLT2i group compared to Non-SGLT2i group.
+
+```{r echo = F}
+# plot_de_markers(so_oldid_subset_group_t2ob, genes, "sglti_timepoint", id1 = "Yes", id2 = "No", "PT","_tca_sglt2i_timpoint_t2dob")
+# kable(m_tca_sglt2i_timpoint_t2dob, digits = 3)
+```
+
+
+## Key transcripts of Oxidative Phosphorylation
+### Combined (T2D + OB + LC)
+#### By T2D status (T2D vs. OB + LC)
+
+Group 1 = "T2D"
+
+Group 2 = "Non-T2D"
+
+**Negative values** indicate that the transcript has a lower expression T2D group compared to non-T2D group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, oxy_phos_genes, "group_t2d", "T2D", "Non-T2D", "PT","_oxphos_t2d")
+kable(m_oxphos_t2d, digits = 3)
+```
+
+#### By T2D status (T2D + OB vs. LC)
+Group 1 = "T2D/OB"
+
+Group 2 = "LC"
+
+**Negative values** indicate that the transcript has a lower expression T2D/OB group compared to LC group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, oxy_phos_genes, "group_t2ob", id1 = "T2D/OB", id2 = "LC", "PT","_oxphos_t2ob")
+kable(m_oxphos_t2ob, digits = 3)
+```
+
+#### By Albuminuria
+
+Group 1 = "Albuminuria"
+
+Group 2 = "Non-albuminuria"
+
+**Negative values** indicate that the transcript has a lower expression Albuminuria group compared to Non-albuminuria group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, oxy_phos_genes, "elevated_albuminuria", id1 = "Yes", id2 = "No", "PT","_oxphos_alb")
+kable(m_oxphos_alb, digits = 3)
+```
+
+#### By SGLT2i (ever)
+
+Group 1 = "Yes"
+
+Group 2 = "No"
+
+**Negative values** indicate that the transcript has a lower expression in the SGLT2i group compared to Non-SGLT2i group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, oxy_phos_genes, "sglt2i_ever", id1 = "Yes", id2 = "No", "PT","_oxphos_sglt2i_ever")
+kable(m_oxphos_sglt2i_ever, digits = 3)
+```
+
+#### By SGLT2i (timepoint)
+
+Group 1 = "Yes"
+
+Group 2 = "No"
+
+**Negative values** indicate that the transcript has a lower expression in the SGLT2i group compared to Non-SGLT2i group.
+
+```{r echo = F}
+# plot_de_markers(so_oldid_subset, oxy_phos_genes, "sglti_timepoint", id1 = "Yes", id2 = "No", "PT","_oxphos_sglt2i_timpoint")
+# kable(m_oxphos_sglt2i_timpoint, digits = 3)
+```
+
+### T2D & OB only (T2D + OB)
+#### By T2D status (T2D vs. OB)
+
+Group 1 = "T2D"
+
+Group 2 = "Obese Control"
+
+**Negative values** indicate that the transcript has a lower expression T2D group compared to Obese group.
+
+```{r echo = F}
+# so_oldid_subset_group_t2ob <- subset(so_oldid_subset, group_t2ob == "T2D/OB")
+# plot_de_markers(so_oldid_subset_group_t2ob, oxy_phos_genes, "group", id1 = "Type 2 Diabetes", id2 = "Obese Control", "PT","_oxphos_t2d_t2dob")
+# kable(m_oxphos_t2d_t2dob, digits = 3)
+```
+
+#### By Albuminuria
+
+Group 1 = "Albuminuria"
+
+Group 2 = "Non-Albuminuria"
+
+**Negative values** indicate that the transcript has a lower expression Albuminuria group compared to Non-Albuminuria group.
+
+```{r echo = F}
+# plot_de_markers(so_oldid_subset_group_t2ob, oxy_phos_genes, "elevated_albuminuria", id1 = "Yes", id2 = "No", "PT","_oxphos_alb_t2dob")
+# kable(m_oxphos_alb_t2dob, digits = 3)
+```
+
+#### By SGLT2i (ever)
+
+Group 1 = "SGLT2i"
+
+Group 2 = "Non-SGLT2i"
+
+**Negative values** indicate that the transcript has a lower expression SGLT2i group compared to Non-SGLT2i group.
+
+```{r echo = F}
+# plot_de_markers(so_oldid_subset_group_t2ob, oxy_phos_genes, "sglt2i_ever", id1 = "Yes", id2 = "No", "PT","_oxphos_sglt2i_ever_t2dob")
+# kable(m_oxphos_sglt2i_ever_t2dob, digits = 3)
+```
+
+#### By SGLT2i (timepoint)
+
+Group 1 = "SGLT2i"
+
+Group 2 = "Non-SGLT2i"
+
+**Negative values** indicate that the transcript has a lower expression SGLT2i group compared to Non-SGLT2i group.
+
+```{r echo = F}
+# plot_de_markers(so_oldid_subset_group_t2ob, oxy_phos_genes, "sglti_timepoint", id1 = "Yes", id2 = "No", "PT","_oxphos_sglt2i_timpoint_t2dob")
+# kable(m_oxphos_sglt2i_timpoint_t2dob, digits = 3)
+```
+
+## Key transcripts of Glycolysis
+
+```{r echo = F}
+so_oldid_subset$t2d_sglt2i_neg <- ifelse(so_oldid_subset$group == "Type 2 Diabetes" & so_oldid_subset$sglt2i_ever == "No", "T2Di(-)", so_oldid_subset$group)
+so_oldid_subset$t2d_sglt2i <- ifelse(so_oldid_subset$group == "Type 2 Diabetes" & so_oldid_subset$sglt2i_ever == "Yes", "T2Di(+)", so_oldid_subset$t2d_sglt2i_neg)
+
+glycolysis_genes <- c("PKLR", "PFKFB3", "PFKL", "ALDOC", "HK2", "ENO2", "PGK1", "PGAM1", "TPI1", "GAPDH")
+```
+
+### JCI (T2Di(-) vs. HC)
+#### By T2D status (T2Di(-) vs HC)
+
+Group 1 = "T2Di(-)"
+
+Group 2 = "HC"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(-) group compared to HC group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, glycolysis_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT","_glyc_t2di_hc")
+kable(m_glyc_t2di_hc, digits = 3)
+```
+
+### JCI (T2Di(+) vs. T2Di(-))
+#### By T2D status (T2Di(+) vs T2Di(-))
+
+Group 1 = "T2Di(+)"
+
+Group 2 = "T2Di(-)"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(+) group compared to T2Di(-) group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, glycolysis_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT","_glyc_t2di")
+kable(m_glyc_t2di, digits = 3)
+```
+
+## Key transcripts of Gluconeogensesis
+
+```{r echo = F}
+gluconeogenesis_genes <- c("SLC25A10", "GOT2", "GOT1", "FBP1", "SLC25A11", "PCK1", "MDH1")
+```
+
+### JCI (T2Di(-) vs. HC)
+#### By T2D status (T2Di(-) vs HC)
+
+Group 1 = "T2Di(-)"
+
+Group 2 = "HC"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(-) group compared to HC group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, gluconeogenesis_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT","_glucogen_t2di_hc")
+kable(m_glucogen_t2di_hc, digits = 3)
+```
+
+### JCI (T2Di(+) vs. T2Di(-))
+#### By T2D status (T2Di(+) vs T2Di(-))
+
+Group 1 = "T2Di(+)"
+
+Group 2 = "T2Di(-)"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(+) group compared to T2Di(-) group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, gluconeogenesis_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT","_glucogen_t2di")
+kable(m_glucogen_t2di, digits = 3)
+```
+## Key transcripts of Pyruvate metabolism and TCA cycle
+
+```{r echo = F}
+pyruvate_tca <- c("SDHB", "SUCLG1", "PDK2", "ACO2", "IDH3G", "SUCLA2", "HAGH", "PDHB", "LDHA")
+```
+
+### JCI (T2Di(-) vs. HC)
+#### By T2D status (T2Di(-) vs HC)
+
+Group 1 = "T2Di(-)"
+
+Group 2 = "HC"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(-) group compared to HC group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, pyruvate_tca, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT","_pyruvate_tca_t2di_hc")
+kable(m_pyruvate_tca_t2di_hc, digits = 3)
+```
+
+### JCI (T2Di(+) vs. T2Di(-))
+#### By T2D status (T2Di(+) vs T2Di(-))
+
+Group 1 = "T2Di(+)"
+
+Group 2 = "T2Di(-)"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(+) group compared to T2Di(-) group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, pyruvate_tca, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT","_pyruvate_tca_t2di")
+kable(m_pyruvate_tca_t2di, digits = 3)
+```
+
+## Key transcripts of Glutathione conjugation
+
+```{r echo = F}
+glut_conj <- c("CNDP2", "GSTM4", "GSTT2B", "GSTO1", "GGCT", "GSTM3", "AKR1A1")
+```
+
+### JCI (T2Di(-) vs. HC)
+#### By T2D status (T2Di(-) vs HC)
+
+Group 1 = "T2Di(-)"
+
+Group 2 = "HC"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(-) group compared to HC group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, glut_conj, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT","_glut_conj_t2di_hc")
+kable(m_glut_conj_t2di_hc, digits = 3)
+```
+
+### JCI (T2Di(+) vs. T2Di(-))
+#### By T2D status (T2Di(+) vs T2Di(-))
+
+Group 1 = "T2Di(+)"
+
+Group 2 = "T2Di(-)"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(+) group compared to T2Di(-) group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, glut_conj, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT","_glut_conj_t2di")
+kable(m_glut_conj_t2di, digits = 3)
+```
+## Key transcripts of Metallothioneins bind metals
+
+```{r echo = F}
+metal_genes <- c("MT1G", "MT1X", "MT1H", "MT2A")
+```
+
+### JCI (T2Di(-) vs. HC)
+#### By T2D status (T2Di(-) vs HC)
+
+Group 1 = "T2Di(-)"
+
+Group 2 = "HC"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(-) group compared to HC group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, metal_genes, "t2d_sglt2i_neg", id1 = "T2Di(-)", id2 = "Lean Control", "PT","_metal_t2di_hc")
+kable(m_metal_t2di_hc, digits = 3)
+```
+
+### JCI (T2Di(+) vs. T2Di(-))
+#### By T2D status (T2Di(+) vs T2Di(-))
+
+Group 1 = "T2Di(+)"
+
+Group 2 = "T2Di(-)"
+
+**Negative values** indicate that the transcript has a lower expression T2Di(+) group compared to T2Di(-) group.
+
+```{r echo = F}
+plot_de_markers(so_oldid_subset, metal_genes, "t2d_sglt2i", id1 = "T2Di(+)", id2 = "T2Di(-)", "PT","_metal_t2di")
+kable(m_metal_t2di, digits = 3)
+```
+
+```{r echo = F}
+# str_sort(unique(so$record_id))
+# str_sort(unique(so_oldid_subset$record_id))
+unique(so$record_id)[unique(so$record_id) %nin% unique(so_oldid_subset$record_id)]
+
+unique(so_old$michigan_id)
+unique(so_oldid_subset$record_id)
+
+nrow(so_oldid_subset)
+
+```
+
+
+# Correlations
+
+```{r echo = F}
+# Correlation / heat map showing association between PET data and transcripts (and consider estimates of insulin sensitivity) (RH/RH2, CRC)
+# Extract individual level expression of scRNA
+# meta_features <- so[["RNA"]]@meta.features
+# a <- rownames(meta_features)
+# var_list <- c("sample", "ident", "michigan_id", genes_subset)
+# pt_md <- FetchData(so, vars = var_list) %>%
+# filter(ident == "PT")
+```
+
+## Combined (T2D + OB + LC)
+
+```{r echo = F}
+
+```
+
+## T2D & OB only (T2D + OB)
+
+
+```{r echo = F}
+# Pseudotime trajectories according to T2D status, albuminuria and SGLT2i as well as proportion of PT subpopulations across these groups (RH/RH2, CRC)
+
+```
+
