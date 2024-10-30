@@ -29,6 +29,7 @@ library(emmeans)
 library(RColorBrewer)
 library(VennDiagram)
 library(broom.mixed)
+library(ggrepel)
 #library(xlsx)
 ```
 
@@ -66,20 +67,55 @@ df$visnum <-
 
 ```
 
+```{r functions}
+scaleFUN <- function(x) sprintf("%.2f", x)
+
+# Volcano plot
+volcano <- function(data, lab = "Target", xcol = "estimate", ycol = "p.value",
+                    top = 15,
+                    xlimit = c(-1, 1), ylimit = c(0, -log10(10e-7)),
+                    xlabel = "Beta", pCutoff = 0.05, overlaps = 50,
+                    log_t = F) {
+  data <- as.data.frame(data)
+  t <- data[data[, "p.value.adj"] <= pCutoff, ]
+  if (log_t) {
+    t <- t[order(abs(log(t[, ycol])), decreasing = F), ]
+  } else {
+    t <- t[order(abs(t[, ycol]), decreasing = F), ]
+  }
+  data$top <- data[, "AptName"] %in% t[1:top, "AptName"]
+  #data$top <- data[, "AptName"] %in% t[t$Target %in% top, "AptName"]
+  data$logp <- -log10(data[, ycol])
+  data$fc <- data[, xcol]
+  data$sig <- data[, ycol] <= pCutoff
+  p <- ggplot(data = data, aes(x = fc, y = logp, color = sig)) +
+    geom_hline(yintercept = -log10(pCutoff), linetype = "dashed") +
+    geom_point(size = 2.5) +
+    geom_label_repel(
+      data = data[data$top, ], aes(label = Target), color = "black",
+      max.overlaps = overlaps
+    ) +
+    scale_color_manual(values = c("grey", "#3e6dbf")) +
+    xlab(xlabel) + scale_x_continuous(labels = scaleFUN) +
+    ylab(bquote(~ -Log[10] ~ italic(P))) +
+    theme_bw() +
+    theme(legend.position = "none")
+  return(p)
+}
+```
+
 ## Longitudinal mixed models
 
 ```{r}
 seqs <- analyte_info$AptName
 # Parallel processing
 cl <- makeForkCluster(8)
-res <- NULL
-# NOTE: this is not working, because res is not defined inside the function
 rows <- parLapply(cl, seqs, function(y) {
-  f <- as.formula(paste0("bmi ~", y, " + visnum +", y,"*visnum"))
+  f <- as.formula(paste0("bmi ~", y))
   m <- lme(f, random = ~1|ID, data = df, na.action = na.omit)
-  temp <- coef(summary(m))[4,]
-  temp$protein <- y
-  res <- rbind(res, temp)
+  #res <- coef(summary(m))[4,]
+  res <- tidy(m, effects = "fixed")
+  res$protein <- y
   return(res)
 })
 stopCluster(cl)
@@ -92,17 +128,14 @@ lmm_res$protein <- analyte_info$UniProt[match(lmm_res$AptName, analyte_info$AptN
 lmm_res$Target <- analyte_info$Target[match(lmm_res$AptName, analyte_info$AptName)]
 lmm_res$TargetFullName <- analyte_info$TargetFullName[match(lmm_res$AptName, analyte_info$AptName)]
 lmm_res$Uniprot <- analyte_info$UniProt[match(lmm_res$AptName, analyte_info$AptName)]
-lmm_res <- split.data.frame(lmm_res, lmm_res$term)
-# Write the change from baseline at each visit as a new excel sheet
-names <- names(lmm_res)
-lmm_res <- lapply(names(lmm_res), function(n) {
-  d <- lmm_res[[n]]
-  d <- d[, c("AptName", "protein", "Target", "TargetFullName", "estimate", "p.value")]
-  d$p.value.adj <- p.adjust(d$p.value, method = "fdr")
-  d <- d[order(d$estimate, decreasing = T), ]
-  colnames(d) <- c("AptName", "UniProt", "Target", "TargetFullName", "logFC", "p value", "q value")
-  return(d)
-})
-openxlsx::write.xlsx(lmm_res, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/Teen LABS change_from_m1.xlsx", sheetName=names)
+lmm_res$p.value.adj <- p.adjust(lmm_res$p.value, method = "BH")
+lmm_res <- lmm_res %>% arrange(p.value.adj)
+openxlsx::write.xlsx(lmm_res, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/Teen LABS proteins BMI.xlsx")
+
+v <- volcano(lmm_res)
+ggsave(
+  filename = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results//Figures/BMI_volcano.jpeg", plot = v,
+  width = 1600, height = 900, units = "px", scale = 2
+)
 ```
 
