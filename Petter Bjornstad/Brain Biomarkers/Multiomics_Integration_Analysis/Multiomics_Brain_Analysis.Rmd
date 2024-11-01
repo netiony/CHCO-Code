@@ -15,30 +15,37 @@ source("Functions.R")
 
 #Directories
 dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
-dir.results <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Brain Biomarkers/Multiomics_Integration_Analysis/Results")
+dir.results <- c("/Users/hhampson/Documents/UW/1_Ongoing Projects/Brain_Biomarkers/Results")
 ```
 
 #2. Load & Clean Data
 ```{r load clean data, include=FALSE, echo=FALSE}
 #Load Data
 dat_harm <- read.csv(fs::path(dir.dat,"Data Harmonization","Data Clean","soma_harmonized_dataset.csv"))
-dat_harm2 <- read.csv(fs::path(dir.dat,"Data Harmonization","Data Clean","harmonized_dataset.csv"))
+# dat_harm2 <- read.csv(fs::path(dir.dat,"Data Harmonization","Data Clean","harmonized_dataset.csv"))
 
 #Filter to CROCODILE & Diabetes
 dat_harm <- dat_harm %>% 
-  filter(study=="CROCODILE" | study=="PENGUIN") 
-PENGUIN <- dat_harm %>% 
-  filter(study=="PENGUIN") 
+  filter(study=="CROCODILE") 
 
 #Metabolomics & proteomics
-met.names <- c("record_id",colnames(dat_harm)[which(grepl("c000",colnames(dat_harm)))])
+#Select metabolomics data
+met.names <- c("record_id",colnames(dat_harm)[which(startsWith(colnames(dat_harm),"c0") | startsWith(colnames(dat_harm),"c1"))])
 met <- dat_harm %>% 
-  # filter(procedure == "metabolomics_blood") %>% 
-  dplyr::select(all_of(met.names))
+  filter(procedure == "metabolomics_blood") %>% #Filter to metabolomics measurement
+  dplyr::select(all_of(met.names)) #Select only metabolite features
+met <- met %>% #Remove metabolites with missing data
+  dplyr::select(where(~ !all(is.na(.))))
+metabolites <- colnames(met)[-1]
+#Select proteomics data
 prot.names <- c("record_id",colnames(dat_harm)[which(grepl("seq.",colnames(dat_harm)))])
 prot <- dat_harm %>% 
-  # filter(procedure == "metabolomics_blood") %>% 
-  dplyr::select(all_of(prot.names))
+  filter(procedure == "metabolomics_blood") %>% #Proteomics available for all measurements, select one arbitrarily)
+  dplyr::select(all_of(prot.names)) #Select only protein features
+#CRC-53 & CRC-60 missing proteomics data
+proteins <- prot.names[-1]
+rm(prot.names)
+rm(met.names)
 
 #Brain biomarkers
 brain <- dat_harm %>% 
@@ -47,8 +54,27 @@ brain <- dat_harm %>%
                 tau_avg_conc,nfl_avg_conc,gfap_avg_conc,
                 ptau_181_avg_conc,ptau_217_avg_conc) %>% 
   filter(!is.na(ab40_avg_conc))
-  
 
+#Select covariates
+cov <- dat_harm %>% 
+  filter(procedure=="physical_exam") %>%
+  dplyr::select(record_id,procedure,diabetes_duration,group,age,sex,bmi,race_ethnicity) %>% 
+  filter(record_id %in% brain$record_id) %>%  #filter to individuals with proteomics & metabolomics & brain biomarkers
+  mutate(diabetes_duration=ifelse(group=="Lean Control",0,diabetes_duration)) %>% 
+  dplyr::select(-procedure)
+  
+#Combine datasets
+dat <- tidylog::left_join(cov,brain,by="record_id")
+dat <- tidylog::left_join(dat,prot,by="record_id")
+dat <- tidylog::left_join(dat,met,by="record_id")
+  
+rm(brain,cov,dat_harm,met,prot)
+
+#Make Covariates factors
+dat <- dat %>% 
+  mutate(diabetes_status=as.factor(ifelse(group=="Lean Control",0,1))) %>% #0 = Lean Control, 1 = Type 1
+  mutate(sex=as.factor(sex),
+         race_ethnicity=as.factor(race_ethnicity))
 ```
 
 # 3. Annotate Feature Tables 
@@ -531,130 +557,40 @@ burden_score <- c("burden_scaled","burden_scaled_pfcas","burden_scaled_pfsas")
 #5. Integration Analysis
 ##a. Prepare Datasets for Analysis 
 ```{r Prepare Datasets for Analysis , echo=F, include=F}
-# Define exposure and outcome name
-# exposure <- c("ma_pfos","ma_pfoa","ma_pfda","ma_pfna","ma_pfhxs","ma_pfhps","ma_pfpes")
-# outcome  <- c("eGFR_log","LCN2_log")
-outcome_log_scaled
-exposure_dat <- meta_filt[exposure_log_scaled]
-# exposure_dat <- meta_filt[burden_score[1]]
-# outcome_dat  <- meta_filt[outcome_log_scaled[c(1)]]
-outcome_dat  <- meta_filt[outcome_log_scaled]
+# Define exposure and outcome names
+exposure <- c("diabetes_duration","diabetes_status")
+exposure_dat <- dat[exposure]
+#Scale continuous exposure
+exposure_dat <- exposure_dat %>% 
+  mutate(diabetes_duration=(diabetes_duration-mean(diabetes_duration))/sd(diabetes_duration))
 
-
-# outcome_dat <- outcome_dat %>% 
-#   mutate(eGFR=exp(eGFR_log),
-#          LCN2=exp(LCN2_log)) %>% 
-#   select(-c(eGFR_log,LCN2_log))
-# outcome_dat <- outcome_dat[[1]]
-ids <- data.frame(id=meta_filt$id)
+outcome  <- c("ab40_avg_conc","ab42_avg_conc","tau_avg_conc",
+              "nfl_avg_conc","gfap_avg_conc","ptau_181_avg_conc","ptau_217_avg_conc")
+outcome_dat  <- dat[outcome]
+#Scale outcome variables
+outcome_dat <- outcome_dat %>% 
+  mutate(across(all_of(outcome),~((.-mean(.,na.rm=T))/sd(.,na.rm=T))))
 
 # Get numeric matrix of covariates 
-covars <- c("ma_age","ma_sex","ma_parental_edu","ma_race_eth","ma_creatinine_scaled")
-X_vars <- meta_filt[covars]
-X_vars$ma_sex <- as.character(X_vars$ma_sex)
-X_vars$ma_sex <- ifelse(X_vars$ma_sex=="male",1,0)
-X_vars$ma_parental_edu <- as.numeric(X_vars$ma_parental_edu)
-X_vars$ma_race_eth <- as.numeric(X_vars$ma_race_eth)
-X <- as.matrix(X_vars)
-X[,1] <- scale(X[,1])
-covs <- X
-# covs
-
-# create list of omics data 
-#Reduce metabolites first
-# metab.data <- metab.data[c("id",sig.metabolites2)]
-metabolite <- metabolites$key
-# metab.data <- metab.data[c("id",metabolite_features)]
-metab.data <- metab.data[c("id",metabolite)]
-omics_df <- metab.data
-omics_df$id <- as.numeric(omics_df$id)
-omics_df <- tidylog::left_join(ids,omics_df,by="id")
-omics_df <- omics_df %>%
-  dplyr::select(-id)
-metabolomics <- as.matrix(omics_df)
-#Filter metabolites to only those selected from data reduction
-# microbiome <- as.matrix(meta_filt[microbiome_features])
-microbiome <- as.matrix(meta_filt[microbiome])
-# omics_lst <- list(metabolomics = metabolomics,microbiome=microbiome)
-omics_lst <- list(microbiome=microbiome,metabolomics = metabolomics)
-
-#Select only PFAS associated with eGFR:
-# exposure.scaled <- c("ma_pfos_scaled","ma_pfoa_scaled","ma_pfna_scaled","ma_pfhxs_scaled","ma_pfpes_scaled")
-exposure.scaled <- c("ma_pfos_scaled","ma_pfoa_scaled","ma_pfna_scaled","ma_pfhxs_scaled","ma_pfpes_scaled","ma_pfhps_scaled","ma_pfda_scaled")
+covars <- c("age","sex","bmi","race_ethnicity")
+covs <- dat[covars]
+covs <- covs %>% 
+  mutate(sex=as.numeric(sex),
+         race_ethnicity=as.numeric(race_ethnicity))
+covs <- as.matrix(covs)
+covs[,c(1,3)] <- scale(covs[,c(1,3)]) #Scale continuous covariates
 
 
-# eGFR <- "eGFR_log_scaled"
+#Create list of omics data 
+metabolomics <- dat[metabolites]
+metabolomics <- metabolomics %>% 
+  mutate(across(all_of(metabolites),~((.-mean(.,na.rm=T))/sd(.,na.rm=T))))
 
+proteomics <- dat[proteins]
+proteomics <- proteomics %>% 
+  mutate(across(all_of(proteins),~((.-mean(.,na.rm=T))/sd(.,na.rm=T))))
 
-# #Calculate PFAS burden scores --------------
-# ## A. Create categorical PFAS which are needed for the score ------
-# pfas_names_all <- c("ma_pfos","ma_pfoa","ma_pfna","ma_pfhxs","ma_pfpes","ma_pfhps","ma_pfda")
-# data_analysis <- meta_filt %>%
-#   mutate_at(.vars = vars(all_of(pfas_names_all[c(1:7)])), 
-#             .funs = list(
-#               quartile = ~as.integer(cut(., quantile(., probs = seq(0, 1, 0.25)), 
-#                                          include.lowest = TRUE
-#               ))))
-# # mutate(pfas_pfda_detected = ifelse(pfas_pfda<0.05|pfas_pfda==0.2/sqrt(2), 1, 2)) %>%
-# # mutate(pfas_pfuna_detected = ifelse(pfas_pfuna<0.05|pfas_pfuna==0.1/sqrt(2), 1, 2)) %>%
-# # mutate_at(.vars = vars(c("pfas_pfhpa","pfas_pfuna")),
-# #           .funs = list(detected = ~ifelse(.<0.05|.==0.1/sqrt(2), 1, 2))) %>%
-# # tidylog::mutate_at(.vars = vars(c("pfas_pfhps", "pfas_pfhpa")), #, 
-# #                    .funs = list(tert = ~cut(., 
-# #                                                    quantile(., probs = seq(0, 1, 1/3)), 
-# #                                                    include.lowest = TRUE) %>% 
-# # as.integer()))
-# 
-# # Select just the categorical PFAS
-# burden_score_pfas <- data_analysis %>% 
-#   dplyr::select(contains("detected"), 
-#                 contains("quartile"), 
-#                 contains("tert")) %>% 
-#   as.data.frame()
-# 
-# eap.pfas <- ltm::factor.scores(grm(burden_score_pfas), 
-#                                method="EAP", 
-#                                resp.patterns = burden_score_pfas)$score.dat$z1
-# meta_filt$eap.pfas <- eap.pfas
-# meta_filt$burden_scaled <- scale(meta_filt$eap.pfas)
-# 
-# burden_score_pfcas <- burden_score_pfas |> 
-#   dplyr::select(ma_pfoa_quartile, 
-#                 ma_pfna_quartile, 
-#                 ma_pfda_quartile) 
-# # pfas_pfuna_detected, 
-# # pfas_pfhpa_tert)
-# 
-# # Select PFSAs
-# burden_score_pfsas <- burden_score_pfas |> 
-#   dplyr::select(ma_pfos_quartile, 
-#                 ma_pfhxs_quartile, 
-#                 ma_pfhps_quartile)
-# 
-# 
-# eap.pfcas <- ltm::factor.scores(grm(burden_score_pfcas), 
-#                                 method="EAP", 
-#                                 resp.patterns = burden_score_pfcas)$score.dat$z1
-# eap.pfsas <- ltm::factor.scores(grm(burden_score_pfsas), 
-#                                 method="EAP", 
-#                                 resp.patterns = burden_score_pfsas)$score.dat$z1
-# 
-# meta_filt$eap.pfcas <- eap.pfcas
-# meta_filt$burden_scaled_pfcas <- scale(meta_filt$eap.pfcas)
-# 
-# meta_filt$eap.pfsas <- eap.pfsas
-# meta_filt$burden_scaled_pfsas <- scale(meta_filt$eap.pfsas)
-
-meta_filt_microbiome <- meta_filt[c("id",exposure_log_scaled,outcome_log_scaled,microbiome_scaled)]
-mean(meta_filt$eGFR3)
-sd(meta_filt$eGFR3)
-
-mean(meta_filt$cystatin_c)
-sd(meta_filt$cystatin_c)
-
-
-log2(meta_filt$eap.pfas)
-meta_filt$ma_pfna
+omics_lst <- list(proteomics=proteomics,metabolomics = metabolomics)
 ```
 
 ##b. Exposure Outcome Analysis 
