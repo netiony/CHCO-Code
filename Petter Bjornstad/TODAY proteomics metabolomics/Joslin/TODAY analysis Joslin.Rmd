@@ -44,6 +44,7 @@ knitr::opts_knit$set(root.dir = home_dir)
 
 ```{r, include=FALSE}
 setwd(home_dir)
+
 # load somalogic data, with QC samples already excluded
 load("./Somalogic data raw/soma.Rdata")
 
@@ -53,53 +54,124 @@ load("./Somalogic data raw/analytes.Rdata")
 # load comorbidity data
 load("./Clinical data/comorb.Rdata")
 
+# load year 10 covariates
+load("./Clinical data/TODAY/yr10risk.Rdata")
+
 # load baseline risk factors
 load("./Clinical data/TODAY/baserisk.Rdata")
 
-# take only the baseline soma samples
+# find the baseline soma samples
 # can we just take the earliest or is it possible someone would have a follow-up sample but not baseline?
 # probably can take the first and then check the years to make sure compatible with TODAY
-base <- soma %>% arrange(releaseid,Date.Drawn) %>% dplyr::group_by(releaseid) %>% dplyr::filter(row_number()==1)
+base <- soma %>% arrange(releaseid,Date.Drawn) %>% group_by(releaseid) %>% filter(row_number()==1)
+
 # these 3 release IDs have first sample after end of recruitment, so they must be missing the baseline visit
 base <- base %>% filter(!releaseid %in% c("65-85903","65-47984","65-25901"))
 
-# the above section of code used to work but seems to have broken....this should accomplish the same thing?
-#base <- soma %>% filter(visit==1)
-
-# merge in complication data
-base <- left_join(base, comorb, by="releaseid")
-# this was previously:
-# base <- merge(base, comorb, by="releaseid",all.x=T, all.y=F)
-
 # merge in baseline risk factors
 base <- left_join(base, baserisk, by="releaseid")
-# this was previously:
-#base <- merge(base, baserisk, by="releaseid",all.x=T, all.y=F)
 
-# log transform UAlbCreat
-base$log_UAlbCreat <- log(base$UAlbCreat + 0.0000001)
-
-# identify columns corresponding to proteins
-#is_seq <- function(.x) grepl("^seq\\.[0-9]{4}", .x) # regex for analytes
+# identify columns corresponding to proteins and convert to numeric
 is_seq <- function(.x) grepl("seq", .x)
-seq <- is_seq(names(base))
+base <- base %>%
+       mutate(across(starts_with("seq"),
+              ~ as.numeric(as.character(.))))
 
-# convert to numeric
-base[,seq] <- apply(base[,seq],2,as.numeric)
+# find follow-up samples
+fup <- soma %>% anti_join(base, soma, by=c("releaseid","Date.Drawn"))
 
-# are there proteins with low variability?
-no_var = caret::nearZeroVar(base[,seq])
-# none
+# merge in nephropathy data
+fup <- left_join(fup, comorb, by="releaseid")
+
+# merge in year 10 covariates
+fup <- left_join(fup, yr10risk, by="releaseid")
+
+# identify columns corresponding to proteins and convert to numeric
+fup <- fup %>%
+       mutate(across(starts_with("seq"),
+              ~ as.numeric(as.character(.))))
+
+# get age and dxtime
+ad <- base %>% select(releaseid, AGEBASE, dxtime)
+fup <- left_join(fup, ad, by = "releaseid")
+
+# create new mac variable only including those diagnosed prior to year 10 sample collection
+# we have variable DAYSTOMAC which is days between baseline and dx of MAC
+# get date of year 10 CBL
+CBL_TODAY2 <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Clinical data/TODAY2/CBL.csv")
+CBL_TODAY2 <- CBL_TODAY2 %>% select(releaseid, days)
+colnames(CBL_TODAY2) <- c("releaseid", "days_to_yr10")
+fup <- left_join(fup, CBL_TODAY2, by = "releaseid")
+fup$MAC_YR10 <- ifelse(fup$MAC == 1 & (fup$DAYSTOMAC <= fup$days_to_yr10), 1, 0)
 
 # read in the proteins from the Joslin analysis and subset Soma data to those proteins
 mma <- openxlsx::readWorkbook("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Joslin collaboration/mma.xlsx")
 analyte_keep <- analytes %>% filter(EntrezGeneSymbol %in% mma$EntrezGeneSymbol)
 apt_keep <- analyte_keep$AptName
-base_keep <- base %>% select(all_of(c("releaseid", "MAC", "AGEBASE", "HbA1c", "dxtime", "EstCreatClear", apt_keep)))
+fup_keep <- fup %>% select(all_of(c("releaseid", "MAC_YR10", "AGEBASE", "hba1c", "dxtime", "estcreatclear", apt_keep)))
 
 # log transform
-base_log <- base_keep %>% modify_if(is_seq(names(.)), log)
-seq <- is_seq(names(base_keep))
+fup_log <- fup_keep %>% modify_if(is_seq(names(.)), log)
+
+```
+
+```{r, include=FALSE}
+# load somalogic data, with QC samples already excluded
+# load("./Somalogic data raw/soma.Rdata")
+# 
+# # load analyte info
+# load("./Somalogic data raw/analytes.Rdata")
+# 
+# # load comorbidity data
+# load("./Clinical data/comorb.Rdata")
+# 
+# # load baseline risk factors
+# load("./Clinical data/TODAY/baserisk.Rdata")
+# 
+# # take only the baseline soma samples
+# # can we just take the earliest or is it possible someone would have a follow-up sample but not baseline?
+# # probably can take the first and then check the years to make sure compatible with TODAY
+# base <- soma %>% arrange(releaseid,Date.Drawn) %>% dplyr::group_by(releaseid) %>% dplyr::filter(row_number()==1)
+# # these 3 release IDs have first sample after end of recruitment, so they must be missing the baseline visit
+# base <- base %>% filter(!releaseid %in% c("65-85903","65-47984","65-25901"))
+# 
+# # the above section of code used to work but seems to have broken....this should accomplish the same thing?
+# #base <- soma %>% filter(visit==1)
+# 
+# # merge in complication data
+# base <- left_join(base, comorb, by="releaseid")
+# # this was previously:
+# # base <- merge(base, comorb, by="releaseid",all.x=T, all.y=F)
+# 
+# # merge in baseline risk factors
+# base <- left_join(base, baserisk, by="releaseid")
+# # this was previously:
+# #base <- merge(base, baserisk, by="releaseid",all.x=T, all.y=F)
+# 
+# # log transform UAlbCreat
+# base$log_UAlbCreat <- log(base$UAlbCreat + 0.0000001)
+# 
+# # identify columns corresponding to proteins
+# #is_seq <- function(.x) grepl("^seq\\.[0-9]{4}", .x) # regex for analytes
+# is_seq <- function(.x) grepl("seq", .x)
+# seq <- is_seq(names(base))
+# 
+# # convert to numeric
+# base[,seq] <- apply(base[,seq],2,as.numeric)
+# 
+# # are there proteins with low variability?
+# #no_var = caret::nearZeroVar(base[,seq])
+# # none
+# 
+# # read in the proteins from the Joslin analysis and subset Soma data to those proteins
+# mma <- openxlsx::readWorkbook("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Joslin collaboration/mma.xlsx")
+# analyte_keep <- analytes %>% filter(EntrezGeneSymbol %in% mma$EntrezGeneSymbol)
+# apt_keep <- analyte_keep$AptName
+# base_keep <- base %>% select(all_of(c("releaseid", "MAC", "AGEBASE", "HbA1c", "dxtime", "EstCreatClear", apt_keep)))
+# 
+# # log transform
+# base_log <- base_keep %>% modify_if(is_seq(names(.)), log)
+# seq <- is_seq(names(base_keep))
 ```
 
 ```{r functions}
@@ -107,36 +179,39 @@ cor_and_plot_soma <- function(data, vars) {
   # Format matrix
   analytes_temp <- analyte_keep
   analytes_temp$Target_apt <- paste0(analytes_temp$Target, " (", analytes_temp$AptName, ")")
-  d <- data[, c(vars, "MAC")]
+  d <- data[, c(vars, "MAC_YR10")]
   n <- c(
     analytes_temp$Target_apt[match(vars, analytes_temp$AptName)],
-    "MAC"
+    "MAC_YR10"
   )
   #n[duplicated(n)] <- paste0(n[duplicated(n)], "(2)")
   #n[duplicated(n)] <- paste0(n[duplicated(n)], "(3)")
   names(d) <- n
   # Correlations
-  M <- corr.test(data.matrix(d), normal = F, method = "spearman", adjust = "none")
-  M_MAC_r <- M$r[,"MAC"]
+  # Pearson correlation is equivalent to point-biserial correlation
+  M <- corr.test(data.matrix(d), normal = F, method = "pearson", adjust = "BH")
+  M_MAC_r <- M$r[,"MAC_YR10"]
   M_MAC_r <- M_MAC_r[-696]
-  M_MAC_p <- M$p[,"MAC"]
+  M_MAC_p <- M$p[,"MAC_YR10"]
   M_MAC_p <- M_MAC_p[-696]
   res <- cbind(M_MAC_r, M_MAC_p)
   res <- cbind(res, analytes_temp$AptName, analytes_temp$Target, analytes_temp$UniProt, analytes_temp$EntrezGeneID)
-  colnames(res) <- c("corr_MAC", "P_corr_MAC", "AptName", "Target", "UniProt", "EntrezGeneID")
+  colnames(res) <- c("corr_MAC", "P_FDR_corr_MAC", "AptName", "Target", "UniProt", "EntrezGeneID")
+  res = as.data.frame(res)
+  res <- res[order(res$P_FDR_corr_MAC),] 
   return(res)
 }
 ```
 
 ```{r, include=FALSE}
-# Spearman correlations and FDR adjusted p-values
-res <- cor_and_plot_soma(data = base_keep, vars = apt_keep)
+# Point-biserial correlations and FDR adjusted p-values
+res <- cor_and_plot_soma(data = fup_keep, vars = apt_keep)
 
 # fold changes
-MAC_contrast <- ifelse(base_keep$MAC==1,1,0)
-MAC_contrast <- cbind(rep(1,nrow(base_keep)),MAC_contrast)
+MAC_contrast <- ifelse(fup_keep$MAC_YR10==1,1,0)
+MAC_contrast <- cbind(rep(1,nrow(fup_keep)),MAC_contrast)
 # moderated t-tests with and without FDR adjustment
-ymat <- t(base_log[,seq])
+ymat <- t(fup_keep[,apt_keep])
 fit <- lmFit(ymat,MAC_contrast)
 fit <- eBayes(fit)
 results_MAC <- topTable(fit,coef = 2,number = nrow(ymat))
@@ -146,10 +221,10 @@ results_MAC <- results_MAC[order(results_MAC$P.Value),]
 
 # logistic regression - unadjusted
 result_lr_MAC <- NULL
-predictors <- colnames(base_log[seq])
+predictors <- colnames(fup_log[apt_keep])
 for (i in 1:length(predictors)) {
-  form <- paste0("MAC~",predictors[i])
-  mod <- glm(data = base_log, formula = as.formula(form))
+  form <- paste0("MAC_YR10~",predictors[i])
+  mod <- glm(data = fup_log, formula = as.formula(form))
   tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
   tidymod <- tidymod[2,]
   result_lr_MAC <- rbind(result_lr_MAC,tidymod)
@@ -162,10 +237,10 @@ result_lr_MAC <- result_lr_MAC[order(result_lr_MAC$p.value),]
 
 # logistic regression - adjusted
 result_lr_MAC_adj <- NULL
-predictors <- colnames(base_log[seq])
+predictors <- colnames(fup_log[apt_keep])
 for (i in 1:length(predictors)) {
-  form <- paste0("MAC~",predictors[i],"+AGEBASE+HbA1c+dxtime+EstCreatClear")
-  mod <- glm(data = base_log, formula = as.formula(form))
+  form <- paste0("MAC_YR10~",predictors[i],"+AGEBASE+hba1c+dxtime+estcreatclear")
+  mod <- glm(data = fup_log, formula = as.formula(form))
   tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
   tidymod <- tidymod[2,]
   result_lr_MAC_adj <- rbind(result_lr_MAC_adj,tidymod)
@@ -178,8 +253,8 @@ result_lr_MAC_adj <- result_lr_MAC_adj[order(result_lr_MAC_adj$p.value),]
 
 # write all results to file
 wb <- createWorkbook()
-addWorksheet(wb,"Spearman corr")
-writeData(wb,"Spearman corr",res,rowNames = F)
+addWorksheet(wb,"Point-biserial corr")
+writeData(wb,"Point-biserial corr",res,rowNames = F)
 addWorksheet(wb,"LogFC")
 writeData(wb,"LogFC",results_MAC,rowNames = F)
 addWorksheet(wb,"Unadjusted GLM")
