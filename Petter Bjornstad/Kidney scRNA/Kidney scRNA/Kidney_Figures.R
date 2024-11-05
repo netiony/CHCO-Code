@@ -457,3 +457,44 @@ for (cell in cell_types){
 }
 
 saveWorkbook(wb,fs::path(dir.home,"Results_and_Figures","Kidney_scRNA_Diff_Exp.xlsx"),overwrite = TRUE)
+
+
+
+# Assuming your code prior to this point remains the same
+library(stringr)
+
+#HC
+kidney_meta_raw_sc <- so_HC@meta.data %>%
+  filter(cryostor_id != "")
+form <- paste("sex", paste(colnames(kidney_meta_raw_sc)[c(18:27)], collapse = " + "), sep = " ~ ")
+
+# Perform the tableby analysis
+table_summary <- arsenal::tableby(formula = as.formula(form), data = kidney_meta_raw_sc, test = TRUE)
+
+# Convert the summary to a data frame
+summary_df <- as.data.frame(summary(table_summary))
+colnames(summary_df)[1] <- "Variable"
+summary_df$Variable <- str_remove_all(summary_df$Variable,"\\**")
+summary_df$Variable <- str_remove_all(summary_df$Variable,"\\&nbsp;&nbsp;&nbsp;")
+summary_df$Variable <- str_to_title(summary_df$Variable)
+
+# Save the summary to a CSV file
+write.csv(summary_df, "HC_Descriptives_by_Sex.csv", row.names = FALSE)
+
+#T2
+kidney_meta_raw_sc <- so_T2@meta.data %>%
+  filter(cryostor_id != "")
+form <- paste("sex", paste(colnames(kidney_meta_raw_sc)[c(18:27)], collapse = " + "), sep = " ~ ")
+
+# Perform the tableby analysis
+table_summary <- arsenal::tableby(formula = as.formula(form), data = kidney_meta_raw_sc, test = TRUE)
+
+# Convert the summary to a data frame
+summary_df <- as.data.frame(summary(table_summary))
+colnames(summary_df)[1] <- "Variable"
+summary_df$Variable <- str_remove_all(summary_df$Variable,"\\**")
+summary_df$Variable <- str_remove_all(summary_df$Variable,"\\&nbsp;&nbsp;&nbsp;")
+summary_df$Variable <- str_to_title(summary_df$Variable)
+
+# Save the summary to a CSV file
+write.csv(summary_df, "T2_Descriptives_by_Sex.csv", row.names = FALSE)

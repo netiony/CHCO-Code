@@ -21,10 +21,77 @@ library(ggpubr)
 library(lme4)
 library(lmerTest)
 library(emmeans)
+library(parallel)
+library(limma)
+library(clusterProfiler)
+library(ReactomePA)
+library(enrichplot)
+library(Hmisc)
+library(knitr)
+library(tidyverse)
+library(gtsummary)
+library(ggpubr)
+library(nlme)
+library(parallel)
+library(emmeans)
+library(RColorBrewer)
+library(VennDiagram)
+library(broom.mixed)
+library(ggrepel)
 knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
 ```
 
+
+```{r functions}
+scaleFUN <- function(x) sprintf("%.2f", x)
+
+# Volcano plot
+volcano <- function(data, lab = "Target", xcol = "estimate", ycol = "p.value",
+                    top = 15,
+                    xlimit = c(-1, 1), ylimit = c(0, -log10(10e-7)),
+                    xlabel = "Beta", pCutoff = 0.05, overlaps = 50,
+                    log_t = F) {
+  data <- as.data.frame(data)
+  t <- data[data[, "p.value.adj"] <= pCutoff, ]
+  if (log_t) {
+    t <- t[order(abs(log(t[, ycol])), decreasing = F), ]
+  } else {
+    t <- t[order(abs(t[, ycol]), decreasing = F), ]
+  }
+  data$top <- data[, "AptName"] %in% t[1:top, "AptName"]
+  #data$top <- data[, "AptName"] %in% t[t$Target %in% top, "AptName"]
+  data$logp <- -log10(data[, ycol])
+  data$fc <- data[, xcol]
+  data$sig <- data[, ycol] <= pCutoff
+  p <- ggplot(data = data, aes(x = fc, y = logp, color = sig)) +
+    geom_hline(yintercept = -log10(pCutoff), linetype = "dashed") +
+    geom_point(size = 2.5) +
+    geom_label_repel(
+      data = data[data$top, ], aes(label = Target), color = "black",
+      max.overlaps = overlaps
+    ) +
+    scale_color_manual(values = c("grey", "#3e6dbf")) +
+    xlab(xlabel) + scale_x_continuous(labels = scaleFUN) +
+    ylab(bquote(~ -Log[10] ~ italic(P))) +
+    theme_bw() +
+    theme(legend.position = "none")
+  return(p)
+}
+```
+
+
 ```{r clean data,echo=FALSE}
+# read entire TL dataset
+# source("/Users/timvigers/GitHub/CHCO-Code/Petter Bjornstad/Teen-LABS/create_teen_labs_analysis_dataset.R")
+load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/analysis_dataset.RData")
+# Tim already log transformed proteins when creating dataframe
+df$map <- NA
+for (i in 1:nrow(df)) {
+  df[i,]$map <- df[i,]$dbp + ((1/3) * (df[i,]$sbp - df[i,]$dbp))
+}
+tldata <- df
+
+# top proteins from TODAY
 load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Proteomics HTN/copy_of_old_analysis_dataset_for_HTN_response.RData")
 df <- df[!is.na(df$htn),]
 df <- df %>% filter(visit == "baseline")
@@ -41,8 +108,7 @@ top_htn <- top_htn_df %>%
   slice_max(abs(log(estimate)), n = 21) %>%
   pull(AptName)
 
-
-# read in estimated marginal means
+# read in estimated marginal means from TL
 emmdf <- read_xlsx("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/Teen LABS emmeans.xlsx")
 emmdf_keep <- emmdf %>% filter(AptName %in% seq_include)
 emmdf_keep$uniqname <- paste0(emmdf_keep$Target,"_",emmdf_keep$AptName)  
@@ -50,6 +116,7 @@ emmdf_keep$uniqname <- paste0(emmdf_keep$Target,"_",emmdf_keep$AptName)
 qvals <- read_xlsx("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/Teen LABS change_from_m1.xlsx")
 qvals <- qvals %>% select(AptName, `q value`)
 emmdf_keep <- left_join(emmdf_keep, qvals, by = "AptName")
+
 ```
 
 ```{r,echo=FALSE}
@@ -148,3 +215,78 @@ panel_pclin
 dev.off()
 
 ```
+
+```{r,echo=FALSE}
+# test association over time of top HTN proteins with SBP
+seqs <- analyte_info$AptName
+# Parallel processing
+cl <- makeForkCluster(8)
+rows <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0("sbp ~", y))
+  m <- lme(f, random = ~1|record_id, data = df, na.action = na.omit)
+  #res <- coef(summary(m))[4,]
+  res <- tidy(m, effects = "fixed")
+  res$protein <- y
+  return(res)
+})
+stopCluster(cl)
+# Save results
+lmm_res <- data.frame(do.call(rbind, rows)) %>%
+  dplyr::select(protein, term, estimate, p.value) %>%
+  filter(term != "(Intercept)")
+lmm_res$AptName <- analyte_info$AptName[match(lmm_res$protein, analyte_info$AptName)]
+lmm_res$protein <- analyte_info$UniProt[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$Target <- analyte_info$Target[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$TargetFullName <- analyte_info$TargetFullName[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$Uniprot <- analyte_info$UniProt[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$p.value.adj <- p.adjust(lmm_res$p.value, method = "BH")
+lmm_res <- lmm_res %>% arrange(p.value.adj)
+openxlsx::write.xlsx(lmm_res, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/Teen LABS proteins SBP.xlsx")
+lmm_res_reduced <- lmm_res %>% filter(term %in% seq_include)
+lmm_res_reduced$p.value.adj <- NULL
+openxlsx::write.xlsx(lmm_res_reduced, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/TODAY top HTN proteins vs. Teen LABS SBP.xlsx")
+
+v <- volcano(lmm_res)
+ggsave(
+  filename = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results//Figures/SBP_volcano.jpeg", plot = v,
+  width = 1600, height = 900, units = "px", scale = 2
+)
+```
+
+```{r,echo=FALSE}
+# test association over time of top HTN proteins with DBP
+seqs <- analyte_info$AptName
+# Parallel processing
+cl <- makeForkCluster(8)
+rows <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0("dbp ~", y))
+  m <- lme(f, random = ~1|record_id, data = df, na.action = na.omit)
+  #res <- coef(summary(m))[4,]
+  res <- tidy(m, effects = "fixed")
+  res$protein <- y
+  return(res)
+})
+stopCluster(cl)
+# Save results
+lmm_res <- data.frame(do.call(rbind, rows)) %>%
+  dplyr::select(protein, term, estimate, p.value) %>%
+  filter(term != "(Intercept)")
+lmm_res$AptName <- analyte_info$AptName[match(lmm_res$protein, analyte_info$AptName)]
+lmm_res$protein <- analyte_info$UniProt[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$Target <- analyte_info$Target[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$TargetFullName <- analyte_info$TargetFullName[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$Uniprot <- analyte_info$UniProt[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$p.value.adj <- p.adjust(lmm_res$p.value, method = "BH")
+lmm_res <- lmm_res %>% arrange(p.value.adj)
+openxlsx::write.xlsx(lmm_res, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/Teen LABS proteins DBP.xlsx")
+lmm_res_reduced <- lmm_res %>% filter(term %in% seq_include)
+lmm_res_reduced$p.value.adj <- NULL
+openxlsx::write.xlsx(lmm_res_reduced, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results/TODAY top HTN proteins vs. Teen LABS DBP.xlsx")
+
+v <- volcano(lmm_res)
+ggsave(
+  filename = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Results//Figures/DBP_volcano.jpeg", plot = v,
+  width = 1600, height = 900, units = "px", scale = 2
+)
+```
+

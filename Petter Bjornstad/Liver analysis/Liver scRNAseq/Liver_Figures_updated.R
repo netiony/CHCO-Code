@@ -17,10 +17,11 @@
 # DimPlot(so_kidney_sc, reduction = "umap")
 # dev.off()
 
-#Diff exp by sex
-pdf(file = fs::path(dir.home,"Results_and_Figures","Volcano_bySex_allcells_all_disease.pdf"),width=15,height=10)
-de.markers(so_kidney_sc, NULL, "sex", id1 = "Female", id2 = "Male", NULL, "_top")
-m_top <- m_top %>% head(2000)
+#Diff exp by diabetes status
+pdf(file = fs::path(dir.results,"Results_and_Figures","Volcano_byDiabetes_heptatocytes.pdf"),width=15,height=10)
+de.markers(so_liver_sn_hep, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hepatocyte", "")
+write.csv(m,fs::path(dir.code,"Differential_Expression_Diabetes.csv"))
+m_top <- m
 significant_genes <- m_top %>% filter(p_val_adj < 0.05)
 
 # Select the top 10 positive and top 10 negative log2FC genes that are significant

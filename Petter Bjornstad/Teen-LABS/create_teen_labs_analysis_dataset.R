@@ -146,6 +146,9 @@ df$f1 <- df$CREAS/df$qcr
 df$f2 <- 1-0.5
 df$f3 <- df$CYSC/0.82
 df$eGFR.fas_cr_cysc <- 107.3 / ((0.5*df$f1) + (df$f2*df$f3))
+label(df$eGFR.fas_cr_cysc) <- "eGFR FAS Cr Cys-C"
+label(df$eGFR.fas_cr) <- "eGFR FAS Cr"
+
 
 # read in NAFLD data
 nafld <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/Pyle NAFLD 02_06_24.csv")
