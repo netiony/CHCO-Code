@@ -326,7 +326,8 @@ def clean_crocodile():
     rct.loc[~(rct['ra'] > 0), 'ra'] = np.nan
     # Reduce rct dataset
     rct = rct[["record_id", "ff", "kfg", "deltapf", "cm", "pg",
-               "glomerular_pressure", "rbf", "rvr", "ra", "re"] + list(rename.values())]
+               "glomerular_pressure", "rbf", "rvr", "ra", "re", 
+               "pah_raw", "pah_sd", "pah_cv", "pahcl_12_8mgmin"] + list(rename.values())]
     rct["procedure"] = "clamp"
     rct["visit"] = "baseline"
 
@@ -407,8 +408,7 @@ def clean_crocodile():
     # Metabolomics (Blood and Tissue)
     # --------------------------------------------------------------------------
     
-    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
-                                               == "metabolomics", "field_name"]]
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"].isin(["metabolomics", "metabolomics_blood_raw"]), "field_name"]]
     metabolomics_blood = pd.DataFrame(proj.export_records(fields=var))
     # Replace missing values
     metabolomics_blood.replace(rep, np.nan, inplace=True)

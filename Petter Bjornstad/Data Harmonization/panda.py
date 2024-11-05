@@ -342,7 +342,8 @@ def clean_panda():
     rct["re"] = (rct["gfr_raw_plasma_seconds"]) / (rct["kfg"] * (rct["rbf_seconds"] - (rct["gfr_raw_plasma_seconds"]))) * 1328
 
     # Reduce rct dataset
-    rct = rct[["record_id", "ff", "kfg", "deltapf", "rbf", "rvr", "re"] + list(rename.values())] 
+    rct = rct[["record_id", "ff", "kfg", "deltapf", "rbf", "rvr", "re", 
+               "pah_raw", "pah_sd", "pah_cv", "pahcl_12_8mgmin"] + list(rename.values())] 
     rct["procedure"] = "clamp"
     rct["visit"] = "baseline"
 
