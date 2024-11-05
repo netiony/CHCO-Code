@@ -314,6 +314,18 @@ def clean_penguin():
     mri.replace(rep, np.nan, inplace=True)
     mri["procedure"] = "mri"
     mri["visit"] = "baseline"
+    
+    # --------------------------------------------------------------------------
+    # Neuro markers
+    # --------------------------------------------------------------------------
+
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                               == "biomarkers", "field_name"]]
+    neuro = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    neuro.replace(rep, np.nan, inplace=True)
+    neuro["procedure"] = "neuro_markers"
+    neuro["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
     # Missingness
@@ -329,6 +341,7 @@ def clean_penguin():
     rct.dropna(thresh=4, axis=0, inplace=True)
     pet.dropna(thresh=4, axis=0, inplace=True)
     voxelwise.dropna(thresh=4, axis=0, inplace=True)
+    neuro.dropna(thresh=2, axis=0, inplace=True)
 
     # --------------------------------------------------------------------------
     # Merge
@@ -344,6 +357,7 @@ def clean_penguin():
     pet = pd.merge(pet, voxelwise, how = 'outer')
     df = pd.concat([df, pet], join='outer', ignore_index=True)
     df = pd.concat([df, mri], join='outer', ignore_index=True)
+    df = pd.concat([df, neuro], join='outer', ignore_index=True)
     df = pd.merge(df, demo, how="outer")
     df = df.copy()
 
