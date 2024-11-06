@@ -19,8 +19,8 @@ library(skimr)
 library(readxl)
 library(arsenal)
 library(gtsummary)
+library(stringr)
 knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
-knitr::opts_knit$set(root.dir = "/Volumes/Peds Endo/Petter Bjornstad/T2D scRNA SGLT2i")
 ```
 
 ```{r include=FALSE}
@@ -28,8 +28,8 @@ knitr::opts_knit$set(root.dir = "/Volumes/Peds Endo/Petter Bjornstad/T2D scRNA S
 df <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/soma_harmonized_dataset.csv", na.strings = "")
 df <- df %>%
   filter(
-    study %in% c("IMPROVE", "RENAL-HEIR","RENAL-HEIRitage"),
-    !grepl("IT2D", co_enroll_id), participation_status == "Participated"
+    study %in% c("IMPROVE", "RENAL-HEIR","RENAL-HEIRitage", "CROCODILE"),
+    !grepl("IT2D", co_enroll_id), participation_status == "Participated",
   ) %>%
   group_by(record_id, visit) %>%
   summarise(across(where(is.character), ~ last(na.omit(.x))),
@@ -38,310 +38,34 @@ df <- df %>%
     .groups = "drop"
   ) %>%
   mutate_all(~ ifelse(is.nan(.), NA, .))
+df <- df %>% filter(visit == "baseline")
 
+# select the sample IDs that Fadhl sent
+ids_keep <- read_xlsx("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Metallothionine/MT_sampleIDs_Laura.xlsx")
+ids_keep$record_id <- stringr::str_remove(ids_keep$michigan_id, "_BL")
+ids_keep$michigan_id <- NULL
 
+df_keep <- left_join(ids_keep, df, by = "record_id")
 
-
-
-
-
-# read in CROCODILE
-source("./Data raw/CROCODILE-SGLT2iDescriptiveSta_R_2021-12-02_1719.r")
-croc <- data
-data <- NULL
-
-# read in IMPROVET2D
-source("./Data raw/IMPROVET2D-SGLT2iManuscriptDesc_R_2021-12-02_1719.r")
-improve <- data
-data <- NULL
-
-# read in RENALHEIR
-source("./Data raw/RENALHEIR-SGLT2iManuscriptDesc_R_2021-12-02_1718.r")
-heir <- data
-data <- NULL
-
-# read in Michigan data
-# michigan <- read.csv("./Data raw/data_set_without_hpi.csv",na.strings = c("NA",""," "))
-michigan <- read.csv("./Data raw/clinical_from_RDS.csv",na.strings = c("NA",""," "))
-
-# correct one value
-michigan$total_protein <- ifelse(michigan$ID=="CRC-09",7.5,michigan$total_protein)
-
-# calculate pglo_abs
-michigan$TotProtgdL <- michigan$total_protein
-michigan$HCt <- michigan$hematocrit
-michigan$MAP_clamp <- michigan$clamp_map
-michigan$HCt_clamp <- michigan$HCt/100
-michigan$GFRabsmLs <- michigan$gfr/60
-michigan$ERPFabsmLs <- michigan$rpf/60
-michigan$FFabs <- michigan$gfr/michigan$rpf
-michigan$RBFabs <- michigan$rpf/(1-michigan$HCt_clamp)
-michigan$RBFGomabs <- michigan$ERPFabsmLs/(1-michigan$HCt_clamp)
-michigan$RVRAbs <- michigan$MAP_clamp/michigan$RBFabs
-michigan$Kfg <- ifelse(michigan$Group %in% c("T1D","T2D"),0.1012,0.1733)
-michigan$deltaPFabs <- michigan$GFRabsmLs/michigan$Kfg
-michigan$Cm_abs <- (michigan$TotProtgdL/michigan$FFabs)*log(1/(1-michigan$FFabs))
-michigan$Pg_abs <- 5*(michigan$Cm_abs-2)
-michigan$Pglo_abs <- michigan$Pg_abs+michigan$deltaPFabs+10
-michigan$Ra_abs <- ((michigan$MAP_clamp - michigan$Pglo_abs)/michigan$RBFGomabs)*1328
-michigan$Re_abs <- (michigan$GFRabsmLs/(michigan$Kfg*(michigan$RBFGomabs-michigan$GFRabsmLs)))*1328
-
-write.csv(michigan,"./Data clean/data_set_without_hpi_with_pgloabs.csv",na = "",row.names = F)
-
-michigan$clamp_height_m <- michigan$clamp_height/100
-michigan$clamp_bmi <- michigan$clamp_weight/(michigan$clamp_height_m^2)
-michigan$screen_elevated_albuminuria <- as.factor(ifelse(michigan$screen_urine_mab>=30,1,
-                                                         ifelse(is.na(michigan$screen_urine_mab),NA,0)))
-michigan$clamp_elevated_albuminuria <- as.factor(ifelse(michigan$clamp_urine_mab_baseline>=30,1,
-                                                        ifelse(is.na(michigan$clamp_urine_mab_baseline),NA,0)))
-michigan$sex <- as.factor(michigan$sex)
-michigan$Glomerular.Nuclear.Count <- NULL
-michigan$Fractional.Interstitial.Area <- NULL
-
-# merge in morphometrics
-morph <- read.csv("./Data raw/PB Morpho 2-2022.csv")
-morph$KL.ID <- morph$Study.ID
-morph <- morph %>% select(-c("Study.ID","Group","ID","Priority.24.."))
-morph$KL.ID <- ifelse(morph$KL.ID=="KL-0010097","KL-0019097",morph$KL.ID)
-michigan <- merge(michigan, morph, by="KL.ID", all.x = T, all.y = F)
-
-# use Tim's code to calculate eGFR by FAS
-# source("C:/Users/pylell/Documents/GitHub/shared-resources/Data Cleaning/Calculated Variables/eGFR.r")
-source("~/GitHub/shared-resources/Data Cleaning/Calculated Variables/eGFR.R")
-x <- egfr_calc(age=michigan$Age,serum_creatinine = michigan$serum_creatinine, cystatin_c = michigan$cystatin_c,
-               bun=michigan$labs_bun, height = michigan$clamp_height_m*100, sex = michigan$sex,
-               female="0", male="1")
-michigan$eGFR_fas_cr <- x$eGFR_fas_cr
-michigan$eGFR_fas_cr_cysc <- x$eGFR_fas_cr_cysc
-
-# exclude T1D for this paper
-t1data <- michigan[!michigan$Group=="T1D",]
-t1data$three_groups = paste(t1data$Group,t1data$SGLT2i,sep = "_")
-t1data$three_groups = factor(t1data$three_groups,
-                             levels = c("HC_NO","T2D_NO","T2D_YES"),
-                             labels = c("Healthy Controls","T2D No SGLT2i","T2D SGLT2i"))
-# Get MRNs for Petter
-croc$croc_id = paste0("CRC-",stringr::str_pad(croc$record_id,2,"left","0"))
-heir$croc_id = heir$subject_id
-heir$mrn = heir$mr_number
-improve$croc_id = improve$subject_id
-improve$mrn = improve$mr_number
-mrns = do.call(rbind,list(croc[,c("croc_id","mrn")],heir[,c("croc_id","mrn")],
-                          improve[,c("croc_id","mrn")]))
-colnames(mrns) = c("ID","MRN")
-mrns = mrns[mrns$ID %in% t1data$ID,]
-mrns = mrns[complete.cases(mrns),]
-# Add ACE inhibitor and Angiotensin Receptor Blocker info
-croc$ACEi = croc$htn_med___1.factor
-levels(croc$ACEi) = c("No","Yes")
-croc$ARB = croc$htn_med___2.factor
-levels(croc$ARB) = c("No","Yes")
-heir$ACEi = heir$htn_med_type___1.factor
-levels(heir$ACEi) = c("No","Yes")
-heir$ARB = heir$htn_med_type___2.factor
-levels(heir$ARB) = c("No","Yes")
-improve$ACEi = improve$htn_med_type___1.factor
-levels(improve$ACEi) = c("No","Yes")
-improve$ARB = improve$htn_med_type___2.factor
-levels(improve$ARB) = c("No","Yes")
-ace_arb = do.call(rbind,list(croc[,c("croc_id","ACEi","ARB")],heir[,c("croc_id","ACEi","ARB")],
-                             improve[,c("croc_id","ACEi","ARB")]))
-ace_arb = ace_arb[complete.cases(ace_arb),]
-ace_arb = ace_arb[!duplicated(ace_arb$croc_id),]
-t1data = left_join(t1data,ace_arb,by = c("ID" = "croc_id"))
-# Electrolytes
-electro = read.csv("./Data clean/SGLT2i_electrolytes.csv")
-electro$MRN = NULL
-t1data = left_join(t1data,electro,by = "ID")
-# SGLT2i details
-meds = read.csv("./Data clean/IT2D_RH_medications.csv")
-meds$Dose = factor(meds$Dose)
-t1data = left_join(t1data,meds)
-# Tables
-vars <- c("Age","sex","clamp_bmi","dxa_body_fat","cholesterol","ldl","hdl",
-          "triglycerides","clamp_sbp","clamp_dbp","clamp_map","clamp_acr_baseline",
-          "screen_elevated_albuminuria","clamp_elevated_albuminuria","hba1c",
-          "gfr","gfr_bsa","eGFR_fas_cr",
-          "serum_creatinine","GIR","labs_bun","Metformin","ACEi","ARB",
-          "Insulin","TZD","GLPYES",
-          "Na","K","Cl","HCO3","BUN",
-          "Fractional.Interstitial.Area",
-          "Glomerular.Tuft.Area..um.2.",
-          "Glomerular.Volume...Weibel..10.6.um.3.",
-          "Glomerular.Volume...Wiggins..10.6.um.3.",
-          "Glomerular.Volume...Consensus..10.6.um.3.",
-          "Mesangial.Matrix.Area..um.2.",
-          "Mesangial.Index....",
-          "Mesangial.Volume...Weibel..10.6.um.3.",
-          "Mesangial.Volume...Wiggins..10.6.um.3.",
-          "Mesangial.Volume...Consensus..10.6.um.3.",
-          "Mesangial.Nuclear.Count",
-          "Glomerular.Nuclear.Count",
-          "SGLT2i_duration_in_all",
-          "SGLT2i_duration_in_exposed",
-          "Type","Dose")
-nonnorm <- c("Na","K","Cl","HCO3","BUN",
-             "Glomerular.Tuft.Area..um.2.",
-             "Glomerular.Volume...Weibel..10.6.um.3.",
-             "Glomerular.Volume...Wiggins..10.6.um.3.",
-             "Glomerular.Volume...Consensus..10.6.um.3.",
-             "Mesangial.Matrix.Area..um.2.",
-             "Mesangial.Volume...Weibel..10.6.um.3.",
-             "Mesangial.Volume...Wiggins..10.6.um.3.",
-             "Mesangial.Volume...Consensus..10.6.um.3.",
-             "Mesangial.Nuclear.Count",
-             "Glomerular.Nuclear.Count",
-             "SGLT2i_duration_in_all",
-             "SGLT2i_duration_in_exposed","clamp_acr_baseline")
-exact <- c("screen_elevated_albuminuria","clamp_elevated_albuminuria","Metformin","Insulin","TZD","GLPYES","ACEi","ARB","Type","Dose")
-t1 <- CreateTableOne(vars = vars, data = t1data, strata = "Group", test = TRUE)
-t1 <- print(t1,nonnormal = nonnorm, exact=exact)
-freq.na(t1data[,vars])
-
-# exclude controls now
-t1data_nocontrol <- t1data[!t1data$three_groups == "Healthy Controls",]
-t1data_nocontrol$three_groups = droplevels(t1data_nocontrol$three_groups)
-t2 <- CreateTableOne(vars = vars, data = t1data_nocontrol, strata = "three_groups", test = TRUE)
-t2 <- print(t2,nonnormal = nonnorm, exact=exact)
 ```
 
-# Data summary
+# Results
 
-```{r echo=FALSE}
-skim(t1data[,vars])
-```
+## Table 1
 
-# Table 1a - healthy controls vs T2D (T2D SGLT2i + T2D no SGLT2i).  
-
-P-values are from Fisher's exact test (if test="exact") or chi-square test for categorical variables,Mann-Whitney test (if test="nonnorm") or t-tests for continuous variables.
-
-```{r echo=FALSE}
-kable(t1)
-```
-
-# Table 1b - T2D SGLT2i vs. T2D no SGLT2i.  
-
-P-values are from Fisher's exact test (if test="exact") or chi-square test for categorical variables, Mann-Whitney test (if test="nonnorm") or t-tests for continuous variables.
-
-```{r echo=FALSE}
-kable(t2)
-```
-
-# Tim's tables
-
-## eGFR, etc.
-
-### All groups
-
-```{r results='asis'}
-t1 <- tableby(three_groups ~ Age + sex + clamp_bmi + dxa_body_fat + cholesterol +
-                ldl + hdl + triglycerides + clamp_sbp + clamp_dbp +
-                kwt(clamp_acr_baseline,"Nmiss","median","q1q3") +
-                fe(screen_elevated_albuminuria) + fe(clamp_elevated_albuminuria) +
-                hba1c + serum_creatinine + eGFR_fas_cr + SGLT2i_duration_in_exposed +
-                fe(GLPYES) + fe(Metformin) + fe(TZD) + fe(Insulin) + fe(ACEi) + fe(ARB) +
-                fe(Type) + fe(Dose) +
-                kwt(Na,"Nmiss","median","q1q3") + 
-                kwt(K,"Nmiss","median","q1q3") + 
-                kwt(Cl,"Nmiss","median","q1q3") + 
-                kwt(HCO3,"Nmiss","median","q1q3") + 
-                kwt(BUN,"Nmiss","median","q1q3") +
-                Fractional.Interstitial.Area +
-                kwt(Glomerular.Tuft.Area..um.2.,"Nmiss","median","q1q3") +
-                kwt(Glomerular.Volume...Weibel..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Glomerular.Volume...Wiggins..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Glomerular.Volume...Consensus..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Matrix.Area..um.2.,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Index....,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Volume...Weibel..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Volume...Wiggins..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Volume...Consensus..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Nuclear.Count,"Nmiss","median","q1q3") +
-                kwt(Glomerular.Nuclear.Count,"Nmiss","median","q1q3"),
-              data = t1data, control = list(digits = 2)
-)
-summary(t1,pfootnote = T)
-```
-
-### T2D only
-
-```{r results='asis'}
-t1 <- tableby(three_groups ~ Age + sex + clamp_bmi + dxa_body_fat + cholesterol +
-                ldl + hdl + triglycerides + clamp_sbp + clamp_dbp +
-                kwt(clamp_acr_baseline,"Nmiss","median","q1q3") +
-                fe(screen_elevated_albuminuria) + fe(clamp_elevated_albuminuria) +
-                hba1c + serum_creatinine + eGFR_fas_cr + SGLT2i_duration_in_exposed +
-                fe(GLPYES) + fe(Metformin) + fe(TZD) + fe(Insulin) + fe(ACEi) + fe(ARB) +
-                fe(Type) + fe(Dose) +
-                kwt(Na,"Nmiss","median","q1q3") + 
-                kwt(K,"Nmiss","median","q1q3") + 
-                kwt(Cl,"Nmiss","median","q1q3") + 
-                kwt(HCO3,"Nmiss","median","q1q3") + 
-                kwt(BUN,"Nmiss","median","q1q3") +
-                Fractional.Interstitial.Area +
-                kwt(Glomerular.Tuft.Area..um.2.,"Nmiss","median","q1q3") +
-                kwt(Glomerular.Volume...Weibel..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Glomerular.Volume...Wiggins..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Glomerular.Volume...Consensus..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Matrix.Area..um.2.,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Index....,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Volume...Weibel..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Volume...Wiggins..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Volume...Consensus..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Nuclear.Count,"Nmiss","median","q1q3") +
-                kwt(Glomerular.Nuclear.Count,"Nmiss","median","q1q3"),
-              data = t1data_nocontrol, control = list(digits = 2)
-)
-summary(t1,pfootnote = T)
-```
-
-### T2D vs. HC
-
-```{r results='asis'}
-t1 <- tableby(Group ~ Age + sex + clamp_bmi + dxa_body_fat + cholesterol +
-                ldl + hdl + triglycerides + clamp_sbp + clamp_dbp + 
-                kwt(clamp_acr_baseline,"Nmiss","median","q1q3") +
-                fe(screen_elevated_albuminuria) + fe(clamp_elevated_albuminuria) +
-                hba1c + serum_creatinine + eGFR_fas_cr + SGLT2i_duration_in_exposed +
-                fe(GLPYES) + fe(Metformin) + fe(TZD) + fe(Insulin) + fe(ACEi) + fe(ARB) +
-                fe(Type) + fe(Dose) +
-                kwt(Na,"Nmiss","median","q1q3") + 
-                kwt(K,"Nmiss","median","q1q3") + 
-                kwt(Cl,"Nmiss","median","q1q3") + 
-                kwt(HCO3,"Nmiss","median","q1q3") + 
-                kwt(BUN,"Nmiss","median","q1q3") +
-                Fractional.Interstitial.Area +
-                kwt(Glomerular.Tuft.Area..um.2.,"Nmiss","median","q1q3") +
-                kwt(Glomerular.Volume...Weibel..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Glomerular.Volume...Wiggins..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Glomerular.Volume...Consensus..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Matrix.Area..um.2.,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Index....,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Volume...Weibel..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Volume...Wiggins..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Volume...Consensus..10.6.um.3.,"Nmiss","median","q1q3") +
-                kwt(Mesangial.Nuclear.Count,"Nmiss","median","q1q3") +
-                kwt(Glomerular.Nuclear.Count,"Nmiss","median","q1q3"),
-              data = t1data, control = list(digits = 2)
-)
-summary(t1,pfootnote = T)
-```
-
-```{r results='asis'}
-vars = c("age","sex","bmi","sbp","dbp","hba1c","creatinine_s","gfr_bsa_plasma","acr_u","creatinine_u","microalbumin_u")
-ids = read.csv("/Volumes/Peds Endo/Petter Bjornstad/T2D scRNA SGLT2i/Data clean/ids.csv")
-df = read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv",na.strings = "",stringsAsFactors = F)
-t = df %>% 
-  filter(record_id %in% ids$record_id,visit=="baseline") %>%
-  select(record_id,visit,procedure,sglt2i_ever,group,all_of(vars)) %>%
-  group_by(record_id,group,sglt2i_ever) %>%
-  mutate(acr_u = mean(acr_u,na.rm = T),
-            elevated = ifelse(acr_u >= 30,"Yes","No")) %>% 
-  summarise(across(everything(),~first(na.omit(.x))),.groups = "drop")
+```{r, include=FALSE}
+t1 <- tableby(T2D_HC_Phil ~ age + sex + race_ethnicity + bmi + dexa_body_fat + cholesterol + ldl + hdl + triglycerides +
+                sbp + dbp + acr_u + albuminuria_cat + hba1c + creatinine_s + eGFR_fas_cr_cysc + sglt2i_ever + 
+                epic_ever_glp1ra_1 + epic_ever_sglt2i_1 + epic_ever_raasi_1 + epic_ever_insulin_1 + epic_ever_mfm_1,  
+                epic_ever_tzd_1, 
+              data = df_keep)
+                
   
-t$hba1c = as.numeric(as.character(t$hba1c))
-t$creatinine_s = as.numeric(as.character(t$creatinine_s))
-t$acr_u = t$acr_u
-t$sglt2i_ever[is.na(t$sglt2i_ever)]="No"
-summary(tableby(interaction(group,sglt2i_ever)~age+sex+bmi+sbp+dbp+kwt(acr_u,"median","q1q3","range")+hba1c+creatinine_s+gfr_bsa_plasma+elevated,data = t))
+             
 ```
+
+```{r, include=TRUE, results='asis'}
+summary(t1)
+```
+
+
