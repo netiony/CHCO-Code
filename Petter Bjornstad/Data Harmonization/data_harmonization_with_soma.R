@@ -13,6 +13,7 @@ clean[clean == ""] <- NA
 # Create screen_date (screening date for each participant or earliest date available)
 clean <- clean %>%
   dplyr::group_by(record_id, visit) %>% 
+  dplyr::mutate(across(where(is.character), ~ na_if(., ""))) %>%
   dplyr::mutate(screen_date = case_when(procedure == "screening" ~ date)) %>%
   fill(screen_date, .direction = "updown") %>%
   dplyr::mutate(screen_date = case_when(is.na(screen_date) ~ min(date, na.rm = T), 
