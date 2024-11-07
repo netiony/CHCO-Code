@@ -83,6 +83,7 @@ def clean_improve():
     var = ["subject_id", "study_visit", "med_date", "diabetes_med",
            "diabetes_med_other", "htn_med_type", "addl_hld_meds", "hypertension"]
     med = pd.DataFrame(proj.export_records(fields=var))
+    med.drop(redcap_cols, axis=1, inplace=True)
     # Replace missing values
     med.replace(rep, np.nan, inplace=True)
     # SGLT2i (diabetes_med_other___4), RAASi (htn_med_type___1, htn_med_type___2), Metformin (diabetes_med_other___1)
@@ -133,7 +134,21 @@ def clean_improve():
            axis=1, inplace=True)
     med["procedure"] = "medications"
     
+    # --------------------------------------------------------------------------
+    # EPIC Medications
+    # --------------------------------------------------------------------------
 
+    var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
+                                               == "epic_meds", "field_name"]]
+    epic_med = pd.DataFrame(proj.export_records(fields=var))
+    epic_med.drop(redcap_cols, axis=1, inplace=True)
+    # Replace missing values
+    epic_med.replace(rep, np.nan, inplace=True)
+    # Replace 0/1 values with yes/no
+    epic_med.iloc[:, 1:] = epic_med.iloc[:, 1:].replace(
+        {0: "No", "0": "No", 2: "No", "2": "No", 1: "Yes", "1": "Yes"})
+    epic_med["procedure"] = "epic_medications"
+    
     # --------------------------------------------------------------------------
     # Physical exam
     # --------------------------------------------------------------------------
@@ -434,6 +449,7 @@ def clean_improve():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                   == "astrazeneca_urine_metabolomics", "field_name"]]
     az_u_metab = pd.DataFrame(proj.export_records(fields=var))
+    az_u_metab.drop(redcap_cols, axis=1, inplace=True)
     # Replace missing values
     az_u_metab.replace(rep, np.nan, inplace=True)
     az_u_metab["procedure"] = "az_u_metab"
@@ -446,6 +462,7 @@ def clean_improve():
     var = ["subject_id"] + [v for v in meta.loc[meta["form_name"]
                                                   == "metabolomics_blood_raw", "field_name"]]
     plasma_metab = pd.DataFrame(proj.export_records(fields=var))
+    plasma_metab.drop(redcap_cols, axis=1, inplace=True)
     # Replace missing values
     plasma_metab.replace(rep, np.nan, inplace=True)
     plasma_metab["procedure"] = "plasma_metab"
@@ -456,6 +473,7 @@ def clean_improve():
     # --------------------------------------------------------------------------
 
     med.dropna(thresh=9, axis=0, inplace=True)
+    epic_med.dropna(thresh=5, axis=0, inplace=True)
     phys.dropna(thresh=3, axis=0, inplace=True)
     screen.dropna(thresh=3, axis=0, inplace=True)
     accel.dropna(thresh=6, axis=0, inplace=True)
@@ -474,6 +492,7 @@ def clean_improve():
     # --------------------------------------------------------------------------
 
     df = pd.concat([accel, med], join='outer', ignore_index=True)
+    df = pd.concat([df, epic_med], join='outer', ignore_index=True)
     df = pd.concat([df, mri], join='outer', ignore_index=True)
     df = pd.concat([df, mmtt], join='outer', ignore_index=True)
     df = pd.concat([df, dxa], join='outer', ignore_index=True)
@@ -502,8 +521,7 @@ def clean_improve():
     df = df[id_cols + other_cols]
     # Change study visit names
     df["visit"].replace({np.nan: "baseline", '1': "baseline",
-                         '2': "3_months_post_surgery",
-                              '3': "12_months_post_surgery"}, inplace=True)
+                         '2': "3_months_post_surgery", '3': "12_months_post_surgery"}, inplace=True)
     df["visit"] = pd.Categorical(df["visit"],
                                  categories=["baseline", "3_months_post_surgery",
                                  "12_months_post_surgery"],

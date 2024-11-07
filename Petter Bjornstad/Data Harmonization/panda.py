@@ -106,6 +106,21 @@ def clean_panda():
     med["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
+    # EPIC Medications
+    # --------------------------------------------------------------------------
+
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                               == "epic_meds", "field_name"]]
+    epic_med = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    epic_med.replace(rep, np.nan, inplace=True)
+    # Replace 0/1 values with yes/no
+    epic_med.iloc[:, 1:] = epic_med.iloc[:, 1:].replace(
+        {0: "No", "0": "No", 2: "No", "2": "No", 1: "Yes", "1": "Yes"})
+    epic_med["procedure"] = "epic_medications"
+    epic_med["visit"] = "baseline"
+    
+    # --------------------------------------------------------------------------
     # Physical exam
     # --------------------------------------------------------------------------
 
@@ -342,7 +357,8 @@ def clean_panda():
     rct["re"] = (rct["gfr_raw_plasma_seconds"]) / (rct["kfg"] * (rct["rbf_seconds"] - (rct["gfr_raw_plasma_seconds"]))) * 1328
 
     # Reduce rct dataset
-    rct = rct[["record_id", "ff", "kfg", "deltapf", "rbf", "rvr", "re"] + list(rename.values())] 
+    rct = rct[["record_id", "ff", "kfg", "deltapf", "rbf", "rvr", "re", 
+               "pah_raw", "pah_sd", "pah_cv", "pahcl_12_8mgmin"] + list(rename.values())] 
     rct["procedure"] = "clamp"
     rct["visit"] = "baseline"
 
@@ -364,6 +380,7 @@ def clean_panda():
     # --------------------------------------------------------------------------
 
     med.dropna(thresh=5, axis=0, inplace=True)
+    epic_med.dropna(thresh=5, axis=0, inplace=True)
     phys.dropna(thresh=5, axis=0, inplace=True)
     screen.dropna(thresh=4, axis=0, inplace=True)
     labs.dropna(thresh=5, axis=0, inplace=True)
@@ -387,6 +404,7 @@ def clean_panda():
     df = pd.concat([df, clamp_merge], join='outer', ignore_index=True)
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
     df = pd.concat([df, med], join='outer', ignore_index=True)
+    df = pd.concat([df, epic_med], join='outer', ignore_index=True)
     df = pd.concat([df, az_u_metab], join='outer', ignore_index=True)
     df = pd.merge(df, demo, on='record_id', how="outer")
     df = df.loc[:, ~df.columns.str.startswith('redcap_')]

@@ -105,6 +105,26 @@ def clean_renal_heiritage():
     med["visit"] = "baseline"
 
     # --------------------------------------------------------------------------
+    # EPIC Medications
+    # --------------------------------------------------------------------------
+
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                               == "epic_meds", "field_name"]]
+    epic_med = pd.DataFrame(proj.export_records(fields=var))
+    epic_med = epic_med.loc[epic_med["redcap_event_name"]. str.startswith('annual_blood_and_u_arm_1', na=False)]
+    epic_med.drop(["redcap_event_name"], axis=1, inplace=True)
+    epic_med.drop(["redcap_repeat_instance"], axis=1, inplace=True)
+    epic_med.drop(["redcap_repeat_instrument"], axis=1, inplace=True)
+    
+    # Replace missing values
+    epic_med.replace(rep, np.nan, inplace=True)
+    # Replace 0/1 values with yes/no
+    epic_med.iloc[:, 1:] = epic_med.iloc[:, 1:].replace(
+        {0: "No", "0": "No", 2: "No", "2": "No", 1: "Yes", "1": "Yes"})
+    epic_med["procedure"] = "epic_medications"
+    epic_med["visit"] = "baseline"   
+    
+    # --------------------------------------------------------------------------
     # Physical exam
     # --------------------------------------------------------------------------
 
@@ -335,6 +355,10 @@ def clean_renal_heiritage():
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                   == "metabolomics_blood_raw", "field_name"]]
     plasma_metab = pd.DataFrame(proj.export_records(fields=var))
+    plasma_metab.drop(["redcap_event_name"], axis=1, inplace=True)
+    plasma_metab.drop(["redcap_repeat_instance"], axis=1, inplace=True)
+    plasma_metab.drop(["redcap_repeat_instrument"], axis=1, inplace=True)
+
     # Replace missing values
     plasma_metab.replace(rep, np.nan, inplace=True)
     plasma_metab["procedure"] = "plasma_metab"
@@ -345,6 +369,7 @@ def clean_renal_heiritage():
     # --------------------------------------------------------------------------
 
     med.dropna(thresh=4, axis=0, inplace=True)
+    epic_med.dropna(thresh=5, axis=0, inplace=True)
     phys.dropna(thresh=4, axis=0, inplace=True)
     annual_labs.dropna(thresh=4, axis=0, inplace=True)
     rct.dropna(thresh=4, axis=0, inplace=True)
@@ -364,6 +389,7 @@ def clean_renal_heiritage():
 
     df = pd.concat([phys, annual_labs], join='outer', ignore_index=True)
     df = pd.concat([df, med], join='outer', ignore_index=True)
+    df = pd.concat([df, epic_med], join='outer', ignore_index=True)
     df = pd.concat([df, rct], join='outer', ignore_index=True)
     df = pd.concat([df, dextran], join='outer', ignore_index=True)
     df = pd.merge(df, out, how='outer')
