@@ -51,7 +51,10 @@ df$combined_race <- droplevels(df$combined_race)
 f <- as.formula(paste("~", paste(ses_vars, collapse = "+")))
 # Set table options
 mycontrols <-
-  tableby.control(numeric.stats = c("Nmiss2", "meansd", "medianq1q3", "range"))
+  tableby.control(
+    numeric.stats = c("N", "Nmiss", "meansd", "medianq1q3", "range"),
+    cat.stats = c("N", "Nmiss", "countpct")
+  )
 # First visit only
 cv1 <- df %>%
   group_by(record_number) %>%
@@ -96,262 +99,175 @@ t5 <- tableby(update(f, pcosdx_specialty ~ .), data = cv1, control = mycontrols)
 summary(t5, labelTranslations = labels(df), pfootnote = T)
 ```
 
-# Treatments 2 years post-Dx
+## Missing data by insurance type
+
+```{r results='asis'}
+cv1_miss <- as.data.frame(is.na(cv1))
+cv1_miss$insur_type <- cv1$insur_type
+insur_miss <- tableby(update(f, insur_type ~ .),
+  data = cv1_miss,
+  control = mycontrols
+)
+summary(insur_miss, labelTranslations = labels(df), pfootnote = T)
+```
+
+# Baseline models
+
+The aim of these model is to "determine differences in utilization of weight management, behavioral health and pharmacologic treatment options in adolescents with PCOS based on insurance status and whether it is independent of personal medical history factors, family history, race, ethnicity, provider preference (specialty) and geographic location."
+
+Based on this, I assumed that the outcome (dependent) variables are the following newly prescribed medications at visit 1: 
+
+1. `cv_newmeds___18` (Antidepressant or anti-anxiety)
+2. `cv_newmeds___19` (ADHD medication)
+3. `cv_newmeds___17` (Atypical antipsychotic)
+4. `cv_newmeds___25` (Topiramate for weight loss)
+5. `cv_newmeds___26` (Phentermine for weight)
+6. `cv_newmeds___27` (Topirimate/phentermine for weight loss)
+7. `cv_newmeds___28` (Liraglutiade (saxcenda) for weight loss)
+8. `cv_newmeds___29` (Semaglutide (Wygovy/Ozempic) for weight loss)
+
+The following comorbidities at the time of diagnosis:
+
+1. `pcosdx_pmh___6` (Pre-diabetes)
+2. `pcosdx_pmh___7` (Type 2 diabetes)
+
+And the following mental health treatments at time of diagnosis:
+
+1. `pcosdx_mentalhealthcounseling___1` (Group therapy)
+2. `pcosdx_mentalhealthcounseling___2` (Individual therapy)
+3. `pcosdx_mentalhealthcounseling___3` (Inpatient therapy)
+
+I also assumed that the predictor (independent) variables to be included as covariates are: 
+
+1. `pcosdx_age` (Age at time of PCOS diagnosis)
+2. `cv_tt_uln` (Total testosterone (ng/dL) value for upper limit of normal for assay)
+3. `cv_ft_uln` (Free Testosterone (pg/mL) value for upper limit of normal for sex, age/tanner stage  for assay)
+4. `cv_bmi` (BMI)
+5. `pcosdx_birthweight_calc` (Birthweight)
+6. `pcosdx_any_famhx___27` (Any family history of PCOS - I created this variable)
+7. `pcosdx_any_famhx___7` (Any family history of T2D - I created this variable)
+8. `pcosdx_any_famhx___5` (Any family history of Overweight/Obesity - I created this variable)
+9. `cv_acneother___1` (Acne elsewhere on the body (choice=Back))
+10. `cv_acneother___2` (Acne elsewhere on the body (choice=Chest))
+11. `insur_type` (Insurance Type)
+12. `pcosdx_specialty` (What medical specialty made the diagnosis of PCOS)
+13. `combined_race` (Race - I created this variable)
+14. `ethnicity` (Ethnicity)
 
 ```{r}
-# Treatments used after diagnosis - limit to two years
-post_dx_tx <- df %>%
-  filter(cv_monthssincepcosdx <= 24) %>%
-  group_by(record_number) %>%
-  summarise(
-    insur_type = insur_type[1], combined_race = combined_race[1],
-    ethnicity = ethnicity[1], pcosdx_specialty = pcosdx_specialty[1],
-    across(
-      contains("cv_medications"), ~ ifelse(any(. == "Checked"), "Yes", "No")
-    )
+# List of outcomes and predictors
+outcomes <- c(
+  "cv_newmeds___18", "cv_newmeds___19", "cv_newmeds___17", "cv_newmeds___25",
+  "cv_newmeds___26", "cv_newmeds___27", "cv_newmeds___28", "cv_newmeds___29",
+  "pcosdx_pmh___6", "pcosdx_pmh___7", "pcosdx_mentalhealthcounseling___1",
+  "pcosdx_mentalhealthcounseling___2", "pcosdx_mentalhealthcounseling___3"
+)
+predictors <- c(
+  "pcosdx_age", "cv_tt_uln", "cv_ft_uln", "cv_bmi", "pcosdx_birthweight_calc",
+  "pcosdx_any_famhx___27", "pcosdx_any_famhx___7", "pcosdx_any_famhx___5",
+  "cv_acneother___1", "cv_acneother___2", "insur_type", "pcosdx_specialty",
+  "combined_race", "ethnicity"
+)
+# Base formula
+f <- as.formula(paste0("~", paste0(predictors, collapse = "+")))
+```
+
+## `cv_newmeds___18`
+
+Due to low group numbers in some categorical variables (e.g., 26 Asian in`combined_race`), some additional data cleaning was performed:
+
+1. Asian, More than one, and Other race were combined into "Other/More than one" race.
+2. People with a `pcosdx_specialty` value of "Other {pcosdx_specialty_other}" were removed.
+
+```{r}
+# Data cleaning
+levels(cv1$combined_race) <- c(
+  "African American", "Other/More than one", "Caucasian", "Other/More than one",
+  "Other/More than one"
+)
+cv1 <- cv1 %>%
+  filter(
+    pcosdx_specialty != "Other {pcosdx_specialty_other}",
+    combined_race != "Other/More than one"
   )
-labs <- label(df)[match(colnames(post_dx_tx), colnames(df))]
-labs <- sub(
-  "Current treatment \\(not prescribed this visit\\)",
-  "Treatment post-Dx", labs
-)
-label(post_dx_tx) <- as.list(labs)
-colnames(post_dx_tx)[2:ncol(post_dx_tx)] <-
-  paste0(colnames(post_dx_tx)[2:ncol(post_dx_tx)], "_post_dx")
-# New basic formula
-f <- as.formula(paste("~", paste(c(
-  paste0("cv_medications___", 1:30, "_post_dx"),
-  "cv_medications___60_post_dx",
-  "cv_medications___0_post_dx", "cv_medications___unk_post_dx"
-), collapse = "+")))
+cv1 <- droplevels(cv1)
+
+m <- glm(update(f, cv_newmeds___18 ~ .), data = cv1, family = "binomial")
 ```
 
-## Overall
 
-```{r results='asis'}
-t6 <- tableby(f, data = post_dx_tx, control = mycontrols)
-summary(t6, labelTranslations = labels(df), pfootnote = T)
-```
 
-## By insurance type
 
-```{r results='asis'}
-t7 <- tableby(update(f, insur_type_post_dx ~ .),
-  data = post_dx_tx, control = mycontrols
-)
-summary(t7, labelTranslations = labels(df), pfootnote = T)
-```
 
-## By race
+<!-- # Treatments 2 years post-Dx -->
 
-```{r results='asis'}
-t8 <- tableby(update(f, combined_race_post_dx ~ .),
-  data = post_dx_tx, control = mycontrols
-)
-summary(t8, labelTranslations = labels(df), pfootnote = T)
-```
+<!-- ```{r} -->
+<!-- # Treatments used after diagnosis - limit to two years -->
+<!-- post_dx_tx <- df %>% -->
+<!--   filter(cv_monthssincepcosdx <= 24) %>% -->
+<!--   group_by(record_number) %>% -->
+<!--   summarise( -->
+<!--     insur_type = insur_type[1], combined_race = combined_race[1], -->
+<!--     ethnicity = ethnicity[1], pcosdx_specialty = pcosdx_specialty[1], -->
+<!--     across( -->
+<!--       contains("cv_medications"), ~ ifelse(any(. == "Checked"), "Yes", "No") -->
+<!--     ) -->
+<!--   ) -->
+<!-- labs <- label(df)[match(colnames(post_dx_tx), colnames(df))] -->
+<!-- labs <- sub( -->
+<!--   "Current treatment \\(not prescribed this visit\\)", -->
+<!--   "Treatment post-Dx", labs -->
+<!-- ) -->
+<!-- label(post_dx_tx) <- as.list(labs) -->
+<!-- colnames(post_dx_tx)[2:ncol(post_dx_tx)] <- -->
+<!--   paste0(colnames(post_dx_tx)[2:ncol(post_dx_tx)], "_post_dx") -->
+<!-- # New basic formula -->
+<!-- f <- as.formula(paste("~", paste(c( -->
+<!--   paste0("cv_medications___", 1:30, "_post_dx"), -->
+<!--   "cv_medications___60_post_dx", -->
+<!--   "cv_medications___0_post_dx", "cv_medications___unk_post_dx" -->
+<!-- ), collapse = "+"))) -->
+<!-- ``` -->
 
-## By ethnicity
+<!-- ## Overall -->
 
-```{r results='asis'}
-t9 <- tableby(update(f, ethnicity_post_dx ~ .),
-  data = post_dx_tx, control = mycontrols
-)
-summary(t9, labelTranslations = labels(df), pfootnote = T)
-```
+<!-- ```{r results='asis'} -->
+<!-- t6 <- tableby(f, data = post_dx_tx, control = mycontrols) -->
+<!-- summary(t6, labelTranslations = labels(df), pfootnote = T) -->
+<!-- ``` -->
 
-## By specialty
+<!-- ## By insurance type -->
 
-```{r results='asis'}
-t10 <- tableby(update(f, pcosdx_specialty_post_dx ~ .),
-  data = post_dx_tx, control = mycontrols
-)
-summary(t10, labelTranslations = labels(df), pfootnote = T)
-```
+<!-- ```{r results='asis'} -->
+<!-- t7 <- tableby(update(f, insur_type_post_dx ~ .), -->
+<!--   data = post_dx_tx, control = mycontrols -->
+<!-- ) -->
+<!-- summary(t7, labelTranslations = labels(df), pfootnote = T) -->
+<!-- ``` -->
 
-# Model selection
+<!-- ## By race -->
 
-```{r}
-# Basic model dataframe
-xvars <- c(
-  "combined_race", "ethnicity", "pcosdx_birthweight_calc",
-  "pcosdx_famhx_parent___22", "pcosdx_famhx_parent___14", "pcosdx_famhx___27",
-  "pcosdx_famhx___28", "pcosdx_famhx___22", "pcosdx_famhx___14",
-  "pcosdx_famhx___60", "cv_bmi_percentile", "cv_tg",
-  "cv_ast", "cv_alt", "pcosdx_pmh___6",
-  "cv_acneother___1", "cv_acneother___2"
-)
-mod_df <- df %>%
-  group_by(record_number) %>%
-  slice_min(redcap_repeat_instance) %>%
-  select(
-    record_number, pcosdx_age, cv_tt_perc, cv_hirsutism_cat, cv_acneface,
-    all_of(xvars), contains("cv_medications___")
-  )
-# Plot missing
-vis_miss(as.data.frame(mod_df))
-gg_miss_var(as.data.frame(mod_df), show_pct = T)
-# Basic formula
-f <- as.formula(paste0("~", paste0(xvars, collapse = "+")))
-# Set seed
-set.seed(1017)
-```
+<!-- ```{r results='asis'} -->
+<!-- t8 <- tableby(update(f, combined_race_post_dx ~ .), -->
+<!--   data = post_dx_tx, control = mycontrols -->
+<!-- ) -->
+<!-- summary(t8, labelTranslations = labels(df), pfootnote = T) -->
+<!-- ``` -->
 
-Models were selected using 5 fold cross-validation to determine the optimal $\lambda$ value for LASSO regression. Coefficients not selected by the lasso are indicated with a "."
+<!-- ## By ethnicity -->
 
-## Age at diagnosis
+<!-- ```{r results='asis'} -->
+<!-- t9 <- tableby(update(f, ethnicity_post_dx ~ .), -->
+<!--   data = post_dx_tx, control = mycontrols -->
+<!-- ) -->
+<!-- summary(t9, labelTranslations = labels(df), pfootnote = T) -->
+<!-- ``` -->
 
-```{r}
-#| warning: false
-# X and Y matrices (from basic linear model)
-X <- lm(update(f, pcosdx_age ~ .), mod_df)
-X <- data.frame(X$model)
-Y <- X$pcosdx_age
-X$pcosdx_age <- NULL
-# CV
-cv <- cv.glmnet(data.matrix(X), Y, nfolds = 5)
-# Coefficients
-c <- rownames(coef(cv, s = "lambda.min"))[which(coef(cv, s = "lambda.min") != 0)]
-c <- c[-which(c == "(Intercept)")]
-if (length(c) == 0) {
-  print("No variables selected.")
-} else {
-  m <- lm(as.formula(paste0("pcosdx_age ~ ", paste0(c, collapse = "+"))), mod_df)
-  m %>% gtsummary::tbl_regression()
-}
-```
+<!-- ## By specialty -->
 
-## Testosterone percent of normal
-
-```{r}
-#| warning: false
-# X and Y matrices (from basic linear model)
-X <- lm(update(f, cv_tt_perc ~ .), mod_df)
-X <- data.frame(X$model)
-Y <- X$cv_tt_perc
-X$cv_tt_perc <- NULL
-# CV
-cv <- cv.glmnet(data.matrix(X), Y, nfolds = 5)
-# Coefficients
-c <- rownames(coef(cv, s = "lambda.min"))[which(coef(cv, s = "lambda.min") != 0)]
-c <- c[-which(c == "(Intercept)")]
-if (length(c) == 0) {
-  print("No variables selected.")
-} else {
-  m <- lm(as.formula(paste0("cv_tt_perc ~ ", paste0(c, collapse = "+"))), mod_df)
-  m %>% gtsummary::tbl_regression()
-}
-```
-
-## Prediabetes
-
-```{r}
-#| warning: false
-# X and Y matrices (from basic linear model)
-X <- glm(update(f, pcosdx_pmh___6 ~ . - pcosdx_pmh___6), mod_df,
-  family = "binomial"
-)
-X <- data.frame(X$model)
-Y <- X$pcosdx_pmh___6
-X$pcosdx_pmh___6 <- NULL
-# CV
-cv <- cv.glmnet(data.matrix(X), Y, nfolds = 5, family = "binomial")
-# Coefficients
-c <- rownames(coef(cv, s = "lambda.min"))[which(coef(cv, s = "lambda.min") != 0)]
-c <- c[-which(c == "(Intercept)")]
-if (length(c) == 0) {
-  print("No variables selected.")
-} else {
-  m <- glm(as.formula(paste0("pcosdx_pmh___6 ~ ", paste0(c, collapse = "+"))), mod_df, family = "binomial")
-  m %>% gtsummary::tbl_regression()
-}
-```
-
-## Hirsutism
-
-```{r}
-#| warning: false
-levels(mod_df$cv_hirsutism_cat) <- c("No", "Yes", "Yes", "Yes", "Yes")
-# X and Y matrices (from basic linear model)
-X <- glm(update(f, cv_hirsutism_cat ~ .), mod_df, family = "binomial")
-X <- data.frame(X$model)
-Y <- X$cv_hirsutism_cat
-X$cv_hirsutism_cat <- NULL
-# CV
-cv <- cv.glmnet(data.matrix(X), Y, nfolds = 5, family = "binomial")
-# Coefficients
-c <- rownames(coef(cv, s = "lambda.min"))[which(coef(cv, s = "lambda.min") != 0)]
-c <- c[-which(c == "(Intercept)")]
-if (length(c) == 0) {
-  print("No variables selected.")
-} else {
-  m <- glm(as.formula(paste0("cv_hirsutism_cat ~ ", paste0(c, collapse = "+"))), mod_df, family = "binomial")
-  m %>% gtsummary::tbl_regression()
-}
-```
-
-## Acne status
-
-Impossible to fit this model because everyone with complete data had acne. 
-
-```{r}
-#| warning: false
-#| eval: false
-levels(mod_df$cv_acneface) <- c("Yes", "Yes", "Yes", "No", "Yes")
-# X and Y matrices (from basic linear model)
-X <- glm(update(f, cv_acneface ~ .), mod_df, family = "binomial")
-X <- data.frame(X$model)
-Y <- X$cv_acneface
-X$cv_acneface <- NULL
-# CV
-cv <- cv.glmnet(data.matrix(X), Y, nfolds = 5, family = "binomial")
-# Coefficients
-c <- rownames(coef(cv, s = "lambda.min"))[which(coef(cv, s = "lambda.min") != 0)]
-c <- c[-which(c == "(Intercept)")]
-if (length(c) == 0) {
-  print("No variables selected.")
-} else {
-  m <- glm(as.formula(paste0("cv_hirsutism_cat ~ ", paste0(c, collapse = "+"))), mod_df, family = "binomial")
-  m %>% gtsummary::tbl_regression()
-}
-```
-
-## Treatment at baseline
-
-```{r results='asis'}
-#| warning: false
-treats <- colnames(mod_df)[grep("cv_medications___", colnames(mod_df))]
-invisible(lapply(treats, function(t) {
-  cat("\n")
-  cat("\n")
-  cat("###", as.character(label(mod_df[, t])))
-  cat("\n")
-  cat("\n")
-  # X and Y matrices (from basic linear model)
-  X <- glm(update(f, paste(t, "~ .")), mod_df, family = "binomial")
-  X <- data.frame(X$model)
-  Y <- X[, t]
-  X[, t] <- NULL
-  if (sum(Y == "Checked") >= 5) {
-    # CV
-    cv <- cv.glmnet(data.matrix(X), Y, nfolds = 5, family = "binomial")
-    # Coefficients
-    c <- rownames(coef(cv, s = "lambda.min"))[which(coef(cv, s = "lambda.min") != 0)]
-    c <- c[-which(c == "(Intercept)")]
-    if (length(c) == 0) {
-      print("No variables selected.")
-    } else {
-      m <- glm(as.formula(paste0("cv_hirsutism_cat ~ ", paste0(c, collapse = "+"))), mod_df, family = "binomial")
-      m %>%
-        gtsummary::tbl_regression() %>%
-        print()
-    }
-  } else {
-    cat(
-      "Unable to perform model selection due to lack of variability in outcome."
-    )
-  }
-  cat("\n")
-  cat("\n")
-}))
-```
+<!-- ```{r results='asis'} -->
+<!-- t10 <- tableby(update(f, pcosdx_specialty_post_dx ~ .), -->
+<!--   data = post_dx_tx, control = mycontrols -->
+<!-- ) -->
+<!-- summary(t10, labelTranslations = labels(df), pfootnote = T) -->
+<!-- ``` -->
