@@ -22,6 +22,7 @@ library(emmeans)
 library(ggvenn)
 library(stringr)
 library(devtools)
+library(mice)
 # devtools::install_github("JingxuanH/xtune", 
 #                          build_vignettes = TRUE)
 library(xtune)
@@ -160,29 +161,74 @@ temp <- str_replace_all(colnames(mbase_log_scale[,seq]),"5","Five")
 colnames(mbase_log_scale)[seq] <- temp
 
 #Select only metabolomics from mbase dataset
-
 mbase_log_scale_sub <- mbase_log_scale[c(1,5:44)]
 met <- colnames(mbase_log_scale_sub)[-1]
 base_log_scale_sub <- base_log_scale[c(7326,7348,7351,7379,7377,7381:7389,7397,7399,7404,38:7325)]
 prot <- colnames(base_log_scale[38:7325])
 dat <- tidylog::left_join(base_log_scale_sub,mbase_log_scale_sub,by="releaseid") #3 participants missing proteomics, remove
+rm(base,base_log,base_log_scale,base_log_scale_sub,comorb,mbase,mbase_log,mbase_log_scale,mbase_log_scale_sub,baserisk,plasma,soma,analytes)
 ```
 
 #3. Plasma Analysis
+##a. Feature Selection
+```{r,include=T}
+#Protein feature seleciton
+#Univariate protein to outcome & select top 1000 proteins (by pvalues)
+features <- data.frame()
+for (x in prot){
+  M0 <- as.formula(paste0("MIC.OR.MAC~",x,"+HbA1c+bmi+sex+AGEBASE+log_trig+sbp+si_1_ins0"))
+  M1 <- glm(M0,family="binomial",data=dat)
+  coef <- summary(M1)$coef[2,1]
+  p <- summary(M1)$coef[2,4]
+  results <- data.frame(Feature=x,Beta=coef,Pvalue=p)
+  features <- rbind(features,results)
+}
+#Select top 1000 features
+features_top <- features %>% 
+  slice_min(Pvalue, n = 1000)
+features <- features_top$Feature
+
+
+#Univariate metabolite to outcome& select top 20 metabolites (by pvalues)
+features2 <- data.frame()
+for (x in met){
+  M0 <- as.formula(paste0("MIC.OR.MAC~",x,"+HbA1c+bmi+sex+AGEBASE+log_trig+sbp+si_1_ins0"))
+  M1 <- glm(M0,family="binomial",data=dat)
+  coef <- summary(M1)$coef[2,1]
+  p <- summary(M1)$coef[2,4]
+  results2 <- data.frame(Feature=x,Beta=coef,Pvalue=p)
+  features2 <- rbind(features2,results2)
+}
+#Select top 1000 features
+features2_top <- features2 %>% 
+  slice_min(Pvalue, n = 20)
+features2 <- features2_top$Feature
+
+```
+
+##b. Analysis
 ```{r, include=T}
 #Define outcome vector: Albuminuria (Binary Occurance)
+cov <- c("HbA1c","bmi","sex","AGEBASE","log_trig","sbp","si_1_ins0")
+colnames(dat)[which(colnames(dat) %in% cov)] <- paste0("cov_",colnames(dat)[which(colnames(dat) %in% cov)])
+covars <- paste0("cov_",c("HbA1c","bmi","sex","AGEBASE","log_trig","sbp","si_1_ins0"))
 Y <- dat$MIC.OR.MAC
-X <- as.matrix(dat[c(met,prot)])
+X <- dat[c(features2,features,covars)]
+#Missing insulin sensitivity for two participants ("163" "298")
+imputeX <- mice(X,m=1,method="pmm",maxit=5)
+X <- complete(imputeX)
+X <- as.matrix(X)#reduced omics sets
+# X <- as.matrix(dat[c(met,prot)]) #Full omics sets
 rownames(X) <- dat$releaseid
-Z <- data.frame(predictors=colnames(X),metabolite=NA,protein=NA)
+Z <- data.frame(predictors=colnames(X),metabolite=NA,protein=NA,covariate=NA)
 rownames(Z) <- Z$predictors
 Z <- Z %>% 
   select(-predictors)
 Z <- Z %>% 
-  mutate(metabolite=ifelse(grepl("seq",rownames(Z)),0,1),
-         protein=ifelse(grepl("seq",rownames(Z)),1,0))
+  mutate(metabolite=ifelse(grepl("seq",rownames(Z)) | rownames(Z) %in% covars,0,1),
+         protein=ifelse(grepl("seq",rownames(Z)),1,0),
+         covariate=ifelse(rownames(Z) %in% covars,1,0))
 Z <- as.matrix(Z)
-
 fit1 <- xtune(X,Y,Z, family = "binary", c = 0.5)
 fit1$penalty.vector
 coef_xtune(fit1,out="lambda.min")
@@ -190,7 +236,6 @@ predict_xtune(fit1, newX = X)
 coef(cvfit, s = "lambda.min")
 # s=“lambda.1se"
 
-#univariate protein to outcome and metabolite to outcome 
-#select top 1000 proteins & top 20 metabolites (largest effect estimates)
+
 
 ```
