@@ -67,6 +67,11 @@ library(EnhancedVolcano)
 library(openxlsx)
 # install.packages("fgsea")
 # library(fgsea)
+#install.packages("BiocManager")
+library(BiocManager)
+#BiocManager::install("MAST")
+library(MAST)
+
 
 #Lambda file path
 dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
@@ -130,6 +135,13 @@ so_liver_sn_hep <- readRDS(fs::path(dir.dat,"scRNA","data_clean","so_liver_sn_he
 gc()
 Idents(so_liver_sn_hep) <- so_liver_sn_hep$hepatocyte
 gc()
+#Create senesence so
+sens_gene_in_data <- intersect(sens_genes, rownames(so_liver_sn_hep))
+# Subset the Seurat object to include only genes in sens_gene_in_data
+so_sens <- subset(so_liver_sn_hep, features = sens_gene_in_data)
+rm(so_liver_sn_hep)
+#saveRDS(so_sens,fs::path(dir.dat,"scRNA","data_clean","so_sens_genes.RDS"))
+so_sens <- readRDS(fs::path(dir.dat,"scRNA","data_clean","so_sens_genes.RDS"))
 ```
 
 #3. Visualize Data with UMAPs
@@ -315,6 +327,14 @@ de.markers(so_liver_sn_hep, genes, "glp1agonist", id2 = "No", id1 = "Yes", "Hepa
 
 #6. Senesence Diff Exp 
 ```{r}
+#Filter to only Hepatocytes
+Idents(so_liver_sn) <- so_liver_sn$hepatocyte
+gc()
+so_liver_sn_hep <- subset(so_liver_sn, hepatocyte == "Hepatocyte")
+gc()
+memory.limit(size = 64000)
+rm(so_liver_sn)
+
 #Diff by Diabetes Status
 Idents(so_liver_sn_hep) <- so_liver_sn_hep$hepatocyte
 de.markers(so_liver_sn_hep, sens_genes, "diagnosis_of_diabetes", id1 = "Yes", id2 = "No", "Hepatocyte", "")
@@ -348,8 +368,7 @@ labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
 
 #GLP1
 #Need to filter to just Type 2
-so_T2 <- subset(so_liver_sn_hep, diagnosis_of_diabetes == "Yes")
-de.markers(so_T2, sens_genes, "glp1agonist", id1 = "Yes", id2 = "No", "Hepatocyte", "")
+de.markers(so_liver_sn_hep, sens_genes, "glp1agonist", id1 = "Yes", id2 = "No", "Hepatocyte", "")
 write.csv(m,fs::path("SeneDifferential_Expression_GLP1.csv"))
 m_top <- m
 significant_genes <- m_top %>% filter(p_val_adj < 0.05)
@@ -361,6 +380,7 @@ top_genes <- rbind(
 )
 
 labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+
 ```
 
 #7. Gene set enrichment analysis
@@ -384,4 +404,41 @@ eaRes$leadingEdge <- sapply(eaRes$leadingEdge, function(x) paste(x, collapse = "
 write.csv(eaRes, "GSEA_Diabetes.csv", row.names = FALSE)
 ```
 
-#8.
+#8. Association between Genes & Liver Outcomes
+```{r}
+# Extract the expression data matrix (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_liver_sn_hep, layer = "data"))
+
+# Extract metadata
+cell_metadata <- so_liver_sn_hep@meta.data
+
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+
+# Assuming gene_set is a vector of gene names
+sca_gene_set <- sca[rownames(sca) %in% gene_set, ]
+
+# Define the model with the outcome variable
+outcomes <- c("AST","ALT","fibrosis","steatosis","lobular_inflammation")
+model_formula <- ~ outcome + covariate
+
+# Run the linear model with zlm
+zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+
+# Summarize results and perform likelihood ratio test (LRT) for outcome
+summary_zlm <- summary(zlm_results, doLRT = 'outcome')
+
+# Convert the summary to a data table for easy manipulation
+summary_dt <- summary_zlm$datatable
+
+# Extract results for the outcome variable
+result <- summary_dt[contrast == 'outcome' & component == 'H', c("primerid", "Pr(>Chisq)")]
+
+# Adjust p-values for multiple testing (False Discovery Rate)
+result$p_adj <- p.adjust(result$`Pr(>Chisq)`, method = "fdr")
+
+# Filter significant results (e.g., adjusted p-value < 0.05)
+significant_results <- result[result$p_adj < 0.05, ]
+print(significant_results)
+
+```
