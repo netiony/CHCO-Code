@@ -1,13 +1,13 @@
 # Define genes
 # Get genes_subset of interest 
 #Glycolysis
-glyc_genes <- read.csv()
+#glyc_genes <- read.csv()
 
 #Gluconeogenesis
-gluc_genes <- read.csv()
+#gluc_genes <- read.csv()
 
 #TCA cycle
-tca_genes <- read.csv()
+#tca_genes <- read.csv()
 # tca_genes <- c("CS","DLAT","DLD","DLST","FH","SUCLG2P2","IDH1","IDH2","IDH3A",
 #                "IDH3B","IDH3G","MDH1","MDH2","ACLY","ACO1","OGDH","ACO2","PC",
 #                "PCK1","PCK2","PDHA1","PDHA2","PDHB","OGDHL","SDHA","SDHB","SDHC",
@@ -19,6 +19,18 @@ oxy_phos_genes <- c(
   "UQCRC1", "UQCRC2", "COX4I1", "COX4I2", "ATP5PF"
 )
 
+sens_genes <- c("ACVR1B","ANG","ANGPT1","ANGPTL4","AREG","AXL","BEX3","BMP2","BMP6","C3","CCL1","CCL13",
+                "CCL16","CCL2","CCL20","CCL24","CCL26","CCL3","CCL4","CCL5","CCL7","CCL8","CD55",
+                "CD9","CSF1","CSF2","CSF2RB","CST4","CTNNB1","CTSB","CXCL1","CXCL10","CXCL12",
+                "CXCL16","CXCL2","CXCL3","CXCL8","CXCR2","DKK1","EDN1","EGF","EGFR","EREG","ESM1",
+                "ETS2","FAS","FGF1","FGF2","FGF7","GDF15","GEM","GMFG","HGF","HMGB1","ICAM1","ICAM3",
+                "IGF1","IGFBP1","IGFBP2","IGFBP3","IGFBP4","IGFBP5","IGFBP6","IGFBP7","IL10","IL13",
+                "IL15","IL18","IL1A","IL1B","IL2","IL32","IL6","IL6ST","IL7","INHA","IQGAP2","ITGA2",
+                "ITPKA","JUN","KITLG","LCP1","MIF","MMP1","MMP10","MMP12","MMP13","MMP14","MMP2",
+                "MMP3","MMP9","NAP1L4","NRG1","PAPPA","PECAM1","PGF","PIGF","PLAT","PLAU","PLAUR",
+                "PTBP1","PTGER2","PTGES","RPS6KA5","SCAMP4","SELPLG","SEMA3F","SERPINB4","SERPINE1",
+                "SERPINE2","SPP1","SPX","TIMP2","TNF","TNFRSF10C","TNFRSF11B","TNFRSF1A","TNFRSF1B",
+                "TUBGCP2","VEGFA","VEGFC","VGF","WNT16","WNT2")
 
 
 # de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", NULL, "_top")

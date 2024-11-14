@@ -4,6 +4,7 @@ author: "Hailey Hampson"
 date: "2024-11-04"
 output: html_document
 ---
+#1. Set Up Libraries & Directories
 ```{r setup, include=FALSE}
 library(SomaDataIO)
 library(limma)
@@ -19,24 +20,33 @@ library(survival)
 library(broom)
 library(emmeans)
 library(ggvenn)
+library(stringr)
+library(devtools)
+library(mice)
+# devtools::install_github("JingxuanH/xtune", 
+#                          build_vignettes = TRUE)
+library(xtune)
 
 knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
-home_dir <- "/Volumes/Peds Endo-1/Petter Bjornstad/TODAY subaward"
+home_dir <- c("/Volumes/Peds Endo/Petter Bjornstad/TODAY subaward")
 ```
 
+#2. Load & Format Data
+##a. Plamsa Proteomics & Covariates
 ```{r, include=FALSE}
-knitr::opts_knit$set(root.dir = "~/Volumes/Peds Endo-1/Petter Bjornstad/TODAY subaward")
+# knitr::opts_knit$set(root.dir = "~/Volumes/Peds Endo-1/Petter Bjornstad/TODAY subaward")
 # load somalogic data, with QC samples already excluded
-load("/Volumes/Peds Endo-1/Petter Bjornstad/TODAY subaward/Somalogic data raw/soma.Rdata")
+# load("/Volumes/Peds Endo-1/Petter Bjornstad/TODAY subaward/Somalogic data raw/soma.Rdata")
+load("/Volumes/Peds Endo/Petter Bjornstad/TODAY subaward/Somalogic data raw/soma.Rdata")
 
 # load analyte info
-load("/Volumes/Peds Endo-1/Petter Bjornstad/TODAY subaward/Somalogic data raw/analytes.Rdata")
+load("/Volumes/Peds Endo/Petter Bjornstad/TODAY subaward/Somalogic data raw/analytes.Rdata")
 
 # load comorbidity data
-load("/Volumes/Peds Endo-1/Petter Bjornstad/TODAY subaward/Clinical data/comorb.Rdata")
+load("/Volumes/Peds Endo/Petter Bjornstad/TODAY subaward/Clinical data/comorb.Rdata")
 
 # load baseline risk factors
-load("/Volumes/Peds Endo-1/Petter Bjornstad/TODAY subaward/Clinical data/TODAY/baserisk.Rdata")
+load("/Volumes/Peds Endo/Petter Bjornstad/TODAY subaward/Clinical data/TODAY/baserisk.Rdata")
 
 # take only the baseline soma samples
 # can we just take the earliest or is it possible someone would have a follow-up sample but not baseline?
@@ -83,232 +93,149 @@ for (i in 1:length(predictors)) {
   base_log_scale[,paste0(predictors[i])] <- base_log_scale[,paste0(predictors[i])]/sd(unlist(base_log[,paste0(predictors[i])]))
 }
 
+```
+
+##b. Plasma Metabolomics
+```{r, include=FALSE}
+load("/Volumes/Peds Endo/Petter Bjornstad/TODAY subaward/Metabolomic data/plasma.Rdata")
+
+# load comorbidity data
+load("/Volumes/Peds Endo/Petter Bjornstad/TODAY subaward/Clinical data/comorb.Rdata")
+
+# load baseline risk factors
+load("/Volumes/Peds Endo/Petter Bjornstad/TODAY subaward/Clinical data/TODAY/baserisk.Rdata")
+
+# take only the baseline samples
+plasma$Date.Drawn <- as.Date(plasma$Date.Drawn,format = "%m/%d/%Y")
+mbase <- plasma %>% arrange(releaseid,Date.Drawn) %>% group_by(releaseid) %>% filter(row_number()==1)
+mbase <- mbase %>% arrange(Date.Drawn)
+
+# merge in complication data
+mbase <- merge(mbase, comorb, by="releaseid",all.x=T, all.y=F)
+
+# merge in mbaseline risk factors
+mbase <- merge(mbase, baserisk, by="releaseid",all.x=T, all.y=F)
+
+# identify columns corresponding to proteins
+#is_seq <- function(.x) grepl("^seq\\.[0-9]{4}", .x) # regex for analytes
+is_seq <- function(.x) grepl("uM", .x)
+seq <- is_seq(names(mbase))
+
+# convert to numeric
+mbase[,seq] <- apply(mbase[,seq],2,as.numeric)
+
+# are there proteins with low variability?
+no_var = caret::nearZeroVar(mbase[,seq])
+mbase <- mbase[,-no_var]
+# other metabolites have zero variance
+mbase <- mbase %>% select(!Adenine.in.uM)
+mbase <- mbase %>% select(!`DL-Homocystine.in.uM`)
+mbase <- mbase %>% select(!Sulpiride.in.uM)
+mbase <- mbase %>% select(!Nicotinic_acid.in.uM)
+mbase <- mbase %>% select(!Quinolinic.Acid.in.uM)
+mbase <- mbase %>% select(!`5-Hydroxyindoleacetic.Acid.in.uM`)
+seq <- is_seq(names(mbase))
+
+# log transform
+mbase_log <- mbase %>% modify_if(is_seq(names(.)), log)
+
+# scale by SD
+mbase_log_scale <- mbase_log
+predictors <- colnames(mbase_log[seq])
+for (i in 1:length(predictors)) {
+  mbase_log_scale[predictors[i]] <- mbase_log_scale[predictors[i]]/sd(mbase_log[,paste0(predictors[i])])
+}
+
+# now we need to change the format of the variable names
+temp <- str_replace_all(colnames(mbase_log_scale[,seq]),"/","_")
+colnames(mbase_log_scale)[seq] <- temp
+temp <- str_replace_all(colnames(mbase_log_scale[,seq]),"-","_")
+colnames(mbase_log_scale)[seq] <- temp
+temp <- str_replace_all(colnames(mbase_log_scale[,seq]),"3","Three")
+colnames(mbase_log_scale)[seq] <- temp
+temp <- str_replace_all(colnames(mbase_log_scale[,seq]),"2","Two")
+colnames(mbase_log_scale)[seq] <- temp
+temp <- str_replace_all(colnames(mbase_log_scale[,seq]),"\\(s\\)","s")
+colnames(mbase_log_scale)[seq] <- temp
+temp <- str_replace_all(colnames(mbase_log_scale[,seq]),"5","Five")
+colnames(mbase_log_scale)[seq] <- temp
+
+#Select only metabolomics from mbase dataset
+mbase_log_scale_sub <- mbase_log_scale[c(1,5:44)]
+met <- colnames(mbase_log_scale_sub)[-1]
+base_log_scale_sub <- base_log_scale[c(7326,7348,7351,7379,7377,7381:7389,7397,7399,7404,38:7325)]
+prot <- colnames(base_log_scale[38:7325])
+dat <- tidylog::left_join(base_log_scale_sub,mbase_log_scale_sub,by="releaseid") #3 participants missing proteomics, remove
+rm(base,base_log,base_log_scale,base_log_scale_sub,comorb,mbase,mbase_log,mbase_log_scale,mbase_log_scale_sub,baserisk,plasma,soma,analytes)
+```
+
+#3. Plasma Analysis
+##a. Feature Selection
+```{r,include=T}
+#Protein feature seleciton
+#Univariate protein to outcome & select top 1000 proteins (by pvalues)
+features <- data.frame()
+for (x in prot){
+  M0 <- as.formula(paste0("MIC.OR.MAC~",x,"+HbA1c+bmi+sex+AGEBASE+log_trig+sbp+si_1_ins0"))
+  M1 <- glm(M0,family="binomial",data=dat)
+  coef <- summary(M1)$coef[2,1]
+  p <- summary(M1)$coef[2,4]
+  results <- data.frame(Feature=x,Beta=coef,Pvalue=p)
+  features <- rbind(features,results)
+}
+#Select top 1000 features
+features_top <- features %>% 
+  slice_min(Pvalue, n = 1000)
+features <- features_top$Feature
+
+
+#Univariate metabolite to outcome& select top 20 metabolites (by pvalues)
+features2 <- data.frame()
+for (x in met){
+  M0 <- as.formula(paste0("MIC.OR.MAC~",x,"+HbA1c+bmi+sex+AGEBASE+log_trig+sbp+si_1_ins0"))
+  M1 <- glm(M0,family="binomial",data=dat)
+  coef <- summary(M1)$coef[2,1]
+  p <- summary(M1)$coef[2,4]
+  results2 <- data.frame(Feature=x,Beta=coef,Pvalue=p)
+  features2 <- rbind(features2,results2)
+}
+#Select top 1000 features
+features2_top <- features2 %>% 
+  slice_min(Pvalue, n = 20)
+features2 <- features2_top$Feature
 
 ```
 
-```{r, include=FALSE}
-# Macroalbuminuria
-result_MAC <- NULL
-predictors <- colnames(base_log[seq])
-for (i in 1:length(predictors)) {
-  form <- paste0("Surv(DAYSTOMAC, MAC)~",predictors[i],"+HbA1c+log_trig+sbp+si_1_ins0+EstCreatClear")
-  mod <- coxph(data = base_log_scale, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
-  tidymod <- tidymod[1,]
-  result_MAC <- rbind(result_MAC,tidymod)
-}
-result_MAC$adj.p.value <- p.adjust(result_MAC$p.value, "fdr")
-result_MAC$AptName <- result_MAC$term
-result_MAC$term <- NULL
-result_MAC <- merge(result_MAC,analytes,by="AptName",all.x = T, all.y = F)
-result_MAC <- result_MAC[order(result_MAC$p.value),] 
+##b. Analysis
+```{r, include=T}
+#Define outcome vector: Albuminuria (Binary Occurance)
+cov <- c("HbA1c","bmi","sex","AGEBASE","log_trig","sbp","si_1_ins0")
+colnames(dat)[which(colnames(dat) %in% cov)] <- paste0("cov_",colnames(dat)[which(colnames(dat) %in% cov)])
+covars <- paste0("cov_",c("HbA1c","bmi","sex","AGEBASE","log_trig","sbp","si_1_ins0"))
+Y <- dat$MIC.OR.MAC
+X <- dat[c(features2,features,covars)]
+#Missing insulin sensitivity for two participants ("163" "298")
+imputeX <- mice(X,m=1,method="pmm",maxit=5)
+X <- complete(imputeX)
+X <- as.matrix(X)#reduced omics sets
+# X <- as.matrix(dat[c(met,prot)]) #Full omics sets
+rownames(X) <- dat$releaseid
+Z <- data.frame(predictors=colnames(X),metabolite=NA,protein=NA,covariate=NA)
+rownames(Z) <- Z$predictors
+Z <- Z %>% 
+  select(-predictors)
+Z <- Z %>% 
+  mutate(metabolite=ifelse(grepl("seq",rownames(Z)) | rownames(Z) %in% covars,0,1),
+         protein=ifelse(grepl("seq",rownames(Z)),1,0),
+         covariate=ifelse(rownames(Z) %in% covars,1,0))
+Z <- as.matrix(Z)
+fit1 <- xtune(X,Y,Z, family = "binary", c = 0.5)
+fit1$penalty.vector
+coef_xtune(fit1,out="lambda.min")
+predict_xtune(fit1, newX = X)
+coef(cvfit, s = "lambda.min")
+# s=“lambda.1se"
 
-# Microalbuminuria
-result_MIC <- NULL
-predictors <- colnames(base_log[seq])
-for (i in 1:length(predictors)) {
-  form <- paste0("Surv(DAYSTOMIC, MIC)~",predictors[i],"+HbA1c+log_trig+sbp+si_1_ins0+EstCreatClear")
-  mod <- coxph(data = base_log_scale, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
-  tidymod <- tidymod[1,]
-  result_MIC <- rbind(result_MIC,tidymod)
-}
-result_MIC$adj.p.value <- p.adjust(result_MIC$p.value, "fdr")
-result_MIC$AptName <- result_MIC$term
-result_MIC$term <- NULL
-result_MIC <- merge(result_MIC,analytes,by="AptName",all.x = T, all.y = F)
-result_MIC <- result_MIC[order(result_MIC$p.value),] 
 
-# Microalbuminuria or macroalbuminuria - whichever is first
-result_MIC.OR.MAC <- NULL
-predictors <- colnames(base_log[seq])
-for (i in 1:length(predictors)) {
-  form <- paste0("Surv(DAYSTOMIC.OR.MAC, MIC.OR.MAC)~",predictors[i],"+HbA1c+log_trig+sbp+si_1_ins0+EstCreatClear")
-  mod <- coxph(data = base_log_scale, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
-  tidymod <- tidymod[1,]
-  result_MIC.OR.MAC <- rbind(result_MIC.OR.MAC,tidymod)
-}
-result_MIC.OR.MAC$adj.p.value <- p.adjust(result_MIC.OR.MAC$p.value, "fdr")
-result_MIC.OR.MAC$AptName <- result_MIC.OR.MAC$term
-result_MIC.OR.MAC$term <- NULL
-result_MIC.OR.MAC <- merge(result_MIC.OR.MAC,analytes,by="AptName",all.x = T, all.y = F)
-result_MIC.OR.MAC <- result_MIC.OR.MAC[order(result_MIC.OR.MAC$p.value),] 
-
-# hyperfiltration
-result_HYP <- NULL
-predictors <- colnames(base_log[seq])
-for (i in 1:length(predictors)) {
-  form <- paste0("Surv(DAYSTOHYP, HYP)~",predictors[i],"+HbA1c+log_trig+sbp+si_1_ins0+EstCreatClear")
-  mod <- coxph(data = base_log_scale, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
-  tidymod <- tidymod[1,]
-  result_HYP <- rbind(result_HYP,tidymod)
-}
-result_HYP$adj.p.value <- p.adjust(result_HYP$p.value, "fdr")
-result_HYP$AptName <- result_HYP$term
-result_HYP$term <- NULL
-result_HYP <- merge(result_HYP,analytes,by="AptName",all.x = T, all.y = F)
-result_HYP <- result_HYP[order(result_HYP$p.value),] 
-
-# rapid eGFR decline
-result_RAPID <- NULL
-predictors <- colnames(base_log[seq])
-for (i in 1:length(predictors)) {
-  form <- paste0("Surv(DAYSTORAPID, RAPID)~",predictors[i],"+HbA1c+log_trig+sbp+si_1_ins0+EstCreatClear")
-  mod <- coxph(data = base_log_scale, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
-  tidymod <- tidymod[1,]
-  result_RAPID <- rbind(result_RAPID,tidymod)
-}
-result_RAPID$adj.p.value <- p.adjust(result_RAPID$p.value, "fdr")
-result_RAPID$AptName <- result_RAPID$term
-result_RAPID$term <- NULL
-result_RAPID <- merge(result_RAPID,analytes,by="AptName",all.x = T, all.y = F)
-result_RAPID <- result_RAPID[order(result_RAPID$p.value),] 
-
-# hypertension
-# omit SBP
-result_HTN <- NULL
-predictors <- colnames(base_log[seq])
-for (i in 1:length(predictors)) {
-  form <- paste0("Surv(DAYSTOHTN, HTN)~",predictors[i],"+HbA1c+log_trig+si_1_ins0+EstCreatClear")
-  mod <- coxph(data = base_log_scale, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
-  tidymod <- tidymod[1,]
-  result_HTN <- rbind(result_HTN,tidymod)
-}
-result_HTN$adj.p.value <- p.adjust(result_HTN$p.value, "fdr")
-result_HTN$AptName <- result_HTN$term
-result_HTN$term <- NULL
-result_HTN <- merge(result_HTN,analytes,by="AptName",all.x = T, all.y = F)
-result_HTN <- result_HTN[order(result_HTN$p.value),] 
-
-# hypertension with SBP
-results_htn_bp <- NULL
-predictors <- colnames(base_log[seq])
-for (i in 1:length(predictors)) {
-  form <- paste0("Surv(DAYSTOHTN, HTN)~",predictors[i],"+HbA1c+log_trig+sbp+si_1_ins0+EstCreatClear")
-  mod <- coxph(data = base_log_scale, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
-  tidymod <- tidymod[1,]
-  results_htn_bp <- rbind(results_htn_bp,tidymod)
-}
-results_htn_bp$adj.p.value <- p.adjust(results_htn_bp$p.value, "fdr")
-results_htn_bp$AptName <- results_htn_bp$term
-results_htn_bp$term <- NULL
-results_htn_bp <- merge(results_htn_bp,analytes,by="AptName",all.x = T, all.y = F)
-results_htn_bp <- results_htn_bp[order(results_htn_bp$p.value),] 
-
-# hypertension with UACR
-results_htn_uacr <- NULL
-predictors <- colnames(base_log[seq])
-for (i in 1:length(predictors)) {
-  form <- paste0("Surv(DAYSTOHTN, HTN)~",predictors[i],"+HbA1c+log_trig+log_UAlbCreat+si_1_ins0+EstCreatClear")
-  mod <- coxph(data = base_log_scale, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
-  tidymod <- tidymod[1,]
-  results_htn_uacr <- rbind(results_htn_uacr,tidymod)
-}
-results_htn_uacr$adj.p.value <- p.adjust(results_htn_uacr$p.value, "fdr")
-results_htn_uacr$AptName <- results_htn_uacr$term
-results_htn_uacr$term <- NULL
-results_htn_uacr <- merge(results_htn_uacr,analytes,by="AptName",all.x = T, all.y = F)
-results_htn_uacr <- results_htn_uacr[order(results_htn_uacr$p.value),] 
-
-# neuropathy
-result_NEURO <- NULL
-predictors <- colnames(base_log[seq])
-for (i in 1:length(predictors)) {
-  form <- paste0("Surv(DAYSTONEURO, NEURO)~",predictors[i],"+HbA1c+log_trig+sbp+si_1_ins0+EstCreatClear")
-  mod <- coxph(data = base_log_scale, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
-  tidymod <- tidymod[1,]
-  result_NEURO <- rbind(result_NEURO,tidymod)
-}
-result_NEURO$adj.p.value <- p.adjust(result_NEURO$p.value, "fdr")
-result_NEURO$AptName <- result_NEURO$term
-result_NEURO$term <- NULL
-result_NEURO <- merge(result_NEURO,analytes,by="AptName",all.x = T, all.y = F)
-result_NEURO <- result_NEURO[order(result_NEURO$p.value),] 
-
-# retinopathy
-result_RETINO <- NULL
-predictors <- colnames(base_log[seq])
-for (i in 1:length(predictors)) {
-  form <- paste0("Surv(DAYSTORETINO, RETINO)~",predictors[i],"+HbA1c+log_trig+sbp+si_1_ins0+EstCreatClear")
-  mod <- coxph(data = base_log_scale, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
-  tidymod <- tidymod[1,]
-  result_RETINO <- rbind(result_RETINO,tidymod)
-}
-result_RETINO$adj.p.value <- p.adjust(result_RETINO$p.value, "fdr")
-result_RETINO$AptName <- result_RETINO$term
-result_RETINO$term <- NULL
-result_RETINO <- merge(result_RETINO,analytes,by="AptName",all.x = T, all.y = F)
-result_RETINO <- result_RETINO[order(result_RETINO$p.value),] 
-
-# glycemic failure
-# omit A1c
-result_GLYC <- NULL
-predictors <- colnames(base_log[seq])
-for (i in 1:length(predictors)) {
-  form <- paste0("Surv(DAYSTOGLYC, GLYC)~",predictors[i],"+bmi+si_1_ins0+AGEBASE+sex+EstCreatClear")
-  mod <- coxph(data = base_log_scale, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
-  tidymod <- tidymod[1,]
-  result_GLYC <- rbind(result_GLYC,tidymod)
-}
-result_GLYC$adj.p.value <- p.adjust(result_GLYC$p.value, "fdr")
-result_GLYC$AptName <- result_GLYC$term
-result_GLYC$term <- NULL
-result_GLYC <- merge(result_GLYC,analytes,by="AptName",all.x = T, all.y = F)
-result_GLYC <- result_GLYC[order(result_GLYC$p.value),] 
-
-# glycemic failure with A1c
-results_glyc_a1c <- NULL
-predictors <- colnames(base_log[seq])
-for (i in 1:length(predictors)) {
-  form <- paste0("Surv(DAYSTOGLYC, GLYC)~",predictors[i],"+HbA1c+bmi+si_1_ins0+AGEBASE+sex+EstCreatClear")
-  mod <- coxph(data = base_log_scale, formula = as.formula(form))
-  tidymod <- tidy(mod, exponentiate=TRUE, conf.int = TRUE)
-  tidymod <- tidymod[1,]
-  results_glyc_a1c <- rbind(results_glyc_a1c,tidymod)
-}
-results_glyc_a1c$adj.p.value <- p.adjust(results_glyc_a1c$p.value, "fdr")
-results_glyc_a1c$AptName <- results_glyc_a1c$term
-results_glyc_a1c$term <- NULL
-results_glyc_a1c <- merge(results_glyc_a1c,analytes,by="AptName",all.x = T, all.y = F)
-results_glyc_a1c <- results_glyc_a1c[order(results_glyc_a1c$p.value),] 
-
-# write all results to file
-wb <- createWorkbook()
-addWorksheet(wb,"MAC CPH")
-writeData(wb,"MAC CPH",result_MAC,rowNames = F)
-addWorksheet(wb,"MIC CPH")
-writeData(wb,"MIC CPH",result_MIC,rowNames = F)
-addWorksheet(wb,"MIC.OR.MAC CPH")
-writeData(wb,"MIC.OR.MAC CPH",result_MIC.OR.MAC,rowNames = F)
-addWorksheet(wb,"HYP CPH")
-writeData(wb,"HYP CPH",result_HYP,rowNames = F)
-addWorksheet(wb,"RAPID CPH")
-writeData(wb,"RAPID CPH",result_RAPID,rowNames = F)
-addWorksheet(wb,"HTN with SBP CPH")
-writeData(wb,"HTN with SBP CPH",results_htn_bp,rowNames = F)
-addWorksheet(wb,"HTN CPH")
-writeData(wb,"HTN CPH",result_HTN,rowNames = F)
-addWorksheet(wb,"HTN with UACR CPH")
-writeData(wb,"HTN with UACR CPH",results_htn_uacr,rowNames = F)
-addWorksheet(wb,"NEURO CPH")
-writeData(wb,"NEURO CPH",result_NEURO,rowNames = F)
-addWorksheet(wb,"RETINO CPH")
-writeData(wb,"RETINO CPH",result_RETINO,rowNames = F)
-addWorksheet(wb,"GLYC CPH")
-writeData(wb,"GLYC CPH",result_GLYC,rowNames = F)
-addWorksheet(wb,"GLYC with A1c CPH")
-writeData(wb,"GLYC with A1c CPH",results_glyc_a1c,rowNames = F)
-saveWorkbook(wb,"./Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted eGFR.xlsx",overwrite = TRUE)
-saveWorkbook(wb,"/Users/pylell/Dropbox/TODAY HTN and DKD output/TODAY somalogic Cox models scaled baseline adjusted eGFR.xlsx",overwrite = TRUE)
-saveWorkbook(wb,"/Users/pylell/Dropbox/TODAY glycemic manuscript [shared]/Analysis output/TODAY somalogic Cox models scaled baseline adjusted eGFR.xlsx",overwrite = TRUE)
 
 ```

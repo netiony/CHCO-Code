@@ -458,3 +458,107 @@ for (cell in cell_types){
 }
 
 saveWorkbook(wb,fs::path(dir.home,"Results_and_Figures","Kidney_scRNA_Diff_Exp.xlsx"),overwrite = TRUE)
+
+#Print senesence figures
+#Type 2
+# Define custom colors based on significance and log2 fold change direction
+colCustom <- ifelse(
+  m_top$p_val_adj < 0.05 & m_top$avg_log2FC > 0, "red",           # Significant & positive FC
+  ifelse(m_top$p_val_adj < 0.05 & m_top$avg_log2FC < 0, "blue",    # Significant & negative FC
+         "lightgray")                                               # Non-significant
+)
+colCustom[is.na(colCustom)] <- "lightgray"
+names(colCustom)[colCustom =="red"] <- "Upregulated in Diabetes"
+names(colCustom)[colCustom =="blue"] <- "Downregulated in Diabetes"
+names(colCustom)[colCustom=="lightgray"] <- "Unchanged"
+
+# Create the volcano plot
+p <- EnhancedVolcano(m_top,
+                     lab = labels,
+                     x = 'avg_log2FC',
+                     y = 'p_val_adj',
+                     title = paste0("Differentially Expressed Senescence Genes by Diabetes (Pseudobulk)"),
+                     subtitle = paste0("Significant at FDR-P<0.05"),
+                     pCutoff = 0.05,         # Set p-value cutoff for significance
+                     FCcutoff = 0,           # No effect size threshold
+                     labFace = 'bold',
+                     pointSize = 4,
+                     labSize = 5,
+                     drawConnectors = TRUE,
+                     widthConnectors = 1.0,
+                     colConnectors = 'black',
+                     legendPosition = NULL,
+                     boxedLabels = TRUE,
+                     max.overlaps = 30,
+                     colCustom = colCustom)  # Apply custom colors
+pdf(file = "Volcano_Senesence_Diabetes.pdf",width=15,height=8)
+plot(p)
+dev.off()
+
+#MASLD
+# Define custom colors based on significance and log2 fold change direction
+colCustom <- ifelse(
+  m_top$p_val_adj < 0.05 & m_top$avg_log2FC > 0, "red",           # Significant & positive FC
+  ifelse(m_top$p_val_adj < 0.05 & m_top$avg_log2FC < 0, "blue",    # Significant & negative FC
+         "lightgray")                                               # Non-significant
+)
+colCustom[is.na(colCustom)] <- "lightgray"
+names(colCustom)[colCustom =="red"] <- "Upregulated in MASLD"
+names(colCustom)[colCustom =="blue"] <- "Downregulated in MASLD"
+names(colCustom)[colCustom=="lightgray"] <- "Unchanged"
+
+# Create the volcano plot
+p <- EnhancedVolcano(m_top,
+                     lab = labels,
+                     x = 'avg_log2FC',
+                     y = 'p_val_adj',
+                     title = paste0("Differentially Expressed Senescence Genes by MASLD (Pseudobulk)"),
+                     subtitle = paste0("Significant at FDR-P<0.05"),
+                     pCutoff = 0.05,         # Set p-value cutoff for significance
+                     FCcutoff = 0,           # No effect size threshold
+                     labFace = 'bold',
+                     pointSize = 4,
+                     labSize = 5,
+                     drawConnectors = TRUE,
+                     widthConnectors = 1.0,
+                     colConnectors = 'black',
+                     legendPosition = NULL,
+                     boxedLabels = TRUE,
+                     max.overlaps = 20,
+                     colCustom = colCustom)  # Apply custom colors
+pdf(file = "Volcano_Senesence_MASLD.pdf",width=15,height=8)
+plot(p)
+dev.off()
+
+# Define custom colors based on significance and log2 fold change direction
+colCustom <- ifelse(
+  m_top$p_val_adj < 0.05 & m_top$avg_log2FC > 0, "red",           # Significant & positive FC
+  ifelse(m_top$p_val_adj < 0.05 & m_top$avg_log2FC < 0, "blue",    # Significant & negative FC
+         "lightgray")                                               # Non-significant
+)
+colCustom[is.na(colCustom)] <- "lightgray"
+names(colCustom)[colCustom =="red"] <- "Upregulated in GLP-1"
+names(colCustom)[colCustom =="blue"] <- "Downregulated in GLP-1"
+names(colCustom)[colCustom=="lightgray"] <- "Unchanged"
+# Create the volcano plot
+p <- EnhancedVolcano(m_top,
+                     lab = labels,
+                     x = 'avg_log2FC',
+                     y = 'p_val_adj',
+                     title = paste0("Differentially Expressed Senescence Genes by GLP-1 Agonists (Pseudobulk)"),
+                     subtitle = paste0("Significant at FDR-P<0.05"),
+                     pCutoff = 0.05,         # Set p-value cutoff for significance
+                     FCcutoff = 0,           # No effect size threshold
+                     labFace = 'bold',
+                     pointSize = 4,
+                     labSize = 5,
+                     drawConnectors = TRUE,
+                     widthConnectors = 1.0,
+                     colConnectors = 'black',
+                     legendPosition = NULL,
+                     boxedLabels = TRUE,
+                     max.overlaps = 20,
+                     colCustom = colCustom)  # Apply custom colors
+pdf(file = "Volcano_Senesence_GLP1.pdf",width=15,height=8)
+plot(p)
+dev.off()
