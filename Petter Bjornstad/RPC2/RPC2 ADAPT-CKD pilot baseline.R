@@ -6,6 +6,8 @@ library(reshape2)
 library(tidyr)
 
 # REDCap token for RPC2
+api_tok <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/api_tokens.csv")
+
 rpc2_tok <- api_tok[api_tok$Study == "RPC2",]$Token
 # uri for REDCap
 uri <- "https://redcap.ucdenver.edu/api/"
@@ -22,11 +24,12 @@ meds_biopsy <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/
   filter(!is.na(med_yn)) %>%
   filter(med_yn != "") %>%
   filter(grepl("RPC-", record_id)) %>% 
-  mutate(age_current=NA, 
+  dplyr::mutate(age_current=NA, 
          gender=NA, race=NA, ethnicity=NA, 
          medname=NA, medindication=NA, meddose=NA, 
          medfreq=NA, medstart=NA, medcontinues=NA, medstop=NA,
          creatinine_s=NA, cystatin_c_s=NA, bun=NA, height=NA,
+         screen_urine_acr=NA,
          source = "EPIC") %>%
   dplyr::rename(subject_id = "record_id")
 
@@ -40,7 +43,7 @@ race_vars <- c("race___1", "race___2", "race___3", "race___4", "race___5", "race
 rpc2_subset <- rpc2 %>%
   filter(subject_id %in% rpc2_ids) %>%
   rowwise() %>%
-  mutate(race = case_when(sum(c_across(all_of(race_vars))) > 1 ~ "More than one",
+  dplyr::mutate(race = case_when(sum(c_across(all_of(race_vars))) > 1 ~ "More than one",
                           race___1 == 1 ~ "American Indian or Alaskan Native",
                           race___2 == 1 ~ "Asian",
                           race___3 == 1 ~ "Hawaiian or Pacific Islander",
@@ -56,8 +59,8 @@ rpc2_subset <- rpc2 %>%
   dplyr::select(subject_id, age_current, gender, race, ethnicity, 
                 medname, Preferred.Label, medindication, meddose, 
                 medfreq, medstart, medcontinues, medstop, 
-                creatinine_s, cystatin_c_s, bun, height) %>%
-  mutate(Preferred.Label = case_when(medname == "798928" ~ "acetaminophen 500 MG Oral Tablet [Tactinal]", 
+                creatinine_s, cystatin_c_s, bun, height, screen_urine_acr) %>%
+  dplyr::mutate(Preferred.Label = case_when(medname == "798928" ~ "acetaminophen 500 MG Oral Tablet [Tactinal]", 
                                      T ~ Preferred.Label),
          gender = case_when(gender == 0 ~ "Female", gender == 1 ~ "Male", gender == 0 ~ "Other"),
          kidneybx_1 = NA, kidneybx_2 = NA, med_yn = "Yes",
@@ -65,7 +68,7 @@ rpc2_subset <- rpc2 %>%
   rbind(meds_biopsy) %>%
   ungroup() %>% group_by(subject_id) %>%
   fill(age_current, gender, race, ethnicity, kidneybx_1, kidneybx_2, 
-       creatinine_s, cystatin_c_s, bun, height,
+       creatinine_s, cystatin_c_s, bun, height, screen_urine_acr,
        .direction = "updown") %>%
   filter(!is.na(Preferred.Label)) %>%
   arrange(subject_id)
@@ -78,12 +81,11 @@ rpc2_subset <- rpc2_subset %>%
 # Petter wants just the EPIC pulled meds and in wide format
 rpc2_subset_epic <- rpc2_subset %>%
   filter(source == "EPIC") %>%
-  dplyr::select(1:11, 18:21, -medname, -source) %>%
+  dplyr::select(1:11, 18:22, -medname, -source) %>%
   pivot_wider(names_from = "Preferred.Label", values_from = "med_yn") %>%
   left_join(subset(rpc2, select = c(subject_id, redcap_event_name, screen_egfr), 
                    !is.na(screen_egfr))) %>%
   mutate(visit = substr(redcap_event_name, 1,2)) %>%
   select(-redcap_event_name)
-
 
 write.csv(rpc2_subset_epic, "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/rpc2_biopsy_meds.csv", row.names = F, na = "")
