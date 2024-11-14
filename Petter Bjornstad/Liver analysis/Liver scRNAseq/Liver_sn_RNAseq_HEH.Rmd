@@ -463,31 +463,152 @@ sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
 sca_gene_set <- sca[rownames(sca) %in% sens_genes, ]
 
 # Define the model with the outcome variable
-outcomes <- c("ast","alt","fibrosis_stage","steatosis_grade","lobular_inflammation_grade")
-# Convert 'lobular_inflammation_grade' to a factor in the Seurat object metadata
-so_sens@meta.data$lobular_inflammation_grade <- factor(so_sens@meta.data$lobular_inflammation_grade)
+outcomes <- c("ast","alt","fibrosis_stage","steatosis_grade")
+# Convert count variables to factors
+#so_sens@meta.data$lobular_inflammation_grade <- factor(so_sens@meta.data$lobular_inflammation_grade,levels = c("0", #"1"),labels=c("No","Yes"))
 so_sens@meta.data$steatosis_grade <- factor(so_sens@meta.data$steatosis_grade)
+so_sens@meta.data$fibrosis_stage <- factor(so_sens@meta.data$fibrosis_stage)
 
-model_formula <- ~ steatosis_grade
+model_formula <- ~ fibrosis_stage
 
 # Run the linear model with zlm
 zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
-summary(zlm_results)
+#summary(zlm_results)
 # Summarize results and perform likelihood ratio test (LRT) for outcome
-summary_zlm <- summary(zlm_results, doLRT = 'steatosis_grade')
+summary_zlm <- summary(zlm_results, doLRT = "fibrosis_stage")
 
 # Convert the summary to a data table for easy manipulation
 summary_dt <- summary_zlm$datatable
 
-# Extract results for the outcome variable
-result <- summary_dt[contrast == 'outcome' & component == 'H', c("primerid", "Pr(>Chisq)")]
+#Select only the coeficients
+summary_dt <- summary_dt %>%
+  filter(contrast!="(Intercept)")
 
-# Adjust p-values for multiple testing (False Discovery Rate)
-result$p_adj <- p.adjust(result$`Pr(>Chisq)`, method = "fdr")
+#Adjust for multiple comparisons
+summary_dt <- summary_dt %>%
+  group_by(component) %>%
+  mutate(adj_p = p.adjust(`Pr(>Chisq)`, method = "fdr")) %>%
+  ungroup()
 
-# Filter significant results (e.g., adjusted p-value < 0.05)
-significant_results <- result[result$p_adj < 0.05, ]
-
-results <- rbind(results,result)
+write.csv(summary_dt,fs::path(dir.dat,"fibrosis_stage_Results.csv"))
 
 ```
+#9. Visualize Results of MAST
+##a. Full Gene Set
+##b. Senesence Gene Set
+```{r}
+
+# Subset the data for components C and D
+summary_dt_filtered <- summary_dt %>%
+  filter(component %in% c("C", "D"))
+
+# Create the bubble plot for components C and D
+ggplot(summary_dt_filtered, aes(x = coef, y = `Pr(>Chisq)`, size = abs(coef), color = adj_p)) +
+  geom_point(alpha = 0.6) +  # Create bubbles with transparency
+  scale_size_continuous(range = c(2, 10)) +  # Adjust bubble size range
+  scale_color_gradient(low = "blue", high = "red") +  # Color by adjusted p-value
+  facet_wrap(~component) +  # Facet by component (C, D)
+  theme_minimal() +  # Clean theme
+  labs(
+    title = "Bubble Plot of Coefficients vs P-values (Components C and D)",
+    x = "Coefficient (Coef)",
+    y = "P-value",
+    size = "Coefficient Magnitude",
+    color = "Adjusted P-value"
+  ) +
+  theme(
+    legend.position = "right",  # Position the legend on the right
+    strip.text = element_text(size = 12),  # Adjust facet label size
+    axis.text = element_text(size = 10),  # Adjust axis label size
+    axis.title = element_text(size = 12)  # Adjust axis title size
+  )
+
+
+
+# Calculate -log10(p-value) for the volcano plot
+summary_dt_filtered <- summary_dt_filtered %>%
+  mutate(log_pvalue = -log10(`Pr(>Chisq)`))  # Use the raw p-value or adjusted p-value if preferred
+
+# Identify top 10 positive and negative coefficients for each component
+top_genes <- summary_dt_filtered %>%
+  group_by(component) %>%
+  arrange(component, desc(coef)) %>%
+  top_n(10, coef) %>%  # Top 10 positive coefficients
+  bind_rows(
+    summary_dt_filtered %>%
+      group_by(component) %>%
+      arrange(component, coef) %>%
+      top_n(10, -coef)  # Top 10 negative coefficients
+  )
+
+# Create the volcano plot
+ggplot(summary_dt_filtered, aes(x = coef, y = log_pvalue)) +
+  geom_point(aes(color = `Pr(>Chisq)`), alpha = 0.6) +  # Points with transparency
+  geom_text(data = top_genes, aes(label = primerid), size = 3, vjust = 1, hjust = 1) +  # Label top 10 genes
+  facet_wrap(~component) +  # Facet by component (C, D)
+  scale_color_gradient(low = "blue", high = "red") +  # Color by p-value (adjusted)
+  theme_minimal() +  # Clean theme
+  labs(
+    title = "Volcano Plot of Coefficients vs -log10(P-value)",
+    x = "Coefficient (Coef)",
+    y = "-log10(P-value)",
+    color = "P-value"
+  ) +
+  theme(
+    legend.position = "right",  # Position the legend on the right
+    strip.text = element_text(size = 12),  # Adjust facet label size
+    axis.text = element_text(size = 10),  # Adjust axis label size
+    axis.title = element_text(size = 12)  # Adjust axis title size
+  )
+
+
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+
+# Subset the data for components C and D
+summary_dt_filtered <- summary_dt %>%
+  filter(component %in% c("C", "D"))
+
+# Calculate -log10(p-value) for the volcano plot
+summary_dt_filtered <- summary_dt_filtered %>%
+  mutate(log_pvalue = -log10(`Pr(>Chisq)`))  # Use the raw p-value or adjusted p-value if preferred
+
+# Identify top 10 positive and negative coefficients for each component
+top_genes <- summary_dt_filtered %>%
+  group_by(component) %>%
+  arrange(component, desc(coef)) %>%
+  top_n(10, coef) %>%  # Top 10 positive coefficients
+  bind_rows(
+    summary_dt_filtered %>%
+      group_by(component) %>%
+      arrange(component, coef) %>%
+      top_n(10, -coef)  # Top 10 negative coefficients
+  ) %>%
+  filter(!is.na(coef) & !is.na(log_pvalue) & !is.na(primerid))  # Remove rows with NA values
+
+# Create the volcano plot with the correct gene label column (primerid)
+ggplot(summary_dt_filtered, aes(x = coef, y = log_pvalue)) +
+  geom_point(aes(color = `Pr(>Chisq)`), alpha = 0.6) +  # Points with transparency
+  geom_segment(data = top_genes, aes(x = coef, y = log_pvalue, xend = coef, yend = log_pvalue + 0.1), 
+               color = "black", linetype = "dashed", linewidth = 0.5) +  # Draw lines from bubbles to labels
+  geom_label(data = top_genes, aes(label = primerid), 
+             size = 3, label.padding = 0.3, label.size = 0.5, color = "black", fill = "white") +  # Labels with border
+  facet_wrap(~component) +  # Facet by component (C, D)
+  scale_color_gradient(low = "blue", high = "red") +  # Color by p-value (adjusted)
+  theme_minimal() +  # Clean theme
+  labs(
+    title = "Volcano Plot of Coefficients vs -log10(P-value)",
+    x = "Coefficient (Coef)",
+    y = "-log10(P-value)",
+    color = "P-value"
+  ) +
+  theme(
+    legend.position = "right",  # Position the legend on the right
+    strip.text = element_text(size = 12),  # Adjust facet label size
+    axis.text = element_text(size = 10),  # Adjust axis label size
+    axis.title = element_text(size = 12)  # Adjust axis title size
+  )
+
+```
+`
