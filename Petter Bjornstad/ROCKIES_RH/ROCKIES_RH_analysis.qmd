@@ -21,33 +21,21 @@ a.	Determine pseudotemporal trajectories of PT in T2D vs. controls, and DKD y/n 
 5.	Validate these findings functionally in ROCKIES in a trial setting with placebo
 6.	State that these findings are seen across the lifespan of people with T2D from young to older adults 
 
-**Comments from PB on 10/30/24:**
-
-* Q1. Can you subset it down to those who had a biopsy PET?
-
-* Q2. Albuminuria should be limited to those with T2D+OB
-
-* Q3. SGLT2i should be limited to those with T2D+OB
-
-* Q4. Some w/ GLP1RA
-
-* Q5. k2 figures and k2/F are missing
-
-
 ```{r echo = F, include = F}
 library(dplyr)
 library(arsenal)
 library(ggplot2)
 library(purrr)
+library(Hmisc)
 source("/Users/choiyej/GitHub/YC_CHCO/R Functions/label_harmonized_function.R")
 ```
 
 ```{r echo = F, include = F}
-dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = "")
+full_dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = "")
 
-dat <- dat %>%
-  filter(study %in% c("RENAL-HEIR", "RENAL-HEIRitage") & group != "Lean Control" | 
-           study == "CROCODILE" & group == "Lean Control") %>%
+full_dat <- full_dat %>%
+  filter(study %in% c("RENAL-HEIR", "RENAL-HEIRitage") | 
+           (study == "CROCODILE" & group == "Lean Control") | (study == "IMPROVE" & visit == "baseline")) %>%
   dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
                    across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
                    .by = record_id) %>%
@@ -86,13 +74,18 @@ dat <- dat %>%
          avg_tot_k1_wo_cyst = rowMeans(dplyr::select(., ltot_k1_wo_cyst, rtot_k1_wo_cyst), na.rm = TRUE),
          avg_tot_k2_wo_cyst = rowMeans(dplyr::select(., ltot_k2_wo_cyst, rtot_k2_wo_cyst), na.rm = TRUE),
          avg_c_k2_f = avg_c_k2/avg_c_f,
+         epic_sglti2_1 = coalesce(epic_sglti2_1, sglti_timepoint),
+         epic_ever_sglt2i_1 = coalesce(epic_ever_sglt2i_1, sglt2i_ever),
          group_t2ob = case_when(group == "Lean Control" ~ "Lean Control",
-                                group == "Type 2 Diabetes" | group == "Obese Control" ~ "T2D/OB")) %>% 
+                                group == "Type 2 Diabetes" | group == "Obese Control" ~ "T2D/OB"),
+         group_sglt2i = case_when(group == "Type 2 Diabetes" & epic_ever_sglt2i_1 == "Yes" ~ "T2D(+)",
+                                  group == "Type 2 Diabetes" & epic_ever_sglt2i_1 == "No" ~ "T2D(-)",
+                                  T ~ group)) %>% 
   mutate_at(vars(starts_with("fsoc")), function(x) case_when(x < 0 ~ 0, T~x)) %>%
-  filter(!is.na(avg_c_k1) & !is.na(kit_id))
+  filter(record_id %nin% c("RH2-48-T", "RH2-52-T", "CRC-55")) # removing two RH2 without scRNA and one CRC control with IgAN
 
 dict <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv") 
-dict <- label_harmonized_dict(dat, dict) %>%
+dict <- label_harmonized_dict(full_dat, dict) %>%
   dplyr::mutate(race_ethnicity_condensed = "Race/Ethnicity",
                 avg_c_t1 = "Avg cortex T1",
                 avg_k_t1 = "Avg kidney T1",
@@ -106,13 +99,11 @@ dict <- label_harmonized_dict(dat, dict) %>%
                 avg_m_k1_wo_cyst_vw = "Avg medulla k2 (wo cyst)",
                 avg_c_k2_f = "Avg cortex k2/F",
                 group_t2ob = "Group")
-dat <- label_harmonized(dat, dict[1,])
-
-rhrh2_dat <- subset(dat, study !="CROCODILE")
+full_dat <- label_harmonized(full_dat, dict[1,])
 ```
 
 ```{r echo = F, results = 'asis'}
-clinical_vars <- c("age", "sex", "race_ethnicity_condensed", "weight", "height", "bmi",  "sbp", "dbp", "pulse", "creatinine_s", "eGFR_CKD_epi", "glp1_agonist_timepoint", "diabetes_duration")
+clinical_vars <- c("age", "sex", "race_ethnicity_condensed", "weight", "height", "bmi",  "sbp", "dbp", "pulse", "creatinine_s", "eGFR_CKD_epi", "epic_sglti2_1", "epic_ever_sglt2i_1", "epic_glp1ra_1", "epic_ever_glp1ra_1", "diabetes_duration")
 
 dexa_vars <- c("dexa_body_fat", "dexa_fat_kg", "dexa_lean_kg", "dexa_trunk_kg")
 
@@ -127,25 +118,39 @@ vw_vars <- c("lc_k2_wo_cyst_vw", "rc_k2_wo_cyst_vw", "avg_c_k2_wo_cyst_vw", "lm_
 
 ## Tables
 
-### 1.	Table of RH/RH2 and CROCODILE (diabetes vs. controls) | ? add ROCKIES
--	Demographics and participant description 
--	N=12 HC
--	N= 30-40 T2D/OB
+### Limited to subjects with PET
 
-#### 1a Clinical variables & labs
+The tables below are limited to subjects with PET regardless of biopsy. 
+
+#### 1.	Table of RH/RH2 and CROCODILE (diabetes vs. controls) | ? add ROCKIES
+
+##### 1a Clinical variables & labs
 
 ```{r echo = F, results = 'asis'}
+dat <- full_dat %>%
+  filter(!is.na(avg_c_f))
+dat$record_id
+
 summary(tableby(as.formula(paste("group ~", 
+                                 paste(c(clinical_vars, 
+                                         'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                         'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                       collapse = " + "))),
+                data = dat), 
+        test = F)
+```
+
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group_sglt2i ~", 
                                  paste(c(clinical_vars, 
                                          'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
                                          'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
                                        collapse = " + "))), 
                 data = dat), 
         test = F)
-dat$record_id
 ```
 
-#### 1b DEXA
+##### 1b DEXA
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("group ~", paste(dexa_vars,
                                                   collapse = " + "))), 
@@ -153,7 +158,14 @@ summary(tableby(as.formula(paste("group ~", paste(dexa_vars,
         test = F)
 ```
 
-#### 1c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group_sglt2i ~", paste(dexa_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+##### 1c MRI
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("group ~", paste(mri_vars,
                                                   collapse = " + "))), 
@@ -161,7 +173,14 @@ summary(tableby(as.formula(paste("group ~", paste(mri_vars,
         test = F)
 ```
 
-#### 1d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group_sglt2i ~", paste(mri_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+##### 1d PET
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("group ~", paste(pet_vars,
                                                   collapse = " + "))), 
@@ -169,7 +188,13 @@ summary(tableby(as.formula(paste("group ~", paste(pet_vars,
         test = F)
 ```
 
-#### 1e Voxelwise
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group_sglt2i ~", paste(pet_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+##### 1e Voxelwise
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("group ~", paste(vw_vars,
                                                   collapse = " + "))), 
@@ -177,12 +202,22 @@ summary(tableby(as.formula(paste("group ~", paste(vw_vars,
         test = F)
 
 ```
-### 2.	Table RH/RH2 (albuminuria y/n, UACR >= 30 mg/g)
-#### T2D+OB
-
-##### 2a Clinical variables & labs
 
 ```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group_sglt2i ~", paste(vw_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+
+```
+#### 2.	Table RH/RH2 (albuminuria y/n, UACR >= 30 mg/g)
+##### T2D+OB
+
+###### 2a Clinical variables & labs
+
+```{r echo = F, results = 'asis'}
+rhrh2_dat <- dat %>% filter(group %in% c("Type 2 Diabetes", "Obese Control"))
+
 summary(tableby(as.formula(paste("albuminuria_yn ~", paste(c(clinical_vars, 
                                                              'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
                                                              'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
@@ -191,23 +226,28 @@ summary(tableby(as.formula(paste("albuminuria_yn ~", paste(c(clinical_vars,
         test = F)
 ```
 
-##### 2b DEXA
+###### 2b DEXA
+
+Not available
+
 ```{r echo = F, results = 'asis'}
-summary(tableby(as.formula(paste("albuminuria_yn ~", paste(dexa_vars,
-                                                           collapse = " + "))), 
-                data = rhrh2_dat), 
-        test = F)
+# summary(tableby(as.formula(paste("albuminuria_yn ~", paste(dexa_vars,
+#                                                            collapse = " + "))),
+#                 data = rhrh2_dat),
+#         test = F)
 ```
 
-##### 2c MRI
+###### 2c MRI
 ```{r echo = F, results = 'asis'}
+mri_vars <- c("total_kidney_volume_ml", "left_kidney_volume_ml", "right_kidney_volume_ml", "pcasl3d_left", "pcasl3d_right", "avg_c_adc", "adc_left", "adc_right")
+
 summary(tableby(as.formula(paste("albuminuria_yn ~", paste(mri_vars,
-                                                           collapse = " + "))), 
-                data = rhrh2_dat), 
+                                                           collapse = " + "))),
+                data = rhrh2_dat),
         test = F)
 ```
 
-##### 2d PET
+###### 2d PET
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("albuminuria_yn ~", paste(pet_vars,
                                                            collapse = " + "))), 
@@ -215,7 +255,7 @@ summary(tableby(as.formula(paste("albuminuria_yn ~", paste(pet_vars,
         test = F)
 ```
 
-##### 2e Voxelwise
+###### 2e Voxelwise
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("albuminuria_yn ~", paste(vw_vars,
                                                            collapse = " + "))), 
@@ -223,8 +263,8 @@ summary(tableby(as.formula(paste("albuminuria_yn ~", paste(vw_vars,
         test = F)
 ```
 
-#### T2D only
-##### 2a Clinical variables & labs
+##### T2D only
+###### 2a Clinical variables & labs
 
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("albuminuria_yn ~", paste(c(clinical_vars, 
@@ -235,23 +275,26 @@ summary(tableby(as.formula(paste("albuminuria_yn ~", paste(c(clinical_vars,
         test = F)
 ```
 
-##### 2b DEXA
+###### 2b DEXA
+
+Not available. 
+
 ```{r echo = F, results = 'asis'}
-summary(tableby(as.formula(paste("albuminuria_yn ~", paste(dexa_vars,
-                                                           collapse = " + "))), 
-                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
-        test = F)
+# summary(tableby(as.formula(paste("albuminuria_yn ~", paste(dexa_vars,
+#                                                            collapse = " + "))),
+#                 data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
+#         test = F)
 ```
 
-##### 2c MRI
+###### 2c MRI
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("albuminuria_yn ~", paste(mri_vars,
-                                                           collapse = " + "))), 
-                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+                                                           collapse = " + "))),
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
         test = F)
 ```
 
-##### 2d PET
+###### 2d PET
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("albuminuria_yn ~", paste(pet_vars,
                                                            collapse = " + "))), 
@@ -259,7 +302,7 @@ summary(tableby(as.formula(paste("albuminuria_yn ~", paste(pet_vars,
         test = F)
 ```
 
-##### 2e Voxelwise
+###### 2e Voxelwise
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("albuminuria_yn ~", paste(vw_vars,
                                                            collapse = " + "))), 
@@ -267,12 +310,12 @@ summary(tableby(as.formula(paste("albuminuria_yn ~", paste(vw_vars,
         test = F)
 ```
 
-### 3.	Table RH/RH2 (SGLT2 y/n, current) 
-#### T2D+OB
+#### 3.	Table RH/RH2 (SGLT2 y/n, current) 
+##### T2D+OB
 
-##### 3a Clinical variables & labs
+###### 3a Clinical variables & labs
 ```{r echo = F, results = 'asis'}
-summary(tableby(as.formula(paste("sglti_timepoint ~", paste(c(clinical_vars, 
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(c(clinical_vars, 
                                                               'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
                                                               'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
                                                             collapse = " + "))), 
@@ -280,43 +323,46 @@ summary(tableby(as.formula(paste("sglti_timepoint ~", paste(c(clinical_vars,
         test = F)
 ```
 
-##### 3b DEXA
+###### 3b DEXA
+
+Not available. 
+
 ```{r echo = F, results = 'asis'}
-summary(tableby(as.formula(paste("sglti_timepoint ~", paste(dexa_vars,
+# summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(dexa_vars,
+#                                                             collapse = " + "))),
+#                 data = rhrh2_dat),
+#         test = F)
+```
+
+###### 3c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(mri_vars,
+                                                            collapse = " + "))),
+                data = rhrh2_dat),
+        test = F)
+```
+
+###### 3d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(pet_vars,
                                                             collapse = " + "))), 
                 data = rhrh2_dat), 
         test = F)
 ```
 
-##### 3c MRI
+###### 3e Voxelwise
 ```{r echo = F, results = 'asis'}
-summary(tableby(as.formula(paste("sglti_timepoint ~", paste(mri_vars,
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(vw_vars,
                                                             collapse = " + "))), 
                 data = rhrh2_dat), 
         test = F)
 ```
 
-##### 3d PET
-```{r echo = F, results = 'asis'}
-summary(tableby(as.formula(paste("sglti_timepoint ~", paste(pet_vars,
-                                                            collapse = " + "))), 
-                data = rhrh2_dat), 
-        test = F)
-```
+##### T2D only
 
-##### 3e Voxelwise
+###### 3a Clinical variables & labs
 ```{r echo = F, results = 'asis'}
-summary(tableby(as.formula(paste("sglti_timepoint ~", paste(vw_vars,
-                                                            collapse = " + "))), 
-                data = rhrh2_dat), 
-        test = F)
-```
-
-#### T2D only
-
-##### 3a Clinical variables & labs
-```{r echo = F, results = 'asis'}
-summary(tableby(as.formula(paste("sglti_timepoint ~", paste(c(clinical_vars, 
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(c(clinical_vars, 
                                                               'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
                                                               'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
                                                             collapse = " + "))), 
@@ -324,41 +370,44 @@ summary(tableby(as.formula(paste("sglti_timepoint ~", paste(c(clinical_vars,
         test = F)
 ```
 
-##### 3b DEXA
+###### 3b DEXA
+
+Not available. 
+
 ```{r echo = F, results = 'asis'}
-summary(tableby(as.formula(paste("sglti_timepoint ~", paste(dexa_vars,
+# summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(dexa_vars,
+#                                                             collapse = " + "))),
+#                 data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
+#         test = F)
+```
+
+###### 3c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(mri_vars,
+                                                            collapse = " + "))),
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
+        test = F)
+```
+
+###### 3d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(pet_vars,
                                                             collapse = " + "))), 
                 data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
         test = F)
 ```
 
-##### 3c MRI
+###### 3e Voxelwise
 ```{r echo = F, results = 'asis'}
-summary(tableby(as.formula(paste("sglti_timepoint ~", paste(mri_vars,
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(vw_vars,
                                                             collapse = " + "))), 
                 data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
         test = F)
 ```
 
-##### 3d PET
-```{r echo = F, results = 'asis'}
-summary(tableby(as.formula(paste("sglti_timepoint ~", paste(pet_vars,
-                                                            collapse = " + "))), 
-                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
-        test = F)
-```
-
-##### 3e Voxelwise
-```{r echo = F, results = 'asis'}
-summary(tableby(as.formula(paste("sglti_timepoint ~", paste(vw_vars,
-                                                            collapse = " + "))), 
-                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
-        test = F)
-```
-
-### 4.	Table RH/RH2 (GLP1 y/n, current) 
-#### T2D+OB
-##### 4a Clinical variables & labs
+#### 4.	Table RH/RH2 (GLP1 y/n, current) 
+##### T2D+OB
+###### 4a Clinical variables & labs
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(c(clinical_vars, 
                                                                      'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
@@ -368,23 +417,26 @@ summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(c(clinical_va
         test = F)
 ```
 
-##### 4b DEXA
+###### 4b DEXA
+
+Not available. 
+
 ```{r echo = F, results = 'asis'}
-summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(dexa_vars,
-                                                                   collapse = " + "))), 
-                data = rhrh2_dat), 
-        test = F)
+# summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(dexa_vars,
+#                                                                    collapse = " + "))),
+#                 data = rhrh2_dat),
+#         test = F)
 ```
 
-##### 4c MRI
+###### 4c MRI
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(mri_vars,
-                                                                   collapse = " + "))), 
-                data = rhrh2_dat), 
+                                                                   collapse = " + "))),
+                data = rhrh2_dat),
         test = F)
 ```
 
-##### 4d PET
+###### 4d PET
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(pet_vars,
                                                                    collapse = " + "))), 
@@ -392,7 +444,7 @@ summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(pet_vars,
         test = F)
 ```
 
-##### 4e Voxelwise
+###### 4e Voxelwise
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(vw_vars,
                                                                    collapse = " + "))), 
@@ -400,9 +452,9 @@ summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(vw_vars,
         test = F)
 ```
 
-#### T2D only
+##### T2D only
 
-##### 4a Clinical variables & labs
+###### 4a Clinical variables & labs
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(c(clinical_vars, 
                                                                      'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
@@ -412,23 +464,26 @@ summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(c(clinical_va
         test = F)
 ```
 
-##### 4b DEXA
+###### 4b DEXA
+
+Not available. 
+
 ```{r echo = F, results = 'asis'}
-summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(dexa_vars,
-                                                                   collapse = " + "))), 
-                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
-        test = F)
+# summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(dexa_vars,
+#                                                                    collapse = " + "))),
+#                 data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
+#         test = F)
 ```
 
-##### 4c MRI
+###### 4c MRI
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(mri_vars,
-                                                                   collapse = " + "))), 
-                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+                                                                   collapse = " + "))),
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
         test = F)
 ```
 
-##### 4d PET
+###### 4d PET
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(pet_vars,
                                                                    collapse = " + "))), 
@@ -436,29 +491,16 @@ summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(pet_vars,
         test = F)
 ```
 
-##### 4e Voxelwise
+###### 4e Voxelwise
 ```{r echo = F, results = 'asis'}
 summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(vw_vars,
                                                                    collapse = " + "))), 
                 data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
         test = F)
 ```
-
-
-### 5.	Table ROCKIES SGLT2i vs. placebo
-
-```{r echo = F, results = 'asis'}
-
-```
-
-
-
-## Figures
-
-1.	PET data (k1, k2, k2/F) stratified by T2D status, albuminuria and SGLT2i (RH2, CRC)
-
-### T2D status
-#### K1
+#### Figures
+##### T2D status
+###### K1
 ```{r echo = F, warning = F}
 dat %>% ggplot(aes(x = group, y = avg_c_k1, color = group)) +
   geom_boxplot(size = 1) +
@@ -470,6 +512,17 @@ dat %>% ggplot(aes(x = group, y = avg_c_k1, color = group)) +
   theme(panel.grid = element_blank(),
         text = element_text(size = 14)) +
   scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482"))
+
+dat %>% ggplot(aes(x = group_sglt2i, y = avg_c_k1, color = group_sglt2i)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group_sglt2i),
+       y = label(dat$avg_c_k1),
+       color = label(dat$group_sglt2i)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482", "#ffa69e"))
 
 dat %>% ggplot(aes(x = group_t2ob, y = avg_c_k1, color = group_t2ob)) +
   geom_boxplot(size = 1) +
@@ -483,7 +536,7 @@ dat %>% ggplot(aes(x = group_t2ob, y = avg_c_k1, color = group_t2ob)) +
   scale_color_manual(values = c("#84a59d", "#f28482"))
 ```
 
-#### k2
+###### k2
 ```{r echo = F, warning = F}
 dat %>% ggplot(aes(x = group, y = avg_c_k2, color = group)) +
   geom_boxplot(size = 1) +
@@ -495,6 +548,17 @@ dat %>% ggplot(aes(x = group, y = avg_c_k2, color = group)) +
   theme(panel.grid = element_blank(),
         text = element_text(size = 14)) +
   scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482"))
+
+dat %>% ggplot(aes(x = group_sglt2i, y = avg_c_k2, color = group_sglt2i)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group_sglt2i),
+       y = label(dat$avg_c_k2),
+       color = label(dat$group_sglt2i)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482", "#ffa69e"))
 
 dat %>% ggplot(aes(x = group_t2ob, y = avg_c_k2, color = group_t2ob)) +
   geom_boxplot(size = 1) +
@@ -508,7 +572,7 @@ dat %>% ggplot(aes(x = group_t2ob, y = avg_c_k2, color = group_t2ob)) +
   scale_color_manual(values = c("#84a59d", "#f28482"))
 ```
 
-#### k2/F
+###### k2/F
 ```{r echo = F, warning = F}
 dat %>% ggplot(aes(x = group, y = avg_c_k2_f, color = group)) +
   geom_boxplot(size = 1) +
@@ -521,6 +585,18 @@ dat %>% ggplot(aes(x = group, y = avg_c_k2_f, color = group)) +
         text = element_text(size = 14)) +
   scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482"))
 
+dat %>% ggplot(aes(x = group_sglt2i, y = avg_c_k2_f, color = group_sglt2i)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group_sglt2i),
+       y = label(dat$avg_c_k2_f),
+       color = label(dat$group_sglt2i)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482", "#ffa69e"))
+
+
 dat %>% ggplot(aes(x = group_t2ob, y = avg_c_k2_f, color = group_t2ob)) +
   geom_boxplot(size = 1) +
   geom_jitter(alpha = 0.3) +
@@ -532,9 +608,10 @@ dat %>% ggplot(aes(x = group_t2ob, y = avg_c_k2_f, color = group_t2ob)) +
         text = element_text(size = 14)) +
   scale_color_manual(values = c("#84a59d", "#f28482"))
 ```
-### Albuminuria status
 
-#### K1 (Excluding Lean Control)
+##### Albuminuria status
+
+###### K1 (Excluding Lean Control)
 ```{r echo = F, warning = F}
 subset(dat, !is.na(albuminuria_yn) & group != "Lean Control") %>% 
   ggplot(aes(x = albuminuria_yn, y = avg_c_k1, color = albuminuria_yn)) +
@@ -550,7 +627,7 @@ subset(dat, !is.na(albuminuria_yn) & group != "Lean Control") %>%
 ```
 
 
-#### k2 (Excluding Lean Control)
+###### k2 (Excluding Lean Control)
 ```{r echo = F, warning = F}
 subset(dat, !is.na(albuminuria_yn) & group != "Lean Control") %>% 
   ggplot(aes(x = albuminuria_yn, y = avg_c_k2, color = albuminuria_yn)) +
@@ -566,7 +643,7 @@ subset(dat, !is.na(albuminuria_yn) & group != "Lean Control") %>%
 ```
 
 
-#### k2/F (Excluding Lean Control)
+###### k2/F (Excluding Lean Control)
 ```{r echo = F, warning = F}
 subset(dat, !is.na(albuminuria_yn) & group != "Lean Control") %>% 
   ggplot(aes(x = albuminuria_yn, y = avg_c_k2_f, color = albuminuria_yn)) +
@@ -580,11 +657,13 @@ subset(dat, !is.na(albuminuria_yn) & group != "Lean Control") %>%
         text = element_text(size = 14)) +
   scale_color_manual(values = c("#457b9d", "#f28482"))
 ```
-### SGLT2i timepoint status
-#### K1 (Everyone)
+
+##### SGLT2i timepoint status
+
+###### K1 (Excluding Lean Control)
 ```{r echo = F, warning = F}
-subset(dat, !is.na(sglti_timepoint)) %>% 
-  ggplot(aes(x = sglti_timepoint, y = avg_c_k1, color = sglti_timepoint)) +
+subset(dat, !is.na(epic_sglti2_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_sglti2_1, y = avg_c_k1, color = epic_sglti2_1)) +
   geom_boxplot(size = 1) +
   geom_jitter(alpha = 0.3) +
   theme_bw() +
@@ -596,87 +675,190 @@ subset(dat, !is.na(sglti_timepoint)) %>%
   scale_color_manual(values = c("#457b9d", "#f28482"))
 ```
 
-#### K1 (Excluding Lean Control)
+
+###### k2 (Excluding Lean Control)
 ```{r echo = F, warning = F}
-subset(dat, !is.na(sglti_timepoint) & group != "Lean Control") %>% 
-  ggplot(aes(x = sglti_timepoint, y = avg_c_k1, color = sglti_timepoint)) +
+subset(dat, !is.na(epic_sglti2_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_sglti2_1, y = avg_c_k2, color = epic_sglti2_1)) +
   geom_boxplot(size = 1) +
   geom_jitter(alpha = 0.3) +
   theme_bw() +
   labs(x = "SGLT2i at visit",
+       y = label(dat$avg_c_k2),
+       color = "SGLT2i at visit") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2/F (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_sglti2_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_sglti2_1, y = avg_c_k2_f, color = epic_sglti2_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "SGLT2i at visit",
+       y = label(dat$avg_c_k2_f),
+       color = "SGLT2i at visit") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+##### GLP1RA ever status
+
+###### K1 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_ever_sglt2i_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_sglt2i_1, y = avg_c_k1, color = epic_ever_sglt2i_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA ever",
        y = label(dat$avg_c_k1),
-       color = "SGLT2i at visit") +
+       color = "GLP1RA ever") +
   theme(panel.grid = element_blank(),
         text = element_text(size = 14)) +
   scale_color_manual(values = c("#457b9d", "#f28482"))
 ```
 
-#### k2 (Everyone)
+
+###### k2 (Excluding Lean Control)
 ```{r echo = F, warning = F}
-subset(dat, !is.na(sglti_timepoint)) %>% 
-  ggplot(aes(x = sglti_timepoint, y = avg_c_k2, color = sglti_timepoint)) +
+subset(dat, !is.na(epic_ever_sglt2i_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_sglt2i_1, y = avg_c_k2, color = epic_ever_sglt2i_1)) +
   geom_boxplot(size = 1) +
   geom_jitter(alpha = 0.3) +
   theme_bw() +
-  labs(x = "SGLT2i at visit",
+  labs(x = "GLP1RA ever",
        y = label(dat$avg_c_k2),
-       color = "SGLT2i at visit") +
+       color = "GLP1RA ever") +
   theme(panel.grid = element_blank(),
         text = element_text(size = 14)) +
   scale_color_manual(values = c("#457b9d", "#f28482"))
 ```
 
-#### k2 (Excluding Lean Control)
+
+###### k2/F (Excluding Lean Control)
 ```{r echo = F, warning = F}
-subset(dat, !is.na(sglti_timepoint) & group != "Lean Control") %>% 
-  ggplot(aes(x = sglti_timepoint, y = avg_c_k2, color = sglti_timepoint)) +
+subset(dat, !is.na(epic_ever_sglt2i_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_sglt2i_1, y = avg_c_k2_f, color = epic_ever_sglt2i_1)) +
   geom_boxplot(size = 1) +
   geom_jitter(alpha = 0.3) +
   theme_bw() +
-  labs(x = "SGLT2i at visit",
+  labs(x = "GLP1RA ever",
+       y = label(dat$avg_c_k2_f),
+       color = "GLP1RA ever") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+##### GLP1RA timepoint status
+
+###### K1 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_glp1ra_1, y = avg_c_k1, color = epic_glp1ra_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA at visit",
+       y = label(dat$avg_c_k1),
+       color = "GLP1RA at visit") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_glp1ra_1, y = avg_c_k2, color = epic_glp1ra_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA at visit",
        y = label(dat$avg_c_k2),
-       color = "SGLT2i at visit") +
+       color = "GLP1RA at visit") +
   theme(panel.grid = element_blank(),
         text = element_text(size = 14)) +
   scale_color_manual(values = c("#457b9d", "#f28482"))
 ```
 
-#### k2/F (Everyone)
+
+###### k2/F (Excluding Lean Control)
 ```{r echo = F, warning = F}
-subset(dat, !is.na(sglti_timepoint)) %>% 
-  ggplot(aes(x = sglti_timepoint, y = avg_c_k2_f, color = sglti_timepoint)) +
+subset(dat, !is.na(epic_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_glp1ra_1, y = avg_c_k2_f, color = epic_glp1ra_1)) +
   geom_boxplot(size = 1) +
   geom_jitter(alpha = 0.3) +
   theme_bw() +
-  labs(x = "SGLT2i at visit",
+  labs(x = "GLP1RA at visit",
        y = label(dat$avg_c_k2_f),
-       color = "SGLT2i at visit") +
+       color = "GLP1RA at visit") +
   theme(panel.grid = element_blank(),
         text = element_text(size = 14)) +
   scale_color_manual(values = c("#457b9d", "#f28482"))
 ```
 
-#### k2/F (Excluding Lean Control)
+##### GLP1RA ever status
+
+###### K1 (Excluding Lean Control)
 ```{r echo = F, warning = F}
-subset(dat, !is.na(sglti_timepoint) & group != "Lean Control") %>% 
-  ggplot(aes(x = sglti_timepoint, y = avg_c_k2_f, color = sglti_timepoint)) +
+subset(dat, !is.na(epic_ever_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_glp1ra_1, y = avg_c_k1, color = epic_ever_glp1ra_1)) +
   geom_boxplot(size = 1) +
   geom_jitter(alpha = 0.3) +
   theme_bw() +
-  labs(x = "SGLT2i at visit",
-       y = label(dat$avg_c_k2_f),
-       color = "SGLT2i at visit") +
+  labs(x = "GLP1RA ever",
+       y = label(dat$avg_c_k1),
+       color = "GLP1RA ever") +
   theme(panel.grid = element_blank(),
         text = element_text(size = 14)) +
   scale_color_manual(values = c("#457b9d", "#f28482"))
 ```
-### Diabetes duration (for T2D only)
-#### K1
+
+
+###### k2 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_ever_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_glp1ra_1, y = avg_c_k2, color = epic_ever_glp1ra_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA ever",
+       y = label(dat$avg_c_k2),
+       color = "GLP1RA ever") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2/F (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_ever_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_glp1ra_1, y = avg_c_k2_f, color = epic_ever_glp1ra_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA ever",
+       y = label(dat$avg_c_k2_f),
+       color = "GLP1RA ever") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+##### Diabetes duration (for T2D only)
+###### K1
 ```{r echo = F, warning = F}
 subset(dat, !is.na(avg_c_k1) & group == "Type 2 Diabetes") %>% 
   ggplot(aes(x = diabetes_duration, y = avg_c_k1)) +
   geom_point(size = 1) +
-  geom_jitter(alpha = 0.3) +
   theme_bw() +
   labs(x = "Diabetes duration",
        y = label(dat$avg_c_k1)) +
@@ -684,12 +866,11 @@ subset(dat, !is.na(avg_c_k1) & group == "Type 2 Diabetes") %>%
         text = element_text(size = 14))
 ```
 
-#### k2
+###### k2
 ```{r echo = F, warning = F}
 subset(dat, !is.na(avg_c_k2) & group == "Type 2 Diabetes") %>% 
   ggplot(aes(x = diabetes_duration, y = avg_c_k2)) +
   geom_point(size = 1) +
-  geom_jitter(alpha = 0.3) +
   theme_bw() +
   labs(x = "Diabetes duration",
        y = label(dat$avg_c_k2)) +
@@ -697,12 +878,11 @@ subset(dat, !is.na(avg_c_k2) & group == "Type 2 Diabetes") %>%
         text = element_text(size = 14))
 ```
 
-#### k2/F
+###### k2/F
 ```{r echo = F, warning = F}
 subset(dat, !is.na(avg_c_k2_f) & group == "Type 2 Diabetes") %>% 
   ggplot(aes(x = diabetes_duration, y = avg_c_k2_f)) +
   geom_point(size = 1) +
-  geom_jitter(alpha = 0.3) +
   theme_bw() +
   labs(x = "Diabetes duration",
        y = label(dat$avg_c_k2_f)) +
@@ -710,17 +890,1545 @@ subset(dat, !is.na(avg_c_k2_f) & group == "Type 2 Diabetes") %>%
         text = element_text(size = 14))
 ```
 
-## Misc. Investigation
 
-Compare current data with previous JCI data
+### Limited to subjects with biopsy
+
+The tables below are limited to subjects with biopsy regardless of PET. 
+
+#### 1.	Table of RH/RH2 and CROCODILE (diabetes vs. controls) | ? add ROCKIES
+
+##### 1a Clinical variables & labs
 
 ```{r echo = F, results = 'asis'}
-jci_dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/T2D scRNA SGLT2i/Data raw/clinical_from_RDS.csv")
-jci_dat$diabetes_duration <- jci_dat$diabetes_duration_months/12
-summary(tableby(as.formula(T2D_HC ~ diabetes_duration), 
-                data = jci_dat), 
-        test = F, total = F)
+dat <- full_dat %>%
+  filter(!is.na(kit_id))
+dat$record_id
+
+summary(tableby(as.formula(paste("group ~", 
+                                 paste(c(clinical_vars, 
+                                         'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                         'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                       collapse = " + "))), 
+                data = dat), 
+        test = F)
 ```
+
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group_sglt2i ~", 
+                                 paste(c(clinical_vars, 
+                                         'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                         'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                       collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+##### 1b DEXA
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group ~", paste(dexa_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group_sglt2i ~", paste(dexa_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+##### 1c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group ~", paste(mri_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group_sglt2i ~", paste(mri_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+##### 1d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group ~", paste(pet_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group_sglt2i ~", paste(pet_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+##### 1e Voxelwise
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group ~", paste(vw_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group_sglt2i ~", paste(vw_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+#### 2.	Table RH/RH2 (albuminuria y/n, UACR >= 30 mg/g)
+##### T2D+OB
+
+###### 2a Clinical variables & labs
+
+```{r echo = F, results = 'asis'}
+rhrh2_dat <- dat %>% filter(group %in% c("Type 2 Diabetes", "Obese Control"))
+
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(c(clinical_vars, 
+                                                             'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                                             'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                                           collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+###### 2b DEXA
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(dexa_vars,
+                                                           collapse = " + "))),
+                data = rhrh2_dat),
+        test = F)
+```
+
+###### 2c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(mri_vars,
+                                                           collapse = " + "))),
+                data = rhrh2_dat),
+        test = F)
+```
+
+###### 2d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(pet_vars,
+                                                           collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+###### 2e Voxelwise
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(vw_vars,
+                                                           collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+##### T2D only
+###### 2a Clinical variables & labs
+
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(c(clinical_vars, 
+                                                             'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                                             'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                                           collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+###### 2b DEXA
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(dexa_vars,
+                                                           collapse = " + "))),
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
+        test = F)
+```
+
+###### 2c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(mri_vars,
+                                                           collapse = " + "))),
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
+        test = F)
+```
+
+###### 2d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(pet_vars,
+                                                           collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+###### 2e Voxelwise
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(vw_vars,
+                                                           collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+#### 3.	Table RH/RH2 (SGLT2 y/n, current) 
+##### T2D+OB
+
+###### 3a Clinical variables & labs
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(c(clinical_vars, 
+                                                              'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                                              'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                                            collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+###### 3b DEXA
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(dexa_vars,
+                                                            collapse = " + "))),
+                data = rhrh2_dat),
+        test = F)
+```
+
+###### 3c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(mri_vars,
+                                                            collapse = " + "))),
+                data = rhrh2_dat),
+        test = F)
+```
+
+###### 3d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(pet_vars,
+                                                            collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+###### 3e Voxelwise
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(vw_vars,
+                                                            collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+##### T2D only
+
+###### 3a Clinical variables & labs
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(c(clinical_vars, 
+                                                              'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                                              'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                                            collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+###### 3b DEXA
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(dexa_vars,
+                                                            collapse = " + "))),
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
+        test = F)
+```
+
+###### 3c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(mri_vars,
+                                                            collapse = " + "))),
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
+        test = F)
+```
+
+###### 3d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(pet_vars,
+                                                            collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+###### 3e Voxelwise
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(vw_vars,
+                                                            collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+#### 4.	Table RH/RH2 (GLP1 y/n, current) 
+##### T2D+OB
+###### 4a Clinical variables & labs
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(c(clinical_vars, 
+                                                                     'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                                                     'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                                                   collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+###### 4b DEXA
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(dexa_vars,
+                                                                   collapse = " + "))),
+                data = rhrh2_dat),
+        test = F)
+```
+
+###### 4c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(mri_vars,
+                                                                   collapse = " + "))),
+                data = rhrh2_dat),
+        test = F)
+```
+
+###### 4d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(pet_vars,
+                                                                   collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+###### 4e Voxelwise
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(vw_vars,
+                                                                   collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+##### T2D only
+
+###### 4a Clinical variables & labs
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(c(clinical_vars, 
+                                                                     'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                                                     'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                                                   collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+###### 4b DEXA
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(dexa_vars,
+                                                                   collapse = " + "))),
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
+        test = F)
+```
+
+###### 4c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(mri_vars,
+                                                                   collapse = " + "))),
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
+        test = F)
+```
+
+###### 4d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(pet_vars,
+                                                                   collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+###### 4e Voxelwise
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(vw_vars,
+                                                                   collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+#### Figures
+##### T2D status
+###### K1
+```{r echo = F, warning = F}
+dat %>% ggplot(aes(x = group, y = avg_c_k1, color = group)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group),
+       y = label(dat$avg_c_k1),
+       color = label(dat$group)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482"))
+
+dat %>% ggplot(aes(x = group_sglt2i, y = avg_c_k1, color = group_sglt2i)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group_sglt2i),
+       y = label(dat$avg_c_k1),
+       color = label(dat$group_sglt2i)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482", "#ffa69e"))
+
+dat %>% ggplot(aes(x = group_t2ob, y = avg_c_k1, color = group_t2ob)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group_t2ob),
+       y = label(dat$avg_c_k1),
+       color = label(dat$group_t2ob)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#f28482"))
+```
+
+###### k2
+```{r echo = F, warning = F}
+dat %>% ggplot(aes(x = group, y = avg_c_k2, color = group)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group),
+       y = label(dat$avg_c_k2),
+       color = label(dat$group)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482"))
+
+dat %>% ggplot(aes(x = group_sglt2i, y = avg_c_k2, color = group_sglt2i)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group_sglt2i),
+       y = label(dat$avg_c_k2),
+       color = label(dat$group_sglt2i)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482", "#ffa69e"))
+
+dat %>% ggplot(aes(x = group_t2ob, y = avg_c_k2, color = group_t2ob)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group_t2ob),
+       y = label(dat$avg_c_k2),
+       color = label(dat$group_t2ob)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#f28482"))
+```
+
+###### k2/F
+```{r echo = F, warning = F}
+dat %>% ggplot(aes(x = group, y = avg_c_k2_f, color = group)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group),
+       y = label(dat$avg_c_k2_f),
+       color = label(dat$group)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482"))
+
+dat %>% ggplot(aes(x = group_sglt2i, y = avg_c_k2_f, color = group_sglt2i)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group_sglt2i),
+       y = label(dat$avg_c_k2_f),
+       color = label(dat$group_sglt2i)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482", "#ffa69e"))
+
+
+dat %>% ggplot(aes(x = group_t2ob, y = avg_c_k2_f, color = group_t2ob)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group_t2ob),
+       y = label(dat$avg_c_k2_f),
+       color = label(dat$group_t2ob)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#f28482"))
+```
+
+##### Albuminuria status
+
+###### K1 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(albuminuria_yn) & group != "Lean Control") %>% 
+  ggplot(aes(x = albuminuria_yn, y = avg_c_k1, color = albuminuria_yn)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "Albuminuria",
+       y = label(dat$avg_c_k1),
+       color = "Albuminuria") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(albuminuria_yn) & group != "Lean Control") %>% 
+  ggplot(aes(x = albuminuria_yn, y = avg_c_k2, color = albuminuria_yn)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "Albuminuria",
+       y = label(dat$avg_c_k2),
+       color = "Albuminuria") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2/F (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(albuminuria_yn) & group != "Lean Control") %>% 
+  ggplot(aes(x = albuminuria_yn, y = avg_c_k2_f, color = albuminuria_yn)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "Albuminuria",
+       y = label(dat$avg_c_k2_f),
+       color = "Albuminuria") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+##### SGLT2i timepoint status
+
+###### K1 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_sglti2_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_sglti2_1, y = avg_c_k1, color = epic_sglti2_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "SGLT2i at visit",
+       y = label(dat$avg_c_k1),
+       color = "SGLT2i at visit") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_sglti2_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_sglti2_1, y = avg_c_k2, color = epic_sglti2_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "SGLT2i at visit",
+       y = label(dat$avg_c_k2),
+       color = "SGLT2i at visit") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2/F (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_sglti2_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_sglti2_1, y = avg_c_k2_f, color = epic_sglti2_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "SGLT2i at visit",
+       y = label(dat$avg_c_k2_f),
+       color = "SGLT2i at visit") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+##### GLP1RA ever status
+
+###### K1 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_ever_sglt2i_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_sglt2i_1, y = avg_c_k1, color = epic_ever_sglt2i_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA ever",
+       y = label(dat$avg_c_k1),
+       color = "GLP1RA ever") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_ever_sglt2i_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_sglt2i_1, y = avg_c_k2, color = epic_ever_sglt2i_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA ever",
+       y = label(dat$avg_c_k2),
+       color = "GLP1RA ever") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2/F (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_ever_sglt2i_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_sglt2i_1, y = avg_c_k2_f, color = epic_ever_sglt2i_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA ever",
+       y = label(dat$avg_c_k2_f),
+       color = "GLP1RA ever") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+##### GLP1RA timepoint status
+
+###### K1 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_glp1ra_1, y = avg_c_k1, color = epic_glp1ra_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA at visit",
+       y = label(dat$avg_c_k1),
+       color = "GLP1RA at visit") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_glp1ra_1, y = avg_c_k2, color = epic_glp1ra_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA at visit",
+       y = label(dat$avg_c_k2),
+       color = "GLP1RA at visit") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2/F (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_glp1ra_1, y = avg_c_k2_f, color = epic_glp1ra_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA at visit",
+       y = label(dat$avg_c_k2_f),
+       color = "GLP1RA at visit") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+##### GLP1RA ever status
+
+###### K1 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_ever_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_glp1ra_1, y = avg_c_k1, color = epic_ever_glp1ra_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA ever",
+       y = label(dat$avg_c_k1),
+       color = "GLP1RA ever") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_ever_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_glp1ra_1, y = avg_c_k2, color = epic_ever_glp1ra_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA ever",
+       y = label(dat$avg_c_k2),
+       color = "GLP1RA ever") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2/F (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_ever_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_glp1ra_1, y = avg_c_k2_f, color = epic_ever_glp1ra_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA ever",
+       y = label(dat$avg_c_k2_f),
+       color = "GLP1RA ever") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+##### Diabetes duration (for T2D only)
+###### K1
+```{r echo = F, warning = F}
+subset(dat, !is.na(avg_c_k1) & group == "Type 2 Diabetes") %>% 
+  ggplot(aes(x = diabetes_duration, y = avg_c_k1)) +
+  geom_point(size = 1) +
+  theme_bw() +
+  labs(x = "Diabetes duration",
+       y = label(dat$avg_c_k1)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14))
+```
+
+###### k2
+```{r echo = F, warning = F}
+subset(dat, !is.na(avg_c_k2) & group == "Type 2 Diabetes") %>% 
+  ggplot(aes(x = diabetes_duration, y = avg_c_k2)) +
+  geom_point(size = 1) +
+  theme_bw() +
+  labs(x = "Diabetes duration",
+       y = label(dat$avg_c_k2)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14))
+```
+
+###### k2/F
+```{r echo = F, warning = F}
+subset(dat, !is.na(avg_c_k2_f) & group == "Type 2 Diabetes") %>% 
+  ggplot(aes(x = diabetes_duration, y = avg_c_k2_f)) +
+  geom_point(size = 1) +
+  theme_bw() +
+  labs(x = "Diabetes duration",
+       y = label(dat$avg_c_k2_f)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14))
+```
+
+
+### Limited to subjects with PET & biopsy
+
+The tables below are limited to subjects with PET & biopsy. 
+
+#### 1.	Table of RH/RH2 and CROCODILE (diabetes vs. controls) | ? add ROCKIES
+
+##### 1a Clinical variables & labs
+
+```{r echo = F, results = 'asis'}
+dat <- full_dat %>%
+  filter(!is.na(avg_c_f) & !is.na(kit_id))
+dat$record_id
+
+summary(tableby(as.formula(paste("group ~", 
+                                 paste(c(clinical_vars, 
+                                         'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                         'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                       collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group_sglt2i ~", 
+                                 paste(c(clinical_vars, 
+                                         'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                         'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                       collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+##### 1b DEXA
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group ~", paste(dexa_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group_sglt2i ~", paste(dexa_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+##### 1c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group ~", paste(mri_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group_sglt2i ~", paste(mri_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+##### 1d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group ~", paste(pet_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group_sglt2i ~", paste(pet_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+```
+
+##### 1e Voxelwise
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group ~", paste(vw_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+
+```
+
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("group_sglt2i ~", paste(vw_vars,
+                                                  collapse = " + "))), 
+                data = dat), 
+        test = F)
+
+```
+#### 2.	Table RH/RH2 (albuminuria y/n, UACR >= 30 mg/g)
+##### T2D+OB
+
+###### 2a Clinical variables & labs
+
+```{r echo = F, results = 'asis'}
+rhrh2_dat <- dat %>% filter(group %in% c("Type 2 Diabetes", "Obese Control"))
+
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(c(clinical_vars, 
+                                                             'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                                             'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                                           collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+###### 2b DEXA
+
+Not available. 
+
+```{r echo = F, results = 'asis'}
+# summary(tableby(as.formula(paste("albuminuria_yn ~", paste(dexa_vars,
+#                                                            collapse = " + "))),
+#                 data = rhrh2_dat),
+#         test = F)
+```
+
+###### 2c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(mri_vars,
+                                                           collapse = " + "))),
+                data = rhrh2_dat),
+        test = F)
+```
+
+###### 2d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(pet_vars,
+                                                           collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+###### 2e Voxelwise
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(vw_vars,
+                                                           collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+##### T2D only
+###### 2a Clinical variables & labs
+
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(c(clinical_vars, 
+                                                             'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                                             'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                                           collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+###### 2b DEXA
+
+Not available. 
+
+```{r echo = F, results = 'asis'}
+# summary(tableby(as.formula(paste("albuminuria_yn ~", paste(dexa_vars,
+#                                                            collapse = " + "))),
+#                 data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
+#         test = F)
+```
+
+###### 2c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(mri_vars,
+                                                           collapse = " + "))),
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
+        test = F)
+```
+
+###### 2d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(pet_vars,
+                                                           collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+###### 2e Voxelwise
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("albuminuria_yn ~", paste(vw_vars,
+                                                           collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+#### 3.	Table RH/RH2 (SGLT2 y/n, current) 
+##### T2D+OB
+
+###### 3a Clinical variables & labs
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(c(clinical_vars, 
+                                                              'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                                              'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                                            collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+###### 3b DEXA
+
+Not available. 
+
+```{r echo = F, results = 'asis'}
+# summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(dexa_vars,
+#                                                             collapse = " + "))),
+#                 data = rhrh2_dat),
+#         test = F)
+```
+
+###### 3c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(mri_vars,
+                                                            collapse = " + "))),
+                data = rhrh2_dat),
+        test = F)
+```
+
+###### 3d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(pet_vars,
+                                                            collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+###### 3e Voxelwise
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(vw_vars,
+                                                            collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+##### T2D only
+
+###### 3a Clinical variables & labs
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(c(clinical_vars, 
+                                                              'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                                              'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                                            collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+###### 3b DEXA
+
+Not available. 
+
+```{r echo = F, results = 'asis'}
+# summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(dexa_vars,
+#                                                             collapse = " + "))),
+#                 data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
+#         test = F)
+```
+
+###### 3c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(mri_vars,
+                                                            collapse = " + "))),
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
+        test = F)
+```
+
+###### 3d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(pet_vars,
+                                                            collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+###### 3e Voxelwise
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("epic_sglti2_1 ~", paste(vw_vars,
+                                                            collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+#### 4.	Table RH/RH2 (GLP1 y/n, current) 
+##### T2D+OB
+###### 4a Clinical variables & labs
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(c(clinical_vars, 
+                                                                     'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                                                     'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                                                   collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+###### 4b DEXA
+
+Not available. 
+
+```{r echo = F, results = 'asis'}
+# summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(dexa_vars,
+#                                                                    collapse = " + "))),
+#                 data = rhrh2_dat),
+#         test = F)
+```
+
+###### 4c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(mri_vars,
+                                                                   collapse = " + "))),
+                data = rhrh2_dat),
+        test = F)
+```
+
+###### 4d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(pet_vars,
+                                                                   collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+###### 4e Voxelwise
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(vw_vars,
+                                                                   collapse = " + "))), 
+                data = rhrh2_dat), 
+        test = F)
+```
+
+##### T2D only
+
+###### 4a Clinical variables & labs
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(c(clinical_vars, 
+                                                                     'kwt(acr_u, "Nmiss", "medianq1q3", "range")', 
+                                                                     'kwt(hba1c, "Nmiss", "medianq1q3", "range")'), 
+                                                                   collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+###### 4b DEXA
+
+Not available. 
+
+```{r echo = F, results = 'asis'}
+# summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(dexa_vars,
+#                                                                    collapse = " + "))),
+#                 data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
+#         test = F)
+```
+
+###### 4c MRI
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(mri_vars,
+                                                                   collapse = " + "))),
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")),
+        test = F)
+```
+
+###### 4d PET
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(pet_vars,
+                                                                   collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+###### 4e Voxelwise
+```{r echo = F, results = 'asis'}
+summary(tableby(as.formula(paste("glp1_agonist_timepoint ~", paste(vw_vars,
+                                                                   collapse = " + "))), 
+                data = subset(rhrh2_dat, group == "Type 2 Diabetes")), 
+        test = F)
+```
+
+#### Figures
+##### T2D status
+###### K1
+```{r echo = F, warning = F}
+dat %>% ggplot(aes(x = group, y = avg_c_k1, color = group)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group),
+       y = label(dat$avg_c_k1),
+       color = label(dat$group)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482"))
+
+dat %>% ggplot(aes(x = group_sglt2i, y = avg_c_k1, color = group_sglt2i)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group_sglt2i),
+       y = label(dat$avg_c_k1),
+       color = label(dat$group_sglt2i)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482", "#ffa69e"))
+
+dat %>% ggplot(aes(x = group_t2ob, y = avg_c_k1, color = group_t2ob)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group_t2ob),
+       y = label(dat$avg_c_k1),
+       color = label(dat$group_t2ob)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#f28482"))
+```
+
+###### k2
+```{r echo = F, warning = F}
+dat %>% ggplot(aes(x = group, y = avg_c_k2, color = group)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group),
+       y = label(dat$avg_c_k2),
+       color = label(dat$group)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482"))
+
+dat %>% ggplot(aes(x = group_sglt2i, y = avg_c_k2, color = group_sglt2i)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group_sglt2i),
+       y = label(dat$avg_c_k2),
+       color = label(dat$group_sglt2i)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482", "#ffa69e"))
+
+dat %>% ggplot(aes(x = group_t2ob, y = avg_c_k2, color = group_t2ob)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group_t2ob),
+       y = label(dat$avg_c_k2),
+       color = label(dat$group_t2ob)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#f28482"))
+```
+
+###### k2/F
+```{r echo = F, warning = F}
+dat %>% ggplot(aes(x = group, y = avg_c_k2_f, color = group)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group),
+       y = label(dat$avg_c_k2_f),
+       color = label(dat$group)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482"))
+
+dat %>% ggplot(aes(x = group_sglt2i, y = avg_c_k2_f, color = group_sglt2i)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group_sglt2i),
+       y = label(dat$avg_c_k2_f),
+       color = label(dat$group_sglt2i)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#457b9d", "#f28482", "#ffa69e"))
+
+
+dat %>% ggplot(aes(x = group_t2ob, y = avg_c_k2_f, color = group_t2ob)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = label(dat$group_t2ob),
+       y = label(dat$avg_c_k2_f),
+       color = label(dat$group_t2ob)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#84a59d", "#f28482"))
+```
+
+##### Albuminuria status
+
+###### K1 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(albuminuria_yn) & group != "Lean Control") %>% 
+  ggplot(aes(x = albuminuria_yn, y = avg_c_k1, color = albuminuria_yn)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "Albuminuria",
+       y = label(dat$avg_c_k1),
+       color = "Albuminuria") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(albuminuria_yn) & group != "Lean Control") %>% 
+  ggplot(aes(x = albuminuria_yn, y = avg_c_k2, color = albuminuria_yn)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "Albuminuria",
+       y = label(dat$avg_c_k2),
+       color = "Albuminuria") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2/F (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(albuminuria_yn) & group != "Lean Control") %>% 
+  ggplot(aes(x = albuminuria_yn, y = avg_c_k2_f, color = albuminuria_yn)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "Albuminuria",
+       y = label(dat$avg_c_k2_f),
+       color = "Albuminuria") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+##### SGLT2i timepoint status
+
+###### K1 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_sglti2_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_sglti2_1, y = avg_c_k1, color = epic_sglti2_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "SGLT2i at visit",
+       y = label(dat$avg_c_k1),
+       color = "SGLT2i at visit") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_sglti2_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_sglti2_1, y = avg_c_k2, color = epic_sglti2_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "SGLT2i at visit",
+       y = label(dat$avg_c_k2),
+       color = "SGLT2i at visit") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2/F (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_sglti2_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_sglti2_1, y = avg_c_k2_f, color = epic_sglti2_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "SGLT2i at visit",
+       y = label(dat$avg_c_k2_f),
+       color = "SGLT2i at visit") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+##### GLP1RA ever status
+
+###### K1 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_ever_sglt2i_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_sglt2i_1, y = avg_c_k1, color = epic_ever_sglt2i_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA ever",
+       y = label(dat$avg_c_k1),
+       color = "GLP1RA ever") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_ever_sglt2i_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_sglt2i_1, y = avg_c_k2, color = epic_ever_sglt2i_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA ever",
+       y = label(dat$avg_c_k2),
+       color = "GLP1RA ever") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2/F (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_ever_sglt2i_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_sglt2i_1, y = avg_c_k2_f, color = epic_ever_sglt2i_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA ever",
+       y = label(dat$avg_c_k2_f),
+       color = "GLP1RA ever") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+##### GLP1RA timepoint status
+
+###### K1 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_glp1ra_1, y = avg_c_k1, color = epic_glp1ra_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA at visit",
+       y = label(dat$avg_c_k1),
+       color = "GLP1RA at visit") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_glp1ra_1, y = avg_c_k2, color = epic_glp1ra_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA at visit",
+       y = label(dat$avg_c_k2),
+       color = "GLP1RA at visit") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2/F (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_glp1ra_1, y = avg_c_k2_f, color = epic_glp1ra_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA at visit",
+       y = label(dat$avg_c_k2_f),
+       color = "GLP1RA at visit") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+##### GLP1RA ever status
+
+###### K1 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_ever_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_glp1ra_1, y = avg_c_k1, color = epic_ever_glp1ra_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA ever",
+       y = label(dat$avg_c_k1),
+       color = "GLP1RA ever") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2 (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_ever_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_glp1ra_1, y = avg_c_k2, color = epic_ever_glp1ra_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA ever",
+       y = label(dat$avg_c_k2),
+       color = "GLP1RA ever") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+
+
+###### k2/F (Excluding Lean Control)
+```{r echo = F, warning = F}
+subset(dat, !is.na(epic_ever_glp1ra_1) & group != "Lean Control") %>% 
+  ggplot(aes(x = epic_ever_glp1ra_1, y = avg_c_k2_f, color = epic_ever_glp1ra_1)) +
+  geom_boxplot(size = 1) +
+  geom_jitter(alpha = 0.3) +
+  theme_bw() +
+  labs(x = "GLP1RA ever",
+       y = label(dat$avg_c_k2_f),
+       color = "GLP1RA ever") +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14)) +
+  scale_color_manual(values = c("#457b9d", "#f28482"))
+```
+##### Diabetes duration (for T2D only)
+###### K1
+```{r echo = F, warning = F}
+subset(dat, !is.na(avg_c_k1) & group == "Type 2 Diabetes") %>% 
+  ggplot(aes(x = diabetes_duration, y = avg_c_k1)) +
+  geom_point(size = 1) +
+  theme_bw() +
+  labs(x = "Diabetes duration",
+       y = label(dat$avg_c_k1)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14))
+```
+
+###### k2
+```{r echo = F, warning = F}
+subset(dat, !is.na(avg_c_k2) & group == "Type 2 Diabetes") %>% 
+  ggplot(aes(x = diabetes_duration, y = avg_c_k2)) +
+  geom_point(size = 1) +
+  theme_bw() +
+  labs(x = "Diabetes duration",
+       y = label(dat$avg_c_k2)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14))
+```
+
+###### k2/F
+```{r echo = F, warning = F}
+subset(dat, !is.na(avg_c_k2_f) & group == "Type 2 Diabetes") %>% 
+  ggplot(aes(x = diabetes_duration, y = avg_c_k2_f)) +
+  geom_point(size = 1) +
+  theme_bw() +
+  labs(x = "Diabetes duration",
+       y = label(dat$avg_c_k2_f)) +
+  theme(panel.grid = element_blank(),
+        text = element_text(size = 14))
+```
+
+
+#### 5.	Table ROCKIES SGLT2i vs. placebo
+
+```{r echo = F, results = 'asis'}
+
+```
+
+
+
+
+1.	PET data (k1, k2, k2/F) stratified by T2D status, albuminuria and SGLT2i (RH2, CRC)
+
+
 
 2.	UMAP of single cell RNA sequencing (RH/RH2, CRC)
 3.	Bar plot with key transcripts of ox phos and TCA cycle stratified by T2D status, albuminuria and SGLT2i (RH/RH2, CRC)
