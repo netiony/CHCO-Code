@@ -562,3 +562,12 @@ p <- EnhancedVolcano(m_top,
 pdf(file = "Volcano_Senesence_GLP1.pdf",width=15,height=8)
 plot(p)
 dev.off()
+
+
+pdf(file="Steatosis_Grade_Plot_Continuous.pdf",width=10,height=5)
+plot(bubble_plot_C)
+dev.off()
+
+pdf(file="Steatosis_Grade_Plot_Discrete.pdf",width=10,height=5)
+plot(bubble_plot_D)
+dev.off()
