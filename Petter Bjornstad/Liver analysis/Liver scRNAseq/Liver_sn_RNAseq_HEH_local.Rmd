@@ -5,7 +5,9 @@ date: "2024-09-24"
 output: html_document
 --- 
   
+#1. Set up Libraries & Directores
 ```{r libraries, echo=F, include = F}
+library(reprex)
 library(tidyverse)
 library(BiocManager)
 library(arsenal)
@@ -27,63 +29,118 @@ library(GSEABase)
 library(msigdbr)
 library(kableExtra)
 library(knitr)
+library(SingleCellExperiment)
+library(fgsea)
+library(EnhancedVolcano)
+library(openxlsx)
+library(BiocManager)
+library(MAST)
+
+#Local file path
+dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
+dir.code <- c("/home/Github_Repo/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+
+plan()
+future::plan("sequential")
+options(future.globals.maxSize = 3e9)
+
 ```
 
-# scRNA
-```{r echo = F}
-# Liver scRNA data processing
-# so_liver_sc <- readRDS("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_raw/PB_Liver_7SingleCellDatasets.RDS")
-so_liver_sc <- readRDS("/Users/hhampson/Dropbox/Bjornstad data/Liver/PB_Liver_7SingleCellDatasets.RDS")
-
-# Add missing liver meta data to Seurat object
-# meta_liver_raw <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean/liver_biopsy_metadata_PN.csv")
-meta_liver_raw <- read.csv("/Users/hhampson/Dropbox/Bjornstad data/Liver/liver_biopsy_metadata_PN.csv")
-
-meta_liver_sc <-  so_liver_sc@meta.data[,1:9] %>%
-  dplyr::mutate(Cryostor_ID = gsub("-Liv", "", orig.ident)) %>%
-  left_join(meta_liver_raw)
-
-rownames(meta_liver_sc) <- rownames(so_liver_sc@meta.data)
-
-so_liver_sc <- AddMetaData(so_liver_sc, meta_liver_sc)
-so_liver_sc <- NormalizeData(so_liver_sc)
-so_liver_sc <- ScaleData(so_liver_sc)
-# PCA
-so_liver_sc <- RunPCA(so_liver_sc, features = VariableFeatures(object = so_liver_sc))
-ElbowPlot(so_liver_sc)
-# Cluster cells
-so_liver_sc <- FindNeighbors(so_liver_sc)
-so_liver_sc <- FindClusters(so_liver_sc)
-# Perform UMAP and tSNE
-so_liver_sc <- RunUMAP(so_liver_sc, dims = 1:15)
-DimPlot(so_liver_sc, reduction = "umap") 
-```
-
-# snRNA
+#2a. Load Full Data & Clean: snRNA & MetaData
 ```{r echo = F}
 # Liver snRNA data processing
+#Local
 # so_liver_sn <- readRDS("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_raw/NoRef_PetterLiver_ClinData_Labels_Char_041924.RDS")
-so_liver_sn <- readRDS("/Users/hhampson/Dropbox/Bjornstad data/Liver/NoRef_PetterLiver_ClinData_Labels_Char_041924.RDS")
+#Lambda
+so_liver_sn <- readRDS(fs::path(dir.dat,"scRNA","data_raw","NoRef_PetterLiver_ClinData_Labels_Char_041924.RDS"))
 
-meta_liver_raw <- read.csv("/Users/hhampson/Dropbox/Bjornstad data/Liver/liver_biopsy_metadata_PN.csv")
+#Lambda
+meta_liver_raw <- read.csv(fs::path(dir.dat,"scRNA","data_clean","liver_biopsy_metadata_PN.csv"))
+
 meta_liver_sn <-  so_liver_sn@meta.data[,1:11] %>%
   dplyr::mutate(RNAlater_ID = SampleID) %>%
   left_join(meta_liver_raw)
 
 rownames(meta_liver_sn) <- rownames(so_liver_sn@meta.data)
 so_liver_sn <- AddMetaData(so_liver_sn, meta_liver_sn)
+rm(meta_liver_sn,meta_liver_raw)
 
-# Set a higher memory limit
-mem.maxVSize(64000000000)
-so_liver_sn <- NormalizeData(so_liver_sn, assay="RNA")
-so_liver_sn <- ScaleData(so_liver_sn, assay="RNA")
-so_liver_sn <- ScaleData(so_liver_sn, assay="integrated")
+#Switch default assay in seurat object to RNA
+DefaultAssay(so_liver_sn) <- "RNA"
 
-rm(meta_liver_raw,meta_liver_sn)
+gc()
+# Normalize the RNA assay
+so_liver_sn <- NormalizeData(so_liver_sn, assay = "RNA")
+so_liver_sn <- ScaleData(so_liver_sn, assay = "RNA")
+gc()
+# Scale the integrated assay (no normalization needed)
+so_liver_sn <- ScaleData(so_liver_sn, assay = "integrated")
+#Create heptatocyte category variable
+so_liver_sn@meta.data$hepatocyte <- ifelse(grepl("Hep",so_liver_sn@meta.data$celltype),"Hepatocyte","Non-Hepatocyte")
+#Create heptatocyte only so
+Idents(so_liver_sn) <- so_liver_sn$hepatocyte
+gc()
+so_liver_sn_hep <- subset(so_liver_sn, hepatocyte == "Hepatocyte")
+gc()
+memory.limit(size = 64000)
+rm(so_liver_sn)
+#Save normalized and scaled hepatocyte so
+#saveRDS(so_liver_sn_hep,"so_liver_sn_hepatocytes_normalized_scaled.RDS")
+
 ```
 
-## Descriptive Statistics
-```{r Table 1}
+-OR-
+#2b. Load Cleaned & Formatted snRNA Hepatocyte Data
+```{r}
+gc()
+so_liver_sn_hep <- readRDS(fs::path(dir.dat,"scRNA","data_clean","so_liver_sn_hepatocytes_normalized_scaled.RDS"))
+gc()
+Idents(so_liver_sn_hep) <- so_liver_sn_hep$hepatocyte
+gc()
+#Create senesence so
+sens_gene_in_data <- intersect(sens_genes, rownames(so_liver_sn_hep))
+# Subset the Seurat object to include only genes in sens_gene_in_data
+so_sens <- subset(so_liver_sn_hep, features = sens_gene_in_data)
+rm(so_liver_sn_hep)
+#saveRDS(so_sens,fs::path(dir.dat,"scRNA","data_clean","so_sens_genes.RDS"))
+```
+#2c. Load Senesence Data 
+```{r}
+so_sens <- readRDS(fs::path(dir.dat,"scRNA","data_clean","so_sens_genes.RDS"))
+
+```
+
+#3. Visualize Data with UMAPs
+```{r echo=F}
+# Set a higher memory limit
+# mem.maxVSize(64000000000)
+
+# PCA
+# so_liver_sn <- RunPCA(so_liver_sn, features = VariableFeatures(object = so_liver_sn),assay="integrated")
+so_liver_sn <- FindVariableFeatures(object = so_liver_sn)
+so_liver_sn <- RunPCA(so_liver_sn, features = VariableFeatures(object = so_liver_sn),assay="RNA")
+ElbowPlot(so_liver_sn)
+# Cluster cells
+# so_liver_sn_int <- FindNeighbors(so_liver_sn_int)
+# so_liver_sn_int <- FindClusters(so_liver_sn_int)
+
+# Find neighbors and clusters (again using integrated data)
+# so_liver_sn <- FindNeighbors(so_liver_sn, assay = "integrated", dims = 1:15)
+so_liver_sn <- FindNeighbors(so_liver_sn, assay = "RNA", dims = 1:15)
+so_liver_sn <- FindClusters(so_liver_sn, resolution = 0.5)
+
+# UMAP for visualization
+# so_liver_sn <- RunUMAP(so_liver_sn, assay = "integrated", dims = 1:15)
+so_liver_sn <- RunUMAP(so_liver_sn, assay = "RNA", dims = 1:15)
+
+# Perform UMAP and tSNE
+# so_liver_sc <- RunUMAP(so_liver_sc, dims = 1:15)
+DimPlot(so_liver_sn, reduction = "umap", raster = F) 
+
+```
+
+#4. Descriptive Statistics
+```{r echo = F}
 dat <- meta_liver_raw
 
 dat$diagnosis_of_diabetes <- factor(dat$diagnosis_of_diabetes, levels=c("Yes","No"), labels=c("Type 2 Diabetes", "Obese Controls"))
@@ -151,25 +208,7 @@ table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + bmi+ tg + ast + alt + g
        extra.col = list(`P-value` = pvalue), 
        render.continuous = render.continuous.custom)
 #bmi,masld,TGs,AST/ALT (Liver enzymes),ggt, steatosis grade and or percentages,lobular inflam grade, fibrosis stage
-```
 
-## snRNA UMAP
-```{r echo=F}
-# PCA
-so_liver_sn_int <- RunPCA(so_liver_sn_int, features = VariableFeatures(object = so_liver_sn_int))
-ElbowPlot(so_liver_sn_int)
-# Cluster cells
-so_liver_sn_int <- FindNeighbors(so_liver_sn_int)
-so_liver_sn_int <- FindClusters(so_liver_sn_int)
-# Perform UMAP and tSNE
-so_liver_sc <- RunUMAP(so_liver_sc, dims = 1:15)
-DimPlot(so_liver_sc, reduction = "umap") 
-
-```
-
-## Obese vs. Obese + T2D
-### Descriptive table
-```{r echo = F}
 # Descriptive stats
 liver_meta_raw_sc <- meta_liver_raw %>%
   filter(Cryostor_ID!="")
@@ -177,40 +216,14 @@ form <- paste("diagnosis_of_diabetes", paste(colnames(liver_meta_raw_sc)[6:36], 
 
 summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
 
-```
-
-
 ## MASLD Y/N
-### Descriptive table
-
-```{r echo = F}
-# Descriptive stats
 liver_meta_raw_sc <- meta_liver_raw %>%
   filter(Cryostor_ID!="")
 form <- paste("diagnosis_of_MASLD", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
 
 summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
 
-```
-
-## OSA Y/N
-### Descriptive table
-
-```{r echo = F}
-# Descriptive stats
-liver_meta_raw_sc <- meta_liver_raw %>%
-  filter(Cryostor_ID!="")
-form <- paste("diagnosis_of_osa", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
-
-summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
-
-```
-
 ## GLP-1RA Y/N
-### Descriptive table
-
-```{r echo = F}
-# Descriptive stats
 liver_meta_raw_sc <- liver_meta_raw %>%
   filter(Cryostor_ID!="")
 form <- paste("glp1agonist", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
@@ -219,92 +232,40 @@ summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, t
 
 ```
 
-## Insulin Y/N
-### Descriptive table
-
-```{r echo = F}
-# Descriptive stats
-liver_meta_raw_sc <- meta_liver_raw %>%
-  filter(Cryostor_ID!="")
-form <- paste("insulin", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
-
-summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
-
-```
-
-## Kidney disease Y/N
-### Descriptive table
-
-```{r echo = F}
-# Descriptive stats
-liver_meta_raw_sc <- meta_liver_raw %>%
-  filter(Cryostor_ID!="")
-form <- paste("diagnosis_of_kidney_disease", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
-
-summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
-
-```
-
-
-## Stratified UMAP scRNA 
-### Obese vs. Obese + T2D
-```{r echo = F}
-so_liver_sc <- RunUMAP(so_liver_sc, dims = 1:15)
-DimPlot(so_liver_sc, reduction = "umap", group.by = "diagnosis_of_diabetes") 
-
-```
-
-### MASLD Y/N
-```{r echo = F}
-so_liver_sc <- RunUMAP(so_liver_sc, dims = 1:15)
-DimPlot(so_liver_sc, reduction = "umap", group.by = "diagnosis_of_MASLD") 
-
-```
-
-### OSA Y/N
-```{r echo = F}
-so_liver_sc <- RunUMAP(so_liver_sc, dims = 1:15)
-DimPlot(so_liver_sc, reduction = "umap", group.by = "diagnosis_of_osa") 
-
-```
-
-### GLP-1RA Y/N
-```{r echo = F}
-so_liver_sc <- RunUMAP(so_liver_sc, dims = 1:15)
-DimPlot(so_liver_sc, reduction = "umap", group.by = "glp1agonist") 
-
-```
-
-### Insulin Y/N
-```{r echo = F}
-so_liver_sc <- RunUMAP(so_liver_sc, dims = 1:15)
-DimPlot(so_liver_sc, reduction = "umap", group.by = "insulin") 
-
-```
-
-### Kidney disease Y/N
-```{r echo = F}
-so_liver_sc <- RunUMAP(so_liver_sc, dims = 1:15)
-DimPlot(so_liver_sc, reduction = "umap", group.by = "diagnosis_of_kidney_disease") 
-
-```
-
-## Differential Expression by Group
-### Obese vs. Obese + T2D
+#5. Differential Expression & GSE Analysis by Groups
+##a. Diabetes Status
 ```{r}
-so_liver_sc@meta.data$hepatocyte <- ifelse(grepl("Hepatocyte",meta_liver_sc$celltype),"Hepatocyte","Non-Hepatocyte")
-genes <- rownames(so_liver_sc)
-Idents(so_liver_sc) <- so_liver_sc$celltype
-de.markers(so_liver_sc, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hepatocyte1", "")
-de.markers(so_liver_sc, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hepatocyte2", "")
-de.markers(so_liver_sc, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hepatocyte3", "")
-
-Idents(so_liver_sc) <- so_liver_sc$hepatocyte
-de.markers(so_liver_sc, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hepatocyte", "")
-
+genes <- unique(rownames(so_liver_sn_hep))
+de.markers(so_liver_sn_hep, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hepatocyte", "")
+#write.csv(m,fs::path(dir.dat,"DEG_Diab.csv"))
+sce_sn_hep <- as.SingleCellExperiment(so_liver_sn_hep)
+#rm(so_liver_sn_hep)
+## C2 category is according to canonical pathways: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
+geneSets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG")
+### filter background to only include genes that we assessed
+geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
+geneSets <- geneSets[geneSets$gene_symbol %in% names(sce_sn_hep),]
+m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
+stats <- m$p_val_adj
+names(stats) <- rownames(m)
+eaRes <- fgsea(pathways = m_list, stats = na.omit(stats))
+#ooEA <- order(eaRes$pval, decreasing = FALSE)
+#kable(head(eaRes[ooEA, 1:7], n = 20))
+# Convert the leadingEdge column to comma-separated strings
+eaRes$leadingEdge <- sapply(eaRes$leadingEdge, function(x) paste(x, collapse = ", "))
+gc()
+# Save to CSV
+write.csv(eaRes, fs::path(dir.dat,"GSEA_Diabetes.csv"))
+gc()
+#By cell
+#Idents(so_liver_sn) <- so_liver_sn$celltype
+#de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", NULL, "_top")
+#de.markers(so_liver_sn, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hep-1", "_top")
+#de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hepatocyte2", "")
+#de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hepatocyte3", "")
 ```
 
-### MASLD Y/N
+##b. MASLD Status
 ```{r}
 Idents(so_liver_sc) <- so_liver_sc$celltype
 de.markers(so_liver_sc, genes, "diagnosis_of_MASLD", id2 = "No", id1 = "Yes", "Hepatocyte1", "")
@@ -316,95 +277,277 @@ de.markers(so_liver_sc, genes, "diagnosis_of_MASLD", id2 = "No", id1 = "Yes", "H
 
 ```
 
-### OSA Y/N
+##c. GLP-1RA Status
 ```{r}
-Idents(so_liver_sc) <- so_liver_sc$celltype
-de.markers(so_liver_sc, genes, "diagnosis_of_osa", id2 = "No", id1 = "Yes", "Hepatocyte1", "")
-de.markers(so_liver_sc, genes, "diagnosis_of_osa", id2 = "No", id1 = "Yes", "Hepatocyte2", "")
-de.markers(so_liver_sc, genes, "diagnosis_of_osa", id2 = "No", id1 = "Yes", "Hepatocyte3", "")
+genes <- unique(rownames(so_liver_sn_hep))
+Idents(so_liver_sn_hep) <- so_liver_sn_hep$hepatocyte
+de.markers(so_liver_sn_hep, genes, "glp1agonist", id2 = "No", id1 = "Yes", "Hepatocyte", "")
+de.markers(so_liver_sn_hep, genes, "glp1agonist", id2 = "No", id1 = "Yes", "Hepatocyte", "")
 
-Idents(so_liver_sc) <- so_liver_sc$hepatocyte
-de.markers(so_liver_sc, genes, "diagnosis_of_osa", id2 = "No", id1 = "Yes", "Hepatocyte", "")
+#Idents(so_liver_sc) <- so_liver_sc$celltype
+#de.markers(so_liver_sc, genes, "glp1agonist", id2 = "No", id1 = "Yes", "Hepatocyte1", "")
+#de.markers(so_liver_sc, genes, "glp1agonist", id2 = "No", id1 = "Yes", "Hepatocyte2", "")
+#de.markers(so_liver_sc, genes, "glp1agonist", id2 = "No", id1 = "Yes", "Hepatocyte3", "")
 
 ```
 
-### GLP-1RA Y/N
+#6. Senesence Diff Exp 
 ```{r}
-Idents(so_liver_sc) <- so_liver_sc$celltype
-de.markers(so_liver_sc, genes, "glp1agonist", id2 = "No", id1 = "Yes", "Hepatocyte1", "")
-de.markers(so_liver_sc, genes, "glp1agonist", id2 = "No", id1 = "Yes", "Hepatocyte2", "")
-de.markers(so_liver_sc, genes, "glp1agonist", id2 = "No", id1 = "Yes", "Hepatocyte3", "")
+#Filter to only Hepatocytes
+Idents(so_liver_sn) <- so_liver_sn$hepatocyte
+gc()
+so_liver_sn_hep <- subset(so_liver_sn, hepatocyte == "Hepatocyte")
+gc()
+memory.limit(size = 64000)
+rm(so_liver_sn)
 
-Idents(so_liver_sc) <- so_liver_sc$hepatocyte
-de.markers(so_liver_sc, genes, "glp1agonist", id2 = "No", id1 = "Yes", "Hepatocyte", "")
+#Diff by Diabetes Status
+Idents(so_liver_sn_hep) <- so_liver_sn_hep$hepatocyte
+de.markers(so_liver_sn_hep, sens_genes, "diagnosis_of_diabetes", id1 = "Yes", id2 = "No", "Hepatocyte", "")
+write.csv(m,"SeneDifferential_Expression_Diabetes.csv")
+m_top <- m
+significant_genes <- m_top %>% filter(p_val_adj < 0.05)
+
+# Select the top 10 positive and top 10 negative log2FC genes that are significant
+top_genes <- rbind(
+  significant_genes %>% arrange(desc(avg_log2FC)) %>% head(20),  # Top 10 positive log2FC
+  significant_genes %>% arrange(avg_log2FC) %>% head(20)         # Top 10 negative log2FC
+)
+
+labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+
+
+#MASLD
+de.markers(so_liver_sn_hep, sens_genes, "diagnosis_of_MASLD", id1 = "Yes", id2 = "No", "Hepatocyte", "")
+write.csv(m,fs::path("SeneDifferential_Expression_MASLD.csv"))
+m_top <- m
+significant_genes <- m_top %>% filter(p_val_adj < 0.05)
+
+# Select the top 10 positive and top 10 negative log2FC genes that are significant
+top_genes <- rbind(
+  significant_genes %>% arrange(desc(avg_log2FC)) %>% head(20),  # Top 10 positive log2FC
+  significant_genes %>% arrange(avg_log2FC) %>% head(20)         # Top 10 negative log2FC
+)
+
+labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+
+
+#GLP1
+#Need to filter to just Type 2
+de.markers(so_liver_sn_hep, sens_genes, "glp1agonist", id1 = "Yes", id2 = "No", "Hepatocyte", "")
+write.csv(m,fs::path("SeneDifferential_Expression_GLP1.csv"))
+m_top <- m
+significant_genes <- m_top %>% filter(p_val_adj < 0.05)
+
+# Select the top 10 positive and top 10 negative log2FC genes that are significant
+top_genes <- rbind(
+  significant_genes %>% arrange(desc(avg_log2FC)) %>% head(20),  # Top 10 positive log2FC
+  significant_genes %>% arrange(avg_log2FC) %>% head(20)         # Top 10 negative log2FC
+)
+
+labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
 
 ```
 
-### Insulin Y/N
-```{r}
-# Idents(so_liver_sc) <- so_liver_sc$celltype
-# de.markers(so_liver_sc, genes, "insulin", id2 = "No", id1 = "Yes", "Hepatocyte1", "")
-# de.markers(so_liver_sc, genes, "insulin", id2 = "No", id1 = "Yes", "Hepatocyte2", "")
-# de.markers(so_liver_sc, genes, "insulin", id2 = "No", id1 = "Yes", "Hepatocyte3", "")
-# 
-# Idents(so_liver_sc) <- so_liver_sc$hepatocyte
-# de.markers(so_liver_sc, genes, "insulin", id2 = "No", id1 = "Yes", "Hepatocyte", "")
-#All no's for insulin
+#7. Gene set enrichment analysis
+```{r echo = F}
+#sce_sn_hep <- as.SingleCellExperiment(so_liver_sn_hep)
+## C2 category is according to canonical pathways: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
+geneSets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG")
+### filter background to only include genes that we assessed
+geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
+geneSets <- geneSets[geneSets$gene_symbol %in% names(sce_sn_hep),]
+m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
+stats <- m$p_val_adj
+names(stats) <- rownames(m)
+eaRes <- fgsea(pathways = m_list, stats = na.omit(stats))
+#ooEA <- order(eaRes$pval, decreasing = FALSE)
+#kable(head(eaRes[ooEA, 1:7], n = 20))
+# Convert the leadingEdge column to comma-separated strings
+eaRes$leadingEdge <- sapply(eaRes$leadingEdge, function(x) paste(x, collapse = ", "))
+
+# Save to CSV
+write.csv(eaRes, "GSEA_Diabetes.csv", row.names = FALSE)
 ```
 
-### Kidney disease Y/N
+#8. Association between Genes & Liver Outcomes
+##a. Full Gene Set
 ```{r}
-# Idents(so_liver_sc) <- so_liver_sc$celltype
-# de.markers(so_liver_sc, genes, "diagnosis_of_kidney_disease", id2 = "No", id1 = "Yes", "Hepatocyte1", "")
-# de.markers(so_liver_sc, genes, "diagnosis_of_kidney_disease", id2 = "No", id1 = "Yes", "Hepatocyte2", "")
-# de.markers(so_liver_sc, genes, "diagnosis_of_kidney_disease", id2 = "No", id1 = "Yes", "Hepatocyte3", "")
-# 
-# Idents(so_liver_sc) <- so_liver_sc$hepatocyte
-# de.markers(so_liver_sc, genes, "diagnosis_of_kidney_disease", id2 = "No", id1 = "Yes", "Hepatocyte", "")
-#All no's for insulin
+# Extract the expression data matrix (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_liver_sn_hep, layer = "data"))
+
+# Extract metadata
+cell_metadata <- so_liver_sn_hep@meta.data
+
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+
+# Assuming gene_set is a vector of gene names
+sca_gene_set <- sca[rownames(sca) %in% gene_set, ]
+
+# Define the model with the outcome variable
+outcomes <- c("AST","ALT","fibrosis","steatosis","lobular_inflammation")
+model_formula <- ~ outcome + covariate
+
+# Run the linear model with zlm
+zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+
+# Summarize results and perform likelihood ratio test (LRT) for outcome
+summary_zlm <- summary(zlm_results, doLRT = 'outcome')
+
+# Convert the summary to a data table for easy manipulation
+summary_dt <- summary_zlm$datatable
+
+# Extract results for the outcome variable
+result <- summary_dt[contrast == 'outcome' & component == 'H', c("primerid", "Pr(>Chisq)")]
+
+# Adjust p-values for multiple testing (False Discovery Rate)
+result$p_adj <- p.adjust(result$`Pr(>Chisq)`, method = "fdr")
+
+# Filter significant results (e.g., adjusted p-value < 0.05)
+significant_results <- result[result$p_adj < 0.05, ]
+print(significant_results)
+
 ```
 
-## Figures
-### Obese vs. Obese + T2D
+##b. Senesence Gene Set
 ```{r}
-Idents(so_liver_sc) <- so_liver_sc$celltype
-pt.plot_table <- dp.formatted(seurat_object = so_liver_sc, genes = genes, group.by = "diagnosis_of_diabetes",
-                              celltype = "Hepatocyte1", m = m)
-pt.plot_table <- dp.formatted(seurat_object = so_liver_sc, genes = genes, group.by = "diagnosis_of_diabetes",
-                              celltype = "Hepatocyte2", m = m)
-pt.plot_table <- dp.formatted(seurat_object = so_liver_sc, genes = genes, group.by = "diagnosis_of_diabetes",
-                              celltype = "Hepatocyte3", m = m)
-Idents(so_liver_sc) <- so_liver_sc$hepatocyte
-pt.plot_table <- dp.formatted(seurat_object = so_liver_sc, genes = genes, group.by = "diagnosis_of_diabetes",
-                              celltype = "Hepatocyte", m = m)
-```
+# Extract the expression data matrix (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_sens, layer = "data"))
 
-### MASLD Y/N
-```{r}
-split.vp(seurat_object = so, genes = genes_subset, filepath = "/Users/hhampson/Library/Mobile Documents/com~apple~CloudDocs/UW/1_Ongoing Projects/Liver scRNAseq")
-Idents(so_liver_sc) <- so_liver_sc$celltype
-pt.plot_table <- dp.formatted(seurat_object = so_liver_sc, genes = genes, group.by = "diagnosis_of_diabetes",
-                              celltype = "Hepatocyte1", m = m)
-pt.plot_table <- dp.formatted(seurat_object = so_liver_sc, genes = genes, group.by = "diagnosis_of_diabetes",
-                              celltype = "Hepatocyte2", m = m)
-pt.plot_table <- dp.formatted(seurat_object = so_liver_sc, genes = genes, group.by = "diagnosis_of_diabetes",
-                              celltype = "Hepatocyte3", m = m)
-Idents(so_liver_sc) <- so_liver_sc$hepatocyte
-pt.plot_table <- dp.formatted(seurat_object = so_liver_sc, genes = genes, group.by = "diagnosis_of_diabetes",
-                              celltype = "Hepatocyte", m = m)
-```
+# Extract metadata
+cell_metadata <- so_sens@meta.data
 
-### OSA Y/N
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+
+# Assuming gene_set is a vector of gene names
+sca_gene_set <- sca[rownames(sca) %in% sens_genes, ]
+
+# Define the model with the outcome variable
+outcomes <- c("ast","alt","fibrosis_stage","steatosis_grade")
+# Convert count variables to factors
+#so_sens@meta.data$lobular_inflammation_grade <- factor(so_sens@meta.data$lobular_inflammation_grade,levels = c("0", #"1"),labels=c("No","Yes"))
+so_sens@meta.data$steatosis_grade <- factor(so_sens@meta.data$steatosis_grade)
+so_sens@meta.data$fibrosis_stage <- factor(so_sens@meta.data$fibrosis_stage)
+
+model_formula <- ~ steatosis_grade
+
+# Run the linear model with zlm
+zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+#summary(zlm_results)
+# Summarize results and perform likelihood ratio test (LRT) for outcome
+summary_zlm <- summary(zlm_results, doLRT = "steatosis_grade")
+
+# Convert the summary to a data table for easy manipulation
+summary_dt <- summary_zlm$datatable
+
+#Select only the coeficients
+summary_dt <- summary_dt %>%
+  filter(contrast!="(Intercept)")
+
+#Adjust for multiple comparisons
+summary_dt <- summary_dt %>%
+  group_by(component) %>%
+  mutate(adj_p = p.adjust(`Pr(>Chisq)`, method = "fdr")) %>%
+  ungroup()
+
+#write.csv(summary_dt,fs::path(dir.dat,"fibrosis_stage_Results.csv"))
+
+```
+#9. Visualize Results of MAST
+##a. Full Gene Set
+##b. Senesence Gene Set
 ```{r}
-split.vp(seurat_object = so, genes = genes_subset, filepath = "/Users/hhampson/Library/Mobile Documents/com~apple~CloudDocs/UW/1_Ongoing Projects/Liver scRNAseq")
-Idents(so_liver_sc) <- so_liver_sc$celltype
-pt.plot_table <- dp.formatted(seurat_object = so_liver_sc, genes = genes, group.by = "diagnosis_of_diabetes",
-                              celltype = "Hepatocyte1", m = m)
-pt.plot_table <- dp.formatted(seurat_object = so_liver_sc, genes = genes, group.by = "diagnosis_of_diabetes",
-                              celltype = "Hepatocyte2", m = m)
-pt.plot_table <- dp.formatted(seurat_object = so_liver_sc, genes = genes, group.by = "diagnosis_of_diabetes",
-                              celltype = "Hepatocyte3", m = m)
-Idents(so_liver_sc) <- so_liver_sc$hepatocyte
-pt.plot_table <- dp.formatted(seurat_object = so_liver_sc, genes = genes, group.by = "diagnosis_of_diabetes",
-                              celltype = "Hepatocyte", m = m)
+# Filter data for component C and D separately
+summary_dt_C <- summary_dt %>%
+  filter(component == "C") %>%
+  mutate(log_pvalue = -log10(`Pr(>Chisq)`))  # Add -log10(p-value)
+
+summary_dt_D <- summary_dt %>%
+  filter(component == "D") %>%
+  mutate(log_pvalue = -log10(`Pr(>Chisq)`))  # Add -log10(p-value)
+
+# For component C: Top 10 significant and largest coefficient genes
+# Filter for p-value < 0.05
+summary_dt_C_significant <- summary_dt_C %>%
+  filter(`Pr(>Chisq)` < 0.05)
+
+# Top 10 significant positive and negative coefficients for component C
+top_significant_positive_C <- summary_dt_C_significant %>%
+  arrange(desc(coef)) %>%  # Largest positive coefficients
+  slice_head(n = 10)
+
+top_significant_negative_C <- summary_dt_C_significant %>%
+  arrange(coef) %>%  # Largest negative coefficients
+  slice_head(n = 10)
+
+# Combine the top 10 significant positive and negative coefficients for component C
+top_genes_C <- bind_rows(top_significant_positive_C, top_significant_negative_C)
+
+# Create the volcano plot for component C with adjusted colors
+bubble_plot_C <- ggplot(summary_dt_C, aes(x = coef, y = log_pvalue)) +
+  geom_point(aes(color = `Pr(>Chisq)`), alpha = 0.6) +  # Bubbles colored by p-value
+  geom_text(data = top_genes_C, aes(label = primerid), size = 3, vjust = 1, hjust = 1) +  # Label top genes
+  scale_color_gradient(low = "blue", high = "red") +  # Color scale for p-value
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +  # Vertical line at coefficient = 0
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +  # Horizontal line at p-value = 0.05
+  theme_minimal() +  # Clean theme
+  labs(
+    title = "Steatosis Grade Volcano Plot for Component C: Coefficients vs -log10(P-value)",
+    x = "Coefficient (Coef)",
+    y = "-log10(P-value)",
+    color = "P-value"
+  ) +
+  theme(
+    legend.position = "right",  # Position the legend on the right
+    strip.text = element_text(size = 12),  # Adjust facet label size
+    axis.text = element_text(size = 10),  # Adjust axis label size
+    axis.title = element_text(size = 12)  # Adjust axis title size
+  )
+
+
+
+# Repeat the same for component D
+
+# For component D: Top 10 significant and largest coefficient genes
+# Filter for p-value < 0.05
+summary_dt_D_significant <- summary_dt_D %>%
+  filter(`Pr(>Chisq)` < 0.05)
+
+# Top 10 significant positive and negative coefficients for component D
+top_significant_positive_D <- summary_dt_D_significant %>%
+  arrange(desc(coef)) %>%  # Largest positive coefficients
+  slice_head(n = 10)
+
+top_significant_negative_D <- summary_dt_D_significant %>%
+  arrange(coef) %>%  # Largest negative coefficients
+  slice_head(n = 10)
+
+# Combine the top 10 significant positive and negative coefficients for component D
+top_genes_D <- bind_rows(top_significant_positive_D, top_significant_negative_D)
+
+# Create the volcano plot for component D with adjusted colors
+bubble_plot_D <- ggplot(summary_dt_D, aes(x = coef, y = log_pvalue)) +
+  geom_point(aes(color = `Pr(>Chisq)`), alpha = 0.6) +  # Bubbles colored by p-value
+  geom_text(data = top_genes_D, aes(label = primerid), size = 3, vjust = 1, hjust = 1) +  # Label top genes
+  scale_color_gradient(low = "blue", high = "red") +  # Color scale for p-value
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +  # Vertical line at coefficient = 0
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +  # Horizontal line at p-value = 0.05
+  theme_minimal() +  # Clean theme
+  labs(
+    title = "Steatosis Grade Volcano Plot for Component D: Coefficients vs -log10(P-value)",
+    x = "Coefficient (Coef)",
+    y = "-log10(P-value)",
+    color = "P-value"
+  ) +
+  theme(
+    legend.position = "right",  # Position the legend on the right
+    strip.text = element_text(size = 12),  # Adjust facet label size
+    axis.text = element_text(size = 10),  # Adjust axis label size
+    axis.title = element_text(size = 12)  # Adjust axis title size
+  )
+
+
+
 ```
