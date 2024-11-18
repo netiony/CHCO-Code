@@ -563,7 +563,59 @@ pdf(file = "Volcano_Senesence_GLP1.pdf",width=15,height=8)
 plot(p)
 dev.off()
 
+# Filter data for component C and D separately
+summary_c <- summary_dt %>%
+  filter(component == "C") %>%
+  filter(contrast=="ast") %>% 
+  dplyr::rename(p_val_adj=adj_p) %>% 
+  mutate(log2coef=log2(coef))
+  
+m_top <- summary_c[c("primerid","coef","p_val_adj")]
+m_top <- as.data.frame(m_top)
+rownames(m_top) <- m_top$primerid
+m_top <- m_top %>% 
+  dplyr::select(-primerid)
+significant_genes <- m_top %>% filter(p_val_adj < 0.05)
 
+# Select the top 10 positive and top 10 negative log2FC genes that are significant
+top_genes <- rbind(
+  significant_genes %>% arrange(desc(coef)) %>% head(20),  # Top 10 positive log2FC
+  significant_genes %>% arrange(coef) %>% head(20)         # Top 10 negative log2FC
+)
+
+# Define custom colors based on significance and log2 fold change direction
+colCustom <- ifelse(
+  m_top$p_val_adj < 0.05 & m_top$coef > 0, "red",           # Significant & positive FC
+  ifelse(m_top$p_val_adj < 0.05 & m_top$coef < 0, "blue",    # Significant & negative FC
+         "lightgray")                                               # Non-significant
+)
+colCustom[is.na(colCustom)] <- "lightgray"
+names(colCustom)[colCustom =="red"] <- "Upregulated"
+names(colCustom)[colCustom =="blue"] <- "Downregulated"
+names(colCustom)[colCustom=="lightgray"] <- "Unchanged"
+
+labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+p <- EnhancedVolcano(m_top,
+                     lab = labels,
+                     x = 'coef',
+                     y = 'p_val_adj',
+                     # title = paste0("Differentially Expressed Genes by Sex (Pseudobulk)"),
+                     # subtitle = paste0("Positive Log2 FC = Greater Expression in Female vs. Male\n",
+                     #                   "(Significant at FDR-P<0.05, FC Threshold = 0.5)"),
+                     pCutoff = 0.05,
+                     FCcutoff = 0,
+                     labFace = 'bold',
+                     pointSize = 4,
+                     labSize = 5,
+                     drawConnectors = TRUE,
+                     widthConnectors = 1.0,
+                     colConnectors = 'black',
+                     legendPosition=NULL,
+                     boxedLabels = TRUE,
+                     max.overlaps=20,
+                     colCustom = colCustom)
+plot(p)
+  
 pdf(file="Adj_AST_Plot_Continuous.pdf",width=10,height=5)
 plot(bubble_plot_C)
 dev.off()
