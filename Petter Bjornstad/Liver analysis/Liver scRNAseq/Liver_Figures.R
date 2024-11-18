@@ -564,10 +564,10 @@ plot(p)
 dev.off()
 
 
-pdf(file="Adj_Steatosis_Grade_Plot_Continuous.pdf",width=10,height=5)
+pdf(file="Adj_AST_Plot_Continuous.pdf",width=10,height=5)
 plot(bubble_plot_C)
 dev.off()
 
-pdf(file="Adj_Steatosis_Grade_Plot_Discrete.pdf",width=10,height=5)
+pdf(file="Adj_AST_Plot_Discrete.pdf",width=10,height=5)
 plot(bubble_plot_D)
 dev.off()
