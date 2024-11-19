@@ -563,10 +563,8 @@ pdf(file = "Volcano_Senesence_GLP1.pdf",width=15,height=8)
 plot(p)
 dev.off()
 
-# Filter data for component C and D separately
-summary_c <- summary_dt %>%
-  filter(component == "C") %>%
-  filter(contrast=="ast") %>% 
+#Visualize Results
+fcHurdle <- fcHurdle %>%
   dplyr::rename(p_val_adj=adj_p) 
   # mutate(log2coef=log2(coef))
   
