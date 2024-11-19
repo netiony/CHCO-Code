@@ -398,11 +398,22 @@ df <- df %>%
       )
   ) %>%
   ungroup()
+# Any mental health counseling
+df$pcosdx_any_mentalhealthcounseling <-
+  rowSums(df[, c(paste0("pcosdx_mentalhealthcounseling___", 1:3))] == "Checked")
+df$pcosdx_any_mentalhealthcounseling <-
+  factor(df$pcosdx_any_mentalhealthcounseling,
+    levels = 0:3,
+    labels = c("No", "Yes", "Yes", "Yes")
+  )
+# Labels
 label(df$depression) <- "Depression?"
 label(df$anxiety) <- "Anxiety?"
 label(df$bed) <- "Binge Eating Disorder?"
 label(df$red) <- "Restrictive Eating Disorder?"
 label(df$adhd) <- "ADHD?"
+label(df$pcosdx_any_mentalhealthcounseling) <-
+  "Any mental health counseling in the 12 months prior to diagnosis?"
 # LARC
 df$larc <- df$cv_medications___10 == "Checked" |
   df$cv_medications___11 == "Checked"
