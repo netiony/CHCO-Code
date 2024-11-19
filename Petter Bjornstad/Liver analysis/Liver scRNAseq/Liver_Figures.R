@@ -567,8 +567,8 @@ dev.off()
 summary_c <- summary_dt %>%
   filter(component == "C") %>%
   filter(contrast=="ast") %>% 
-  dplyr::rename(p_val_adj=adj_p) %>% 
-  mutate(log2coef=log2(coef))
+  dplyr::rename(p_val_adj=adj_p) 
+  # mutate(log2coef=log2(coef))
   
 m_top <- summary_c[c("primerid","coef","p_val_adj")]
 m_top <- as.data.frame(m_top)
@@ -602,6 +602,10 @@ p <- EnhancedVolcano(m_top,
                      # title = paste0("Differentially Expressed Genes by Sex (Pseudobulk)"),
                      # subtitle = paste0("Positive Log2 FC = Greater Expression in Female vs. Male\n",
                      #                   "(Significant at FDR-P<0.05, FC Threshold = 0.5)"),
+                     xlab = "Beta Coefficient", 
+                     ylab = "-Log10 Adjusted P-Value", 
+                     # Adjust x-axis scale
+                     xlim = c(-0.05, 0.05), 
                      pCutoff = 0.05,
                      FCcutoff = 0,
                      labFace = 'bold',
@@ -612,8 +616,10 @@ p <- EnhancedVolcano(m_top,
                      colConnectors = 'black',
                      legendPosition=NULL,
                      boxedLabels = TRUE,
-                     max.overlaps=20,
+                     max.overlaps=50,
                      colCustom = colCustom)
+p + scale_x_continuous(limits = c(-2, 2), breaks = seq(-2, 2, by = 0.5)) +
+  labs(x = "Log2 Fold Change (Custom)", y = "-Log10 Adjusted P-Value (Custom)")
 plot(p)
   
 pdf(file="Adj_AST_Plot_Continuous.pdf",width=10,height=5)
