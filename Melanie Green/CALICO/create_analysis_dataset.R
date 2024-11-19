@@ -153,8 +153,7 @@ nch_chop_vars <- c(
   "cv_referrals___9", "cv_referrals___10", "cv_referrals___11",
   "cv_referrals___12", "cv_referrals___60", "cv_referrals___na",
   "cv_referrals___unk", "cv_referrals___oth", "cv_referrals___pm",
-  "cv_referrals_reason", "cv_dietarycounseling", "cv_exerciseplan",
-  "cv_phq2_score", "cv_phq8_score", "cv_phq9_score", "cv_cesd_score"
+  "cv_referrals_reason", "cv_dietarycounseling", "cv_exerciseplan"
 )
 # LARC for BCH
 larc_vars <- c(
@@ -335,11 +334,11 @@ any_hist <- data.frame(lapply(hist_vars, function(v) {
 colnames(any_hist) <- paste0("pcosdx_any_famhx___", hist_vars)
 df <- cbind(df, any_hist)
 # Mental health screening
-# df$mental_health_screening <-
-#   rowSums(!is.na(df[, c("cv_phq2", "cv_phq8", "cv_phq9", "cv_cesd20")]))
-# df$mental_health_screening <- factor(df$mental_health_screening,
-#   levels = 0:1, labels = c("No", "Yes")
-# )
+df$mental_health_screening <-
+  rowSums(!is.na(df[, c("cv_phq2", "cv_phq8", "cv_phq9", "cv_cesd20")]))
+df$mental_health_screening <- factor(df$mental_health_screening,
+  levels = 0:4, labels = c("No", "Yes", "Yes", "Yes", "Yes")
+)
 # Combine two earliest obesity noticed columns
 df$pcosdx_obesitydx_age_combined <-
   coalesce(df$pcosdx_obesitydx_age, df$pcosdx_obesitydx_earliestage)
@@ -365,14 +364,20 @@ levels(df$Region) <- c(
   "Midwest", "Southeast", "Midwest", "Southwest", "Southwest"
 )
 # Mental health diagnosis variables
+# Conver to numeric
+df$cv_phq9[df$cv_phq9 %in%
+  c("performed, score not included", "performed, results not listed")] <- NA
+df$cv_phq9[df$cv_phq9 == "negative"] <- 0
+df$cv_cesd20[df$cv_cesd20 == "AN"] <- NA
+df$cv_phq9 <- as.numeric(df$cv_phq9)
+df$cv_cesd20 <- as.numeric(df$cv_cesd20)
 df <- df %>%
   group_by(record_number) %>%
   mutate(
     depression =
       factor(
         any(cv_newdx___16 == "Checked" | pcosdx_pmh___16 == "Checked" |
-          cv_phq2_score == 1 | cv_phq8_score == 1 | cv_phq9_score |
-          cv_cesd_score == 1),
+          cv_phq2 >= 3 | cv_phq8 >= 10 | cv_phq9 >= 10 | cv_cesd20 >= 16),
         levels = c(F, T), labels = c("No", "Yes")
       ),
     anxiety =
@@ -441,8 +446,8 @@ label(df$larc) <- "On LARC?"
 label(df$larc_ever) <- "LARC Ever Used?"
 label(df$pcosdx_age) <- "Age at time of PCOS diagnosis"
 label(df[, paste0("pcosdx_any_famhx___", hist_vars)]) <- as.list(hist_labels)
-# label(df$mental_health_screening) <-
-#   "PHQ-2, PHQ-8, PHQ-9 or CED-S Score Available?"
+label(df$mental_health_screening) <-
+  "PHQ-2, PHQ-8, PHQ-9 or CED-S Score Available?"
 label(df[, grep("___unk", colnames(df))]) <-
   as.list(sub(
     "choice=NA", "choice=Unknown/Not recorded",
