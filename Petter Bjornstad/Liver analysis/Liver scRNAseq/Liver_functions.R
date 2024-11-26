@@ -41,7 +41,7 @@ sens_genes <- c("ACVR1B","ANG","ANGPT1","ANGPTL4","AREG","AXL","BEX3","BMP2","BM
 # celltype=NULL
 # extension="_top"
 # # function for de.markers
-de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, extension){
+de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, extension,logfc.threshold,min.pct){
   m = FindMarkers(seurat_object, features = genes,group.by = group.by,ident.1 = id1, 
                   ident.2 = id2, subset.ident = celltype, verbose = F, logfc.threshold=0.001,
                   min.pct = 0.001)
