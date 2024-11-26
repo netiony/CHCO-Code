@@ -1,36 +1,36 @@
-# Define genes
-# Get genes_subset of interest 
-#Glycolysis
-#glyc_genes <- read.csv()
-
-#Gluconeogenesis
-#gluc_genes <- read.csv()
-
-#TCA cycle
-#tca_genes <- read.csv()
-# tca_genes <- c("CS","DLAT","DLD","DLST","FH","SUCLG2P2","IDH1","IDH2","IDH3A",
-#                "IDH3B","IDH3G","MDH1","MDH2","ACLY","ACO1","OGDH","ACO2","PC",
-#                "PCK1","PCK2","PDHA1","PDHA2","PDHB","OGDHL","SDHA","SDHB","SDHC",
-#                "SDHD","SUCLG2","SUCLG1","SUCLA2")
-
-#Oxidative Phosphorylation
-oxy_phos_genes <- c(
-  "NDUFS6",  "SDHB", "SDHC", "SDHD",
-  "UQCRC1", "UQCRC2", "COX4I1", "COX4I2", "ATP5PF"
-)
-
-sens_genes <- c("ACVR1B","ANG","ANGPT1","ANGPTL4","AREG","AXL","BEX3","BMP2","BMP6","C3","CCL1","CCL13",
-                "CCL16","CCL2","CCL20","CCL24","CCL26","CCL3","CCL4","CCL5","CCL7","CCL8","CD55",
-                "CD9","CSF1","CSF2","CSF2RB","CST4","CTNNB1","CTSB","CXCL1","CXCL10","CXCL12",
-                "CXCL16","CXCL2","CXCL3","CXCL8","CXCR2","DKK1","EDN1","EGF","EGFR","EREG","ESM1",
-                "ETS2","FAS","FGF1","FGF2","FGF7","GDF15","GEM","GMFG","HGF","HMGB1","ICAM1","ICAM3",
-                "IGF1","IGFBP1","IGFBP2","IGFBP3","IGFBP4","IGFBP5","IGFBP6","IGFBP7","IL10","IL13",
-                "IL15","IL18","IL1A","IL1B","IL2","IL32","IL6","IL6ST","IL7","INHA","IQGAP2","ITGA2",
-                "ITPKA","JUN","KITLG","LCP1","MIF","MMP1","MMP10","MMP12","MMP13","MMP14","MMP2",
-                "MMP3","MMP9","NAP1L4","NRG1","PAPPA","PECAM1","PGF","PIGF","PLAT","PLAU","PLAUR",
-                "PTBP1","PTGER2","PTGES","RPS6KA5","SCAMP4","SELPLG","SEMA3F","SERPINB4","SERPINE1",
-                "SERPINE2","SPP1","SPX","TIMP2","TNF","TNFRSF10C","TNFRSF11B","TNFRSF1A","TNFRSF1B",
-                "TUBGCP2","VEGFA","VEGFC","VGF","WNT16","WNT2")
+# # Define genes
+# # Get genes_subset of interest 
+# #Glycolysis
+# #glyc_genes <- read.csv()
+# 
+# #Gluconeogenesis
+# #gluc_genes <- read.csv()
+# 
+# #TCA cycle
+# #tca_genes <- read.csv()
+# # tca_genes <- c("CS","DLAT","DLD","DLST","FH","SUCLG2P2","IDH1","IDH2","IDH3A",
+# #                "IDH3B","IDH3G","MDH1","MDH2","ACLY","ACO1","OGDH","ACO2","PC",
+# #                "PCK1","PCK2","PDHA1","PDHA2","PDHB","OGDHL","SDHA","SDHB","SDHC",
+# #                "SDHD","SUCLG2","SUCLG1","SUCLA2")
+# 
+# #Oxidative Phosphorylation
+# oxy_phos_genes <- c(
+#   "NDUFS6",  "SDHB", "SDHC", "SDHD",
+#   "UQCRC1", "UQCRC2", "COX4I1", "COX4I2", "ATP5PF"
+# )
+# 
+# sens_genes <- c("ACVR1B","ANG","ANGPT1","ANGPTL4","AREG","AXL","BEX3","BMP2","BMP6","C3","CCL1","CCL13",
+#                 "CCL16","CCL2","CCL20","CCL24","CCL26","CCL3","CCL4","CCL5","CCL7","CCL8","CD55",
+#                 "CD9","CSF1","CSF2","CSF2RB","CST4","CTNNB1","CTSB","CXCL1","CXCL10","CXCL12",
+#                 "CXCL16","CXCL2","CXCL3","CXCL8","CXCR2","DKK1","EDN1","EGF","EGFR","EREG","ESM1",
+#                 "ETS2","FAS","FGF1","FGF2","FGF7","GDF15","GEM","GMFG","HGF","HMGB1","ICAM1","ICAM3",
+#                 "IGF1","IGFBP1","IGFBP2","IGFBP3","IGFBP4","IGFBP5","IGFBP6","IGFBP7","IL10","IL13",
+#                 "IL15","IL18","IL1A","IL1B","IL2","IL32","IL6","IL6ST","IL7","INHA","IQGAP2","ITGA2",
+#                 "ITPKA","JUN","KITLG","LCP1","MIF","MMP1","MMP10","MMP12","MMP13","MMP14","MMP2",
+#                 "MMP3","MMP9","NAP1L4","NRG1","PAPPA","PECAM1","PGF","PIGF","PLAT","PLAU","PLAUR",
+#                 "PTBP1","PTGER2","PTGES","RPS6KA5","SCAMP4","SELPLG","SEMA3F","SERPINB4","SERPINE1",
+#                 "SERPINE2","SPP1","SPX","TIMP2","TNF","TNFRSF10C","TNFRSF11B","TNFRSF1A","TNFRSF1B",
+#                 "TUBGCP2","VEGFA","VEGFC","VGF","WNT16","WNT2")
 
 
 # de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", NULL, "_top")
@@ -63,199 +63,199 @@ de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, exten
   ))
 }
 
-GeomSplitViolin <- ggproto(
-  "GeomSplitViolin", 
-  GeomViolin, 
-  draw_group = function(self, data, ..., draw_quantiles = NULL) {
-    data <- transform(data, 
-                      xminv = x - violinwidth * (x - xmin), 
-                      xmaxv = x + violinwidth * (xmax - x))
-    grp <- data[1,'group']
-    newdata <- plyr::arrange(
-      transform(data, x = if(grp%%2==1) xminv else xmaxv), 
-      if(grp%%2==1) y else -y
-    )
-    newdata <- rbind(newdata[1, ], newdata, newdata[nrow(newdata), ], newdata[1, ])
-    newdata[c(1,nrow(newdata)-1,nrow(newdata)), 'x'] <- round(newdata[1, 'x']) 
-    if (length(draw_quantiles) > 0 & !scales::zero_range(range(data$y))) {
-      stopifnot(all(draw_quantiles >= 0), all(draw_quantiles <= 1))
-      quantiles <- ggplot2:::create_quantile_segment_frame(data, draw_quantiles)
-      aesthetics <- data[rep(1, nrow(quantiles)), setdiff(names(data), c("x", "y")), drop = FALSE]
-      aesthetics$alpha <- rep(1, nrow(quantiles))
-      both <- cbind(quantiles, aesthetics)
-      quantile_grob <- GeomPath$draw_panel(both, ...)
-      ggplot2:::ggname("geom_split_violin", 
-                       grid::grobTree(GeomPolygon$draw_panel(newdata, ...), quantile_grob))
-    } else {
-      ggplot2:::ggname("geom_split_violin", GeomPolygon$draw_panel(newdata, ...))
-    }
-  }
-)
-
-geom_split_violin <- function (mapping = NULL, 
-                               data = NULL, 
-                               stat = "ydensity", 
-                               position = "identity", ..., 
-                               draw_quantiles = NULL, 
-                               trim = TRUE, 
-                               scale = "area", 
-                               na.rm = FALSE, 
-                               show.legend = NA, 
-                               inherit.aes = TRUE) {
-  layer(data = data, 
-        mapping = mapping, 
-        stat = stat, 
-        geom = GeomSplitViolin, 
-        position = position, 
-        show.legend = show.legend, 
-        inherit.aes = inherit.aes, 
-        params = list(trim = trim, 
-                      scale = scale, 
-                      draw_quantiles = draw_quantiles, 
-                      na.rm = na.rm, ...)
-  )
-}
-
-split.vp <- function(seurat_object, genes, filepath, color1 = "#6c9a8b", color2 = "#e8998d") {
-  for (i in 1:length(genes)){
-    cat("\n")
-    cat("###", genes[i])
-    cat("\n")  
-    d = VlnPlot(seurat_object, features = genes[i], split.by = "Group", idents = "PT", split.plot = F, pt.size = 0) 
-    d = d$data
-    p = ggplot(d,aes(x=ident, y = !!sym(genes[i]), fill=split))+
-      geom_jitter(position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.9), 
-                  size = 0.2, alpha = 0.3, show.legend = T, aes(color = split)) +
-      geom_split_violin(trim = T) +
-      theme_bw()+
-      theme(legend.title = element_blank(),
-            axis.title.x = element_blank(), 
-            axis.text.x=element_blank(),
-            plot.title = element_text()) +
-      labs(title = (paste0(genes[i]," in  PT Cells")),
-           y = "Expression") +
-      scale_fill_manual(values=c(color1, color2)) + 
-      scale_color_manual(values=c(color1, color2))
-    print(p)
-    cat("\n")
-    # Save
-    ggsave(filename = paste0(filepath,"Violin_",genes[i],".jpeg"),plot = p,scale = 5,
-           width = 800,height = 600,units = "px")
-  }
-}
-
-split.vp.combined <- function(seurat_object, genes, filepath, color1 = "#6c9a8b", color2 = "#e8998d", idents = NULL) {
-  compiled_d = data.frame()
-  for (i in 1:length(genes)){
-    d = VlnPlot(seurat_object, features = genes[i], split.by = "Group", idents = idents, split.plot = F, pt.size = 0) 
-    d = d$data
-    d$genename = colnames(d)[1]
-    colnames(d)[1] <- "expression"
-    compiled_d = rbind(compiled_d, d)
-  }
-  p = 
-    ggplot(compiled_d,aes(x=genename, y = expression, fill=split)) +
-    geom_jitter(position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.9), 
-                size = 0.2, alpha = 0.3, show.legend = T, aes(color = split)) +    
-    geom_split_violin(scale = "width", trim = T) +
-    theme_bw() +
-    theme(legend.title = element_blank(),
-          axis.title.x = element_blank(), 
-          plot.title = element_text()) +
-    labs(y = "Expression") +
-    scale_fill_manual(values=c(color1, color2)) + 
-    scale_color_manual(values=c(color1, color2))
-  print(p)
-  cat("\n")
-  # Save
-  ggsave(filename = paste0(filepath,"Violin_combined",".jpeg"),plot = p,scale = 5,
-         width = 1000,height = 600,units = "px")
-  
-}
-
-# Formatted dot plot function
-# colorlow = "#8ecae6", colormid = "#fcbf49", colorhigh = "#d90429"
-dp.formatted <- function(seurat_object, genes, celltype, group.by, m,
-                         colorlow = "#83c5be", colormid = "#f4f1bb", colorhigh = "#d90429")
-{
-  pt.combined <- DotPlot(seurat_object,
-                         features = genes,idents = celltype, group.by = group.by,
-                         scale = F, cols = "RdYlBu"
-  )$data 
-  
-  pt.plot <- pt.combined %>% 
-    ggplot(aes(x=features.plot, y = id, color = avg.exp.scaled, size = pct.exp)) + 
-    geom_point() +
-    theme_bw() +
-    scale_color_gradient2(low = colorlow, mid = colormid, high = colorhigh, midpoint = 2,
-                          guide = guide_colorbar(label.vjust = 0.8, ticks = F, draw.ulim = T, draw.llim = T),
-                          limits = c(0,4)) +
-    scale_size(range = c(0,4), 
-               limits = c(1,80)) +
-    theme(panel.grid = element_blank(),
-          axis.title.x = element_blank(),
-          axis.title.y = element_blank(),
-          axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
-          legend.text = element_text(size = 8),
-          legend.title = element_text(size = 8, vjust = 0.5),
-          legend.spacing.x = unit(.1, "cm"),
-          legend.direction = "horizontal") +
-    guides(size = guide_legend(label.position = "bottom",
-                               title.position = "top"),
-           color = guide_colorbar(label.position = "bottom",
-                                  title.position = "top")) +
-    labs(color = "Scaled average expression",
-         size = "Expression (%) ") + 
-    scale_y_discrete(limits=rev)
-  
-  pt.table <- m %>%
-    filter(rownames(m) %in% genes) %>%
-    dplyr::mutate(p_val_rounded = round(p_val, 4),
-                  p_val = p_format(p_val_rounded, trailing.zero = T, accuracy = 0.001, digits = 3),
-                  p_val_adj_rounded = round(p_val_adj, 4),
-                  p_val_adj = p_format(p_val_adj_rounded, trailing.zero = T, accuracy = 0.001, digits = 3),
-                  pct.1 = sprintf("%.3f", pct.1),
-                  pct.2 = sprintf("%.3f", pct.2),
-                  avg_log2FC = sprintf("%.3f", avg_log2FC)) %>% 
-    dplyr::select(pct.1, pct.2, avg_log2FC, p_val, p_val_adj) 
-  gg.pt.table <- ggtexttable(pt.table,
-                             cols = c("T1D", "HC", "Log2FC", "p-value", "q-value"),
-                             theme = ttheme("blank")) %>%
-    tab_add_hline(at.row = 1:2, row.side = "top", linewidth = 1) %>%
-    tab_add_title("% Expressed in PT Cells")
-  
-  pt.plot_table <- ggarrange(pt.plot, NULL, gg.pt.table,
-                             nrow = 1, widths = c(1,-0.1,1), common.legend = F,
-                             legend = "top")
-  
-}
-
-metabo_sc <- function(data, gene, transcripts, gene_name) {
-  plots <- list()
-  for (i in 1:length(transcripts)) {
-    plot <- subset(data, apply(!is.na(data[, c(transcripts[i], gene)]), 1, all)) %>%
-      ggplot(aes_string(y = gene, x = transcripts[i], color = "group")) +
-      geom_smooth(method = lm, se = F, aes(color=NULL), color = "black",
-                  linetype = "dashed") +
-      geom_point() +
-      geom_smooth(method = lm, se = F) +
-      labs(color = "Group",
-           y = gene_name,
-           x = if(is.null(label(data[[transcripts[i]]]))) (transcripts[i]) else label(data[[transcripts[i]]])) +
-      theme_bw()
-    plots[[i]] <- plot
-  }
-  ggarrange(plotlist = plots, common.legend = T)
-}
-
-add_direction <- function(df) {
-  df <- df %>%
-    mutate(direction = case_when(
-      (avg_log2FC > 0 & p_val < 0.05) ~ "Upregulated", 
-      (avg_log2FC <= 0 & p_val < 0.05) ~ "Downregulated",
-      TRUE ~ "NS"
-    ))
-  df$direction <- factor(df$direction, levels = c("Downregulated", "Upregulated", "NS") )
-  return(df)
-}
-
+# GeomSplitViolin <- ggproto(
+#   "GeomSplitViolin", 
+#   GeomViolin, 
+#   draw_group = function(self, data, ..., draw_quantiles = NULL) {
+#     data <- transform(data, 
+#                       xminv = x - violinwidth * (x - xmin), 
+#                       xmaxv = x + violinwidth * (xmax - x))
+#     grp <- data[1,'group']
+#     newdata <- plyr::arrange(
+#       transform(data, x = if(grp%%2==1) xminv else xmaxv), 
+#       if(grp%%2==1) y else -y
+#     )
+#     newdata <- rbind(newdata[1, ], newdata, newdata[nrow(newdata), ], newdata[1, ])
+#     newdata[c(1,nrow(newdata)-1,nrow(newdata)), 'x'] <- round(newdata[1, 'x']) 
+#     if (length(draw_quantiles) > 0 & !scales::zero_range(range(data$y))) {
+#       stopifnot(all(draw_quantiles >= 0), all(draw_quantiles <= 1))
+#       quantiles <- ggplot2:::create_quantile_segment_frame(data, draw_quantiles)
+#       aesthetics <- data[rep(1, nrow(quantiles)), setdiff(names(data), c("x", "y")), drop = FALSE]
+#       aesthetics$alpha <- rep(1, nrow(quantiles))
+#       both <- cbind(quantiles, aesthetics)
+#       quantile_grob <- GeomPath$draw_panel(both, ...)
+#       ggplot2:::ggname("geom_split_violin", 
+#                        grid::grobTree(GeomPolygon$draw_panel(newdata, ...), quantile_grob))
+#     } else {
+#       ggplot2:::ggname("geom_split_violin", GeomPolygon$draw_panel(newdata, ...))
+#     }
+#   }
+# )
+# 
+# geom_split_violin <- function (mapping = NULL, 
+#                                data = NULL, 
+#                                stat = "ydensity", 
+#                                position = "identity", ..., 
+#                                draw_quantiles = NULL, 
+#                                trim = TRUE, 
+#                                scale = "area", 
+#                                na.rm = FALSE, 
+#                                show.legend = NA, 
+#                                inherit.aes = TRUE) {
+#   layer(data = data, 
+#         mapping = mapping, 
+#         stat = stat, 
+#         geom = GeomSplitViolin, 
+#         position = position, 
+#         show.legend = show.legend, 
+#         inherit.aes = inherit.aes, 
+#         params = list(trim = trim, 
+#                       scale = scale, 
+#                       draw_quantiles = draw_quantiles, 
+#                       na.rm = na.rm, ...)
+#   )
+# }
+# 
+# split.vp <- function(seurat_object, genes, filepath, color1 = "#6c9a8b", color2 = "#e8998d") {
+#   for (i in 1:length(genes)){
+#     cat("\n")
+#     cat("###", genes[i])
+#     cat("\n")  
+#     d = VlnPlot(seurat_object, features = genes[i], split.by = "Group", idents = "PT", split.plot = F, pt.size = 0) 
+#     d = d$data
+#     p = ggplot(d,aes(x=ident, y = !!sym(genes[i]), fill=split))+
+#       geom_jitter(position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.9), 
+#                   size = 0.2, alpha = 0.3, show.legend = T, aes(color = split)) +
+#       geom_split_violin(trim = T) +
+#       theme_bw()+
+#       theme(legend.title = element_blank(),
+#             axis.title.x = element_blank(), 
+#             axis.text.x=element_blank(),
+#             plot.title = element_text()) +
+#       labs(title = (paste0(genes[i]," in  PT Cells")),
+#            y = "Expression") +
+#       scale_fill_manual(values=c(color1, color2)) + 
+#       scale_color_manual(values=c(color1, color2))
+#     print(p)
+#     cat("\n")
+#     # Save
+#     ggsave(filename = paste0(filepath,"Violin_",genes[i],".jpeg"),plot = p,scale = 5,
+#            width = 800,height = 600,units = "px")
+#   }
+# }
+# 
+# split.vp.combined <- function(seurat_object, genes, filepath, color1 = "#6c9a8b", color2 = "#e8998d", idents = NULL) {
+#   compiled_d = data.frame()
+#   for (i in 1:length(genes)){
+#     d = VlnPlot(seurat_object, features = genes[i], split.by = "Group", idents = idents, split.plot = F, pt.size = 0) 
+#     d = d$data
+#     d$genename = colnames(d)[1]
+#     colnames(d)[1] <- "expression"
+#     compiled_d = rbind(compiled_d, d)
+#   }
+#   p = 
+#     ggplot(compiled_d,aes(x=genename, y = expression, fill=split)) +
+#     geom_jitter(position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.9), 
+#                 size = 0.2, alpha = 0.3, show.legend = T, aes(color = split)) +    
+#     geom_split_violin(scale = "width", trim = T) +
+#     theme_bw() +
+#     theme(legend.title = element_blank(),
+#           axis.title.x = element_blank(), 
+#           plot.title = element_text()) +
+#     labs(y = "Expression") +
+#     scale_fill_manual(values=c(color1, color2)) + 
+#     scale_color_manual(values=c(color1, color2))
+#   print(p)
+#   cat("\n")
+#   # Save
+#   ggsave(filename = paste0(filepath,"Violin_combined",".jpeg"),plot = p,scale = 5,
+#          width = 1000,height = 600,units = "px")
+#   
+# }
+# 
+# # Formatted dot plot function
+# # colorlow = "#8ecae6", colormid = "#fcbf49", colorhigh = "#d90429"
+# dp.formatted <- function(seurat_object, genes, celltype, group.by, m,
+#                          colorlow = "#83c5be", colormid = "#f4f1bb", colorhigh = "#d90429")
+# {
+#   pt.combined <- DotPlot(seurat_object,
+#                          features = genes,idents = celltype, group.by = group.by,
+#                          scale = F, cols = "RdYlBu"
+#   )$data 
+#   
+#   pt.plot <- pt.combined %>% 
+#     ggplot(aes(x=features.plot, y = id, color = avg.exp.scaled, size = pct.exp)) + 
+#     geom_point() +
+#     theme_bw() +
+#     scale_color_gradient2(low = colorlow, mid = colormid, high = colorhigh, midpoint = 2,
+#                           guide = guide_colorbar(label.vjust = 0.8, ticks = F, draw.ulim = T, draw.llim = T),
+#                           limits = c(0,4)) +
+#     scale_size(range = c(0,4), 
+#                limits = c(1,80)) +
+#     theme(panel.grid = element_blank(),
+#           axis.title.x = element_blank(),
+#           axis.title.y = element_blank(),
+#           axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+#           legend.text = element_text(size = 8),
+#           legend.title = element_text(size = 8, vjust = 0.5),
+#           legend.spacing.x = unit(.1, "cm"),
+#           legend.direction = "horizontal") +
+#     guides(size = guide_legend(label.position = "bottom",
+#                                title.position = "top"),
+#            color = guide_colorbar(label.position = "bottom",
+#                                   title.position = "top")) +
+#     labs(color = "Scaled average expression",
+#          size = "Expression (%) ") + 
+#     scale_y_discrete(limits=rev)
+#   
+#   pt.table <- m %>%
+#     filter(rownames(m) %in% genes) %>%
+#     dplyr::mutate(p_val_rounded = round(p_val, 4),
+#                   p_val = p_format(p_val_rounded, trailing.zero = T, accuracy = 0.001, digits = 3),
+#                   p_val_adj_rounded = round(p_val_adj, 4),
+#                   p_val_adj = p_format(p_val_adj_rounded, trailing.zero = T, accuracy = 0.001, digits = 3),
+#                   pct.1 = sprintf("%.3f", pct.1),
+#                   pct.2 = sprintf("%.3f", pct.2),
+#                   avg_log2FC = sprintf("%.3f", avg_log2FC)) %>% 
+#     dplyr::select(pct.1, pct.2, avg_log2FC, p_val, p_val_adj) 
+#   gg.pt.table <- ggtexttable(pt.table,
+#                              cols = c("T1D", "HC", "Log2FC", "p-value", "q-value"),
+#                              theme = ttheme("blank")) %>%
+#     tab_add_hline(at.row = 1:2, row.side = "top", linewidth = 1) %>%
+#     tab_add_title("% Expressed in PT Cells")
+#   
+#   pt.plot_table <- ggarrange(pt.plot, NULL, gg.pt.table,
+#                              nrow = 1, widths = c(1,-0.1,1), common.legend = F,
+#                              legend = "top")
+#   
+# }
+# 
+# metabo_sc <- function(data, gene, transcripts, gene_name) {
+#   plots <- list()
+#   for (i in 1:length(transcripts)) {
+#     plot <- subset(data, apply(!is.na(data[, c(transcripts[i], gene)]), 1, all)) %>%
+#       ggplot(aes_string(y = gene, x = transcripts[i], color = "group")) +
+#       geom_smooth(method = lm, se = F, aes(color=NULL), color = "black",
+#                   linetype = "dashed") +
+#       geom_point() +
+#       geom_smooth(method = lm, se = F) +
+#       labs(color = "Group",
+#            y = gene_name,
+#            x = if(is.null(label(data[[transcripts[i]]]))) (transcripts[i]) else label(data[[transcripts[i]]])) +
+#       theme_bw()
+#     plots[[i]] <- plot
+#   }
+#   ggarrange(plotlist = plots, common.legend = T)
+# }
+# 
+# add_direction <- function(df) {
+#   df <- df %>%
+#     mutate(direction = case_when(
+#       (avg_log2FC > 0 & p_val < 0.05) ~ "Upregulated", 
+#       (avg_log2FC <= 0 & p_val < 0.05) ~ "Downregulated",
+#       TRUE ~ "NS"
+#     ))
+#   df$direction <- factor(df$direction, levels = c("Downregulated", "Upregulated", "NS") )
+#   return(df)
+# }
+# 
