@@ -1,8 +1,8 @@
 library(dplyr)
 library(sampling)
+library(readxl)
 
-data <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Lauren Shomaker/BREATHE U01/Quarterly audits/Breathe Audit List AFTER 12.15.2023.csv",
-                 na.strings = c(""," ","-99"))
+data <- read_xlsx('/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Lauren Shomaker/BREATHE U01/Quarterly audits/Breathe Audit List AFTER 7.9.24.xlsx')
 data$Record <- paste(data$SID, data$interval)
 data <- unique(data)
 data_long <- data
@@ -33,6 +33,6 @@ res <- getdata(data_long, temp)
 res <- res[,c("Record","SITE")]
 
 
-write.csv(res,"/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Lauren Shomaker/BREATHE U01/Quarterly audits/Breathe Audit List AFTER 12.15.2023 selected visits.csv",
+write.csv(res,"/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Lauren Shomaker/BREATHE U01/Quarterly audits/Breathe Audit List AFTER 7.9.24 selected visits.csv",
           row.names = F)
 
