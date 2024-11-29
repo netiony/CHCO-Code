@@ -17,6 +17,34 @@
 # DimPlot(so_kidney_sc, reduction = "umap")
 # dev.off()
 
+pdf(file = fs::path(dir.results,"Senesence Results","Volcano_Diabetes.pdf"),width=15,height=10)
+plot(p)
+dev.off()
+
+pdf(file = fs::path(dir.results,"Senesence Results","Barchart_Diabetes.pdf"),width=8,height=5)
+plot(b)
+dev.off()
+
+pdf(file = fs::path(dir.results,"Senesence Results","Volcano_MASLD.pdf"),width=15,height=10)
+plot(p)
+dev.off()
+
+pdf(file = fs::path(dir.results,"Senesence Results","Barchart_MASLD.pdf"),width=8,height=5)
+plot(b)
+dev.off()
+
+pdf(file = fs::path(dir.results,"Senesence Results","Volcano_GLP_1.pdf"),width=15,height=10)
+plot(p)
+dev.off()
+
+pdf(file = fs::path(dir.results,"Senesence Results","Barchart_GLP_1.pdf"),width=8,height=5)
+plot(b)
+dev.off()
+
+pdf(file = fs::path(dir.results,"Senesence Results","ALT.pdf"),width=8,height=5)
+plot(b)
+dev.off()
+
 #Diff exp by diabetes status
 pdf(file = fs::path(dir.results,"Results_and_Figures","Volcano_byDiabetes_heptatocytes.pdf"),width=15,height=10)
 de.markers(so_liver_sn_hep, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hepatocyte", "")
@@ -599,9 +627,9 @@ p <- EnhancedVolcano(m_top,
                      # xlab = "Beta Coefficient",
                      ylab = "-Log10 Adjusted P-Value",
                      # Adjust x-axis scale
-                     # xlim = c(-0.05, 0.05),
+                     xlim = c(-0.25, 0.25),
                      pCutoff = 0.05,
-                     FCcutoff = 0,
+                     FCcutoff = 0.005,
                      labFace = 'bold',
                      pointSize = 4,
                      labSize = 5,

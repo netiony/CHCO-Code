@@ -60,6 +60,7 @@ knitr::opts_chunk$set(message = FALSE,error = FALSE,warning = FALSE,cache = FALS
 
 #Local file path
 dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
+dir.dat2 <- c("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean")
 dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
 dir.results <- c("/Users/hhampson/Documents/UW/1_Ongoing Projects/Liver scRNAseq/2_Results")
 
@@ -99,7 +100,9 @@ Idents(so_liver_sn) <- so_liver_sn$hepatocyte
 # gc()
 so_liver_sn_hep <- subset(so_liver_sn, hepatocyte == "Hepatocyte")
 DefaultAssay(object = so_liver_sn_hep) <- "RNA"
-# saveRDS(so_liver_sn_hep,"so_liver_sn_hepatocytes.RDS")
+rm(so_liver_sn)
+#saveRDS(so_liver_sn_hep,fs::path(dir.dat2,"so_liver_sn_hepatocytes.RDS"))
+
 
 ```
 
@@ -107,7 +110,7 @@ DefaultAssay(object = so_liver_sn_hep) <- "RNA"
 #2b. Load Cleaned & Formatted snRNA Hepatocyte Data
 ```{r}
 gc()
-so_liver_sn_hep <- readRDS(fs::path(dir.dat,"scRNA","data_clean","so_liver_sn_hepatocytes_normalized_scaled.RDS"))
+# so_liver_sn_hep <- readRDS(fs::path(dir.dat2,"so_liver_sn_hepatocytes.RDS"))
 gc()
 Idents(so_liver_sn_hep) <- so_liver_sn_hep$hepatocyte
 gc()
@@ -116,11 +119,11 @@ sens_gene_in_data <- intersect(sens_genes, rownames(so_liver_sn_hep))
 # Subset the Seurat object to include only genes in sens_gene_in_data
 so_sens <- subset(so_liver_sn_hep, features = sens_gene_in_data)
 rm(so_liver_sn_hep)
-#saveRDS(so_sens,fs::path(dir.dat,"scRNA","data_clean","so_sens_genes.RDS"))
+saveRDS(so_sens,fs::path(dir.dat,"scRNA","data_clean","so_sens_genes.RDS"))
 ```
 #2c. Load Senesence Data 
 ```{r}
-so_sens <- readRDS(fs::path(dir.dat,"scRNA","data_clean","so_sens_genes.RDS"))
+so_sens <- readRDS(fs::path(dir.dat2,"so_sens_genes.RDS"))
 ```
 
 #3a. Visualize Data with UMAPs
@@ -508,19 +511,12 @@ de.markers(so_liver_sn_hep, genes, "glp1agonist", id2 = "No", id1 = "Yes", "Hepa
 ```
 
 #6. Senesence Diff Exp 
+##a. Diabetes Status 
 ```{r}
-#Filter to only Hepatocytes
-Idents(so_liver_sn) <- so_liver_sn$hepatocyte
-gc()
-so_liver_sn_hep <- subset(so_liver_sn, hepatocyte == "Hepatocyte")
-gc()
-memory.limit(size = 64000)
-rm(so_liver_sn)
-
 #Diff by Diabetes Status
-Idents(so_liver_sn_hep) <- so_liver_sn_hep$hepatocyte
-de.markers(so_liver_sn_hep, sens_genes, "diagnosis_of_diabetes", id1 = "Yes", id2 = "No", "Hepatocyte", "")
-write.csv(m,"SeneDifferential_Expression_Diabetes.csv")
+Idents(so_sens) <- so_sens$hepatocyte
+de.markers(so_sens, sens_genes, "diagnosis_of_diabetes", id1 = "Yes", id2 = "No", "Hepatocyte", "",min.pct=0.1)
+#write.csv(m,fs::path(dir.results,"DEG_Diabetes_Senesence.csv"))
 m_top <- m
 significant_genes <- m_top %>% filter(p_val_adj < 0.05)
 
@@ -531,27 +527,184 @@ top_genes <- rbind(
 )
 
 labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+p <- EnhancedVolcano(m_top,
+                     lab = labels,
+                     x = 'avg_log2FC',
+                     y = 'p_val_adj',
+                     title = paste0("Differentially Expressed Senesence Genes by Diabetes Status (Pseudobulk Hepatocytes)"),
+                     subtitle = paste0("Positive Log2 FC = Greater Expression in Diabetes vs. No Diabetes\n",
+                                       "(Significant at FDR-P<0.05, FC Threshold = 0.25)"),
+                     pCutoff = 0.05,
+                     FCcutoff = 0.25,
+                     labFace = 'bold',
+                     pointSize = 4,
+                     labSize = 5,
+                     drawConnectors = TRUE,
+                     widthConnectors = 1.0,
+                     colConnectors = 'black',
+                     legendPosition=NULL,
+                     boxedLabels = TRUE,
+                     xlim = c(-2,2),
+                     max.overlaps=30)
+plot(p)
+
+#Bubble plot
+# Prepare the data
+m_top <- m_top %>%
+  mutate(abs_log2FC = abs(avg_log2FC),         # Absolute log2 fold change for size
+         log_pvalue = -log10(p_val_adj),       # Transform p-value for better visualization
+         significant = p_val_adj < 0.05)      # Boolean for significance
+
+# Create the bubble plot
+p <- ggplot(m_top, aes(x = avg_log2FC, 
+                       y = log_pvalue, 
+                       size = abs_log2FC, 
+                       color = avg_log2FC)) +
+  geom_point(aes(fill = significant),          # Fill for significance
+             shape = 21, alpha = 0.8) +        # Hollow circles for better visualization
+  geom_text(aes(label = ifelse(significant, Gene, "")), # Labels only for significant genes
+            hjust = 0, nudge_y = 0.5, size = 4, fontface = "bold") +
+  scale_color_gradient2(low = "blue", mid = "gray", high = "red", midpoint = 0, 
+                        name = "Log2 Fold Change") +  # Gradient for fold change
+  scale_fill_manual(values = c("white", "black"), name = "Significance", 
+                    labels = c("Not Significant", "Significant")) + # Black for significant
+  scale_size_continuous(name = "|Log2 Fold Change|", range = c(2, 10)) + # Size scaling
+  labs(title = "Bubble Plot of Differentially Expressed Genes",
+       subtitle = "Black dots indicate statistical significance (P < 0.05)",
+       x = "Log2 Fold Change",
+       y = "-Log10 Adjusted P-value") +
+  theme_minimal() +
+  theme(legend.position = "right") +
+  xlim(-2, 2)
+
+# Filter top 10 positive and negative log2FoldChange
+top_pos <- as.data.frame(m) %>% 
+  arrange(desc(avg_log2FC)) %>% 
+  dplyr::slice(1:10) 
+top_pos$Gene <- rownames(top_pos)
+top_pos <- top_pos[c("Gene","avg_log2FC","p_val_adj")]
+rownames(top_pos) <- NULL
+top_pos$Direction <- "Positive"
+
+top_neg <- m %>% 
+  arrange(avg_log2FC) %>% 
+  dplyr::slice(1:10) 
+top_neg$Gene <- rownames(top_neg)
+top_neg <- top_neg[c("Gene","avg_log2FC","p_val_adj")]
+rownames(top_neg) <- NULL
+top_neg$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes <- bind_rows(top_pos, top_neg) 
+
+# Bar chart
+ggplot(top_genes, aes(x = Gene, y = avg_log2FC, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(x = "Gene", y = "log2 Fold Change", title = "Top 10 Positive and Negative DEGs") +
+  scale_fill_manual(values = c("red", "blue"), labels = c("Negative", "Positive")) +
+  theme_minimal()
 
 
+# Set sorting order: all negative genes first, then all positive genes
+top_genes <- top_genes %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, avg_log2FC)]))  # Order by Direction and log2FC
+
+# Bar chart with flipped x and y axes
+b <- ggplot(top_genes, aes(x = avg_log2FC, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "log2 Fold Change", y = "Gene", title = "Top 10 Positive and Negative DEGs in Diabetes vs. No Diabetes") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Downregulated in Diabetes", "Upregulated in Diabetes")) +
+  theme_minimal()
+
+```
+##b. MASLD Status
+```{r}
 #MASLD
-de.markers(so_liver_sn_hep, sens_genes, "diagnosis_of_MASLD", id1 = "Yes", id2 = "No", "Hepatocyte", "")
-write.csv(m,fs::path("SeneDifferential_Expression_MASLD.csv"))
+Idents(so_sens) <- so_sens$hepatocyte
+de.markers(so_sens, sens_genes, "diagnosis_of_MASLD", id1 = "Yes", id2 = "No", "Hepatocyte", "",min.pct=0.1)
+# write.csv(m,fs::path(dir.results,"Senesence Results","DEG_MASLD_Senesence.csv"))
 m_top <- m
 significant_genes <- m_top %>% filter(p_val_adj < 0.05)
 
 # Select the top 10 positive and top 10 negative log2FC genes that are significant
 top_genes <- rbind(
-  significant_genes %>% arrange(desc(avg_log2FC)) %>% head(20),  # Top 10 positive log2FC
-  significant_genes %>% arrange(avg_log2FC) %>% head(20)         # Top 10 negative log2FC
+  significant_genes %>% arrange(desc(avg_log2FC)) %>% head(40),  # Top 10 positive log2FC
+  significant_genes %>% arrange(avg_log2FC) %>% head(40)         # Top 10 negative log2FC
 )
 
 labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+p <- EnhancedVolcano(m_top,
+                     lab = labels,
+                     x = 'avg_log2FC',
+                     y = 'p_val_adj',
+                     title = paste0("Differentially Expressed Senesence Genes by MASLD Status (Pseudobulk Hepatocytes)"),
+                     subtitle = paste0("Positive Log2 FC = Greater Expression in MASLD vs. No MASLD\n",
+                                       "(Significant at FDR-P<0.05, FC Threshold = 0.25)"),
+                     pCutoff = 0.05,
+                     FCcutoff = 0.25,
+                     labFace = 'bold',
+                     pointSize = 4,
+                     labSize = 5,
+                     drawConnectors = TRUE,
+                     widthConnectors = 1.0,
+                     colConnectors = 'black',
+                     legendPosition=NULL,
+                     boxedLabels = TRUE,
+                     xlim = c(-2,2),
+                     max.overlaps=30)
+plot(p)
+
+# Filter top 10 positive and negative log2FoldChange
+top_pos <- as.data.frame(m) %>% 
+  arrange(desc(avg_log2FC)) %>% 
+  dplyr::slice(1:10) 
+top_pos$Gene <- rownames(top_pos)
+top_pos <- top_pos[c("Gene","avg_log2FC","p_val_adj")]
+rownames(top_pos) <- NULL
+top_pos$Direction <- "Positive"
+
+top_neg <- m %>% 
+  arrange(avg_log2FC) %>% 
+  dplyr::slice(1:10) 
+top_neg$Gene <- rownames(top_neg)
+top_neg <- top_neg[c("Gene","avg_log2FC","p_val_adj")]
+rownames(top_neg) <- NULL
+top_neg$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes <- bind_rows(top_pos, top_neg) 
+
+# Bar chart
+ggplot(top_genes, aes(x = Gene, y = avg_log2FC, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(x = "Gene", y = "log2 Fold Change", title = "Top 10 Positive and Negative DEGs") +
+  scale_fill_manual(values = c("red", "blue"), labels = c("Negative", "Positive")) +
+  theme_minimal()
 
 
+# Set sorting order: all negative genes first, then all positive genes
+top_genes <- top_genes %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, avg_log2FC)]))  # Order by Direction and log2FC
+
+# Bar chart with flipped x and y axes
+b <- ggplot(top_genes, aes(x = avg_log2FC, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "log2 Fold Change", y = "Gene", title = "Top 10 Positive and Negative DEGs in MASLD vs. No MASLD") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Downregulated in MASLD", "Upregulated in MASLD")) +
+  theme_minimal()
+```
+##c. GLP-1 Status
+```{r}
 #GLP1
 #Need to filter to just Type 2
-de.markers(so_liver_sn_hep, sens_genes, "glp1agonist", id1 = "Yes", id2 = "No", "Hepatocyte", "")
-write.csv(m,fs::path("SeneDifferential_Expression_GLP1.csv"))
+so_diab <- subset(so_sens, diagnosis_of_diabetes == "Yes")
+DefaultAssay(object = so_diab) <- "RNA"
+
+#DEG
+de.markers(so_diab, sens_genes, "glp1agonist", id1 = "Yes", id2 = "No", "Hepatocyte", "")
+write.csv(m,fs::path(dir.results,"Senesence Results","DEG_GLP1_Senesence.csv"))
 m_top <- m
 significant_genes <- m_top %>% filter(p_val_adj < 0.05)
 
@@ -562,7 +715,66 @@ top_genes <- rbind(
 )
 
 labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+p <- EnhancedVolcano(m_top,
+                     lab = labels,
+                     x = 'avg_log2FC',
+                     y = 'p_val_adj',
+                     title = paste0("Differentially Expressed Senesence Genes by GLP-1 Status (Among T2D, Pseudobulk Hepatocytes)"),
+                     subtitle = paste0("Positive Log2 FC = Greater Expression in GLP-1 vs. No GLP-1\n",
+                                       "(Significant at FDR-P<0.05, FC Threshold = 0.25)"),
+                     pCutoff = 0.05,
+                     FCcutoff = 0.25,
+                     labFace = 'bold',
+                     pointSize = 4,
+                     labSize = 5,
+                     drawConnectors = TRUE,
+                     widthConnectors = 1.0,
+                     colConnectors = 'black',
+                     legendPosition=NULL,
+                     boxedLabels = TRUE,
+                     xlim = c(-2,2),
+                     max.overlaps=30)
+plot(p)
 
+# Filter top 10 positive and negative log2FoldChange
+top_pos <- as.data.frame(m) %>% 
+  arrange(desc(avg_log2FC)) %>% 
+  dplyr::slice(1:10) 
+top_pos$Gene <- rownames(top_pos)
+top_pos <- top_pos[c("Gene","avg_log2FC","p_val_adj")]
+rownames(top_pos) <- NULL
+top_pos$Direction <- "Positive"
+
+top_neg <- m %>% 
+  arrange(avg_log2FC) %>% 
+  dplyr::slice(1:10) 
+top_neg$Gene <- rownames(top_neg)
+top_neg <- top_neg[c("Gene","avg_log2FC","p_val_adj")]
+rownames(top_neg) <- NULL
+top_neg$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes <- bind_rows(top_pos, top_neg) 
+
+# Bar chart
+ggplot(top_genes, aes(x = Gene, y = avg_log2FC, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(x = "Gene", y = "log2 Fold Change", title = "Top 10 Positive and Negative DEGs") +
+  scale_fill_manual(values = c("red", "blue"), labels = c("Negative", "Positive")) +
+  theme_minimal()
+
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes <- top_genes %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, avg_log2FC)]))  # Order by Direction and log2FC
+
+# Bar chart with flipped x and y axes
+b <- ggplot(top_genes, aes(x = avg_log2FC, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "log2 Fold Change", y = "Gene", title = "Top 10 Positive and Negative DEGs in T2D") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Downregulated in GLP-1", "Upregulated in GLP-1")) +
+  theme_minimal()
 ```
 
 #7. Gene set enrichment analysis
@@ -662,22 +874,65 @@ so_sens@meta.data$diagnosis_of_MASLD <- factor(so_sens@meta.data$diagnosis_of_MA
 so_sens@meta.data$glp1agonist <- factor(so_sens@meta.data$glp1agonist)
 so_sens@meta.data$nih_sex <- factor(so_sens@meta.data$nih_sex)
 
-model_formula <- ~ alt + age_surgery + nih_sex + a1c + diagnosis_of_diabetes + glp1agonist + diagnosis_of_MASLD
+model_formula <- ~ ast + age_surgery + nih_sex + a1c + diagnosis_of_diabetes + glp1agonist + diagnosis_of_MASLD
 #Diabetes status, GLP1 status, age, sex, sbp, HbA1c
 # Run the linear model with zlm
 zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
-#summary(zlm_results)
+# summary_zlm <- summary(zlm_results)
 # Summarize results and perform likelihood ratio test (LRT) for outcome
-summary_zlm <- summary(zlm_results, doLRT = "alt")
+summary_zlm <- summary(zlm_results, doLRT = "ast")
 # summary_zlm <- summary(zlm_results)
 # Convert the summary to a data table for easy manipulation
 summary_dt <- summary_zlm$datatable
 
-fcHurdle <- merge(summary_dt[contrast=='alt' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
-                  summary_dt[contrast=='alt' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle <- merge(summary_dt[contrast=='ast' & component=='C',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                  summary_dt[contrast=='ast' & component=='C', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
 fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
-write.csv(fcHurdle,fs::path("Adj_ALT_Results.csv"))
+fcHurdle <- fcHurdle %>% 
+  mutate(coef=10*coef)
+write.csv(fcHurdle,fs::path(dir.results,"Senesence Results","AST_Senescence.csv"))
+m <- fcHurdle[,c("primerid","coef","fdr")]
+# Filter top 10 positive and negative log2FoldChange
+top_pos <- as.data.frame(m) %>% 
+  arrange(desc(coef)) %>% 
+  dplyr::slice(1:10) %>% 
+  dplyr::rename(Gene=primerid)
+# top_pos$Gene <- rownames(top_pos)
+top_pos <- top_pos[c("Gene","coef","fdr")]
+rownames(top_pos) <- NULL
+top_pos$Direction <- "Positive"
 
+top_neg <- m %>% 
+  arrange(coef) %>% 
+  dplyr::slice(1:10) %>% 
+  dplyr::rename(Gene=primerid)
+# top_neg$Gene <- rownames(top_neg)
+# top_neg <- top_neg[c("Gene","coef","fdr")]
+# rownames(top_neg) <- NULL
+top_neg$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes <- bind_rows(top_pos, top_neg) 
+
+# Bar chart
+ggplot(top_genes, aes(x = Gene, y = coef, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(x = "Gene", y = "effect estimate", title = "Top 10 Positive and Negative DEGs") +
+  scale_fill_manual(values = c("red", "blue"), labels = c("Negative", "Positive")) +
+  theme_minimal()
+
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes <- top_genes %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, coef)]))  # Order by Direction and log2FC
+
+# Bar chart with flipped x and y axes
+b <- ggplot(top_genes, aes(x = coef, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Coefficient", y = "Gene", title = "Top 10 Positive and Negative DEGs in Diabetes vs. No Diabetes") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Downregulated in Diabetes", "Upregulated in Diabetes")) +
+  theme_minimal()
 # FCTHRESHOLD = log2(0.25)
 # fcHurdleSig <- merge(fcHurdle[fdr<.05 & abs(coef)>FCTHRESHOLD], as.data.table(mcols(sca_gene_set)), by='primerid')
 # setorder(fcHurdleSig, fdr)
