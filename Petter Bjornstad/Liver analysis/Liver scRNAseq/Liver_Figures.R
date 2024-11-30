@@ -17,6 +17,23 @@
 # DimPlot(so_kidney_sc, reduction = "umap")
 # dev.off()
 
+#Compare effect esitmates
+pdf(file = fs::path(dir.results,"Senesence Results","ComparisonPlots_ALT.pdf"),width=10,height=15)
+plot(pvalue)
+dev.off()
+
+pdf(file = fs::path(dir.results,"Senesence Results","ComparisonPlots_ALT2.pdf"),width=10,height=15)
+plot(plot)
+dev.off()
+
+pdf(file = fs::path(dir.results,"Senesence Results","ComparisonPlots_ALT3.pdf"),width=20,height=20)
+plot(plot)
+dev.off()
+
+pdf(file = fs::path(dir.results,"Senesence Results","ComparisonPlots_ALT4.pdf"),width=20,height=20)
+plot(plot)
+dev.off()
+
 pdf(file = fs::path(dir.results,"Senesence Results","Volcano_Diabetes.pdf"),width=15,height=10)
 plot(p)
 dev.off()
@@ -603,7 +620,7 @@ pdf(file = "Volcano_Senesence_GLP1.pdf",width=15,height=8)
 plot(p)
 dev.off()
 
-#Visualize Results
+#MAST Results ----
 m_top <- fcHurdle[,c("primerid","coef","fdr")]
 m_top <- as.data.frame(m_top)
 rownames(m_top) <- m_top$primerid
@@ -658,4 +675,9 @@ plot(p)
 pdf(file="Adj_Fibrosis_Grade_Plot.pdf",width=15,height=10)
 plot(p)
 dev.off()
+
+
+
+table <- table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + diagnosis_of_diabetes + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage | glp1agonist, data = dat)
+write.csv(table, fs::path(dir.results,"Table1_ByGLP1.csv"))
 
