@@ -45,6 +45,18 @@ pdf(file = fs::path(dir.results,"Senesence Results","ALT.pdf"),width=8,height=5)
 plot(b)
 dev.off()
 
+pdf(file = fs::path(dir.results,"Senesence Results","AST.pdf"),width=8,height=5)
+plot(b)
+dev.off()
+
+pdf(file = fs::path(dir.results,"Senesence Results","Fibrosis_Stage.pdf"),width=8,height=5)
+plot(b)
+dev.off()
+
+pdf(file = fs::path(dir.results,"Senesence Results","Steatosis_Grade.pdf"),width=8,height=5)
+plot(b)
+dev.off()
+
 #Diff exp by diabetes status
 pdf(file = fs::path(dir.results,"Results_and_Figures","Volcano_byDiabetes_heptatocytes.pdf"),width=15,height=10)
 de.markers(so_liver_sn_hep, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hepatocyte", "")
