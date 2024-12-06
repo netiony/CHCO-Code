@@ -1,0 +1,183 @@
+---
+title: "KPMP recruitment U01 prelim data"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r libraries,echo=FALSE, include=F}
+library(knitr)
+library(tidyverse)
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(arsenal)
+
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+```
+
+```{r functions,echo=FALSE, include=F}
+calc_egfr <- function(df, age = "age", serum_creatinine = "creatinine_s", 
+                      sex = "Sex", male = "Male", female = "Female", alpha = 0.5) {
+  
+  # Make a copy of the dataframe
+  data <- df
+  
+  # Convert relevant columns to numeric
+  data[[serum_creatinine]] <- as.numeric(data[[serum_creatinine]])
+  data[[age]] <- as.numeric(data[[age]])
+  
+  # CKD-EPI Creatinine 2021
+  f <- dplyr::recode(data[[sex]], "Male" = 0, "Female" = 1)
+  a <- recode(data[[sex]], "Male" = -0.302, "Female" = -0.241)
+  k <- recode(data[[sex]], "Male" = 0.9, "Female" = 0.7)
+  
+  eGFR_CKD_epi <- 142 * (pmin(data[[serum_creatinine]] / k, 1) ^ a) *
+    (pmax(data[[serum_creatinine]] / k, 1) ^ -1.200) *
+    (0.9938 ^ data[[age]]) * (1.012 * f + (1 - f))
+  
+  # Combine the eGFR results into the original dataframe
+  eGFR_df <- data.frame(
+      eGFR_CKD_epi = eGFR_CKD_epi
+  )
+  
+  # Return final dataframe
+  data <- bind_cols(data, eGFR_df)
+  
+  return(data)
+}
+```
+
+```{r clean data,echo=FALSE}
+# Zip, State, Sex, Religion, Marital Status, Language, Age
+patient_data <- read.csv('/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Grants/KPMP recruitment site/Prelim data/patient_data.csv')
+patient_data$Sex <- recode(patient_data$Sex, "Another, not listed" = "Male", "Nonbinary" = "Female", "Unknown" = "Male",
+                           "X" = "Male", "X (Legal Non-Binary Designation)" = "Female")
+
+# hypertension dx
+diagnosis <- read.csv('/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Grants/KPMP recruitment site/Prelim data/diagnosis_data.csv')
+diag_type <- unique(diagnosis$EventDescription)
+write.csv(diag_type, '/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Grants/KPMP recruitment site/Prelim data/diagnoses.csv', row.names = F)
+dx <- c("Essential (primary) hypertension", "Hypertension secondary to other renal disorders",
+        "Renovascular hypertension", "Hypertension secondary to endocrine disorders",
+        "Other secondary hypertension", "Secondary hypertension, unspecified",
+        "Resistant hypertension", "UNSPECIFIED ESSENTIAL HYPERTENSION", "Benign essential hypertension",
+        "Essential hypertension, unspecified benign or malignant", "Hypertension NOS",
+        "Malignant essential hypertension", "HYPERTENSION, ESSENTIAL",
+        "SECOND HYPERTENSION NEC", "HYPERTENSION, MALIGNANT", "hypertension", 
+        "BENIGN HYPERTENSION", "RENOVASC HYPERTENSION", "chronic hypertension",
+        "ESSENTIAL HYPERTENSION", "SECOND HYPERTENSION NOS", "HYPERTENSION NOS",
+        "HYPERTENSION" )
+diagnosis$hypertension <- ifelse(diagnosis$EventDescription %in% dx, 1, 0)
+diagnosis <- diagnosis %>% group_by(hash_id) %>% mutate(hypertension_ever = max(hypertension)) 
+diagnosis$hypertension_ever <- as.factor(diagnosis$hypertension_ever)
+diagnosis_keep <- diagnosis %>% select(hash_id, hypertension_ever)
+diagnosis_keep <- unique(diagnosis_keep)
+
+# merge patient and diagnosis data
+# if hypertension dx missing, set to 0
+final <- left_join(patient_data, diagnosis_keep, by = "hash_id")
+final$hypertension_ever <- ifelse(is.na(final$hypertension_ever), 0, 1)
+final$hypertension_ever <- as.factor(final$hypertension_ever)
+
+# HbA1c
+lab1 <- read.csv('/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Grants/KPMP recruitment site/Prelim data/lab1_data.csv')
+lab1$hba1c_ge_8.5 <- as.factor(ifelse(lab1$Value >= 8.5, 1, 0))
+lab1$OrderedDateDurableKey <- as.Date(lab1$OrderedDateDurableKey, format = "%m/%d/%Y")
+lab1 <- lab1 %>% group_by(hash_id) %>% arrange(hash_id, desc(OrderedDateDurableKey)) %>% filter(row_number()==1)
+lab1_keep <- lab1 %>% select(hash_id, hba1c_ge_8.5)
+lab1_keep <- unique(lab1_keep)
+
+# merge HbA1c 
+final <- left_join(final, lab1_keep, by = "hash_id")
+
+# serum Creatinine
+lab2 <- read.csv('/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Grants/KPMP recruitment site/Prelim data/lab2_data.csv')
+x <- patient_data %>% select(hash_id, Age, Sex)
+lab2 <- left_join(lab2, x, by = "hash_id")
+lab2 <- calc_egfr(lab2, age = "Age", sex = "Sex", serum_creatinine = "Value")
+lab2$egfr_lt_30 <- as.factor(ifelse(lab2$eGFR_CKD_epi < 30, 1, 0))
+lab2$egfr_30_59 <- as.factor(ifelse(lab2$eGFR_CKD_epi >= 30 & lab2$eGFR_CKD_epi <= 59, 1, 0))
+lab2$OrderedDateDurableKey <- as.Date(lab2$OrderedDateDurableKey, format = "%m/%d/%y")
+lab2 <- lab2 %>% group_by(hash_id) %>% arrange(hash_id, desc(OrderedDateDurableKey)) %>% filter(row_number()==1)
+lab2_keep <- lab2 %>% select(hash_id, egfr_30_59, egfr_lt_30)
+lab2_keep <- unique(lab2_keep)
+final <- left_join(final, lab2_keep)
+
+# UACR
+lab3 <- read.csv('/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Grants/KPMP recruitment site/Prelim data/lab3_data.csv')
+lab3$uacr_ge_30 <- as.factor(ifelse(lab3$Value >= 30, 1, 0))
+lab3$uacr_10_30 <- as.factor(ifelse(lab3$Value >= 10 & lab3$Value < 30, 1, 0))
+lab3$OrderedDateDurableKey <- as.Date(lab3$OrderedDateDurableKey, format = "%m/%d/%Y")
+lab3 <- lab3 %>% group_by(hash_id) %>% arrange(hash_id, desc(OrderedDateDurableKey)) %>% filter(row_number()==1)
+lab3_keep <- lab3 %>% select(hash_id, uacr_ge_30, uacr_10_30)
+lab3_keep  <- unique(lab3_keep)
+final <- left_join(final, lab3_keep)
+
+# BMI
+vital_data <- read.csv('/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Grants/KPMP recruitment site/Prelim data/vital_data.csv')
+vital_data$bmi_ge_27.5 <- as.factor(ifelse(vital_data$Value >= 27.5, 1, 0))
+vital_data$takeninstant <- as.POSIXct(vital_data$takeninstant, format = "%m/%d/%Y")
+vital_data <- vital_data %>% group_by(hash_id) %>% arrange(hash_id, desc(takeninstant)) %>% filter(row_number()==1)
+vital_data_keep <- vital_data %>% select(hash_id, bmi_ge_27.5)
+vital_data_keep <- unique(vital_data_keep)
+final <- left_join(final, vital_data_keep)
+
+# create flag for egfr available, UACR available
+final$egfr_available <- ifelse(is.na(final$egfr_30_59), "eGFR not available", "eGFR available")
+final$uacr_available <- ifelse(is.na(final$uacr_ge_30), "UACR not available", "UACR available")
+# is eGFR 30-59 OR UACR >=30
+final$egfr_30_59_or_uacr_ge30 <- NA
+final$egfr_30_59_or_uacr_ge30 <- ifelse(final$egfr_30_59 == "1", 1, final$egfr_30_59_or_uacr_ge30)
+final$egfr_30_59_or_uacr_ge30 <- ifelse(final$uacr_ge_30 == "1", 1, final$egfr_30_59_or_uacr_ge30)
+final$egfr_30_59_or_uacr_ge30 <- ifelse(final$uacr_ge_30 == "0" & final$egfr_30_59 == 0, 0, final$egfr_30_59_or_uacr_ge30)
+final$egfr_30_59_or_uacr_ge30 <- as.factor(final$egfr_30_59_or_uacr_ge30)
+
+# new variable for any risk factor
+final$any_risk_factor <- NA
+final$any_risk_factor <- ifelse(final$hba1c_ge_8.5 == "1", 1, final$any_risk_factor)
+final$any_risk_factor <- ifelse(final$bmi_ge_27.5 == "1", 1, final$any_risk_factor)
+final$any_risk_factor <- ifelse(final$hypertension == "1", 1, final$any_risk_factor)
+final$any_risk_factor <- ifelse(final$uacr_10_30 == "1", 1, final$any_risk_factor)
+final$any_risk_factor <- as.factor(final$any_risk_factor)
+
+# exclude patients with CKD
+nockd <- final %>% filter(egfr_30_59 %in% c("0", NA) & egfr_lt_30 %in% c("0", NA)  & uacr_ge_30 %in% c("0", NA))
+
+```
+
+# All patients
+
+```{r, include=FALSE}
+t1 <- tableby( ~ egfr_lt_30 + egfr_30_59 + uacr_ge_30 + uacr_10_30 + bmi_ge_27.5 + hba1c_ge_8.5 + hypertension_ever
+               + egfr_30_59_or_uacr_ge30 + any_risk_factor,
+               data = final)
+```
+
+```{r, include=TRUE, results='asis'}
+summary(t1)
+```
+
+# Availability of eGFR x UACR (all patients)
+
+```{r, include=TRUE, comment = ""}
+table(final$egfr_available, final$uacr_available)
+```
+
+# Excluding patients with CKD (eGFR < 60 or UACR >= 30)
+
+```{r, include=FALSE}
+t2 <- tableby( ~ egfr_lt_30 + egfr_30_59 + uacr_ge_30 + uacr_10_30 + bmi_ge_27.5 + hba1c_ge_8.5 + hypertension_ever
+               + egfr_30_59_or_uacr_ge30 +  any_risk_factor,
+               data = nockd)
+```
+
+```{r, include=TRUE, results='asis'}
+summary(t2)
+```
