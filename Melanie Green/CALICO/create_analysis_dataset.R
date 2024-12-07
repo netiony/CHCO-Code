@@ -372,32 +372,29 @@ df$cv_cesd20[df$cv_cesd20 == "AN"] <- NA
 df$cv_phq9 <- as.numeric(df$cv_phq9)
 df$cv_cesd20 <- as.numeric(df$cv_cesd20)
 df <- df %>%
-  group_by(record_number) %>%
   mutate(
-    depression =
-      factor(
-        any(cv_newdx___16 == "Checked" | pcosdx_pmh___16 == "Checked" |
-          cv_phq2 >= 3 | cv_phq8 >= 10 | cv_phq9 >= 10 | cv_cesd20 >= 16),
-        levels = c(F, T), labels = c("No", "Yes")
-      ),
+    depression = cv_newdx___16 == "Checked" | pcosdx_pmh___16 == "Checked" |
+      cv_phq2 >= 3 | cv_phq8 >= 10 | cv_phq9 >= 10 | cv_cesd20 >= 16,
     anxiety =
-      factor(any(cv_newdx___15 == "Checked" | pcosdx_pmh___15 == "Checked"),
+      factor(cv_newdx___15 == "Checked" | pcosdx_pmh___15 == "Checked",
         levels = c(F, T), labels = c("No", "Yes")
       ),
     bed =
-      factor(any(cv_newdx___17 == "Checked" | pcosdx_pmh___17 == "Checked"),
+      factor(cv_newdx___17 == "Checked" | pcosdx_pmh___17 == "Checked",
         levels = c(F, T), labels = c("No", "Yes")
       ),
     red =
-      factor(any(cv_newdx___18 == "Checked" | pcosdx_pmh___18 == "Checked"),
+      factor(cv_newdx___18 == "Checked" | pcosdx_pmh___18 == "Checked",
         levels = c(F, T), labels = c("No", "Yes")
       ),
     adhd =
-      factor(any(cv_newdx___19 == "Checked" | pcosdx_pmh___19 == "Checked"),
+      factor(cv_newdx___19 == "Checked" | pcosdx_pmh___19 == "Checked",
         levels = c(F, T), labels = c("No", "Yes")
       )
-  ) %>%
-  ungroup()
+  )
+df$depression[is.na(df$depression)] <- F
+df$depression <-
+  factor(df$depression, levels = c(F, T), labels = c("No", "Yes"))
 # Any mental health counseling
 df$pcosdx_any_mentalhealthcounseling <-
   rowSums(df[, c(paste0("pcosdx_mentalhealthcounseling___", 1:3))] == "Checked")
@@ -450,6 +447,8 @@ label(df$ethnicity) <- "Ethnicity"
 label(df$pcosdx_age) <- "Age at time of PCOS diagnosis"
 label(df$age_group) <- "Age Group at Diagnosis"
 label(df$combined_race) <- "Race"
+label(df$weight_perc) <- "Weight Category (by percentile and raw value)"
+label(df$weight_raw) <- "Weight Category (by raw value)"
 label(df$overweight_perc) <- "Overweight Status (by percentile and raw value)"
 label(df$overweight_raw) <- "Overweight Status (by raw value)"
 label(df$cv_a1c) <- "HbA1C"
