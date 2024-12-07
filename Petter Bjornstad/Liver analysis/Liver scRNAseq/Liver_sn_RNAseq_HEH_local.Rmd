@@ -140,53 +140,96 @@ DefaultAssay(object = so_diab) <- "RNA"
 
 ```
 
-#3a. Visualize Data with UMAPs
-```{r echo=F}
-# Set a higher memory limit
-# mem.maxVSize(64000000000)
+#2d. Load Kidney ScRNA 
+```{r}
+#Increase Memory
+mem.maxVSize(64000000000)
+dir.dat <- c("/Users/hhampson/Dropbox/Bjornstad data")
+so_kidney_sc <- readRDS(fs::path(dir.dat,"Kidney scRNA","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
 
-# PCA
-# so_liver_sn <- RunPCA(so_liver_sn, features = VariableFeatures(object = so_liver_sn),assay="integrated")
-# so_liver_sn <- FindVariableFeatures(object = so_liver_sn)
-# so_liver_sn <- RunPCA(so_liver_sn, features = VariableFeatures(object = so_liver_sn),assay="RNA")
-ElbowPlot(so_liver_sn)
-ElbowPlot(so_sens_all)
-# Cluster cells
-# so_liver_sn_int <- FindNeighbors(so_liver_sn_int)
-# so_liver_sn_int <- FindClusters(so_liver_sn_int)
+meta_raw <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv")
+meta_raw1 <- meta_raw %>% 
+  filter(record_id %in% unique(so_kidney_sc@meta.data$record_id))
 
-# # Find neighbors and clusters (again using integrated data)
-# # so_liver_sn <- FindNeighbors(so_liver_sn, assay = "integrated", dims = 1:15)
-# so_liver_sn <- FindNeighbors(so_liver_sn, assay = "RNA", dims = 1:15)
-# so_liver_sn <- FindClusters(so_liver_sn, resolution = 0.5)
-# 
-# # UMAP for visualization
-# # so_liver_sn <- RunUMAP(so_liver_sn, assay = "integrated", dims = 1:15)
-# so_liver_sn <- RunUMAP(so_liver_sn, assay = "RNA", dims = 1:15)
+# biopsy <- read.xlsx("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Biopsies/Biopsy master tracker.xlsx")
+# biopsy <- biopsy[-1,]
+# colnames(biopsy) <- biopsy[1,]
+# biopsy <- biopsy[-1,]
 
-# Perform UMAP and tSNE
-# so_liver_sc <- RunUMAP(so_liver_sc, dims = 1:15)
-DimPlot(so_liver_sn, reduction = "umap", raster = F) 
-DimPlot(so_liver_sn, reduction = "umap", group.by = "celltype", raster = FALSE)
-DimPlot(so_liver_sn, reduction = "umap", group.by = "celltype", label = TRUE, label.size = 4)+
-  ggtitle("UMAP Plot with Cell Type Labels")
+# unique(so_kidney_sc@meta.data$cryostor_id)
+# unique(meta_raw$cryostor_id)
+# unique(so_kidney_sc@meta.data$record_id)
+# unique(meta_raw$record_id)
 
-#Sens
+meta_raw2 <- meta_raw1 %>% 
+  filter(visit=="baseline") %>%
+  dplyr::select(c(record_id,cryostor_id,kit_id,co_enroll_id,visit,procedure,hba1c,diabetes_duration,diabetes_dx_date,epic_ever_glp1ra_1,epic_glp1ra_1,sex,age,race,race_ethnicity,epic_ever_sglt2i_1,epic_sglti2_1,bmi,triglycerides,sbp,dbp))
+
+meta_raw3 <- meta_raw2 %>% 
+  mutate(across(everything(),~ifelse(.=="",NA,.))) %>% 
+  summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+            across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+            .by = c(record_id, visit))
+meta_raw3 <- meta_raw3 %>% 
+  mutate(diagnosis_of_diabetes=ifelse(is.na(diabetes_dx_date),"No","Yes"))
+meta_raw3 <- meta_raw3 %>% 
+    summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+            across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+            .by = c(kit_id, visit))
+
+
+meta_kidney_sc <-  left_join(so_kidney_sc@meta.data,meta_raw3,by=c("kit_id","record_id","cryostor_id"))
+rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+so_kidney_sc <- AddMetaData(so_kidney_sc, meta_kidney_sc)
+rm(meds,biopsy,meta_raw,meta_raw2,meta_raw3,meta_kidney_sc,meta_raw1)
+
+#Create senesence so in all cell types
+sens_genes <- c(sens_genes,"CDKN1A")
+sens_gene_in_data <- intersect(sens_genes, rownames(so_kidney_sc))
+# Subset the Seurat object to include only genes in sens_gene_in_data
+so_sens_all <- subset(so_kidney_sc, features = sens_gene_in_data)
+rm(so_kidney_sc)
+# saveRDS(so_sens_all,fs::path(dir.dat2,"so_sens_genes_all_cells_KIDNEY.RDS"))
+
+#Load sens all cells
+so_sens <- readRDS(fs::path(dir.dat2,"so_sens_genes_all_cells_KIDNEY.RDS"))
+so_diab <- subset(so_sens, diagnosis_of_diabetes == "Yes")
+
+#PT Cells
+so_sens_all@meta.data$PT <- ifelse(grepl("PT-",so_sens_all@meta.data$celltype_rpca),"PT","Non-PT")
+Idents(so_sens_all) <- so_sens_all$PT
+so_sens <- subset(so_sens_all, PT=="PT")
+saveRDS(so_sens,fs::path(dir.dat2,"so_sens_genes_PT_Cells_KIDNEY.RDS"))
+rm(so_sens_all)
+so_sens <- readRDS(fs::path(dir.dat2,"so_sens_genes_PT_Cells_KIDNEY.RDS"))
+
+```
+
+#3a. Visualize Kidney Data
+```{r}
+#Visualize the data
+so_kidney_sc <- FindVariableFeatures(object = so_kidney_sc)
+so_kidney_sc <- RunPCA(so_kidney_sc, features = VariableFeatures(object = so_kidney_sc))
+ElbowPlot(so_kidney_sc)
+so_kidney_sc <- FindNeighbors(so_kidney_sc, dims = 1:15)
+so_kidney_sc <- FindClusters(so_kidney_sc, resolution = 0.5)
+so_kidney_sc <- RunUMAP(so_kidney_sc, dims = 1:15)
+# DimPlot(so_kidney_sc, reduction = "umap", raster = F) 
+# so_kidney_sc$celltype_rpca
+# DimPlot(so_kidney_sc, reduction = "umap", group.by = "celltype_rpca", raster = FALSE)
+# DimPlot(so_kidney_sc, reduction = "umap", group.by = "celltype_rpca",raster = FALSE, label = TRUE, label.size = 2)
+
 #Categorize senescence genes
 # Calculate whether each cell expresses any of the sens_genes
-so_liver_sn$Sens_Expression <- colSums(so_liver_sn@assays$RNA@data[sens_genes, , drop = FALSE]) > 0
-so_liver_sn$Sens_Expression <- ifelse(so_liver_sn$Sens_Expression==TRUE,"Expressing","Not Expressing")
-so_liver_sn$Sens_Expression_Level <- colSums(so_liver_sn@assays$RNA@data[sens_genes, , drop = FALSE])
-
-#Raw data, not normalized
-so_liver_sn$Sens_Expression <- colSums(so_liver_sn@assays$RNA@counts[sens_genes, , drop = FALSE]) > 0
-so_liver_sn$Sens_Expression <- ifelse(so_liver_sn$Sens_Expression==TRUE,"Expressing","Not Expressing")
-so_liver_sn$Sens_Expression_Level <- colSums(so_liver_sn@assays$RNA@counts[sens_genes, , drop = FALSE])
+dat <- data.frame(so_kidney_sc@assays$RNA@data)
+so_kidney_sc$Sens_Expression <- rowSums(so_kidney_sc@assays$RNA@data[sens_genes, , drop = FALSE]) > 0
+so_kidney_sc$Sens_Expression <- ifelse(so_kidney_sc$Sens_Expression==TRUE,"Expressing","Not Expressing")
+so_kidney_sc$Sens_Expression_Level <- colSums(so_kidney_sc@assays$RNA@data[sens_genes, , drop = FALSE])
 
 # Assign colors based on Sens_Expression
 DimPlot(so_liver_sn, reduction = "umap", group.by = "Sens_Expression", raster=F) 
 umap1 <- DimPlot(so_liver_sn, reduction = "umap", group.by = "Sens_Expression", 
-        cols = c("Not Expressing" = "red", "Expressing" = "lightblue1"))+
+                 cols = c("Not Expressing" = "red", "Expressing" = "lightblue1"))+
   ggtitle("UMAP Plot with Senescence Expression")+
   theme_void()
 
@@ -229,13 +272,13 @@ cluster_centers <- umap_data %>%
 
 umap_plot <- FeaturePlot(so_liver_sn, features = "Sens_Expression_Level", raster = TRUE,
                          reduction = "umap",
-                         min.cutoff = 0, max.cutoff = 37.82061) +
+                         min.cutoff = 0, max.cutoff = 40.48379) +
   scale_color_gradientn(
-    colors = c("gray", "lightblue1", "lightblue3","blue", "darkblue"),  # Red for 0, transitioning to dark blue
-    values = scales::rescale(c(0,1,5, 20, 37.82061)),           # Control how the colors map to the expression values
-    limits = c(0, 37.82061)                                    # Explicitly set the limits of the color scale
+    colors = c("gray", "lightblue1", "lightblue2","lightblue3","blue", "darkblue"),  # Red for 0, transitioning to dark blue
+    values = scales::rescale(c(0,1,5, 10,15,20,30, 40.48379)),           # Control how the colors map to the expression values
+    limits = c(0, 40.48379)                                    # Explicitly set the limits of the color scale
   ) +
-  labs(color = "Expression Level") +
+  labs(color = "Normalized Expression") +
   ggtitle("UMAP with Gradient of Senescence Gene Expression by Cell Type") +
   theme_void()
 
@@ -246,7 +289,144 @@ umap_plot +
             color = "black", size = 2,fontface="bold", nudge_y = 0.5)
 
 
-hist(as.vector(so_liver_sn$Sens_Expression_Level), breaks = 50, main = "Distribution of Raw Expression for Sens Genes", xlab = "Expression Level")
+hist(as.vector(so_liver_sn$Sens_Expression_Level), breaks = 50, main = "Distribution of Raw Expression for Sens Genes", xlab = "Normalized Expression Level")
+range(so_liver_sn$Sens_Expression_Level)
+
+#Raw data, not normalized
+so_kidney_sc$Sens_Expression <- colSums(so_kidney_sc@assays$RNA@counts[sens_genes, , drop = FALSE]) > 0
+so_kidney_sc$Sens_Expression <- ifelse(so_kidney_sc$Sens_Expression==TRUE,"Expressing","Not Expressing")
+so_kidney_sc$Sens_Expression_Level <- colSums(so_kidney_sc@assays$RNA@counts[sens_genes, , drop = FALSE])
+
+# Assign colors based on Sens_Expression
+DimPlot(so_liver_sn, reduction = "umap", group.by = "Sens_Expression", raster=F) 
+umap1 <- DimPlot(so_liver_sn, reduction = "umap", group.by = "Sens_Expression", 
+                 cols = c("Not Expressing" = "red", "Expressing" = "lightblue1"))+
+  ggtitle("UMAP Plot with Senescence Expression")+
+  theme_void()
+
+# Fetch UMAP coordinates and metadata
+umap_data <- FetchData(so_liver_sn, vars = c("UMAP_1", "UMAP_2", "Sens_Expression_Level", "celltype"))
+
+# Calculate cluster centers for each cell type
+cluster_centers <- umap_data %>%
+  group_by(celltype) %>%
+  summarize(UMAP_1 = mean(UMAP_1), UMAP_2 = mean(UMAP_2))
+umap1 +
+  geom_text(data = cluster_centers, 
+            aes(x = UMAP_1, y = UMAP_2, label = celltype), 
+            color = "black", size = 2,fontface="bold", nudge_y = 0.5)
+
+```
+
+#3b. Visualize Liver Data with UMAPs
+##i. Senescence Genes
+```{r echo=F}
+# Set a higher memory limit
+# mem.maxVSize(64000000000)
+
+# PCA
+# so_liver_sn <- RunPCA(so_liver_sn, features = VariableFeatures(object = so_liver_sn),assay="integrated")
+# so_liver_sn <- FindVariableFeatures(object = so_liver_sn)
+# so_liver_sn <- RunPCA(so_liver_sn, features = VariableFeatures(object = so_liver_sn),assay="RNA")
+ElbowPlot(so_liver_sn)
+ElbowPlot(so_sens_all)
+# Cluster cells
+# so_liver_sn_int <- FindNeighbors(so_liver_sn_int)
+# so_liver_sn_int <- FindClusters(so_liver_sn_int)
+
+# # Find neighbors and clusters (again using integrated data)
+# # so_liver_sn <- FindNeighbors(so_liver_sn, assay = "integrated", dims = 1:15)
+# so_liver_sn <- FindNeighbors(so_liver_sn, assay = "RNA", dims = 1:15)
+# so_liver_sn <- FindClusters(so_liver_sn, resolution = 0.5)
+# 
+# # UMAP for visualization
+# # so_liver_sn <- RunUMAP(so_liver_sn, assay = "integrated", dims = 1:15)
+# so_liver_sn <- RunUMAP(so_liver_sn, assay = "RNA", dims = 1:15)
+
+# Perform UMAP and tSNE
+# so_liver_sc <- RunUMAP(so_liver_sc, dims = 1:15)
+DimPlot(so_liver_sn, reduction = "umap", raster = F) 
+DimPlot(so_liver_sn, reduction = "umap", group.by = "celltype", raster = FALSE)
+DimPlot(so_liver_sn, reduction = "umap", group.by = "celltype", label = TRUE, label.size = 4)+
+  ggtitle("UMAP Plot with Cell Type Labels")
+
+#Sens
+#Categorize senescence genes
+# Calculate whether each cell expresses any of the sens_genes
+so_liver_sn$Sens_Expression <- colSums(so_liver_sn@assays$RNA@data[sens_genes, , drop = FALSE]) > 0
+so_liver_sn$Sens_Expression <- ifelse(so_liver_sn$Sens_Expression==TRUE,"Expressing","Not Expressing")
+so_liver_sn$Sens_Expression_Level <- colSums(so_liver_sn@assays$RNA@data[sens_genes, , drop = FALSE])
+
+#Raw data, not normalized
+so_liver_sn$Sens_Expression <- colSums(so_liver_sn@assays$RNA@counts[sens_genes, , drop = FALSE]) > 0
+so_liver_sn$Sens_Expression <- ifelse(so_liver_sn$Sens_Expression==TRUE,"Expressing","Not Expressing")
+so_liver_sn$Sens_Expression_Level <- colSums(so_liver_sn@assays$RNA@counts[sens_genes, , drop = FALSE])
+
+
+# Assign colors based on Sens_Expression
+DimPlot(so_liver_sn, reduction = "umap", group.by = "Sens_Expression", raster=F) 
+umap1 <- DimPlot(so_liver_sn, reduction = "umap", group.by = "Sens_Expression", 
+                 cols = c("Not Expressing" = "red", "Expressing" = "lightblue1"))+
+  ggtitle("UMAP Plot with Senescence Expression")+
+  theme_void()
+
+# Fetch UMAP coordinates and metadata
+umap_data <- FetchData(so_liver_sn, vars = c("UMAP_1", "UMAP_2", "Sens_Expression_Level", "celltype"))
+
+# Calculate cluster centers for each cell type
+cluster_centers <- umap_data %>%
+  group_by(celltype) %>%
+  summarize(UMAP_1 = mean(UMAP_1), UMAP_2 = mean(UMAP_2))
+umap1 +
+  geom_text(data = cluster_centers, 
+            aes(x = UMAP_1, y = UMAP_2, label = celltype), 
+            color = "black", size = 2,fontface="bold", nudge_y = 0.5)
+
+DimPlot(so_liver_sn, reduction = "umap", group.by = "celltype", label = TRUE, label.size = 4)+
+  ggtitle("UMAP Plot with Cell Type Labels")
+
+FeaturePlot(so_liver_sn, features = "Sens_Expression_Level", 
+            reduction = "umap", cols = c("lightgrey", "blue", "darkblue")) +
+  ggtitle("UMAP with Gradient of Sensitivity Gene Expression") +
+  labs(color = "Expression Level") 
+
+max(so_liver_sn$Sens_Expression_Level)
+# Fetch UMAP coordinates and metadata
+umap_data <- FetchData(so_liver_sn, vars = c("UMAP_1", "UMAP_2", "Sens_Expression_Level", "celltype"))
+
+# Calculate cluster centers for each cell type
+cluster_centers <- umap_data %>%
+  group_by(celltype) %>%
+  summarize(UMAP_1 = mean(UMAP_1), UMAP_2 = mean(UMAP_2))
+
+# Plot UMAP with gradient of senescence gene expression
+# umap_plot <- FeaturePlot(so_liver_sn, features = "Sens_Expression_Level", raster=T,
+#                          reduction = "umap", cols = c("red","lightblue1", "blue", "darkblue"),
+#             min.cutoff = 0, max.cutoff = 37.82061) +
+#   labs(color = "Expression Level") +
+#   ggtitle("UMAP with Gradient of Senescence Gene Expression by Cell Type") +
+#   theme_void()
+
+umap_plot <- FeaturePlot(so_liver_sn, features = "Sens_Expression_Level", raster = TRUE,
+                         reduction = "umap",
+                         min.cutoff = 0, max.cutoff = 40.48379) +
+  scale_color_gradientn(
+    colors = c("gray", "lightblue1", "lightblue2","lightblue3","blue", "darkblue"),  # Red for 0, transitioning to dark blue
+    values = scales::rescale(c(0,1,5, 10,15,20,30, 40.48379)),           # Control how the colors map to the expression values
+    limits = c(0, 40.48379)                                    # Explicitly set the limits of the color scale
+  ) +
+  labs(color = "Normalized Expression") +
+  ggtitle("UMAP with Gradient of Senescence Gene Expression by Cell Type") +
+  theme_void()
+
+# Add cell type labels to the plot
+umap_plot +
+  geom_text(data = cluster_centers, 
+            aes(x = UMAP_1, y = UMAP_2, label = celltype), 
+            color = "black", size = 2,fontface="bold", nudge_y = 0.5)
+
+
+hist(as.vector(so_liver_sn$Sens_Expression_Level), breaks = 50, main = "Distribution of Raw Expression for Sens Genes", xlab = "Normalized Expression Level")
 range(so_liver_sn$Sens_Expression_Level)
 
 
@@ -273,20 +453,245 @@ expression_by_celltype_combined <- expression_with_celltype %>%
   dplyr::group_by(celltype) %>%
   dplyr::summarize(total_expression = sum(total_sens_expression, na.rm = TRUE),
                    total_cells = n())
-expression_by_celltype_combined$average <- expression_by_celltype_combined$total_expression/expression_by_celltype_combined$total_cells
+expression_by_celltype_combined <- expression_by_celltype_combined %>%
+  mutate(average_expression = total_expression / total_cells)
 
-# View the results
-average_expression_by_celltype_combined
 
-# Extract expression data for senescence genes (assuming `sens_genes` is a character vector of gene names)
+ggplot(expression_by_celltype_combined, aes(x = celltype, y = average_expression)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Average Senescence Gene Expression by Cell Type",
+       x = "Cell Type",
+       y = "Average Expression") +
+  theme_minimal()
+
+expression_with_celltype <- expression_with_celltype %>%
+  left_join(expression_by_celltype_combined[, c("celltype", "average_expression")], by = "celltype")
+
+# Add back to Seurat metadata
+so_liver_sn@meta.data$average_expression <- expression_with_celltype$average_expression
+umap2 <- FeaturePlot(so_liver_sn, features = "average_expression", reduction = "umap")
+
+umap2 +
+  geom_text(data = cluster_centers, 
+            aes(x = UMAP_1, y = UMAP_2, label = celltype), 
+            color = "black", size = 2,fontface="bold", nudge_y = 0.5)+
+  labs(color = "Average Expression")+
+  theme_void()+
+  scale_color_gradientn(
+    colors = c("gray", "lightblue1","blue", "darkblue"),  # Red for 0, transitioning to dark blue
+    # values = scales::rescale(c(0,9,10,11,12,13,14,15,16)),           # Control how the colors map to the expression values
+    limits = c(9, 16)                                    # Explicitly set the limits of the color scale
+  ) 
+
+
+# Extract metadata from Seurat object
+metadata <- so_liver_sn@meta.data
+
+# 1. Filter and summarize by diagnosis and cell type
+cell_type_counts <- metadata %>%
+  group_by(diagnosis_of_diabetes, celltype) %>%
+  summarise(cell_count = n(), .groups = "drop")
+
+# 2. Calculate total cells per diagnosis group
+total_cells_per_group <- metadata %>%
+  group_by(diagnosis_of_diabetes) %>%
+  summarise(total_cells = n(), .groups = "drop")
+
+# 3. Merge the counts with the total cell counts to calculate proportions
+cell_type_proportions <- cell_type_counts %>%
+  left_join(total_cells_per_group, by = "diagnosis_of_diabetes") %>%
+  mutate(proportion = cell_count / total_cells)
+
+# Plot the proportions
+ggplot(cell_type_proportions, aes(x = celltype, y = proportion, fill = diagnosis_of_diabetes)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Proportion of Each Cell Type in T2D and Healthy Controls",
+       x = "Cell Type", y = "Proportion") +
+  theme_minimal()
+
+# Extract metadata from Seurat object
+metadata <- so_liver_sn@meta.data
+
+
+```
+##ii. P21/CDKN1A
+```{r echo=F}
+# Perform UMAP and tSNE
+# so_liver_sc <- RunUMAP(so_liver_sc, dims = 1:15)
+DimPlot(so_liver_sn, reduction = "umap", raster = F) 
+DimPlot(so_liver_sn, reduction = "umap", group.by = "celltype", raster = FALSE)
+DimPlot(so_liver_sn, reduction = "umap", group.by = "celltype", label = TRUE, label.size = 4)+
+  ggtitle("UMAP Plot with Cell Type Labels")
+
+#Sens
+#Categorize senescence genes
+# Calculate whether each cell expresses any of the sens_genes
+sens_genes <- c("CDKN1A")
+so_liver_sn$Sens_Expression <- colSums(so_liver_sn@assays$RNA@data[sens_genes, , drop = FALSE]) > 0
+so_liver_sn$Sens_Expression <- ifelse(so_liver_sn$Sens_Expression==TRUE,"Expressing","Not Expressing")
+so_liver_sn$Sens_Expression_Level <- colSums(so_liver_sn@assays$RNA@data[sens_genes, , drop = FALSE])
+
+# #Raw data, not normalized
+# so_liver_sn$Sens_Expression <- colSums(so_liver_sn@assays$RNA@counts[sens_genes, , drop = FALSE]) > 0
+# so_liver_sn$Sens_Expression <- ifelse(so_liver_sn$Sens_Expression==TRUE,"Expressing","Not Expressing")
+# so_liver_sn$Sens_Expression_Level <- colSums(so_liver_sn@assays$RNA@counts[sens_genes, , drop = FALSE])
+
+
+# Assign colors based on Sens_Expression
+DimPlot(so_liver_sn, reduction = "umap", group.by = "Sens_Expression", raster=F) 
+umap1 <- DimPlot(so_liver_sn, reduction = "umap", group.by = "Sens_Expression", 
+                 cols = c("Not Expressing" = "lightblue1", "Expressing" = "red"))+
+  ggtitle("UMAP Plot with Senescence Expression")+
+  theme_void()
+
+# Fetch UMAP coordinates and metadata
+umap_data <- FetchData(so_liver_sn, vars = c("UMAP_1", "UMAP_2", "Sens_Expression_Level", "celltype"))
+
+# Calculate cluster centers for each cell type
+cluster_centers <- umap_data %>%
+  group_by(celltype) %>%
+  summarize(UMAP_1 = mean(UMAP_1), UMAP_2 = mean(UMAP_2))
+umap1 +
+  geom_text(data = cluster_centers, 
+            aes(x = UMAP_1, y = UMAP_2, label = celltype), 
+            color = "black", size = 2,fontface="bold", nudge_y = 0.5)
+
+DimPlot(so_liver_sn, reduction = "umap", group.by = "celltype", label = TRUE, label.size = 4)+
+  ggtitle("UMAP Plot with Cell Type Labels")
+
+FeaturePlot(so_liver_sn, features = "Sens_Expression_Level", 
+            reduction = "umap", cols = c("gray", "lightblue1", "lightblue2","lightblue3","blue", "darkblue")) +
+  ggtitle("UMAP with Gradient of Sensitivity Gene Expression") +
+  labs(color = "Expression Level") 
+
+max(so_liver_sn$Sens_Expression_Level)
+range(so_liver_sn$Sens_Expression_Level)
+
+# Fetch UMAP coordinates and metadata
+umap_data <- FetchData(so_liver_sn, vars = c("UMAP_1", "UMAP_2", "Sens_Expression_Level", "celltype"))
+
+# Calculate cluster centers for each cell type
+cluster_centers <- umap_data %>%
+  group_by(celltype) %>%
+  summarize(UMAP_1 = mean(UMAP_1), UMAP_2 = mean(UMAP_2))
+
+# Plot UMAP with gradient of senescence gene expression
+# umap_plot <- FeaturePlot(so_liver_sn, features = "Sens_Expression_Level", raster=T,
+#                          reduction = "umap", cols = c("red","lightblue1", "blue", "darkblue"),
+#             min.cutoff = 0, max.cutoff = 37.82061) +
+#   labs(color = "Expression Level") +
+#   ggtitle("UMAP with Gradient of Senescence Gene Expression by Cell Type") +
+#   theme_void()
+
+umap_plot <- FeaturePlot(so_liver_sn, features = "Sens_Expression_Level", raster = TRUE,
+                         reduction = "umap",
+                         min.cutoff = 0, max.cutoff = 3.365003) +
+  scale_color_gradientn(
+    colors = c("lightgrey","lightblue1","blue", "darkblue"),  # Red for 0, transitioning to dark blue
+    values = scales::rescale(c(0,0.1,1,2,3,4)),           # Control how the colors map to the expression values
+    limits = c(0, 3.365003)                                    # Explicitly set the limits of the color scale
+  ) +
+  labs(color = "Normalized Expression") +
+  ggtitle("UMAP with Gradient of Senescence Gene Expression by Cell Type") +
+  theme_void()
+
+# Add cell type labels to the plot
+umap_plot +
+  geom_text(data = cluster_centers, 
+            aes(x = UMAP_1, y = UMAP_2, label = celltype), 
+            color = "black", size = 2,fontface="bold", nudge_y = 0.5)
+
+
+hist(as.vector(so_liver_sn$Sens_Expression_Level), breaks = 50, main = "Distribution of Raw Expression for Sens Genes", xlab = "Normalized Expression Level")
+range(so_liver_sn$Sens_Expression_Level)
+
+
+# Extract expression data for the senescence genes
 expression_data <- so_liver_sn@assays$RNA@data[sens_genes, , drop = FALSE]
+# Extract cell type information (assuming 'celltype' is a column in metadata)
+cell_types <- so_liver_sn$celltype
 
+# Combine the expression data with the cell type information
+expression_with_celltype <- data.frame(expression_data)
+rm(expression_data)
+dim(expression_with_celltype) #124 rows/genes, 130124 columns/cells
+expression_with_celltype <- t(expression_with_celltype)
+cell <- rownames(expression_with_celltype)
+expression_with_celltype <- as.data.frame(expression_with_celltype)
+expression_with_celltype$celltype <- cell_types
+expression_with_celltype$cell <- cell
+
+#Calculate total sense expression for each cell
+expression_with_celltype$total_sens_expression <- rowSums(expression_with_celltype[sens_genes])
+
+# Now, calculate the average expression for each cell type
+expression_by_celltype_combined <- expression_with_celltype %>%
+  dplyr::group_by(celltype) %>%
+  dplyr::summarize(total_expression = sum(total_sens_expression, na.rm = TRUE),
+                   total_cells = n())
+expression_by_celltype_combined <- expression_by_celltype_combined %>%
+  mutate(average_expression = total_expression / total_cells)
+
+
+ggplot(expression_by_celltype_combined, aes(x = celltype, y = average_expression)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Average P21 Gene Expression by Cell Type",
+       x = "Cell Type",
+       y = "Average Expression") +
+  theme_minimal()
+
+expression_with_celltype <- expression_with_celltype %>%
+  left_join(expression_by_celltype_combined[, c("celltype", "average_expression")], by = "celltype")
+
+# Add back to Seurat metadata
+so_liver_sn@meta.data$average_expression <- expression_with_celltype$average_expression
+umap2 <- FeaturePlot(so_liver_sn, features = "average_expression", raster=T,reduction = "umap")
+
+umap2 +
+  geom_text(data = cluster_centers, 
+            aes(x = UMAP_1, y = UMAP_2, label = celltype), 
+            color = "black", size = 2,fontface="bold", nudge_y = 0.5)+
+  labs(color = "Average Expression")+
+  theme_void()+
+  scale_color_gradientn(
+    colors = c("lightgray", "lightblue1","blue", "darkblue"),  # Red for 0, transitioning to dark blue
+    # values = scales::rescale(c(0,0.1,1,2,3,4)),           # Control how the colors map to the expression values
+    limits = c(0, 0.03)                                    # Explicitly set the limits of the color scale
+  ) 
+
+
+# Extract metadata from Seurat object
+metadata <- so_liver_sn@meta.data
+
+# 1. Filter and summarize by diagnosis and cell type
+cell_type_counts <- metadata %>%
+  group_by(diagnosis_of_diabetes, celltype) %>%
+  summarise(cell_count = n(), .groups = "drop")
+
+# 2. Calculate total cells per diagnosis group
+total_cells_per_group <- metadata %>%
+  group_by(diagnosis_of_diabetes) %>%
+  summarise(total_cells = n(), .groups = "drop")
+
+# 3. Merge the counts with the total cell counts to calculate proportions
+cell_type_proportions <- cell_type_counts %>%
+  left_join(total_cells_per_group, by = "diagnosis_of_diabetes") %>%
+  mutate(proportion = cell_count / total_cells)
+
+# Plot the proportions
+ggplot(cell_type_proportions, aes(x = celltype, y = proportion, fill = diagnosis_of_diabetes)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Proportion of Each Cell Type in T2D and Healthy Controls",
+       x = "Cell Type", y = "Proportion") +
+  theme_minimal()
+
+# Extract metadata from Seurat object
+metadata <- so_liver_sn@meta.data
 
 
 ```
 
-
-#3b. Cleaning - Check for dublets 
+#3c. Cleaning - Check for dublets 
 ```{r}
 # Identify gene markers
 # Initialize a list to store markers for each cell type
@@ -528,12 +933,12 @@ cbind.fill <- function(...) {
 
 ipa.table.comb <- cbind.fill(ipa.table.neg,ipa.table.pos,ipa.table.unk)
 gg.ipa.table <- ggtexttable(ipa.table.comb, rows = NULL,
-                                cols = c("Label", "Pathway", "Label", "Pathway","Label", "Pathway"),
-                                theme = ttheme("blank",
-                                               tbody.style = tbody_style(fill = "white", 
-                                                                         size = 8.5, 
-                                                                         hjust = 0,
-                                                                         x = 0.1))) %>%
+                            cols = c("Label", "Pathway", "Label", "Pathway","Label", "Pathway"),
+                            theme = ttheme("blank",
+                                           tbody.style = tbody_style(fill = "white", 
+                                                                     size = 8.5, 
+                                                                     hjust = 0,
+                                                                     x = 0.1))) %>%
   tab_add_hline(at.row = 1:2, row.side = "top", linewidth = 0.8)
 
 
@@ -954,6 +1359,7 @@ print(significant_results)
 ```
 
 ##b. Senesence Gene Set
+###LIVER
 ###i. Quality Control & Visualizations
 ```{r}
 # Step 1: Extract the expression data matrix (e.g., normalized counts)
@@ -971,7 +1377,87 @@ cell_metadata$wellKey <- rownames(cell_metadata)
 sca <- FromMatrix(exprsArray = expression_matrix_filtered, cData = cell_metadata)
 
 # 
+#GLP1 diabetes only
+so_diab@meta.data$alt_scaled <- scale(so_diab@meta.data$alt) %>% 
+  as.numeric()
+# Step 1: Extract the expression data matrix (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_diab[["RNA"]], layer = "data"))
+
+# Step 2: Filter out genes with zero variance
+gene_variance <- apply(expression_matrix, 1, var)
+expression_matrix_filtered <- expression_matrix[gene_variance > 0, ]
+
+# Step 3: Extract metadata and add 'wellKey' column
+cell_metadata <- so_diab@meta.data
+cell_metadata$wellKey <- rownames(cell_metadata)
+
+# Step 7: Create a SingleCellAssay object with the filtered and subsetted expression matrix
+sca <- FromMatrix(exprsArray = expression_matrix_filtered, cData = cell_metadata)
+
+```
+
+###ii. Differential Expression Analyses
+```{r}
+# Assuming gene_set is a vector of gene names
+sca_gene_set <- sca[rownames(sca) %in% sens_genes, ]
+
+# Define the model with the exposure variable
+#"ast","alt","fibrosis_stage","steatosis_grade")
+
+# Convert count variables to factors
+so_sens@meta.data$steatosis_grade <- factor(so_sens@meta.data$steatosis_grade)
+so_sens@meta.data$fibrosis_stage <- factor(so_sens@meta.data$fibrosis_stage)
+so_sens@meta.data$diagnosis_of_diabetes <- factor(so_sens@meta.data$diagnosis_of_diabetes,levels = c("No", "Yes"), labels = c(0, 1))
+so_sens@meta.data$diagnosis_of_MASLD <- factor(so_sens@meta.data$diagnosis_of_MASLD,levels = c("No", "Yes"), labels = c(0, 1))
+so_sens@meta.data$glp1agonist <- factor(so_sens@meta.data$glp1agonist, levels = c("No", "Yes"), labels = c(0, 1))
+so_sens@meta.data$nih_sex <- factor(so_sens@meta.data$nih_sex)
+
+so_diab@meta.data$steatosis_grade <- factor(so_diab@meta.data$steatosis_grade)
+so_diab@meta.data$fibrosis_stage <- factor(so_diab@meta.data$fibrosis_stage)
+so_diab@meta.data$diagnosis_of_diabetes <- factor(so_diab@meta.data$diagnosis_of_diabetes)
+so_diab@meta.data$diagnosis_of_MASLD <- factor(so_diab@meta.data$diagnosis_of_MASLD)
+so_diab@meta.data$glp1agonist <- factor(so_diab@meta.data$glp1agonist, levels = c("No", "Yes"), labels = c(0, 1))
+so_diab@meta.data$nih_sex <- factor(so_diab@meta.data$nih_sex)
+# so_diab@meta.data$tg <- factor(so_diab@meta.data$tg)
+so_diab@meta.data$alt_scaled <- (so_diab@meta.data$alt-mean(so_diab@meta.data$alt,na.rm=T))/sd(so_diab@meta.data$alt,na.rm=T)
+so_diab@meta.data$alt_scaled <- scale(so_diab@meta.data$alt) %>% 
+  as.numeric()
+
+#Filter to diabetes only
+model_formula <- ~ glp1agonist + alt_scaled
+#Diabetes status, GLP1 status, age, sex, sbp, HbA1c
+# Run the linear model with zlm
+zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+# summary_zlm <- summary(zlm_results)
+# Summarize results and perform likelihood ratio test (LRT) for outcome
+summary_zlm <- summary(zlm_results, doLRT = "glp1agonist1")
+# summary_zlm <- summary(zlm_results)
+# Convert the summary to a data table for easy manipulation
+summary_dt2 <- summary_zlm$datatable
+
+```
+
+###KIDNEY
+###i. Quality Control & Visualizations
+```{r}
+# Step 1: Extract the expression data matrix (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_sens[["RNA"]], layer = "data"))
+
+# Step 2: Filter out genes with zero variance
+gene_variance <- apply(expression_matrix, 1, var)
+expression_matrix_filtered <- expression_matrix[gene_variance > 0, ]
+
+# Step 3: Extract metadata and add 'wellKey' column
+cell_metadata <- so_sens@meta.data
+cell_metadata$wellKey <- rownames(cell_metadata)
+
+# Step 7: Create a SingleCellAssay object with the filtered and subsetted expression matrix
+sca <- FromMatrix(exprsArray = expression_matrix_filtered, cData = cell_metadata)
+
+
 # #GLP1 diabetes only
+# so_diab@meta.data$alt_scaled <- scale(so_diab@meta.data$alt) %>% 
+#   as.numeric()
 # # Step 1: Extract the expression data matrix (e.g., normalized counts)
 # expression_matrix <- as.matrix(GetAssayData(so_diab[["RNA"]], layer = "data"))
 # 
@@ -1004,61 +1490,65 @@ so_sens@meta.data$diagnosis_of_MASLD <- factor(so_sens@meta.data$diagnosis_of_MA
 so_sens@meta.data$glp1agonist <- factor(so_sens@meta.data$glp1agonist, levels = c("No", "Yes"), labels = c(0, 1))
 so_sens@meta.data$nih_sex <- factor(so_sens@meta.data$nih_sex)
 
-# so_diab@meta.data$steatosis_grade <- factor(so_diab@meta.data$steatosis_grade)
-# so_diab@meta.data$fibrosis_stage <- factor(so_diab@meta.data$fibrosis_stage)
-# so_diab@meta.data$diagnosis_of_diabetes <- factor(so_diab@meta.data$diagnosis_of_diabetes)
-# so_diab@meta.data$diagnosis_of_MASLD <- factor(so_diab@meta.data$diagnosis_of_MASLD)
-# so_diab@meta.data$glp1agonist <- factor(so_diab@meta.data$glp1agonist, levels = c("No", "Yes"), labels = c(0, 1))
-# so_diab@meta.data$nih_sex <- factor(so_diab@meta.data$nih_sex)
-# # so_diab@meta.data$tg <- factor(so_diab@meta.data$tg)
+so_diab@meta.data$steatosis_grade <- factor(so_diab@meta.data$steatosis_grade)
+so_diab@meta.data$fibrosis_stage <- factor(so_diab@meta.data$fibrosis_stage)
+so_diab@meta.data$diagnosis_of_diabetes <- factor(so_diab@meta.data$diagnosis_of_diabetes)
+so_diab@meta.data$diagnosis_of_MASLD <- factor(so_diab@meta.data$diagnosis_of_MASLD)
+so_diab@meta.data$glp1agonist <- factor(so_diab@meta.data$glp1agonist, levels = c("No", "Yes"), labels = c(0, 1))
+so_diab@meta.data$nih_sex <- factor(so_diab@meta.data$nih_sex)
+# so_diab@meta.data$tg <- factor(so_diab@meta.data$tg)
+so_diab@meta.data$alt_scaled <- (so_diab@meta.data$alt-mean(so_diab@meta.data$alt,na.rm=T))/sd(so_diab@meta.data$alt,na.rm=T)
+so_diab@meta.data$alt_scaled <- scale(so_diab@meta.data$alt) %>% 
+  as.numeric()
 
 #Filter to diabetes only
-model_formula <- ~ diagnosis_of_diabetes + alt
+model_formula <- ~ glp1agonist + alt_scaled
 #Diabetes status, GLP1 status, age, sex, sbp, HbA1c
 # Run the linear model with zlm
 zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
 # summary_zlm <- summary(zlm_results)
 # Summarize results and perform likelihood ratio test (LRT) for outcome
-summary_zlm <- summary(zlm_results, doLRT = "diagnosis_of_diabetesYes")
+summary_zlm <- summary(zlm_results, doLRT = "glp1agonist1")
 # summary_zlm <- summary(zlm_results)
 # Convert the summary to a data table for easy manipulation
-summary_dt <- summary_zlm$datatable
+summary_dt2 <- summary_zlm$datatable
 
 ```
+
 #All Cells, by cell type
 ```{r}
 
 cell_types <- as.vector(unique(so_sens@meta.data$celltype))
 
 for (cell in cell_types) {
-cell="Hep-2"
-#Create subset so
-Idents(so_sens) <- so_sens$celltype
-# gc()
-so_subset <- subset(so_sens, diagnosis_of_diabetes=="Yes")
-so_sens$celltype==cell
-DefaultAssay(object = so_liver_sn_hep) <- "RNA"
-
-
-#Filter to diabetes only
-model_formula <- ~ diagnosis_of_diabetes + alt
-#Diabetes status, GLP1 status, age, sex, sbp, HbA1c
-# Run the linear model with zlm
-zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
-# summary_zlm <- summary(zlm_results)
-# Summarize results and perform likelihood ratio test (LRT) for outcome
-summary_zlm <- summary(zlm_results, doLRT = "diagnosis_of_diabetesYes")
-# summary_zlm <- summary(zlm_results)
-# Convert the summary to a data table for easy manipulation
-summary_dt <- summary_zlm$datatable
-
-#Overall with Hurdle and logFC
-fcHurdle <- merge(summary_dt[contrast=='diagnosis_of_diabetesYes' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
-                  summary_dt[contrast=='diagnosis_of_diabetesYes' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
-fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
-# write.csv(fcHurdle,fs::path(dir.results,"Senesence Results","ALT_Senescence_OverallResults.csv"))
-m <- fcHurdle[,c("primerid","coef","fdr")]
-
+  cell="Hep-2"
+  #Create subset so
+  Idents(so_sens) <- so_sens$celltype
+  # gc()
+  so_subset <- subset(so_sens, diagnosis_of_diabetes=="Yes")
+  so_sens$celltype==cell
+  DefaultAssay(object = so_liver_sn_hep) <- "RNA"
+  
+  
+  #Filter to diabetes only
+  model_formula <- ~ diagnosis_of_diabetes + alt
+  #Diabetes status, GLP1 status, age, sex, sbp, HbA1c
+  # Run the linear model with zlm
+  zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+  # summary_zlm <- summary(zlm_results)
+  # Summarize results and perform likelihood ratio test (LRT) for outcome
+  summary_zlm <- summary(zlm_results, doLRT = "diagnosis_of_diabetesYes")
+  # summary_zlm <- summary(zlm_results)
+  # Convert the summary to a data table for easy manipulation
+  summary_dt <- summary_zlm$datatable
+  
+  #Overall with Hurdle and logFC
+  fcHurdle <- merge(summary_dt[contrast=='diagnosis_of_diabetesYes' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                    summary_dt[contrast=='diagnosis_of_diabetesYes' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+  fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+  # write.csv(fcHurdle,fs::path(dir.results,"Senesence Results","ALT_Senescence_OverallResults.csv"))
+  m <- fcHurdle[,c("primerid","coef","fdr")]
+  
 }
 # # m$Condition <- "A1c"
 # m$Condition <- "GLP-1 Adj. ALT"
