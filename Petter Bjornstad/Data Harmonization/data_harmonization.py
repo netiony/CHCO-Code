@@ -126,7 +126,12 @@ def harmonize_data():
     harmonized["avg_c_r2"]= \
         harmonized[["bold_l_bl_cortex", "bold_r_bl_cortex"]].apply(lambda x: x.mean(), axis=1)
     harmonized["avg_m_r2"]= \
-        harmonized[["bold_l_bl_medulla", "bold_r_bl_medulla"]].apply(lambda x: x.mean(), axis=1)        
+        harmonized[["bold_l_bl_medulla", "bold_r_bl_medulla"]].apply(lambda x: x.mean(), axis=1)   
+    # Average T1
+    harmonized["avg_k_t1"]= \
+        harmonized[["bold_l_t1_kidney", "bold_r_t1_kidney"]].apply(lambda x: x.mean(), axis=1)
+    harmonized["avg_c_t1"]= \
+        harmonized[["bold_l_t1_cortex", "bold_r_t1_cortex"]].apply(lambda x: x.mean(), axis=1)
     # Average ADC
     harmonized["avg_c_adc"] = \
         harmonized[["adc_left", "adc_right"]].apply(lambda x: x.mean(), axis=1)
