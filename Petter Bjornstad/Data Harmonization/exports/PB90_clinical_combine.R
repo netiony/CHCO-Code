@@ -3,7 +3,10 @@ library(Hmisc)
 library(purrr)
 library(Seurat)
 
+dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
 so <- readRDS("/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/data_raw/PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS")
+
+#Making an update
 
 dat <- read.csv("/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv")
 dat[dat == ""] <- NA
