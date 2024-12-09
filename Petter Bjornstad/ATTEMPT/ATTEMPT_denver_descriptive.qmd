@@ -1,0 +1,176 @@
+---
+title: "ATTEMPT Denver Descriptives"
+author: "Ye Ji Choi"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    embed-resources: true
+---
+
+```{r libraries, echo=F, include = F}
+library(tidyverse)
+library(arsenal)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(ggpubr)
+library(readxl)
+source("/Users/choiyej/GitHub/YC_CHCO/R Functions/label_harmonized_function.R")
+```
+
+```{r load-data, echo = F, include = F, message=FALSE}
+attempt_file = "/Volumes/Peds Endo/Petter Bjornstad/ATTEMPT/Data Raw/ATTEMPT_AnalyticalDatasets_Denver.xlsx"
+dict <- read_excel(attempt_file, sheet = "Data Dictionary", na = c("NA", "")) %>%
+  select(Variable_Name, Label) %>%
+  as.data.frame() 
+
+demo <- read_excel(attempt_file, sheet = "ATTEMPT_Demographics", na = c("NA", ""))
+anthro <- read_excel(attempt_file, sheet = "ATTEMPT_Anthropometrics", na = c("NA", ""))
+medfamsmoking <- read_excel(attempt_file, sheet = "ATTEMPT_MedFamSmokingHx", na = c("NA", ""))
+diabetesman <- read_excel(attempt_file, sheet = "ATTEMPT_DiabetesManagement", na = c("NA", ""))
+glucosemon <- read_excel(attempt_file, sheet = "ATTEMPT_GlucoseMonitoring", na = c("NA", ""))
+urinelab <- read_excel(attempt_file, sheet = "ATTEMPT_LocalUrineLabs", na = c("NA", ""))
+urine_24h <- read_excel(attempt_file, sheet = "ATTEMPT_Urine24h", na = c("NA", "")) %>%
+  mutate(date_visit = urine24h_start_date)
+urineemu <- read_excel(attempt_file, sheet = "ATTEMPT_UrineEMU", na = c("NA", ""))
+bloodlab_local <- read_excel(attempt_file, sheet = "ATTEMPT_LocalBloodLabs", na = c("NA", ""))
+bloodlab_central <- read_excel(attempt_file, sheet = "ATTEMPT_CentralBloodLabs", na = c("NA", ""))
+compliance <- read_excel(attempt_file, sheet = "ATTEMPT_Compliance", na = c("NA", ""))
+egfr <- read_excel(attempt_file, sheet = "ATTEMPT_eGFR", na = c("NA", ""))
+mgfr <- read_excel(attempt_file, sheet = "ATTEMPT_mGFR", na = c("NA", ""))
+mri <- read_excel(attempt_file, sheet = "ATTEMPT_BoldMRI", na = c("NA", ""))
+randomization <- read_excel("/Volumes/Peds Endo/Petter Bjornstad/ATTEMPT/Data Raw/ATTEMPT_Randomization_Denver.xlsx",
+                            sheet = "ATTEMPT_Randomization", na = c("NA", ""))
+
+data_frames <- list(
+  demo = demo, randomization = randomization, anthro = anthro, 
+  medfamsmoking = medfamsmoking, diabetesman = diabetesman, 
+  glucosemon = glucosemon, urinelab = urinelab, 
+  urineemu = urineemu, urine_24h = urine_24h, 
+  bloodlab_local = bloodlab_local, 
+  bloodlab_central = bloodlab_central, compliance = compliance, 
+  egfr = egfr, mgfr = mgfr, mri = mri)
+
+data_frames <- lapply(data_frames, function(df) {
+  df %>%
+    mutate(visit = case_when(str_detect(visit, "V1|V2") ~ "PRE",
+                             str_detect(visit, "V3") ~ "Safety",
+                             str_detect(visit, "V4|V5|R3") ~ "POST")) %>%
+    select(-site)
+})
+```
+
+```{r echo = F, warning = F, message = F}
+# Define categories
+# Race
+eth_names <- c("White",
+               "Black",
+               "Latin / South American",
+               "Arab / West Asian",
+               "Japanese / Korean / Filipino",
+               "South East Asian",
+               "Mixed")
+
+merged_data <- reduce(data_frames, ~ full_join(.x, .y)) %>%
+  group_by(subject_id) %>%
+  fill(-c(visit), .direction = "downup") %>%
+  ungroup() %>% rowwise() %>%
+  dplyr::mutate(across(where(is.logical), ~ ifelse(.x, "Yes", "No")),
+                across(where(~ any(grepl("^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$", .))), 
+                       ~ format(as.POSIXct(.), "%H:%M")),
+                ethnicity = case_when(ethnicity_categorized == 1 ~ eth_names[1], 
+                                      ethnicity_categorized == 2 ~ eth_names[2],
+                                      ethnicity_categorized == 3 ~ eth_names[3], 
+                                      ethnicity_categorized == 4 ~ eth_names[4], 
+                                      ethnicity_categorized == 5 ~ eth_names[5], 
+                                      ethnicity_categorized == 6 ~ eth_names[6], 
+                                      ethnicity_categorized == 7 ~ eth_names[7]),
+                sex = case_when(sex == 1  ~ "Male", sex == 2 ~ "Female"),
+                treatment_arm = case_when(treatment_arm == "A" ~ "Placebo",
+                                          treatment_arm == "B" ~ "Dapagliflozin 5mg"),
+                microalbumin_urine24h = case_when(microalbumin_urine24h == "< 5"  ~ "2.5",
+                                                  T ~ microalbumin_urine24h),
+                microalbumin_urine24h_mgL = as.numeric(microalbumin_urine24h) * 1000,
+                creatinine_urine24h_gL = creatinine_urine24h * 0.11312,
+                uacr_24 = microalbumin_urine24h_mgL / creatinine_urine24h_gL,
+                mri_r2_cortex_l = case_when(!is.na(mri_r2_cortex_l) ~ as.numeric(mri_r2_cortex_l)),
+                mri_r2_cortex_r = case_when(!is.na(mri_r2_cortex_l) ~ as.numeric(mri_r2_cortex_r)),
+                mri_r2_medulla_l = case_when(!is.na(mri_r2_cortex_l) ~ as.numeric(mri_r2_medulla_l)),
+                mri_r2_medulla_r = case_when(!is.na(mri_r2_cortex_l) ~ as.numeric(mri_r2_medulla_r)),
+                mri_r2_kidney_l = case_when(!is.na(mri_r2_cortex_l) ~ as.numeric(mri_r2_kidney_l)),
+                mri_r2_kidney_r = case_when(!is.na(mri_r2_cortex_l) ~ as.numeric(mri_r2_kidney_r)),
+                avg_c_r2 = mean(c(mri_r2_cortex_l, mri_r2_cortex_r)),
+                avg_m_r2 = mean(c(mri_r2_medulla_l, mri_r2_medulla_r)),
+                avg_k_r2  = mean(c(mri_r2_kidney_l, mri_r2_kidney_r))) %>% ungroup() %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA, last(na.omit(.x)))),
+                   across(where(is.numeric),  ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+                   .by = c(subject_id, visit)) %>%
+  filter(visit %in% c("PRE", "POST"))
+
+merged_data$visit <- factor(merged_data$visit, levels = c("PRE", "POST"))
+merged_data$treatment_arm <- factor(merged_data$treatment_arm, levels = c("Placebo", "Dapagliflozin 5mg"))
+
+dict <- label_harmonized_dict(merged_data, dict) %>%
+  mutate(ethnicity = "Ethnicity",
+         treatment_arm = "Treatment",
+         uacr_24 = "UACR (24h)",
+         avg_c_r2 = "Avg cortical R2*",
+         avg_m_r2 = "Avg medulla R2*",
+         avg_k_r2 = "Avg kidney R2*",
+         age_baseline = "Age (Baseline)")
+merged_data <- label_harmonized(merged_data, dict)
+```
+
+# Descriptive tables
+
+### Baseline visit
+```{r echo = F, results = 'asis'}
+# baseline
+summary(arsenal::tableby(treatment_arm ~ age_baseline + sex + ethnicity + t1d_duration +
+                           weight_kg + height_m + bmi_kgm2 + bmi_percentile + 
+                           sbp_mmhg	+ dbp_mmhg + kwt(uacr_24, "Nmiss", "medianq1q3", "range") +
+                           egfr_ckdepi40_cr + egfr_ckidu25_cr + mgfr_si + 
+                           mgfr_si_adjusted + mgfr_bm_adult + avg_c_r2 + avg_m_r2 + avg_k_r2,  
+                         data = subset(merged_data, visit == "PRE")),total = F)
+```
+
+### Follow up visit
+```{r echo = F, results = 'asis'}
+# post treatment
+summary(arsenal::tableby(treatment_arm ~ age_baseline + sex + ethnicity + t1d_duration +
+                           weight_kg + height_m + bmi_kgm2 + bmi_percentile + 
+                           sbp_mmhg	+ dbp_mmhg + kwt(uacr_24, "Nmiss", "medianq1q3", "range") +
+                           egfr_ckdepi40_cr + egfr_ckidu25_cr + mgfr_si + 
+                           mgfr_si_adjusted + mgfr_bm_adult + avg_c_r2 + avg_m_r2 + avg_k_r2,  
+                         data = subset(merged_data, visit == "POST")), total = F)
+```
+
+### Placebo
+```{r echo = F, results = 'asis'}
+# placebo
+summary(arsenal::paired(visit ~ age_baseline + sex + ethnicity + t1d_duration +
+                           weight_kg + height_m + bmi_kgm2 + bmi_percentile + 
+                           sbp_mmhg	+ dbp_mmhg + signed.rank(uacr_24, "Nmiss", "medianq1q3", "range") +
+                           egfr_ckdepi40_cr + egfr_ckidu25_cr + mgfr_si + 
+                           mgfr_si_adjusted + mgfr_bm_adult + avg_c_r2 + avg_m_r2 + avg_k_r2,  
+                         data = subset(merged_data, treatment_arm == "Placebo"), id = subject_id), total = F)
+```
+
+### Dapagliflozin 5mg
+```{r echo = F, results = 'asis'}
+# treatment
+summary(arsenal::paired(visit ~ age_baseline + sex + ethnicity + t1d_duration +
+                           weight_kg + height_m + bmi_kgm2 + bmi_percentile + 
+                           sbp_mmhg	+ dbp_mmhg + signed.rank(uacr_24, "Nmiss", "medianq1q3", "range") +
+                           egfr_ckdepi40_cr + egfr_ckidu25_cr + mgfr_si + 
+                           mgfr_si_adjusted + mgfr_bm_adult + avg_c_r2 + avg_m_r2 + avg_k_r2,  
+                         data = subset(merged_data, treatment_arm == "Dapagliflozin 5mg"), id = subject_id), total = F)
+```
+
+
+
+
