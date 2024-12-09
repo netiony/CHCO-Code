@@ -1,0 +1,1111 @@
+---
+  title: "Intermediate Liver scRNA analysis HEH"
+author: "Hailey Hampson"
+date: '2024-11-25'
+output: html_document
+--- 
+
+#1. Set up Libraries & Directores
+```{r libraries, echo=F, include = F}
+library(reprex)
+library(tidyverse)
+library(BiocManager)
+library(arsenal)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(Seurat)
+library(future)
+library(colorspace)
+library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggpubr)
+library(rstatix)
+library(table1)
+library(Biobase)
+library(ReactomeGSA)
+library(GSEABase)
+library(msigdbr)
+library(kableExtra)
+library(knitr)
+library(SingleCellExperiment)
+library(fgsea)
+library(EnhancedVolcano)
+library(openxlsx)
+library(BiocManager)
+library(MAST)
+library(enrichplot)
+library(readxl)
+library(ggplot2)
+library(dplyr)
+library(forcats)
+library(ggpubr)
+
+suppressPackageStartupMessages({
+  library(ggplot2)
+  library(GGally)
+  library(GSEABase)
+  library(limma)
+  library(reshape2)
+  library(data.table)
+  library(knitr)
+  # library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+  library(stringr)
+  library(NMF)
+  library(rsvd)
+  library(RColorBrewer)
+  library(MAST)
+})
+#options(mc.cores = detectCores() - 1) #if you have multiple cores to spin
+options(mc.cores = 1)
+knitr::opts_chunk$set(message = FALSE,error = FALSE,warning = FALSE,cache = FALSE,fig.width=8,fig.height=6)
+
+# #Local file paths
+# dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
+# dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+# dir.results <- c("/Users/hhampson/Documents/UW/1_Ongoing Projects/Liver scRNAseq/2_Results")
+
+#Lambda file paths
+dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
+dir.code <- c("/home/Github_Repo/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+dir.results <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
+
+plan()
+future::plan("sequential")
+options(future.globals.maxSize = 3e9)
+
+```
+
+#2a. Load Full Data & Clean: snRNA & MetaData
+```{r echo = F}
+# Liver snRNA data processing
+gc()
+
+#Lambda
+so_liver_sn <- readRDS(fs::path(dir.dat,"scRNA","data_raw","NoRef_PetterLiver_ClinData_Labels_Char_041924.RDS"))
+
+#Lambda
+meta_liver_raw <- read.csv(fs::path(dir.dat,"scRNA","data_clean","liver_biopsy_metadata_PN.csv"))
+
+
+# #Local
+# so_liver_sn <- readRDS(fs::path(dir.dat,"scRNA","data_raw","NoRef_PetterLiver_ClinData_Labels_Char_041924.RDS"))
+# gc()
+# #Local
+# meta_liver_raw <- read.csv(fs::path(dir.dat,"scRNA","data_clean","liver_biopsy_metadata_PN.csv"))
+
+meta_liver_sn <-  so_liver_sn@meta.data[,1:11] %>%
+  dplyr::mutate(RNAlater_ID = SampleID) %>%
+  left_join(meta_liver_raw)
+
+rownames(meta_liver_sn) <- rownames(so_liver_sn@meta.data)
+so_liver_sn <- AddMetaData(so_liver_sn, meta_liver_sn)
+rm(meta_liver_sn,meta_liver_raw)
+
+#Switch default assay in seurat object to RNA
+DefaultAssay(so_liver_sn) <- "RNA"
+gc()
+so_liver_sn@meta.data$hepatocyte <- ifelse(grepl("Hep",so_liver_sn@meta.data$celltype),"Hepatocyte","Non-Hepatocyte")
+#Create heptatocyte only so
+# Idents(so_liver_sn) <- so_liver_sn$hepatocyte
+gc()
+so_liver_sn_hep <- subset(so_liver_sn, hepatocyte == "Hepatocyte")
+# DefaultAssay(object = so_liver_sn_hep) <- "RNA"
+# saveRDS(so_liver_sn_hep,"so_liver_sn_hepatocytes.RDS")
+
+```
+
+-OR-
+#2b. Load Cleaned & Formatted snRNA Hepatocyte Data
+```{r}
+gc()
+so_liver_sn_hep <- readRDS(fs::path(dir.dat,"scRNA","data_clean","so_liver_sn_hepatocytes_normalized_scaled.RDS"))
+gc()
+Idents(so_liver_sn_hep) <- so_liver_sn_hep$hepatocyte
+gc()
+#Create senesence so
+sens_gene_in_data <- intersect(sens_genes, rownames(so_liver_sn_hep))
+# Subset the Seurat object to include only genes in sens_gene_in_data
+so_sens <- subset(so_liver_sn_hep, features = sens_gene_in_data)
+rm(so_liver_sn_hep)
+#saveRDS(so_sens,fs::path(dir.dat,"scRNA","data_clean","so_sens_genes.RDS"))
+```
+#2c. Load Senesence Data 
+```{r}
+gc()
+so_sens <- readRDS(fs::path(dir.dat,"scRNA","data_clean","so_sens_genes.RDS"))
+```
+
+#3a. Visualize Data with UMAPs
+```{r echo=F}
+# Set a higher memory limit
+# mem.maxVSize(64000000000)
+
+# PCA
+# so_liver_sn <- RunPCA(so_liver_sn, features = VariableFeatures(object = so_liver_sn),assay="integrated")
+# so_liver_sn <- FindVariableFeatures(object = so_liver_sn)
+# so_liver_sn <- RunPCA(so_liver_sn, features = VariableFeatures(object = so_liver_sn),assay="RNA")
+ElbowPlot(so_liver_sn)
+# Cluster cells
+# so_liver_sn_int <- FindNeighbors(so_liver_sn_int)
+# so_liver_sn_int <- FindClusters(so_liver_sn_int)
+
+# # Find neighbors and clusters (again using integrated data)
+# # so_liver_sn <- FindNeighbors(so_liver_sn, assay = "integrated", dims = 1:15)
+# so_liver_sn <- FindNeighbors(so_liver_sn, assay = "RNA", dims = 1:15)
+# so_liver_sn <- FindClusters(so_liver_sn, resolution = 0.5)
+# 
+# # UMAP for visualization
+# # so_liver_sn <- RunUMAP(so_liver_sn, assay = "integrated", dims = 1:15)
+# so_liver_sn <- RunUMAP(so_liver_sn, assay = "RNA", dims = 1:15)
+
+# Perform UMAP and tSNE
+# so_liver_sc <- RunUMAP(so_liver_sc, dims = 1:15)
+DimPlot(so_liver_sn, reduction = "umap", raster = F) 
+DimPlot(so_liver_sn, reduction = "umap", group.by = "celltype", raster = FALSE)
+DimPlot(so_liver_sn, reduction = "umap", group.by = "celltype", label = TRUE, label.size = 4)+
+  ggtitle("UMAP Plot with Cell Type Labels")
+
+
+```
+
+#3b. Cleaning - Check for dublets 
+```{r}
+# Identify gene markers
+# Initialize a list to store markers for each cell type
+top_markers <- list()
+
+# Get unique cell types
+cell_types <- unique(so_liver_sn$celltype)  # Replace 'celltype' with your grouping metadata column
+
+# Loop through each cell type
+for (cell in cell_types) {
+  # Find markers for the current cell type vs all others
+  markers <- FindMarkers(so_liver_sn, 
+                         ident.1 = cell, 
+                         group.by = "celltype", 
+                         min.pct = 0.25,  # Minimum fraction of cells expressing the gene
+                         logfc.threshold = 0.25)  # Minimum log fold change
+  
+  # Add gene names as a column
+  markers <- markers %>%
+    rownames_to_column("gene")
+  
+  # Sort by adjusted p-value (p_val_adj) and log2 fold change
+  markers <- markers %>%
+    arrange(p_val_adj, desc(avg_log2FC))
+  
+  # Select the top gene
+  if (nrow(markers) > 0) {
+    top_markers[[cell]] <- markers$gene[1]
+  } else {
+    top_markers[[cell]] <- NA  # No markers found for this cell type
+  }
+}
+
+# Convert the result to a data frame
+top_markers_df <- data.frame(celltype = names(top_markers), 
+                             top_gene = unlist(top_markers))
+print(top_markers_df)
+
+
+# Define your genes of interest
+marker_genes <- top_markers_df$top_gene
+
+# Generate the dot plot grouped by cell type
+dot_plot <- DotPlot(so_liver_sn, 
+                    features = marker_genes, 
+                    group.by = "celltype") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) # Rotate x-axis labels for readability
+
+# Display the plot
+dot_plot
+
+```
+
+#4. Descriptive Statistics
+```{r echo = F}
+dat <- meta_liver_raw
+
+dat$diagnosis_of_diabetes <- factor(dat$diagnosis_of_diabetes, levels=c("Yes","No"), labels=c("Type 2 Diabetes", "Obese Controls"))
+dat$nih_sex     <- factor(dat$nih_sex, levels=c("Male", "Female"), labels=c("Male", "Female"))
+dat$nih_ethnicity   <- factor(dat$nih_ethnicity, levels=c("Hispanic_Or_Latino","NonHispanic"), labels=c("Hispanic or Latino","Non-Hispanic/Non-Latino"))
+dat$nih_race   <- factor(dat$nih_race, levels=c("White","BlackAfAm","Multiracial","Other"),
+                         labels=c("White","Black","Multirace","Other"))
+dat$steatosis_grade <- as.factor(dat$steatosis_grade)
+dat$fibrosis_stage <- as.factor(dat$fibrosis_stage)
+dat$lobular_inflammation_percent <- as.factor(dat$lobular_inflammation_percent)
+
+label(dat$age)      <- "Age (y)"
+label(dat$nih_sex)      <- "Sex"
+label(dat$nih_race)    <- "Race"
+label(dat$nih_ethnicity)    <- "Ethnicity"
+label(dat$diagnosis_of_diabetes)  <- "Diabetes Status"
+label(dat$bmi)   <- "Body Mass Index (kg/m2)"
+label(dat$diagnosis_of_MASLD)  <- "MASLD Status"
+label(dat$sbp)     <- "Systolic Blood Pressure (mmHg)"
+label(dat$dbp) <- "Diastolic Blood Pressure (mmHg)"
+label(dat$tg) <-  "Triglycerides (mg/dL)"
+label(dat$creatinine) <-  "Creatinine (mg/dL)"
+label(dat$steatosis_percent) <- "Steatosis Percent (%)"
+label(dat$fibrosis_stage) <- "Fibrosis Stage"
+label(dat$lobular_inflammation_percent) <- "Lobular Inflammation Percent (%)"
+
+table1(~ age + nih_sex + nih_race + nih_ethnicity + bmi + diagnosis_of_MASLD + sbp + dbp + tg + creatinine | diagnosis_of_diabetes, data=dat)
+
+table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage | diagnosis_of_diabetes, data = dat)
+
+
+pvalue <- function(x,...) {
+  # Construct vectors of data y, and groups (strata) g
+  y <- unlist(x)
+  g <- factor(rep(1:length(x), times=sapply(x, length)))
+  if (is.numeric(y)) {
+    # For numeric variables, perform a standard 2-sample t-test
+    p <- t.test(y ~ g)$p.value
+  } else {
+    # For categorical variables, perform a chi-squared test of independence
+    p <- chisq.test(table(y, g))$p.value
+  }
+  # Format the p-value, using an HTML entity for the less-than sign.
+  # The initial empty string places the output on the line below the variable label.
+  c("", sub("<", "&lt;", format.pval(p, digits=3, eps=0.001)))
+}
+
+mean_sd <- function(x) {
+  # Handle missing values explicitly
+  s <- stats::sd(x, na.rm=TRUE)
+  m <- mean(x, na.rm=TRUE)
+  sprintf("%.2f (%.2f)", m, s)
+}
+
+table1(~ age + nih_sex + nih_race + bmi + diagnosis_of_MASLD + sbp + dbp + tg | diagnosis_of_diabetes, data=dat,overall=F, extra.col=list(`P-value`=pvalue), render.continuous = mean_sd)
+
+table1(~ age + nih_sex + nih_race + bmi + diagnosis_of_MASLD + sbp + dbp + tg | diagnosis_of_diabetes, data=dat,render.continuous = render.continuous.custom)
+
+table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage | diagnosis_of_diabetes, data = dat,render.continuous = render.continuous.custom)
+
+# Generate the table
+table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage | diagnosis_of_diabetes, 
+       data = dat, 
+       overall = , 
+       extra.col = list(`P-value` = pvalue), 
+       render.continuous = render.continuous.custom)
+#bmi,masld,TGs,AST/ALT (Liver enzymes),ggt, steatosis grade and or percentages,lobular inflam grade, fibrosis stage
+
+# Descriptive stats
+liver_meta_raw_sc <- meta_liver_raw %>%
+  filter(Cryostor_ID!="")
+form <- paste("diagnosis_of_diabetes", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
+
+summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
+
+## MASLD Y/N
+liver_meta_raw_sc <- meta_liver_raw %>%
+  filter(Cryostor_ID!="")
+form <- paste("diagnosis_of_MASLD", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
+
+summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
+
+## GLP-1RA Y/N
+liver_meta_raw_sc <- liver_meta_raw %>%
+  filter(Cryostor_ID!="")
+form <- paste("glp1agonist", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
+
+summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
+
+```
+
+#5. Differential Expression & GSE Analysis by Groups
+##a. Diabetes Status
+###i. All cell types 
+```{r}
+genes <- unique(rownames(so_liver_sn))
+Idents(so_liver_sn) <- so_liver_sn$celltype
+de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", NULL, "",logfc.threshold=0.25,min.pct=0.1)
+#write.csv(m,fs::path(dir.results,"DEG_Liver_Diabetes_All_Cell_Types.csv"))
+m_top <- m
+rm(m)
+significant_genes <- m_top %>% filter(p_val_adj < 0.05)
+
+# Select the top 10 positive and top 10 negative log2FC genes that are significant
+top_genes <- rbind(
+  significant_genes %>% arrange(desc(avg_log2FC)) %>% head(10),  # Top 10 positive log2FC
+  significant_genes %>% arrange(avg_log2FC) %>% head(10)         # Top 10 negative log2FC
+)
+
+labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+p <- EnhancedVolcano(m_top,
+                     lab = labels,
+                     x = 'avg_log2FC',
+                     y = 'p_val_adj',
+                     title = paste0("Differentially Expressed Genes by Diabetes Status (Pseudobulk All Cell Types)"),
+                     subtitle = paste0("Positive Log2 FC = Greater Expression in Diabetes vs. No Diabetes\n",
+                                       "(Significant at FDR-P<0.05, FC Threshold = 0.5)"),
+                     pCutoff = 0.05,
+                     FCcutoff = 0.5,
+                     labFace = 'bold',
+                     pointSize = 4,
+                     labSize = 5,
+                     drawConnectors = TRUE,
+                     widthConnectors = 1.0,
+                     colConnectors = 'black',
+                     legendPosition=NULL,
+                     boxedLabels = TRUE,
+                     max.overlaps=20)
+
+m <- m_top
+rm(m_top)
+
+#Gene set enrichment analysis
+sce_sn_hep <- as.SingleCellExperiment(so_liver_sn)
+# rm(so_liver_sn)
+## C2 category is according to canonical pathways: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
+geneSets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG")
+### filter background to only include genes that we assessed
+geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
+geneSets <- geneSets[geneSets$gene_symbol %in% names(sce_sn_hep),]
+m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
+stats <- m$p_val_adj
+names(stats) <- rownames(m)
+eaRes <- fgsea(pathways = m_list, stats = na.omit(stats))
+# Select the top 10 enriched pathways
+top_eaRes <- eaRes[order(eaRes$pval)][1:20, ]
+
+# Create a dot plot
+enrich.p <- ggplot(top_eaRes, aes(x = reorder(pathway, -NES), y = NES, size = -log10(pval), color = pval)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red") +
+  coord_flip() +
+  labs(
+    title = "Top 20 Enriched Gene Sets (Diabetes vs. No Diabetes)",
+    x = "Pathway",
+    y = "Normalized Enrichment Score (NES)",
+    size = "-log10(p-value)"
+  ) +
+  theme_minimal()
+
+#Barchart
+ggplot(top_eaRes, aes(x = reorder(pathway, NES), y = NES, fill = -log10(pval))) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_gradient(low = "blue", high = "red") +
+  labs(
+    title = "Top 20 Enriched Gene Sets",
+    x = "Pathway",
+    y = "Normalized Enrichment Score (NES)",
+    fill = "-log10(p-value)"
+  ) +
+  theme_minimal()
+
+# Add a column to classify pathways as upregulated or downregulated
+top_eaRes <- eaRes[order(eaRes$pval)][1:20, ]
+top_eaRes$Regulation <- ifelse(top_eaRes$NES > 0, "Upregulated", "Downregulated")
+
+# Create a bar chart colored by regulation status
+ggplot(top_eaRes, aes(x = reorder(pathway, NES), y = NES, fill = Regulation)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_manual(values = c("Upregulated" = "steelblue", "Downregulated" = "firebrick")) +
+  labs(
+    title = "Top 20 Enriched Gene Sets",
+    x = "Pathway",
+    y = "Normalized Enrichment Score (NES)",
+    fill = "Regulation"
+  ) +
+  theme_minimal()
+
+#ooEA <- order(eaRes$pval, decreasing = FALSE)
+#kable(head(eaRes[ooEA, 1:7], n = 20))
+# Convert the leadingEdge column to comma-separated strings
+eaRes$leadingEdge <- sapply(eaRes$leadingEdge, function(x) paste(x, collapse = ", "))
+gc()
+# Save to CSV
+# write.csv(eaRes, fs::path(dir.results,"GSEA_Liver_Diabetes_All_Cell_Types.csv"))
+gc()
+
+```
+
+###ii. Hepatocytes
+```{r}
+#Hepatocytes only
+# rm(so_liver_sn)
+genes <- unique(rownames(so_liver_sn_hep))
+de.markers(so_liver_sn_hep, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hepatocyte", "")
+# write.csv(m,fs::path(dir.results,"DEG_Diabetes_Hepatocytes.csv"))
+
+
+#Gene set enrichment analysis
+sce_sn_hep <- as.SingleCellExperiment(so_liver_sn_hep)
+rm(so_liver_sn_hep)
+## C2 category is according to canonical pathways: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
+geneSets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG")
+### filter background to only include genes that we assessed
+geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
+geneSets <- geneSets[geneSets$gene_symbol %in% names(sce_sn_hep),]
+m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
+stats <- m$p_val_adj
+names(stats) <- rownames(m)
+eaRes <- fgsea(pathways = m_list, stats = na.omit(stats))
+#ooEA <- order(eaRes$pval, decreasing = FALSE)
+#kable(head(eaRes[ooEA, 1:7], n = 20))
+# Convert the leadingEdge column to comma-separated strings
+eaRes$leadingEdge <- sapply(eaRes$leadingEdge, function(x) paste(x, collapse = ", "))
+gc()
+# Save to CSV
+write.csv(eaRes, fs::path(dir.results,"GSEA_Diabetes_Hepatocytes.csv"))
+gc()
+```
+###iii. By Hepatocyte Cell types
+```{r}
+#By cell
+Idents(so_liver_sn) <- so_liver_sn$celltype
+de.markers(so_liver_sn, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hep-1", "_top")
+de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hepa-2", "")
+de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hep-3", "")
+de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hep-4", "")
+de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hep-5", "")
+
+#Determine proportion of each hepatocyte type among Type 2s and Not Type 2s
+# Extract metadata
+metadata <- so_liver_sn@meta.data
+
+# Ensure the cell type and diabetes diagnosis columns are present
+head(metadata[, c("celltype", "diagnosis_of_diabetes")])
+
+# Define relevant cell types
+hep_celltypes <- c("Hep-1", "Hep-2", "Hep-3", "Hep-4", "Hep-5")
+
+# Subset metadata for these cell types
+metadata_hep <- metadata %>% filter(celltype %in% hep_celltypes)
+
+# Calculate proportions by group and cell type
+proportions <- metadata_hep %>%
+  group_by(diagnosis_of_diabetes, celltype) %>%
+  summarise(count = n()) %>%
+  group_by(diagnosis_of_diabetes) %>%
+  mutate(proportion = count / sum(count))
+
+ggplot(proportions, aes(x = diagnosis_of_diabetes, y = proportion, fill = celltype)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Proportion of Hep Cell Types by Diabetes Status",
+       x = "Diabetes Diagnosis",
+       y = "Proportion") +
+  theme_minimal()
+
+
+ggplot(proportions, aes(x = celltype, y = proportion, fill = diagnosis_of_diabetes)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Proportion of Hep Cell Types by Diabetes Status",
+       x = "Cell Type",
+       y = "Proportion") +
+  theme_minimal()
+
+```
+
+##b. MASLD Status
+###i. All Cell Types
+```{r}
+genes <- unique(rownames(so_liver_sn))
+Idents(so_liver_sn) <- so_liver_sn$celltype
+de.markers(so_liver_sn, genes, "diagnosis_of_MASLD", id2 = "No", id1 = "Yes", NULL, "",logfc.threshold=0.25,min.pct=0.1)
+# write.csv(m,fs::path(dir.results,"DEG_Liver_MASLD_All_Cell_Types.csv"))
+m_top <- m
+rm(m)
+significant_genes <- m_top %>% filter(p_val_adj < 0.05)
+
+# Select the top 10 positive and top 10 negative log2FC genes that are significant
+top_genes <- rbind(
+  significant_genes %>% arrange(desc(avg_log2FC)) %>% head(20),  # Top 10 positive log2FC
+  significant_genes %>% arrange(avg_log2FC) %>% head(20)         # Top 10 negative log2FC
+)
+
+labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+p <- EnhancedVolcano(m_top,
+                     lab = labels,
+                     x = 'avg_log2FC',
+                     y = 'p_val_adj',
+                     title = paste0("Differentially Expressed Genes by MASLD Status (Pseudobulk All Cell Types)"),
+                     subtitle = paste0("Positive Log2 FC = Greater Expression in MASLD vs. No MASLD\n",
+                                       "(Significant at FDR-P<0.05, FC Threshold = 0.5)"),
+                     pCutoff = 0.05,
+                     FCcutoff = 0.5,
+                     labFace = 'bold',
+                     pointSize = 4,
+                     labSize = 5,
+                     drawConnectors = TRUE,
+                     widthConnectors = 1.0,
+                     colConnectors = 'black',
+                     legendPosition=NULL,
+                     boxedLabels = TRUE,
+                     max.overlaps=40)
+
+m <- m_top
+rm(m_top)
+
+#Gene set enrichment analysis
+sce_sn_hep <- as.SingleCellExperiment(so_liver_sn)
+# rm(so_liver_sn)
+## C2 category is according to canonical pathways: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
+geneSets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG")
+### filter background to only include genes that we assessed
+geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
+geneSets <- geneSets[geneSets$gene_symbol %in% names(sce_sn_hep),]
+m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
+stats <- m$p_val_adj
+names(stats) <- rownames(m)
+eaRes <- fgsea(pathways = m_list, stats = na.omit(stats))
+# Select the top 10 enriched pathways
+top_eaRes <- eaRes[order(eaRes$pval)][1:20, ]
+
+# Create a dot plot
+enrich.p <- ggplot(top_eaRes, aes(x = reorder(pathway, -NES), y = NES, size = -log10(pval), color = pval)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red") +
+  coord_flip() +
+  labs(
+    title = "Top 20 Enriched Gene Sets (MASLD vs. No MASLD)",
+    x = "Pathway",
+    y = "Normalized Enrichment Score (NES)",
+    size = "-log10(p-value)"
+  ) +
+  theme_minimal()
+
+#Barchart
+ggplot(top_eaRes, aes(x = reorder(pathway, NES), y = NES, fill = -log10(pval))) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_gradient(low = "blue", high = "red") +
+  labs(
+    title = "Top 20 Enriched Gene Sets",
+    x = "Pathway",
+    y = "Normalized Enrichment Score (NES)",
+    fill = "-log10(p-value)"
+  ) +
+  theme_minimal()
+
+# Add a column to classify pathways as upregulated or downregulated
+top_eaRes <- eaRes[order(eaRes$pval)][1:20, ]
+top_eaRes$Regulation <- ifelse(top_eaRes$NES > 0, "Upregulated", "Downregulated")
+
+# Create a bar chart colored by regulation status
+ggplot(top_eaRes, aes(x = reorder(pathway, NES), y = NES, fill = Regulation)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_manual(values = c("Upregulated" = "steelblue", "Downregulated" = "firebrick")) +
+  labs(
+    title = "Top 20 Enriched Gene Sets",
+    x = "Pathway",
+    y = "Normalized Enrichment Score (NES)",
+    fill = "Regulation"
+  ) +
+  theme_minimal()
+
+#ooEA <- order(eaRes$pval, decreasing = FALSE)
+#kable(head(eaRes[ooEA, 1:7], n = 20))
+# Convert the leadingEdge column to comma-separated strings
+eaRes$leadingEdge <- sapply(eaRes$leadingEdge, function(x) paste(x, collapse = ", "))
+gc()
+# Save to CSV
+# write.csv(eaRes, fs::path(dir.results,"GSEA_Liver_MASLD_All_Cell_Types.csv"))
+gc()
+
+```
+
+```{r}
+#IPA Pathway Results
+test_ipa <- readxl::read_xlsx(fs::path(dir.dat,"Liver project","IPA_MASLD.xlsx"))
+colnames(test_ipa) <- c("pathway", "neglog_p", "zscore","ratio", "molecules")
+
+# Volcano plot
+sig_cutoff = -log(0.05, base = 10)
+
+test_ipa <- test_ipa %>%
+  dplyr::mutate(direction = case_when(zscore < 0 & neglog_p > sig_cutoff ~ "Negative", 
+                                      zscore > 0 & neglog_p > sig_cutoff ~ "Positive",
+                                      zscore == 0 & neglog_p > sig_cutoff ~ "Unknown",
+                                      T ~ "NS")) %>%
+  group_by(direction) %>%
+  dplyr::mutate(count = row_number(),
+                label = case_when(direction != "NS" ~ paste0(str_sub(direction, 1,1), count))) %>%
+  ungroup()
+
+test_ipa$direction <- factor(test_ipa$direction, levels = c("Negative", "Positive", "Unknown", "NS"))
+
+ipa.plot <- test_ipa %>% filter(neglog_p > 0) %>%
+  ggplot(aes(x = zscore, y = neglog_p)) + 
+  geom_point(aes(color = direction), alpha = 0.5, size = 2) +
+  geom_hline(aes(yintercept = sig_cutoff), color = "red", linetype = "dashed") +
+  labs(x = "Z-Score",
+       y = "-log(p-value)",
+       color = "Direction") + 
+  scale_color_manual(values = c("#bf0603", "#457b9d",
+                                "#f6bd60", "#dad7cd")) +
+  ggrepel::geom_label_repel(aes(label = label, color = direction),
+                            label.size = 0.15,
+                            max.overlaps = 100, 
+                            min.segment.length = 0.01) +
+  theme_bw()
+
+# Table
+ipa.table.neg <- test_ipa %>%
+  dplyr::filter(direction == "Negative") %>%
+  dplyr::select(label, pathway) 
+ipa.table.pos <- test_ipa %>%
+  dplyr::filter(direction == "Positive") %>%
+  dplyr::select(label, pathway) 
+ipa.table.unk <- test_ipa %>%
+  dplyr::filter(direction == "Unknown") %>%
+  dplyr::select(label, pathway) 
+
+cbind.fill <- function(...) {
+  nm <- list(...) 
+  nm <- lapply(nm, as.matrix)
+  n <- max(sapply(nm, nrow)) 
+  do.call(cbind, lapply(nm, function(x) {
+    filled_matrix <- ifelse(is.na(x), "", x)
+    rbind(filled_matrix, matrix("", n - nrow(filled_matrix), ncol(filled_matrix)))
+  }))
+}
+
+ipa.table.comb <- cbind.fill(ipa.table.neg,ipa.table.pos,ipa.table.unk)
+gg.ipa.table <- ggtexttable(ipa.table.comb, rows = NULL,
+                                cols = c("Label", "Pathway", "Label", "Pathway","Label", "Pathway"),
+                                theme = ttheme("blank",
+                                               tbody.style = tbody_style(fill = "white", 
+                                                                         size = 8.5, 
+                                                                         hjust = 0,
+                                                                         x = 0.1))) %>%
+  tab_add_hline(at.row = 1:2, row.side = "top", linewidth = 0.8)
+
+
+
+ggarrange(ipa.plot, gg.ipa.table,
+          ncol = 2, heights = c(1,1), widths = c(0.5,1),
+          legend = "top")
+
+
+#IPA Plot - LP code
+color_table <- tibble(
+  up_down = c(-1, 0, 1),
+  color = c("indianred", "gray", "steelblue")
+)
+
+masld <- readxl::read_xlsx(fs::path(dir.dat,"Liver project","IPA_MASLD.xlsx"))
+masld <- masld %>% arrange(desc("-log(p-value)")) 
+masld_keep <- masld[1:10,]
+
+diab <- readxl::read_xlsx(fs::path(dir.dat,"Liver project","IPA_Diabetes.xlsx"))
+diab <- diab %>% arrange(desc("-log(p-value)")) 
+diab_keep <- diab[1:10,]
+
+glp1 <- readxl::read_xls(fs::path(dir.dat,"Liver project","IPA_GLP1.xls"))
+glp1 <- glp1 %>% arrange(desc("-log(p-value)")) 
+glp1_keep <- glp1[1:10,]
+
+masld_plot <- ipa_plot(masld_keep)
+diab_plot <- ipa_plot(diab_keep)
+glp1_plot <- ipa_plot(glp1_keep)
+
+p <- ggarrange(masld_plot, diab_plot, glp1_plot, ncol = 1, nrow = 3, align = "hv", labels = c("A", "B", "C"))
+
+png('/Volumes/PEDS/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/IPA/Output from IPA/TODAY_DKD_IPA_pathway.png', 
+    res = 600, width = 15, height = 6, units = "in")
+p
+dev.off()
+
+htn <- read_xls("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/IPA/Output from IPA/HTN.xls",
+                  skip = 1)
+htn <- htn %>% arrange(desc("-log(p-value)")) 
+#htn_keep <- htn[htn$`-log(p-value)` > 1.3,]
+htn_keep <- htn[1:20,]
+htn_plot <- ipa_plot(htn_keep)
+png('/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/IPA/Output from IPA/TODAY_HTN_IPA_pathway.png', 
+    res = 600, width = 15, height = 6, units = "in")
+htn_plot
+dev.off()
+
+glyc <- read_xls("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/IPA/Output from IPA/GLYC.xls",
+                skip = 1)
+glyc <- glyc %>% arrange(desc("-log(p-value)")) 
+glyc_keep <- glyc[1:30,]
+glyc_plot <- ipa_plot(glyc_keep)
+png('/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/IPA/Output from IPA/TODAY_GLYC_IPA_pathway.png', 
+    res = 600, width = 15, height = 6, units = "in")
+glyc_plot
+dev.off()
+file.copy("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/IPA/Output from IPA/TODAY_GLYC_IPA_pathway.png",
+          "/Users/pylell/Dropbox/TODAY glycemic manuscript [shared]/Analysis output/TODAY_GLYC_IPA_pathway.png",overwrite = TRUE)
+```
+
+```{r}
+Idents(so_liver_sc) <- so_liver_sc$celltype
+de.markers(so_liver_sc, genes, "diagnosis_of_MASLD", id2 = "No", id1 = "Yes", "Hepatocyte1", "")
+de.markers(so_liver_sc, genes, "diagnosis_of_MASLD", id2 = "No", id1 = "Yes", "Hepatocyte2", "")
+de.markers(so_liver_sc, genes, "diagnosis_of_MASLD", id2 = "No", id1 = "Yes", "Hepatocyte3", "")
+
+Idents(so_liver_sc) <- so_liver_sc$hepatocyte
+de.markers(so_liver_sc, genes, "diagnosis_of_MASLD", id2 = "No", id1 = "Yes", "Hepatocyte", "")
+
+```
+
+##c. GLP-1RA Status
+```{r}
+genes <- unique(rownames(so_liver_sn_hep))
+Idents(so_liver_sn_hep) <- so_liver_sn_hep$hepatocyte
+de.markers(so_liver_sn_hep, genes, "glp1agonist", id2 = "No", id1 = "Yes", "Hepatocyte", "")
+de.markers(so_liver_sn_hep, genes, "glp1agonist", id2 = "No", id1 = "Yes", "Hepatocyte", "")
+
+#Idents(so_liver_sc) <- so_liver_sc$celltype
+#de.markers(so_liver_sc, genes, "glp1agonist", id2 = "No", id1 = "Yes", "Hepatocyte1", "")
+#de.markers(so_liver_sc, genes, "glp1agonist", id2 = "No", id1 = "Yes", "Hepatocyte2", "")
+#de.markers(so_liver_sc, genes, "glp1agonist", id2 = "No", id1 = "Yes", "Hepatocyte3", "")
+
+```
+
+#6. Senesence Diff Exp 
+```{r}
+#Filter to only Hepatocytes
+Idents(so_liver_sn) <- so_liver_sn$hepatocyte
+gc()
+so_liver_sn_hep <- subset(so_liver_sn, hepatocyte == "Hepatocyte")
+gc()
+memory.limit(size = 64000)
+rm(so_liver_sn)
+
+#Diff by Diabetes Status
+Idents(so_liver_sn_hep) <- so_liver_sn_hep$hepatocyte
+de.markers(so_liver_sn_hep, sens_genes, "diagnosis_of_diabetes", id1 = "Yes", id2 = "No", "Hepatocyte", "")
+write.csv(m,"SeneDifferential_Expression_Diabetes.csv")
+m_top <- m
+significant_genes <- m_top %>% filter(p_val_adj < 0.05)
+
+# Select the top 10 positive and top 10 negative log2FC genes that are significant
+top_genes <- rbind(
+  significant_genes %>% arrange(desc(avg_log2FC)) %>% head(20),  # Top 10 positive log2FC
+  significant_genes %>% arrange(avg_log2FC) %>% head(20)         # Top 10 negative log2FC
+)
+
+labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+
+
+#MASLD
+de.markers(so_liver_sn_hep, sens_genes, "diagnosis_of_MASLD", id1 = "Yes", id2 = "No", "Hepatocyte", "")
+write.csv(m,fs::path("SeneDifferential_Expression_MASLD.csv"))
+m_top <- m
+significant_genes <- m_top %>% filter(p_val_adj < 0.05)
+
+# Select the top 10 positive and top 10 negative log2FC genes that are significant
+top_genes <- rbind(
+  significant_genes %>% arrange(desc(avg_log2FC)) %>% head(20),  # Top 10 positive log2FC
+  significant_genes %>% arrange(avg_log2FC) %>% head(20)         # Top 10 negative log2FC
+)
+
+labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+
+
+#GLP1
+#Need to filter to just Type 2
+de.markers(so_liver_sn_hep, sens_genes, "glp1agonist", id1 = "Yes", id2 = "No", "Hepatocyte", "")
+write.csv(m,fs::path("SeneDifferential_Expression_GLP1.csv"))
+m_top <- m
+significant_genes <- m_top %>% filter(p_val_adj < 0.05)
+
+# Select the top 10 positive and top 10 negative log2FC genes that are significant
+top_genes <- rbind(
+  significant_genes %>% arrange(desc(avg_log2FC)) %>% head(20),  # Top 10 positive log2FC
+  significant_genes %>% arrange(avg_log2FC) %>% head(20)         # Top 10 negative log2FC
+)
+
+labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+
+```
+
+#7. Gene set enrichment analysis
+```{r echo = F}
+#sce_sn_hep <- as.SingleCellExperiment(so_liver_sn_hep)
+## C2 category is according to canonical pathways: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
+geneSets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG")
+### filter background to only include genes that we assessed
+geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
+geneSets <- geneSets[geneSets$gene_symbol %in% names(sce_sn_hep),]
+m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
+stats <- m$p_val_adj
+names(stats) <- rownames(m)
+eaRes <- fgsea(pathways = m_list, stats = na.omit(stats))
+#ooEA <- order(eaRes$pval, decreasing = FALSE)
+#kable(head(eaRes[ooEA, 1:7], n = 20))
+# Convert the leadingEdge column to comma-separated strings
+eaRes$leadingEdge <- sapply(eaRes$leadingEdge, function(x) paste(x, collapse = ", "))
+
+# Save to CSV
+write.csv(eaRes, "GSEA_Diabetes.csv", row.names = FALSE)
+```
+
+#8. Association between Genes & Liver Outcomes
+##a. Full Gene Set
+```{r}
+# Extract the expression data matrix (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_liver_sn_hep, layer = "data"))
+
+# Extract metadata
+cell_metadata <- so_liver_sn_hep@meta.data
+
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+
+# Assuming gene_set is a vector of gene names
+sca_gene_set <- sca[rownames(sca) %in% gene_set, ]
+
+# Define the model with the outcome variable
+outcomes <- c("AST","ALT","fibrosis","steatosis","lobular_inflammation")
+model_formula <- ~ outcome + covariate
+
+# Run the linear model with zlm
+zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+
+# Summarize results and perform likelihood ratio test (LRT) for outcome
+summary_zlm <- summary(zlm_results, doLRT = 'outcome')
+
+# Convert the summary to a data table for easy manipulation
+summary_dt <- summary_zlm$datatable
+
+# Extract results for the outcome variable
+result <- summary_dt[contrast == 'outcome' & component == 'H', c("primerid", "Pr(>Chisq)")]
+
+# Adjust p-values for multiple testing (False Discovery Rate)
+result$p_adj <- p.adjust(result$`Pr(>Chisq)`, method = "fdr")
+
+# Filter significant results (e.g., adjusted p-value < 0.05)
+significant_results <- result[result$p_adj < 0.05, ]
+print(significant_results)
+
+```
+
+##b. Senesence Gene Set
+###i. Quality Control & Visualizations
+```{r}
+# Step 1: Extract the expression data matrix (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_sens[["RNA"]], layer = "data"))
+
+# Step 2: Filter out genes with zero variance
+gene_variance <- apply(expression_matrix, 1, var)
+expression_matrix_filtered <- expression_matrix[gene_variance > 0, ]
+
+# Step 3: Extract metadata and add 'wellKey' column
+cell_metadata <- so_sens@meta.data
+cell_metadata$wellKey <- rownames(cell_metadata)
+
+# Step 7: Create a SingleCellAssay object with the filtered and subsetted expression matrix
+sca <- FromMatrix(exprsArray = expression_matrix_filtered, cData = cell_metadata)
+
+```
+
+###ii. Differential Expression Analyses
+```{r}
+# Assuming gene_set is a vector of gene names
+sca_gene_set <- sca[rownames(sca) %in% sens_genes, ]
+
+# Define the model with the exposure variable
+#"ast","alt","fibrosis_stage","steatosis_grade")
+
+# Convert count variables to factors
+#so_sens@meta.data$lobular_inflammation_grade <- factor(so_sens@meta.data$lobular_inflammation_grade,levels = c("0", #"1"),labels=c("No","Yes"))
+so_sens@meta.data$steatosis_grade <- factor(so_sens@meta.data$steatosis_grade)
+so_sens@meta.data$fibrosis_stage <- factor(so_sens@meta.data$fibrosis_stage)
+so_sens@meta.data$diagnosis_of_diabetes <- factor(so_sens@meta.data$diagnosis_of_diabetes)
+so_sens@meta.data$diagnosis_of_MASLD <- factor(so_sens@meta.data$diagnosis_of_MASLD)
+so_sens@meta.data$glp1agonist <- factor(so_sens@meta.data$glp1agonist)
+so_sens@meta.data$nih_sex <- factor(so_sens@meta.data$nih_sex)
+
+model_formula <- ~ alt + age_surgery + nih_sex + a1c + diagnosis_of_diabetes + glp1agonist + diagnosis_of_MASLD
+#Diabetes status, GLP1 status, age, sex, sbp, HbA1c
+# Run the linear model with zlm
+zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+#summary(zlm_results)
+# Summarize results and perform likelihood ratio test (LRT) for outcome
+summary_zlm <- summary(zlm_results, doLRT = "alt")
+# summary_zlm <- summary(zlm_results)
+# Convert the summary to a data table for easy manipulation
+summary_dt <- summary_zlm$datatable
+
+fcHurdle <- merge(summary_dt[contrast=='alt' & component=='C',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                      summary_dt[contrast=='alt' & component=='C', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle <- fcHurdle %>% 
+  mutate(coef=10*coef)
+write.csv(fcHurdle,fs::path(dir.dat,"ALT_Senescence.csv"))
+m <- fcHurdle[,c("primerid","coef","fdr")]
+# Filter top 10 positive and negative log2FoldChange
+top_pos <- as.data.frame(m) %>% 
+  filter(fdr<0.05) %>% 
+  arrange(desc(coef)) %>% 
+  dplyr::slice(1:10) %>% 
+  dplyr::rename(Gene=primerid)
+# top_pos$Gene <- rownames(top_pos)
+top_pos <- top_pos[c("Gene","coef","fdr")]
+rownames(top_pos) <- NULL
+top_pos$Direction <- "Positive"
+
+top_neg <- m %>% 
+  filter(fdr<0.05) %>% 
+  arrange(coef) %>% 
+  dplyr::slice(1:10) %>% 
+  dplyr::rename(Gene=primerid)
+# top_neg$Gene <- rownames(top_neg)
+# top_neg <- top_neg[c("Gene","coef","fdr")]
+# rownames(top_neg) <- NULL
+top_neg$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes <- bind_rows(top_pos, top_neg) 
+
+# Bar chart
+ggplot(top_genes, aes(x = Gene, y = coef, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(x = "Gene", y = "effect estimate", title = "Top 10 Positive and Negative DEGs") +
+  scale_fill_manual(values = c("red", "blue"), labels = c("Negative", "Positive")) +
+  theme_minimal()
+
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes <- top_genes %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, coef)]))  # Order by Direction and log2FC
+
+# Bar chart with flipped x and y axes
+b <- ggplot(top_genes, aes(x = coef, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Coefficient", y = "Gene", title = "Top 10 Positive and Negative DEGs in Diabetes vs. No Diabetes") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Downregulated in Diabetes", "Upregulated in Diabetes")) +
+  theme_minimal()
+# FCTHRESHOLD = log2(0.25)
+# fcHurdleSig <- merge(fcHurdle[fdr<.05 & abs(coef)>FCTHRESHOLD], as.data.table(mcols(sca_gene_set)), by='primerid')
+# setorder(fcHurdleSig, fdr)
+```
+
+##c. Tutorial 
+```{r}
+data(maits, package='MAST')
+dim(maits$expressionmat)
+head(maits$cdat)
+head(maits$fdat)
+
+scaRaw <- FromMatrix(t(maits$expressionmat), maits$cdat, maits$fdat)
+aheatmap(assay(scaRaw[1:1000,]), labRow='', annCol=as.data.frame(colData(scaRaw)[,c('condition', 'ourfilter')]), distfun='spearman')
+
+set.seed(123)
+plotPCA <- function(sca_obj){
+  projection <- rpca(t(assay(sca_obj)), retx=TRUE, k=4)$x
+  colnames(projection)=c("PC1","PC2","PC3","PC4")
+  pca <- data.table(projection,  as.data.frame(colData(sca_obj)))
+  print(ggpairs(pca, columns=c('PC1', 'PC2', 'PC3', 'libSize', 'PercentToHuman', 'nGeneOn', 'exonRate'),
+                mapping=aes(color=condition), upper=list(continuous='blank')))
+  invisible(pca)
+}
+
+plotPCA(scaRaw)
+```
+
+#9. Visualize Results of MAST
+##a. Full Gene Set
+##b. Senesence Gene Set
+```{r}
+# Filter data for component C and D separately
+summary_dt_H <- summary_dt %>%
+  filter(component == "H") %>%
+  mutate(log_pvalue = -log10(`Pr(>Chisq)`))  # Add -log10(p-value)
+
+# Filter data for component C and D separately
+summary_dt_C <- summary_dt %>%
+  filter(component == "C") %>%
+  mutate(log_pvalue = -log10(`Pr(>Chisq)`))  # Add -log10(p-value)
+
+summary_dt_D <- summary_dt %>%
+  filter(component == "D") %>%
+  mutate(log_pvalue = -log10(`Pr(>Chisq)`))  # Add -log10(p-value)
+
+# For component C: Top 10 significant and largest coefficient genes
+# Filter for p-value < 0.05
+summary_dt_C_significant <- summary_dt_C %>%
+  filter(`Pr(>Chisq)` < 0.05)
+
+# Top 10 significant positive and negative coefficients for component C
+top_significant_positive_C <- summary_dt_C_significant %>%
+  arrange(desc(coef)) %>%  # Largest positive coefficients
+  slice_head(n = 10)
+
+top_significant_negative_C <- summary_dt_C_significant %>%
+  arrange(coef) %>%  # Largest negative coefficients
+  slice_head(n = 10)
+
+# Combine the top 10 significant positive and negative coefficients for component C
+top_genes_C <- bind_rows(top_significant_positive_C, top_significant_negative_C)
+
+# Create the volcano plot for component C with adjusted colors
+bubble_plot_C <- ggplot(summary_dt_C, aes(x = coef, y = log_pvalue)) +
+  geom_point(aes(color = `Pr(>Chisq)`), alpha = 0.6) +  # Bubbles colored by p-value
+  geom_text(data = top_genes_C, aes(label = primerid), size = 3, vjust = 1, hjust = 1) +  # Label top genes
+  scale_color_gradient(low = "blue", high = "red") +  # Color scale for p-value
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +  # Vertical line at coefficient = 0
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +  # Horizontal line at p-value = 0.05
+  theme_minimal() +  # Clean theme
+  labs(
+    title = "Adjusted AST Volcano Plot for Component C: Coefficients vs -log10(P-value)",
+    x = "Coefficient (Coef)",
+    y = "-log10(P-value)",
+    color = "P-value"
+  ) +
+  theme(
+    legend.position = "right",  # Position the legend on the right
+    strip.text = element_text(size = 12),  # Adjust facet label size
+    axis.text = element_text(size = 10),  # Adjust axis label size
+    axis.title = element_text(size = 12)  # Adjust axis title size
+  )
+
+
+
+# Repeat the same for component D
+
+# For component D: Top 10 significant and largest coefficient genes
+# Filter for p-value < 0.05
+summary_dt_D_significant <- summary_dt_D %>%
+  filter(`Pr(>Chisq)` < 0.05)
+
+# Top 10 significant positive and negative coefficients for component D
+top_significant_positive_D <- summary_dt_D_significant %>%
+  arrange(desc(coef)) %>%  # Largest positive coefficients
+  slice_head(n = 10)
+
+top_significant_negative_D <- summary_dt_D_significant %>%
+  arrange(coef) %>%  # Largest negative coefficients
+  slice_head(n = 10)
+
+# Combine the top 10 significant positive and negative coefficients for component D
+top_genes_D <- bind_rows(top_significant_positive_D, top_significant_negative_D)
+
+# Create the volcano plot for component D with adjusted colors
+bubble_plot_D <- ggplot(summary_dt_D, aes(x = coef, y = log_pvalue)) +
+  geom_point(aes(color = `Pr(>Chisq)`), alpha = 0.6) +  # Bubbles colored by p-value
+  geom_text(data = top_genes_D, aes(label = primerid), size = 3, vjust = 1, hjust = 1) +  # Label top genes
+  scale_color_gradient(low = "blue", high = "red") +  # Color scale for p-value
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +  # Vertical line at coefficient = 0
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +  # Horizontal line at p-value = 0.05
+  theme_minimal() +  # Clean theme
+  labs(
+    title = "Adjusted AST Volcano Plot for Component D: Coefficients vs -log10(P-value)",
+    x = "Coefficient (Coef)",
+    y = "-log10(P-value)",
+    color = "P-value"
+  ) +
+  theme(
+    legend.position = "right",  # Position the legend on the right
+    strip.text = element_text(size = 12),  # Adjust facet label size
+    axis.text = element_text(size = 10),  # Adjust axis label size
+    axis.title = element_text(size = 12)  # Adjust axis title size
+  )
+
+
+
+```

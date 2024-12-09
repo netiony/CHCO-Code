@@ -17,6 +17,7 @@
 # DimPlot(so_kidney_sc, reduction = "umap")
 # dev.off()
 
+<<<<<<< Updated upstream
 #Compare effect esitmates
 pdf(file = fs::path(dir.results,"Senesence Results","ComparisonPlots_ALT.pdf"),width=10,height=15)
 plot(pvalue)
@@ -71,6 +72,9 @@ plot(b)
 dev.off()
 
 pdf(file = fs::path(dir.results,"Senesence Results","Steatosis_Grade.pdf"),width=8,height=5)
+=======
+pdf(file = fs::path(dir.dat,"AST.pdf"),width=8,height=5)
+>>>>>>> Stashed changes
 plot(b)
 dev.off()
 
@@ -78,7 +82,9 @@ dev.off()
 pdf(file = fs::path(dir.results,"Results_and_Figures","Volcano_byDiabetes_heptatocytes.pdf"),width=15,height=10)
 de.markers(so_liver_sn_hep, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hepatocyte", "")
 write.csv(m,fs::path(dir.code,"Differential_Expression_Diabetes.csv"))
+
 m_top <- m
+rm(m)
 significant_genes <- m_top %>% filter(p_val_adj < 0.05)
 
 # Select the top 10 positive and top 10 negative log2FC genes that are significant
@@ -92,11 +98,11 @@ p <- EnhancedVolcano(m_top,
                      lab = labels,
                      x = 'avg_log2FC',
                      y = 'p_val_adj',
-                     title = paste0("Differentially Expressed Genes by Sex (Pseudobulk)"),
-                     subtitle = paste0("Positive Log2 FC = Greater Expression in Female vs. Male\n",
+                     title = paste0("Differentially Expressed Genes by Diabetes Status (Pseudobulk All Cell Types)"),
+                     subtitle = paste0("Positive Log2 FC = Greater Expression in Diabetes vs. No Diabetes\n",
                                        "(Significant at FDR-P<0.05, FC Threshold = 0.5)"),
                      pCutoff = 0.05,
-                     FCcutoff = 1.4,
+                     FCcutoff = 0.5,
                      labFace = 'bold',
                      pointSize = 4,
                      labSize = 5,
@@ -676,8 +682,28 @@ pdf(file="Adj_Fibrosis_Grade_Plot.pdf",width=15,height=10)
 plot(p)
 dev.off()
 
+<<<<<<< Updated upstream
 
 
 table <- table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + diagnosis_of_diabetes + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage | glp1agonist, data = dat)
 write.csv(table, fs::path(dir.results,"Table1_ByGLP1.csv"))
 
+=======
+pdf(file="Steatosis_Grade_Plot_Discrete.pdf",width=10,height=5)
+plot(bubble_plot_D)
+dev.off()
+
+pdf(file=fs::path(dir.results,"UMAP_Cell_Types.pdf"))
+DimPlot(so_liver_sn, reduction = "umap", group.by = "celltype", label = TRUE, label.size = 4)+
+  ggtitle("UMAP Plot with Cell Type Labels")
+dev.off()
+
+
+pdf(file = fs::path(dir.results,"Volcano_DEG_Liver_MASLT_All_Cell_Types.pdf"),width=20,height=20)
+plot(p)
+dev.off()
+
+pdf(file=fs::path(dir.results,"GSEA_Top_20_Liver_Diabetes_All_Cell_Types.pdf"),width=10,height=5)
+plot(enrich.p)
+dev.off()
+>>>>>>> Stashed changes
