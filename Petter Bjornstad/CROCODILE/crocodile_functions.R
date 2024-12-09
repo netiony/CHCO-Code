@@ -5,7 +5,7 @@ genes <- c(
   "SUCLA2", "SUCLG1", "SUCLG2", "SDHA", "FH", "MDH1", "MDH2",  "CS"
 )
 genes = sort(genes)
-all.genes = rownames(so)
+# all.genes = rownames(so)
 
 acetylcoa_genes <- c(
   "PDHA1", "PDHB", "ACADM", "ACADS", "ACADL", "BCAT1", "BCAT2", "GOT1", "GOT2", 
@@ -39,26 +39,47 @@ leptin_adipo_genes <- c(
 )
 
 # function for de.markers
-de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, extension){
-  m = FindMarkers(seurat_object, features = genes,group.by = group.by,ident.1 = id1, 
-                  ident.2 = id2, subset.ident = celltype, verbose = F, logfc.threshold=0.001,
-                  min.pct = 0.001)
-  m$p_val_adj = p.adjust(m$p_val,method = "fdr")
-  m <- m %>% 
-    rownames_to_column('gene') %>%
-    arrange(p_val) %>%
-    column_to_rownames('gene') %>%
-    dplyr::select(avg_log2FC,pct.1,pct.2,p_val,p_val_adj) %>%
-    filter(!is.na(p_val))
+de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, extension, 
+                       min.pct = 0.001, logfc.threshold = 0.001, test.use = "wilcox",
+                       latent.vars = NULL) {
+  # Perform FindMarkers
+  m <- FindMarkers(seurat_object, features = genes, group.by = group.by, ident.1 = id1, 
+                   ident.2 = id2, subset.ident = celltype, verbose = FALSE, 
+                   logfc.threshold = logfc.threshold, min.pct = min.pct, test.use = test.use,
+                   latent.vars = latent.vars)
   
-  genes_subset <- rownames(m)[m$p_val <= 0.05]
-  
-  if (length(genes_subset) > 0){
-    assign(paste0("genes_subset", extension), genes_subset, envir = .GlobalEnv)
+  # Check if m has rows before proceeding
+  if (nrow(m) > 0) {
+    m$p_val_adj <- p.adjust(m$p_val, method = "fdr")
+    m <- m %>% 
+      rownames_to_column('gene') %>%
+      arrange(p_val) %>%
+      column_to_rownames('gene') %>%
+      dplyr::select(avg_log2FC, pct.1, pct.2, p_val, p_val_adj) %>%
+      filter(!is.na(p_val))
+    
+    # Identify significant genes
+    genes_subset <- rownames(m)[m$p_val <= 0.05]
+    
+    # Assign significant genes to global environment if any
+    if (length(genes_subset) > 0) {
+      assign(paste0("genes_subset", extension), genes_subset, envir = .GlobalEnv)
+    }
+  } else {
+    # If no rows in m, initialize m with proper column names for compatibility
+    m <- data.frame(avg_log2FC = numeric(0), pct.1 = numeric(0), pct.2 = numeric(0), 
+                    p_val = numeric(0), p_val_adj = numeric(0))
   }
+  
+  # Assign m to global environment
   assign(paste0("m", extension), m, envir = .GlobalEnv)
-  return(knitr::kable(m, digits = 3
-  ))
+  
+  # Return knitr::kable if m is not empty, otherwise return a message
+  if (nrow(m) > 0) {
+    return(knitr::kable(m, digits = 3))
+  } else {
+    return("No significant markers found.")
+  }
 }
 
 GeomSplitViolin <- ggproto(
