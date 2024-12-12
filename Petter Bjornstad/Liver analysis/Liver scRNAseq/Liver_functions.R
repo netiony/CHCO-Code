@@ -35,11 +35,12 @@ sens_genes <- c(sens_genes,"CDKN1A")
 
 
 # de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", NULL, "_top")
-# seurat_object <- so_liver_sn
-# group.by <- "diagnosis_of_diabetes"
-# id1 <- "Yes"
-# id2 <- "No"
-# celltype=NULL
+# seurat_object <- so_kidney_sc
+# group.by <- "epic_glp1ra_1"
+# id1 <- "No"
+# id2 <- "Yes"
+# celltype="PT"
+# genes <- sens_genes
 # extension="_top"
 # # function for de.markers
 de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, extension,logfc.threshold,min.pct){
