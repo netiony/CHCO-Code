@@ -28,6 +28,19 @@ library(tableone)
 library(knitr)
 library(gtools)
 library(ggpubr)
+library(parallel)
+library(limma)
+library(Hmisc)
+library(knitr)
+library(tidyverse)
+library(gtsummary)
+library(ggpubr)
+library(lmerTest)
+library(parallel)
+library(emmeans)
+library(RColorBrewer)
+library(VennDiagram)
+library(broom.mixed)
 # Print all pander tables
 panderOptions("knitr.auto.asis", FALSE)
 ```
@@ -56,8 +69,10 @@ df$map <- NA
 for (i in 1:nrow(df)) {
   df[i,]$map <- df[i,]$dbp + ((1/3) * (df[i,]$sbp - df[i,]$dbp))
 }
+df_long_keep <- df %>% select(ID, visit, sbp, dbp, all_of(seq_include))
 
 load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Somalogic data raw/analytes.Rdata")
+analytes_keep <- analytes %>% filter(AptName %in% seq_include)
 
 # create df with change in SBP/DBP and proteins between baseline and 1 year
 deltas_temp <- df %>% filter(visit %in% c("Month 1", "Year 1"))
@@ -245,8 +260,7 @@ correlation_p_value_matrix <- function(data, relevant_vars, n_cols, cor_method =
 }
 ```
 
-
-### Correlations of change in SBP/DBP with changes in proteins
+# Correlations of change in SBP/DBP with changes in proteins
 
 ```{r results='asis', dpi=1200}
 prot_heatmap <- top_htn_df %>%
@@ -258,10 +272,317 @@ colnames_M <- top_htn_df %>%
 #colnames_M <- paste0(colnames_M,"_",prot_heatmap)
 png(height = 3000, width = 2500, file = "/Users/pylell/Dropbox/TODAY HTN and DKD output/local_T2D_BP_heatmap_TL.png", res = 170)
 corr_plot_modified_nodict(data=df, 
-                   Y=df[,prot_heatmap], 
+                   Y=df[,prot_heatmap],   
                  X=df[,c("sbp","dbp")],
                  cor_method="spearman", adj_var = NA,
                  colnames_M=colnames_M,
                  rownames_M=c("SBP","DBP"))
 dev.off()
+```
+
+# Mixed models and plots - proteins alone for plotting
+
+```{r}
+#| cache: true
+seqs <- seq_include
+# Parallel processing
+cl <- makeForkCluster(8)
+rows <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|ID)"))
+  m <- lmer(f, data = df_long_keep)
+  emm <- emmeans(m, specs = ~visit)
+  # Contrast not necessary with current parameterization, but nice to have written
+  c <- contrast(emm,
+    method =
+      list("Year 1 - Month 1" = c(0, 0, 1, 0, 0, 0, 0) - c(1, 0, 0, 0, 0, 0, 0))
+  )
+  c <- as.data.frame(c)
+  c$AptName <- y
+  return(c)
+})
+stopCluster(cl)
+
+cl <- makeForkCluster(8)
+means <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|ID)"))
+  m <- lmer(f, data = df_long_keep)
+  emm <- emmeans(m, specs = ~visit)
+  # Contrast not necessary with current parameterization, but nice to have written
+  c <- contrast(emm,
+    method =
+      list("Year 1 - Month 1" = c(0, 0, 1, 0, 0, 0, 0) - c(1, 0, 0, 0, 0, 0, 0))
+  )
+  c <- as.data.frame(c)
+  c$AptName <- y
+  #emm <- as.data.frame(emm)
+  #emm$AptName <- y
+  return(emm)
+})
+stopCluster(cl)
+
+```
+
+```{r}
+# Format results
+lmm_res <- do.call(rbind, rows)
+lmm_res$p.value.adj <- p.adjust(lmm_res$p.value, method = "BH")
+lmm_res$Target <- analyte_info$Target[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res <- lmm_res[, c(
+  "AptName", "Target", "estimate", "SE", "df",
+  "t.ratio", "p.value", "p.value.adj"
+)]
+lmm_res <- lmm_res[order(lmm_res$p.value, decreasing = F), ]
+lmm_res <- lmm_res[lmm_res$p.value.adj <= 0.05, ]
+kable(lmm_res[1:10, ], digits = 3, row.names = F)
+
+means_res <- NULL
+for (i in 1:nrow(analytes_keep)) {
+  temp <- summary(means[[i]])
+  a <- analyte_info[i, c("Target", "TargetFullName", "UniProt", "AptName")]
+  a <- rbind(a, a[rep(1,6),])
+  temp <- cbind(a, temp)
+  means_res <- rbind(means_res, temp)
+}
+
+lmm_res_prot <- lmm_res
+means_res_prot <- means_res
+lmm_res <- NULL
+means_res <- NULL
+```
+
+# Mixed models and plots - SBP/DBP alone for plotting
+
+```{r}
+#| cache: true
+bpvars <- c("sbp", "dbp")
+# Parallel processing
+cl <- makeForkCluster(8)
+rows <- parLapply(cl, bpvars, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|ID)"))
+  m <- lmer(f, data = df_long_keep)
+  emm <- emmeans(m, specs = ~visit)
+  # Contrast not necessary with current parameterization, but nice to have written
+  c <- contrast(emm,
+    method =
+      list("Year 1 - Month 1" = c(0, 0, 1, 0, 0, 0, 0) - c(1, 0, 0, 0, 0, 0, 0))
+  )
+  c <- as.data.frame(c)
+  c$AptName <- y
+  return(c)
+})
+stopCluster(cl)
+
+cl <- makeForkCluster(8)
+means <- parLapply(cl, bpvars, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|ID)"))
+  m <- lmer(f, data = df_long_keep)
+  emm <- emmeans(m, specs = ~visit)
+  # Contrast not necessary with current parameterization, but nice to have written
+  c <- contrast(emm,
+    method =
+      list("Year 1 - Month 1" = c(0, 0, 1, 0, 0, 0, 0) - c(1, 0, 0, 0, 0, 0, 0))
+  )
+  c <- as.data.frame(c)
+  c$AptName <- y
+  #emm <- as.data.frame(emm)
+  #emm$AptName <- y
+  return(emm)
+})
+stopCluster(cl)
+
+```
+
+```{r}
+# Format results
+lmm_res <- do.call(rbind, rows)
+lmm_res$p.value.adj <- p.adjust(lmm_res$p.value, method = "BH")
+lmm_res$Target <- analyte_info$Target[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res <- lmm_res[, c(
+  "AptName", "Target", "estimate", "SE", "df",
+  "t.ratio", "p.value", "p.value.adj"
+)]
+lmm_res <- lmm_res[order(lmm_res$p.value, decreasing = F), ]
+lmm_res <- lmm_res[lmm_res$p.value.adj <= 0.05, ]
+kable(lmm_res[1:10, ], digits = 3, row.names = F)
+
+means_res <- NULL
+for (i in 1:length(bpvars)) {
+  temp <- summary(means[[i]])
+  a <- paste0(bpvars[i])
+  a <- rbind(a, a, a, a, a, a, a)
+  temp <- cbind(a, temp)
+  means_res <- rbind(means_res, temp)
+}
+
+lmm_res_bp <- lmm_res
+means_res_bp <- means_res
+means_res_bp$Target <- NA
+means_res_bp$TargetFullName <- means_res_bp$a
+means_res_bp$a <- NULL
+means_res_bp$UniProt <- NA
+means_res_bp$AptName <- NA
+lmm_res <- NULL
+means_res <- NULL
+```
+
+# Combine means for proteins and SBP/DBP and plot
+
+```{r}
+means_res <- rbind(means_res_prot, means_res_bp)
+
+# FOR PLOTS - WILL NEED TO COMBINE TARGET AND SEQNAME
+```
+
+# Mixed models and plots - proteins vs. SBP/DBP for p-values
+
+## First SBP
+
+```{r}
+# NOTE: This might be pulling off the wrong coefficient, not for BP
+
+#| cache: true
+seqs <- seq_include
+# Parallel processing
+cl <- makeForkCluster(8)
+rows <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|ID) + sbp"))
+  m <- lmer(f, data = df_long_keep)
+  emm <- emmeans(m, specs = ~visit)
+  # Contrast not necessary with current parameterization, but nice to have written
+  c <- contrast(emm,
+    method =
+      list("Year 1 - Month 1" = c(0, 0, 1, 0, 0, 0, 0) - c(1, 0, 0, 0, 0, 0, 0))
+  )
+  c <- as.data.frame(c)
+  c$AptName <- y
+  return(c)
+})
+stopCluster(cl)
+
+cl <- makeForkCluster(8)
+means <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|ID) + sbp"))
+  m <- lmer(f, data = df_long_keep)
+  emm <- emmeans(m, specs = ~visit)
+  # Contrast not necessary with current parameterization, but nice to have written
+  c <- contrast(emm,
+    method =
+      list("Year 1 - Month 1" = c(0, 0, 1, 0, 0, 0, 0) - c(1, 0, 0, 0, 0, 0, 0))
+  )
+  c <- as.data.frame(c)
+  c$AptName <- y
+  #emm <- as.data.frame(emm)
+  #emm$AptName <- y
+  return(emm)
+})
+stopCluster(cl)
+
+```
+
+```{r}
+# Format results
+lmm_res <- do.call(rbind, rows)
+lmm_res$p.value.adj <- p.adjust(lmm_res$p.value, method = "BH")
+lmm_res$Target <- analyte_info$Target[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res <- lmm_res[, c(
+  "AptName", "Target", "estimate", "SE", "df",
+  "t.ratio", "p.value", "p.value.adj"
+)]
+lmm_res <- lmm_res[order(lmm_res$p.value, decreasing = F), ]
+lmm_res <- lmm_res[lmm_res$p.value.adj <= 0.05, ]
+kable(lmm_res[1:10, ], digits = 3, row.names = F)
+
+means_res <- NULL
+for (i in 1:nrow(analytes_keep)) {
+  temp <- summary(means[[i]])
+  a <- analyte_info[i, c("Target", "TargetFullName", "UniProt", "AptName")]
+  a <- rbind(a, a[rep(1,6),])
+  temp <- cbind(a, temp)
+  means_res <- rbind(means_res, temp)
+}
+
+lmm_res_prot_sbp <- lmm_res
+means_res_prot_sbp <- means_res
+lmm_res_prot_sbp$bp_var <- "sbp"
+means_res_prot_sbp$bp_var <- "sbp"
+lmm_res <- NULL
+means_res <- NULL
+```
+
+## Then DBP
+
+```{r}
+#| cache: true
+seqs <- seq_include
+# Parallel processing
+cl <- makeForkCluster(8)
+rows <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|ID) + dbp"))
+  m <- lmer(f, data = df_long_keep)
+  emm <- emmeans(m, specs = ~visit)
+  # Contrast not necessary with current parameterization, but nice to have written
+  c <- contrast(emm,
+    method =
+      list("Year 1 - Month 1" = c(0, 0, 1, 0, 0, 0, 0) - c(1, 0, 0, 0, 0, 0, 0))
+  )
+  c <- as.data.frame(c)
+  c$AptName <- y
+  return(c)
+})
+stopCluster(cl)
+
+cl <- makeForkCluster(8)
+means <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0(y, "~ visit + (1|ID) + dbp"))
+  m <- lmer(f, data = df_long_keep)
+  emm <- emmeans(m, specs = ~visit)
+  # Contrast not necessary with current parameterization, but nice to have written
+  c <- contrast(emm,
+    method =
+      list("Year 1 - Month 1" = c(0, 0, 1, 0, 0, 0, 0) - c(1, 0, 0, 0, 0, 0, 0))
+  )
+  c <- as.data.frame(c)
+  c$AptName <- y
+  #emm <- as.data.frame(emm)
+  #emm$AptName <- y
+  return(emm)
+})
+stopCluster(cl)
+
+```
+
+```{r}
+# Format results
+lmm_res <- do.call(rbind, rows)
+lmm_res$p.value.adj <- p.adjust(lmm_res$p.value, method = "BH")
+lmm_res$Target <- analyte_info$Target[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res <- lmm_res[, c(
+  "AptName", "Target", "estimate", "SE", "df",
+  "t.ratio", "p.value", "p.value.adj"
+)]
+lmm_res <- lmm_res[order(lmm_res$p.value, decreasing = F), ]
+lmm_res <- lmm_res[lmm_res$p.value.adj <= 0.05, ]
+kable(lmm_res[1:10, ], digits = 3, row.names = F)
+
+means_res <- NULL
+for (i in 1:nrow(analytes_keep)) {
+  temp <- summary(means[[i]])
+  a <- analyte_info[i, c("Target", "TargetFullName", "UniProt", "AptName")]
+  a <- rbind(a, a[rep(1,6),])
+  temp <- cbind(a, temp)
+  means_res <- rbind(means_res, temp)
+}
+
+lmm_res_prot_dbp <- lmm_res
+means_res_prot_dbp <- means_res
+lmm_res_prot_dbp$bp_var <- "dbp"
+means_res_prot_dbp$bp_var <- "dbp"
+lmm_res <- NULL
+means_res <- NULL
+
+lmm_res <- rbind(lmm_res_prot_sbp, lmm_res_prot_dbp)
+means_res <- rbind(means_res_prot_sbp, means_res_prot_dbp)
+
+# write file
+write.csv(lmm_res,"/Users/pylell/Dropbox/TODAY HTN and DKD output/TeenLABS_mixed_models_HTN_proteins_BP.csv", row.names = F)
 ```
