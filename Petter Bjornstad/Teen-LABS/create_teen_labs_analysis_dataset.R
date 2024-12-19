@@ -192,3 +192,6 @@ label(df$diab_baseline) = "Diabetes at Baseline"
 df <- as.data.frame(df)
 # Save
 save(df,analyte_info, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/analysis_dataset.RData")
+# write list of IDs
+write.csv(unique(df$ID), file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/id_list.csv",
+          row.names = F)
