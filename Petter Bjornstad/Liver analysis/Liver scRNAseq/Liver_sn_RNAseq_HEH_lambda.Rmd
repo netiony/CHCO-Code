@@ -2633,108 +2633,123 @@ bubble_plot_D <- ggplot(summary_dt_D, aes(x = coef, y = log_pvalue)) +
 ###i. Full Gene Set
 ```{r, Full Gene Set}
 # Extract the count matrix (rows: genes, columns: cells)
-count_matrix <- GetAssayData(so_liver_sn, assay = "RNA", layer = "count")
-count_matrix <- as.matrix(count_matrix)
-count_matrix <- round(count_matrix)
-
-#################
-batch_size <- 100  # Number of genes per batch
-gene_batches <- split(rownames(count_matrix), ceiling(seq_along(rownames(count_matrix)) / batch_size))
-
-batch_genes <- gene_batches[[1]]
-batch_matrix <- count_matrix[batch_genes, ]
-
-# Check for any negative values
-any(batch_matrix < 0)
-
-# Check for non-integer values
-any(batch_matrix != floor(batch_matrix))
+# count_matrix <- GetAssayData(so_liver_sn, assay = "RNA", layer = "count")
+# count_matrix <- as.matrix(count_matrix)
+# count_matrix <- round(count_matrix)
+# 
+# #################
+# batch_size <- 100  # Number of genes per batch
+# gene_batches <- split(rownames(count_matrix), ceiling(seq_along(rownames(count_matrix)) / batch_size))
+# 
+# batch_genes <- gene_batches[[1]]
+# batch_matrix <- count_matrix[batch_genes, ]
+# 
+# # Check for any negative values
+# any(batch_matrix < 0)
+# 
+# # Check for non-integer values
+# any(batch_matrix != floor(batch_matrix))
 ############
+exposure <- "diagnosis_of_diabetes"
+var_type <- "binary"
+# so <- so_liver_sn
+rm(so_liver_sn)
+id <- "Kit_Lot"
+method <- "zinb"
 
-# Extract cell metadata
-meta_cell <- so_liver_sn@meta.data
-meta_cell$cell_id <- rownames(meta_cell)  # Add cell IDs
-
-# Ensure cell metadata includes a read depth column
-# Example: Calculate total counts per cell as a proxy for read depth
-meta_cell$cell_rd <- colSums(count_matrix)
-
-# Create individual-level metadata (e.g., group information)
-# Example: Assuming "individual" and "phenotype" are in meta_cell
-meta_ind <- unique(meta_cell[, c("Kit_Lot", "diagnosis_of_diabetes")])
-
-# Set variables
-var2test <- "diagnosis_of_diabetes"  # Group variable to test
-var2adjust <- NULL       # Adjusting variable (e.g., RIN, if applicable)
-var2test_type <- "binary"  # "binary" or "continuous"
-var_per_cell <- "cell_rd"  # Cell-level adjustment variable (read depth)
-
-
-# Split genes into batches
-batch_size <- 1000  # Number of genes per batch
-gene_batches <- split(rownames(count_matrix), ceiling(seq_along(rownames(count_matrix)) / batch_size))
-
-# Loop through each gene batch
-all_results <- list()  # To store results from all batches
-
-for (i in seq_along(gene_batches)) {
-  cat("Processing batch", i, "of", length(gene_batches), "\n")
+ideas_fxn <- function(so, exposure, covariates, var_type, id, method) {
   
-  # Get the list of genes for the current batch
-  batch_genes <- gene_batches[[i]]
+  # Create individual variable dynamically based on the input 'id'
+  so$individual <- so[[id]]  # Assign the column specified by 'id' as the individual variable
   
-  # Subset the Seurat object to only include the current batch of genes
-  so_batch <- subset(so_liver_sn, features = batch_genes)  # Adjust 'so_liver_sn' to your Seurat object name
+  # Split genes into batches
+  batch_size <- 1000  # Number of genes per batch
+  count_matrix <- GetAssayData(so, assay = "RNA", slot = "counts")
+  gene_batches <- split(rownames(count_matrix), ceiling(seq_along(rownames(count_matrix)) / batch_size))
   
-  # Create the count matrix for this batch of genes
-  batch_matrix <- as.matrix(GetAssayData(so_batch, assay = "RNA", slot = "counts"))
+  # Loop through each gene batch
+  all_results <- list()  # To store results from all batches
   
-  # Ensure that the count matrix contains non-negative integers
-  batch_matrix <- round(batch_matrix)  # Round values to ensure integer counts
-  
-  # Check if the matrix contains non-integer values
-  if (any(batch_matrix != floor(batch_matrix))) {
-    stop("Batch matrix contains non-integer values!")
+  for (i in seq_along(gene_batches)) {
+    cat("Processing batch", i, "of", length(gene_batches), "\n")
+    
+    # Get the list of genes for the current batch
+    batch_genes <- gene_batches[[i]]
+    
+    # Extract the count matrix for this batch of genes
+    batch_matrix <- count_matrix[batch_genes, , drop = FALSE]  # Drop = FALSE ensures it stays a matrix
+    batch_matrix <- as.matrix(batch_matrix)
+    # Round the count matrix to ensure integer values
+    batch_matrix <- round(batch_matrix)  # Round values to ensure integer counts
+    
+    # Check if the matrix contains non-integer values
+    if (any(batch_matrix != floor(batch_matrix))) {
+      stop("Batch matrix contains non-integer values!")
+    }
+    
+    # Extract the metadata for the cells corresponding to the batch
+    meta_cell <- so@meta.data
+    meta_cell$cell_id <- rownames(meta_cell)  # Add cell IDs if not already present
+    
+    # Ensure the metadata includes the required column (e.g., 'Kit_Lot' for individuals)
+    meta_cell$cell_rd <- colSums(batch_matrix)  # Total counts per cell (read depth)
+    
+    # Add a small constant to ensure no zero or negative values
+    meta_cell$cell_rd <- meta_cell$cell_rd + 1  # Adding 1 to avoid log(0) errors
+    
+    #    # Ensure the metadata includes the required column (e.g., 'Kit_Lot' for individuals)
+    # meta_cell$cell_rd[meta_cell$cell_rd == 0] <- 1  # Ensure no zero read depth
+    
+    # Create individual-level metadata (e.g., group information, exposure)
+    meta_ind <- unique(meta_cell[, c("individual", exposure)])  # Use dynamic 'id' for individual variable
+    
+    # Set variables for differential expression analysis
+    var2test <- exposure  # Group variable to test
+    var2adjust <- NULL     # Adjusting variable (e.g., RIN, if applicable)
+    var2test_type <- var_type  # "binary" or "continuous"
+    var_per_cell <- "cell_rd"  # Cell-level adjustment variable (read depth)
+    test_method <- paste0(method)
+    
+    # Perform IDEAS distance calculation for this batch
+    dist_batch <- ideas_dist(
+      count_input = batch_matrix,
+      meta_cell = meta_cell,
+      meta_ind = meta_ind,
+      var_per_cell = var_per_cell,
+      var2test = var2test,
+      var2test_type = var2test_type,
+      d_metric = "Was",  # Wasserstein distance
+      fit_method = test_method  # Negative binomial fit
+    )
+    
+    # Perform PERMANOVA for this batch
+    pval_batch <- permanova(
+      dist_array = dist_batch,
+      meta_ind = meta_ind,
+      var2test = var2test,
+      var2adjust = NULL,
+      var2test_type = var2test_type,
+      n_perm = 999,
+      r.seed = 903
+    )
+    
+    # Combine results for this batch
+    batch_results <- data.frame(
+      gene = batch_genes,
+      pvalue = pval_batch
+    )
+    
+    # Store results
+    all_results[[i]] <- batch_results
   }
   
-  # Perform IDEAS distance calculation for this batch
-  dist_batch <- ideas_dist(
-    count_input = batch_matrix,
-    meta_cell = meta_cell,
-    meta_ind = meta_ind,
-    var_per_cell = var_per_cell,
-    var2test = var2test,
-    var2test_type = var2test_type,
-    d_metric = "Was",  # Wasserstein distance
-    fit_method = "nb"  # Negative binomial fit
-  )
+  # Combine all batches into one final result
+  final_results <- do.call(rbind, all_results)
   
-  # Perform PERMANOVA for this batch
-  pval_batch <- permanova(
-    dist_array = dist_batch,
-    meta_ind = meta_ind,
-    var2test = var2test,
-    var2adjust = NULL,
-    var2test_type = var2test_type,
-    n_perm = 999,
-    r.seed = 903
-  )
-  
-  # Combine results for this batch
-  batch_results <- data.frame(
-    gene = batch_genes,
-    pvalue = pval_batch
-  )
-  
-  # Store results
-  all_results[[i]] <- batch_results
+  # Save or further analyze the results
+  write.csv(final_results, "DEA_results_ideas.csv", row.names = FALSE)
 }
 
-# Combine all batches into one final result
-final_results <- do.call(rbind, all_results)
-
-# Save or further analyze the results
-write.csv(final_results, "DEA_results_ideas.csv", row.names = FALSE)
 
 
 ```
