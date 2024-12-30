@@ -1,24 +1,4 @@
-# # Define genes
-# # Get genes_subset of interest 
-# #Glycolysis
-# #glyc_genes <- read.csv()
-# 
-# #Gluconeogenesis
-# #gluc_genes <- read.csv()
-# 
-# #TCA cycle
-# #tca_genes <- read.csv()
-# # tca_genes <- c("CS","DLAT","DLD","DLST","FH","SUCLG2P2","IDH1","IDH2","IDH3A",
-# #                "IDH3B","IDH3G","MDH1","MDH2","ACLY","ACO1","OGDH","ACO2","PC",
-# #                "PCK1","PCK2","PDHA1","PDHA2","PDHB","OGDHL","SDHA","SDHB","SDHC",
-# #                "SDHD","SUCLG2","SUCLG1","SUCLA2")
-# 
-# #Oxidative Phosphorylation
-# oxy_phos_genes <- c(
-#   "NDUFS6",  "SDHB", "SDHC", "SDHD",
-#   "UQCRC1", "UQCRC2", "COX4I1", "COX4I2", "ATP5PF"
-# )
-# 
+#Define genes
 sens_genes <- c("ACVR1B","ANG","ANGPT1","ANGPTL4","AREG","AXL","BEX3","BMP2","BMP6","C3","CCL1","CCL13",
                 "CCL16","CCL2","CCL20","CCL24","CCL26","CCL3","CCL4","CCL5","CCL7","CCL8","CD55",
                 "CD9","CSF1","CSF2","CSF2RB","CST4","CTNNB1","CTSB","CXCL1","CXCL10","CXCL12",
@@ -33,7 +13,7 @@ sens_genes <- c("ACVR1B","ANG","ANGPT1","ANGPTL4","AREG","AXL","BEX3","BMP2","BM
                 "TUBGCP2","VEGFA","VEGFC","VGF","WNT16","WNT2")
 sens_genes <- c(sens_genes,"CDKN1A")
 
-
+#DEGS ----
 # de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", NULL, "_top")
 # seurat_object <- so_kidney_sc
 # group.by <- "epic_glp1ra_1"
@@ -63,6 +43,187 @@ de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, exten
   assign(paste0("m", extension), m, envir = .GlobalEnv)
   return(knitr::kable(m, digits = 3
   ))
+}
+
+
+#DEG & GSEA Function ----
+degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,top_gsea) {
+  DefaultAssay(so) <- "RNA"
+  
+  #Conidtion names
+  condition <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group," vs. ",ref_group,")")
+  
+  #Differential Expression by Group
+  if (!is.null(cell)) {
+  Idents(so) <- so$cell
+  }
+  # sens_genes <- c(sens_genes,"CDKN1A")
+  # de.markers(so, gene_set, "group", id2 = "neither", id1 = "both", "PT", "")
+  de.markers(so, gene_set, exposure, id2 = ref_group, id1 = exp_group, cell, "")
+  colnames(m)[2] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group,")")
+  colnames(m)[3] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",ref_group,")")
+  
+  #Plot DEGs
+  m_top <- m
+  significant_genes <- m_top %>% filter(p_val_adj < 0.05)
+  
+  # # Select the top 10 positive and top 10 negative log2FC genes that are significant
+  # top_genes <- rbind(
+  #   significant_genes %>% arrange(desc(avg_log2FC)) %>% head(40),  # Top 10 positive log2FC
+  #   significant_genes %>% arrange(avg_log2FC) %>% head(40)         # Top 10 negative log2FC
+  # )
+  top_genes <- rbind(
+    significant_genes %>% filter(avg_log2FC > 0) %>% arrange(p_val_adj) %>% head(20),  # Top 10 positive significant genes
+    significant_genes %>% filter(avg_log2FC < 0) %>% arrange(p_val_adj) %>% head(20)  # Top 10 negative significant genes
+  )
+  
+  if (!is.null(cell)){
+    title <- paste0("DEGs in ",cell," cells for ",condition)
+  } else {
+    title <- paste0("Bulk DEGs for ",condition)
+  }
+  labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+  p <- EnhancedVolcano(m_top,
+                       lab = labels,
+                       x = 'avg_log2FC',
+                       y = 'p_val_adj',
+                       title = title,
+                       subtitle = paste0("Positive Log2 FC = Greater Expression in ", condition,"\n",
+                                         "(Significant at FDR-P<0.05, FC Threshold = 0.5)"),
+                       pCutoff = 0.05,
+                       FCcutoff = 0.5,
+                       labFace = 'bold',
+                       pointSize = 4,
+                       labSize = 5,
+                       drawConnectors = TRUE,
+                       widthConnectors = 1.0,
+                       colConnectors = 'black',
+                       legendPosition=NULL,
+                       boxedLabels = TRUE,
+                       max.overlaps=60)
+  if (!is.null(cell)){
+  filename <- paste0("DEGs_in_",cell,"_cells_in_",condition2,"_vs_",reference2,".pdf")
+  } else {
+    filename <- paste0("Bulk_DEGs_for_",condition,".pdf") 
+  }
+  pdf(fs::path(dir.results,filename),width=20,height=20)
+  plot(p)
+  dev.off()
+  
+  #GSEA
+  if (enrichment=="Yes") {
+    #Gene set enrichment analysis
+    gc()
+    sce_sn_hep <- as.SingleCellExperiment(so)
+    ## C2 category is according to canonical pathways: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
+    geneSets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG")
+    ### filter background to only include genes that we assessed
+    geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
+    geneSets <- geneSets[geneSets$gene_symbol %in% names(sce_sn_hep),]
+    m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
+    stats <- m$p_val_adj
+    names(stats) <- rownames(m)
+    eaRes <- fgsea(pathways = m_list, stats = na.omit(stats))
+    #ooEA <- order(eaRes$pval, decreasing = FALSE)
+    #kable(head(eaRes[ooEA, 1:7], n = 20))
+    # Convert the leadingEdge column to comma-separated strings
+    eaRes$leadingEdge <- sapply(eaRes$leadingEdge, function(x) paste(x, collapse = ", "))
+    gc()
+    #Significant pathways
+    sig <- eaRes %>% 
+      filter(padj<0.05)
+    
+    #Plot top pathways
+    # Subset top pathways for visualization
+    top_pathways <- eaRes[order(-abs(eaRes$NES)), ][1:top_gsea, ]  # Top 10 pathways based on adjusted p-value
+    
+    # Define a significance threshold
+    significance_threshold <- 0.05
+    
+    # Add a significance column for coloring
+    top_pathways$significance <- ifelse(
+      top_pathways$padj > significance_threshold, "Non-significant",
+      ifelse(top_pathways$NES > 0, "Positive Significant", "Negative Significant")
+    )
+    
+    if (!is.null(cell)) {
+      title <- paste0("Top Enriched Pathways by NES (GSEA) in ",cell," cells between ",condition, " and ", reference)
+    } else {
+      title <- paste0("Top Enriched Pathways by NES (GSEA) for ",condition," (Bulk)")
+    }
+    # Create a bar plot
+    gsea_plot <- ggplot(top_pathways, aes(x = reorder(pathway, NES), y = NES, fill = significance)) +
+      geom_bar(stat = "identity") +
+      coord_flip() +  # Flip coordinates for better readability
+      scale_fill_manual(
+        values = c(
+          "Positive Significant" = "red",
+          "Negative Significant" = "blue",
+          "Non-significant" = "gray"
+        ),
+        name = "Significance"
+      ) +
+      labs(
+        title = title,
+        x = "Pathway",
+        y = "Normalized Enrichment Score (NES)"
+      ) +
+      theme_minimal(base_size = 12) +
+      theme(
+        axis.text.y = element_text(size = 10),
+        axis.title.y = element_text(size = 12),
+        plot.title = element_text(size = 14, face = "bold")
+      )
+    
+  
+    if (!is.null(cell)){
+      filename <- paste0("GSEA_top_",top_gsea,"_pathways_",cell,"_cells_for",condition,".pdf")
+    } else {
+      filename <- paste0("Bulk_GSEA_for_",condition,".pdf") 
+    }
+    pdf(fs::path(dir.results,filename),width=20,height=20)
+    plot(gsea_plot)
+    dev.off()
+    
+  }
+  
+  #save results to excel file
+  write_multiple_sheets <- function(output_file, sheet_data) {
+    # Create a new workbook
+    wb <- createWorkbook()
+    
+    # Loop over the list of data frames
+    for (sheet_name in names(sheet_data)) {
+      # Add a new sheet to the workbook
+      addWorksheet(wb, sheet_name)
+      
+      # Write the data frame to the sheet
+      writeData(wb, sheet_name, sheet_data[[sheet_name]])
+    }
+    # Save the workbook to the specified file
+    saveWorkbook(wb, file = output_file, overwrite = TRUE)
+    
+    # Print a message
+    message("Excel file with multiple sheets created: ", output_file)
+  } 
+  # Example usage
+  df1 <- m
+  df2 <- eaRes
+  
+  # Specify the file name and data
+  if (!is.null(cell)){
+  output_file <- fs::path(dir.results,paste0("Results_",cell,"_cells_for_",condition,".xlsx"))  
+  } else {
+  output_file <- fs::path(dir.results,paste0("Results_for_",condition,".xlsx"))
+  }
+
+  sheet_data <- list(
+    "DEG" = df1,
+    "Pathway_Results" = df2
+  )
+  
+  # Call the function
+  write_multiple_sheets(output_file, sheet_data)
 }
 
 #Mast Function----
