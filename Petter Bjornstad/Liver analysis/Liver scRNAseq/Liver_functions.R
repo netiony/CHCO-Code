@@ -45,7 +45,6 @@ de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, exten
   ))
 }
 
-
 #DEG & GSEA Function ----
 degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,top_gsea) {
   DefaultAssay(so) <- "RNA"
@@ -55,7 +54,8 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
   
   #Differential Expression by Group
   if (!is.null(cell)) {
-  Idents(so) <- so$cell
+  Idents(so) <- so$celltype2
+  cell_name <- str_replace_all(cell,"/","_")
   }
   # sens_genes <- c(sens_genes,"CDKN1A")
   # de.markers(so, gene_set, "group", id2 = "neither", id1 = "both", "PT", "")
@@ -78,7 +78,7 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
   )
   
   if (!is.null(cell)){
-    title <- paste0("DEGs in ",cell," cells for ",condition)
+    title <- paste0("DEGs in ",cell_name," cells for ",condition)
   } else {
     title <- paste0("Bulk DEGs for ",condition)
   }
@@ -102,7 +102,7 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
                        boxedLabels = TRUE,
                        max.overlaps=60)
   if (!is.null(cell)){
-  filename <- paste0("DEGs_in_",cell,"_cells_in_",condition2,"_vs_",reference2,".pdf")
+  filename <- paste0("DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
   } else {
     filename <- paste0("Bulk_DEGs_for_",condition,".pdf") 
   }
@@ -147,7 +147,7 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
     )
     
     if (!is.null(cell)) {
-      title <- paste0("Top Enriched Pathways by NES (GSEA) in ",cell," cells between ",condition, " and ", reference)
+      title <- paste0("Top Enriched Pathways by NES (GSEA) in ",cell_name," cells among ",condition)
     } else {
       title <- paste0("Top Enriched Pathways by NES (GSEA) for ",condition," (Bulk)")
     }
@@ -177,7 +177,7 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
     
   
     if (!is.null(cell)){
-      filename <- paste0("GSEA_top_",top_gsea,"_pathways_",cell,"_cells_for",condition,".pdf")
+      filename <- paste0("GSEA_top_",top_gsea,"_pathways_",cell_name,"_cells_for",condition,".pdf")
     } else {
       filename <- paste0("Bulk_GSEA_for_",condition,".pdf") 
     }
@@ -212,7 +212,7 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
   
   # Specify the file name and data
   if (!is.null(cell)){
-  output_file <- fs::path(dir.results,paste0("Results_",cell,"_cells_for_",condition,".xlsx"))  
+  output_file <- fs::path(dir.results,paste0("Results_",cell_name,"_cells_for_",condition,".xlsx"))  
   } else {
   output_file <- fs::path(dir.results,paste0("Results_for_",condition,".xlsx"))
   }
@@ -226,144 +226,26 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
   write_multiple_sheets(output_file, sheet_data)
 }
 
-#Mast Function----
-mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,ref_group,enrichment,top_gsea_pathways) {
-  DefaultAssay(so) <- "RNA"
-  
-  #Set conditions and references
-  condition <- ifelse(exp_group=="both","SLGT2i + GLP-1 (+/+)",
-                      ifelse(exp_group=="exclusive_sglt2","SGLT2i (-/+)",
-                             ifelse(exp_group=="exclusive_glp1","GLP-1 (+/-)",
-                                    ifelse(exp_group=="neither","No Treatment (-/-)",NA))))
-  reference <- ifelse(ref_group=="both","SLGT2i + GLP-1 (+/+)",
-                      ifelse(ref_group=="exclusive_sglt2","SGLT2i (-/+)",
-                             ifelse(ref_group=="exclusive_glp1","GLP-1 (+/-)",
-                                    ifelse(ref_group=="neither","No Treatment (-/-)",NA))))
-  #Set conditions and references for printing
-  condition2 <- ifelse(exp_group=="both","SLGT2i_GLP_1",
-                       ifelse(exp_group=="exclusive_sglt2","SGLT2i",
-                              ifelse(exp_group=="exclusive_glp1","GLP_1",
-                                     ifelse(exp_group=="neither","No_Treatment",NA))))
-  reference2 <- ifelse(ref_group=="both","SLGT2i_GLP_1",
-                       ifelse(ref_group=="exclusive_sglt2","SGLT2i",
-                              ifelse(ref_group=="exclusive_glp1","GLP_1",
-                                     ifelse(ref_group=="neither","No_Treatment",NA))))
-  
-  #Subset so to conditions of interest
-  so <- subset(so,group==ref_group | group == exp_group)
-  
-  #Differential Expression by Group
-  Idents(so) <- so$celltype2
-  # sens_genes <- c(sens_genes,"CDKN1A")
-  # de.markers(so, gene_set, "group", id2 = "neither", id1 = "both", "PT", "")
-  de.markers(so, gene_set, exposure, id2 = ref_group, id1 = exp_group, cell, "")
-  colnames(m)[2] <- paste0(condition)
-  colnames(m)[3] <- paste0(reference)
-  
-  #Plot DEGs
-  m_top <- m
-  significant_genes <- m_top %>% filter(p_val_adj < 0.05)
-  
-  # # Select the top 10 positive and top 10 negative log2FC genes that are significant
-  # top_genes <- rbind(
-  #   significant_genes %>% arrange(desc(avg_log2FC)) %>% head(40),  # Top 10 positive log2FC
-  #   significant_genes %>% arrange(avg_log2FC) %>% head(40)         # Top 10 negative log2FC
-  # )
-  top_genes <- rbind(
-    significant_genes %>% filter(avg_log2FC > 0) %>% arrange(p_val_adj) %>% head(20),  # Top 10 positive significant genes
-    significant_genes %>% filter(avg_log2FC < 0) %>% arrange(p_val_adj) %>% head(20)  # Top 10 negative significant genes
-  )
-  
-  labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
-  p <- EnhancedVolcano(m_top,
-                       lab = labels,
-                       x = 'avg_log2FC',
-                       y = 'p_val_adj',
-                       title =paste0("DEGs in ",cell," cells between ",condition, " and ", reference),
-                       subtitle = paste0("Positive Log2 FC = Greater Expression in", condition," vs.", reference,"\n",
-                                         "(Significant at FDR-P<0.05, FC Threshold = 0.5)"),
-                       pCutoff = 0.05,
-                       FCcutoff = 0.5,
-                       labFace = 'bold',
-                       pointSize = 4,
-                       labSize = 5,
-                       drawConnectors = TRUE,
-                       widthConnectors = 1.0,
-                       colConnectors = 'black',
-                       legendPosition=NULL,
-                       boxedLabels = TRUE,
-                       max.overlaps=60)
-  filename <- paste0("DEGs_in_",cell,"_cells_in_",condition2,"_vs_",reference2,".pdf")
-  pdf(fs::path(dir.results,filename),width=20,height=20)
-  plot(p)
-  dev.off()
 
-  #GSEA
-  if (enrichment=="Yes") {
-    #Gene set enrichment analysis
-    gc()
-    sce_sn_hep <- as.SingleCellExperiment(so)
-    ## C2 category is according to canonical pathways: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
-    geneSets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG")
-    ### filter background to only include genes that we assessed
-    geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
-    geneSets <- geneSets[geneSets$gene_symbol %in% names(sce_sn_hep),]
-    m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
-    stats <- m$p_val_adj
-    names(stats) <- rownames(m)
-    eaRes <- fgsea(pathways = m_list, stats = na.omit(stats))
-    #ooEA <- order(eaRes$pval, decreasing = FALSE)
-    #kable(head(eaRes[ooEA, 1:7], n = 20))
-    # Convert the leadingEdge column to comma-separated strings
-    eaRes$leadingEdge <- sapply(eaRes$leadingEdge, function(x) paste(x, collapse = ", "))
-    gc()
-    #Significant pathways
-    sig <- eaRes %>% 
-      filter(padj<0.05)
-    
-    #Plot top pathways
-    # Subset top pathways for visualization
-    top_pathways <- eaRes[order(-abs(eaRes$NES)), ][1:top_gsea_pathways, ]  # Top 10 pathways based on adjusted p-value
-    
-    # Define a significance threshold
-    significance_threshold <- 0.05
-    
-    # Add a significance column for coloring
-    top_pathways$significance <- ifelse(
-      top_pathways$padj > significance_threshold, "Non-significant",
-      ifelse(top_pathways$NES > 0, "Positive Significant", "Negative Significant")
-    )
-    
-    # Create a bar plot
-    gsea_plot <- ggplot(top_pathways, aes(x = reorder(pathway, NES), y = NES, fill = significance)) +
-      geom_bar(stat = "identity") +
-      coord_flip() +  # Flip coordinates for better readability
-      scale_fill_manual(
-        values = c(
-          "Positive Significant" = "red",
-          "Negative Significant" = "blue",
-          "Non-significant" = "gray"
-        ),
-        name = "Significance"
-      ) +
-      labs(
-        title = paste0("Top Enriched Pathways by NES (GSEA) in ",cell," cells between ",condition, " and ", reference),
-        x = "Pathway",
-        y = "Normalized Enrichment Score (NES)"
-      ) +
-      theme_minimal(base_size = 12) +
-      theme(
-        axis.text.y = element_text(size = 10),
-        axis.title.y = element_text(size = 12),
-        plot.title = element_text(size = 14, face = "bold")
-      )
-    filename <- paste0("GSEA_top_",top_gsea_pathways,"_pathways_",cell,"_cells_",condition2,"_vs_",reference2,".pdf")
-    pdf(fs::path(dir.results,filename),width=20,height=20)
-    plot(gsea_plot)
-    dev.off()
-    
+#so=so_liver_sn
+#cell=NULL
+#exposure=exp
+#covariate="diagnosis_of_diabetes"
+#gene_set=rownames(so_liver_sn)
+#batch_size=100
+#exp_group=NULL
+#ref_group=NULL
+#Mast Function----
+mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,ref_group) {
+  DefaultAssay(so) <- "RNA"
+
+  #Conidtion names
+  if (!is.null(exp_group)) {
+  condition <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group," vs. ",ref_group,")")
+  } else {
+    condition <- paste0(str_to_title(exposure))
   }
-  
+
   #Association by Group
   combined_results <- data.frame()
   num_genes <- length(gene_set)
@@ -372,17 +254,21 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
     end_batch <- min(start_batch + batch_size - 1, num_genes)
     batch <- gene_set[start_batch:end_batch]
     #Filter so to specified cell type
-    so <- subset(so,celltype2==cell)
+    if (!is.null(cell)){
+    so_sub <- subset(so,celltype2==cell)
     DefaultAssay(so) <- "RNA"
-    subset <- intersect(batch, rownames(so))
+    subset <- intersect(batch, rownames(so_sub))
     # Subset the Seurat object to include only genes in sens_gene_in_data
-    so <- subset(so, features = subset)
+    so_sub <- subset(so_sub, features = subset)
+    } else {
+      so_sub <- so
+    }
     
     # Extract the expression data matrix from so (e.g., normalized counts)
-    expression_matrix <- as.matrix(GetAssayData(so, layer = "data"))
+    expression_matrix <- as.matrix(GetAssayData(so_sub, layer = "data"))
     
     # Extract metadata
-    cell_metadata <- so@meta.data
+    cell_metadata <- so_sub@meta.data
     cell_metadata[[exposure]] <- factor(cell_metadata[[exposure]])
     
     # Create SingleCellAssay object
@@ -392,7 +278,7 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
     sca_gene_set <- sca[rownames(sca) %in% gene_set, ]
     
     #Define the formula
-    model_formula <- as.formula(paste0("~", exposure))
+    model_formula <- as.formula(paste0("~", exposure,"+",covariate))
     exp <- paste0(exposure,exp_group)
     
     # Run the linear model with zlm
@@ -432,42 +318,15 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
     combined_results <- rbindlist(list(combined_results, result1), use.names = TRUE, fill = TRUE)
     
   }
-  # return(combined_results)
-  # Call the function
-  write_multiple_sheets <- function(output_file, sheet_data) {
-    # Create a new workbook
-    wb <- createWorkbook()
-    
-    # Loop over the list of data frames
-    for (sheet_name in names(sheet_data)) {
-      # Add a new sheet to the workbook
-      addWorksheet(wb, sheet_name)
-      
-      # Write the data frame to the sheet
-      writeData(wb, sheet_name, sheet_data[[sheet_name]])
-    }
-    # Save the workbook to the specified file
-    saveWorkbook(wb, file = output_file, overwrite = TRUE)
-    
-    # Print a message
-    message("Excel file with multiple sheets created: ", output_file)
-  } 
-  # Example usage
-  df1 <- m
-  df2 <- combined_results
-  df3 <- eaRes
-  
+
   # Specify the file name and data
-  output_file <- fs::path(dir.results,paste0("Results_",cell,"_cells_",condition2,"_vs._",reference2,".xlsx"))
-  
-  sheet_data <- list(
-    "DEG" = df1,
-    "MAST_Results" = df2,
-    "Pathway_Results" = df3
-  )
-  
-  # Call the function
-  write_multiple_sheets(output_file, sheet_data)
+  if (!is.null(cell)){
+    output_file <- paste0("Results_",cell_name,"_cells_for_",condition,".xlsx")
+  } else {
+    output_file <- paste0("Results_for_",condition,".xlsx")
+  }
+
+  write.csv(combined_results,fs::path(output_file))
   
   # Filter top 10 positive and negative log2FoldChange
   top_pos <- as.data.frame(combined_results) %>%
@@ -506,7 +365,14 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
     theme_minimal()+
     theme(element_text(family="Times"))+
     theme(legend.position="none")
-  pdf(fs::path(dir.results,paste0("Barchart_",cell,"_cells_",condition2,"_vs._",reference2,".pdf")),width=20,height=20)
+  
+  if (!is.null(cell)){
+    figure_file<- paste0("MAST_Barchart_",cell_name,"_cells_for_",condition,".pdf")
+  } else {
+    figure_file <- paste0("MAST_Barchart_for_",condition,".pdf")
+  }
+  
+  pdf(fs::path(dir.results,figure_file),width=20,height=20)
   plot(p)
   dev.off()
   }
