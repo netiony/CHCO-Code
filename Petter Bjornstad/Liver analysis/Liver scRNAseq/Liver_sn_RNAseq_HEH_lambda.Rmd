@@ -202,9 +202,19 @@ so_kidney_sc@meta.data <- so_kidney_sc@meta.data %>%
   mutate(exclusive_sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
   mutate(exclusive_glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
   mutate(neither=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
-# so_diab <- subset(so_kidney_sc,group=="Type 2 Diabetes")
-# rm(so_kidney_sc)
-# gc()
+
+
+so_kidney_sc@meta.data <- so_kidney_sc@meta.data %>% 
+  mutate(group2 = case_when(both == "Yes" ~ "both",
+                            exclusive_sglt2 == "Yes" ~ "exclusive_sglt2",
+                            exclusive_glp1 == "Yes" ~ "exclusive_glp1",
+                            neither == "Yes" ~ "neither"))
+
+so_kidney_sc@meta.data$group2 <- factor(so_kidney_sc@meta.data$group2, levels = c("neither", "both", "exclusive_sglt2", "exclusive_glp1"))
+
+so_diab <- subset(so_kidney_sc,group=="Type 2 Diabetes")
+rm(so_kidney_sc)
+gc()
 
 # #Create senesence so in all cell types
 # sens_genes <- c(sens_genes,"CDKN1A")
@@ -995,10 +1005,10 @@ dat <- dat %>%
 
 dat$record_id %in% unique(so_kidney_sc$record_id)
 unique(so_kidney_sc$record_id)
-table(dat$exclusive_sglt2) #-/+
-table(dat$exclusive_glp1) #+/-
-table(dat$both) #+/+
-table(dat$neither) #-/-
+table(dat$exclusive_sglt2) #-/+ #27 no, 10 yes
+table(dat$exclusive_glp1) #+/- #29 no, 8 yes
+table(dat$both) #+/+ #33 no, 4 yes
+table(dat$neither) #-/- #22 no, 15 yes
 
 
 
@@ -2737,34 +2747,47 @@ ideas_fxn <- function(so, exposure, covariates, var_type, id, method) {
 ```
 ##b. Kidney
 ```{r}
-exposure <- "group"
+exposure="group3"
+exp_group <- "exclusive_glp1"
+ref_group <- "neither"
 var_type <- "binary"
-so <- so_kidney_sc
-rm(so_kidney_sc)
-id <- "Kit_Lot"
+so <- so_diab
+# rm(so_kidney_sc)
+id <- "kit_id"
 method <- "zinb"
+# unique(so$kit_id[which(is.na(so$group))])
+# so_diab <- subset(so,group=="Type 2 Diabetes")
+# so <- so_diab
+# rm(so_diab)
 
-ideas_fxn <- function(so, exposure, covariates, var_type, id, method) {
+ideas_fxn <- function(so, exp_group, ref_group, covariates, var_type, id, method, exposure) {
+  
+  #Filter so to groups of interest
+  so$filt_condition <- ifelse(so$group2==paste0(exp_group) | so$group2==paste0(ref_group),"Yes","No")
+  so <- subset(so,filt_condition=="Yes")
+  so$group3 <- ifelse(so$group2==paste0(exp_group),paste0(exp_group),paste0(ref_group))
+  so$group3 <- factor(so$group3)
   
   # Create individual variable dynamically based on the input 'id'
   so$individual <- so[[id]]  # Assign the column specified by 'id' as the individual variable
   
   # Split genes into batches
-  batch_size <- 1000  # Number of genes per batch
-  count_matrix <- GetAssayData(so, assay = "RNA", slot = "counts")
+  batch_size <- 100  # Number of genes per batch
+  count_matrix <- GetAssayData(so, assay = "RNA", layer = "counts")
   gene_batches <- split(rownames(count_matrix), ceiling(seq_along(rownames(count_matrix)) / batch_size))
   
   # Loop through each gene batch
   all_results <- list()  # To store results from all batches
   
-  for (i in seq_along(gene_batches)) {
+  for (i in seq_along(gene_batches)) 
+    {
     cat("Processing batch", i, "of", length(gene_batches), "\n")
     
     # Get the list of genes for the current batch
     batch_genes <- gene_batches[[i]]
     
     # Extract the count matrix for this batch of genes
-    batch_matrix <- count_matrix[batch_genes, , drop = FALSE]  # Drop = FALSE ensures it stays a matrix
+    batch_matrix <- count_matrix[batch_genes,]  # Drop = FALSE ensures it stays a matrix
     batch_matrix <- as.matrix(batch_matrix)
     # Round the count matrix to ensure integer values
     batch_matrix <- round(batch_matrix)  # Round values to ensure integer counts
@@ -2775,7 +2798,9 @@ ideas_fxn <- function(so, exposure, covariates, var_type, id, method) {
     }
     
     # Extract the metadata for the cells corresponding to the batch
-    meta_cell <- so@meta.data
+    # Subset meta_cell based on the cells in batch_matrix
+    cell_ids <- colnames(batch_matrix)  # Extract cell IDs from the batch matrix
+    meta_cell <- so@meta.data[cell_ids, ]  # Subset metadata to match the batch cells
     meta_cell$cell_id <- rownames(meta_cell)  # Add cell IDs if not already present
     
     # Ensure the metadata includes the required column (e.g., 'Kit_Lot' for individuals)
@@ -2784,14 +2809,11 @@ ideas_fxn <- function(so, exposure, covariates, var_type, id, method) {
     # Add a small constant to ensure no zero or negative values
     meta_cell$cell_rd <- meta_cell$cell_rd + 1  # Adding 1 to avoid log(0) errors
     
-    #    # Ensure the metadata includes the required column (e.g., 'Kit_Lot' for individuals)
-    # meta_cell$cell_rd[meta_cell$cell_rd == 0] <- 1  # Ensure no zero read depth
-    
     # Create individual-level metadata (e.g., group information, exposure)
-    meta_ind <- unique(meta_cell[, c("individual", exposure)])  # Use dynamic 'id' for individual variable
+    meta_ind <- unique(meta_cell[, c("individual", "group3")]) 
     
     # Set variables for differential expression analysis
-    var2test <- exposure  # Group variable to test
+    var2test <- "group3"  # Group variable to test
     var2adjust <- NULL     # Adjusting variable (e.g., RIN, if applicable)
     var2test_type <- var_type  # "binary" or "continuous"
     var_per_cell <- "cell_rd"  # Cell-level adjustment variable (read depth)

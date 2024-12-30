@@ -65,6 +65,7 @@ de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, exten
   ))
 }
 
+#Mast Function----
 mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,ref_group,enrichment,top_gsea_pathways) {
   DefaultAssay(so) <- "RNA"
   
@@ -348,6 +349,143 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
   plot(p)
   dev.off()
   }
+}
+
+
+#Ideas Function ----
+ideas_fxn <- function(so, exp_group, ref_group, covariates, var_type, id, method, exposure) {
+  
+  #Filter so to groups of interest
+  so$filt_condition <- ifelse(so$group2==paste0(exp_group) | so$group2==paste0(ref_group),"Yes","No")
+  so <- subset(so,filt_condition=="Yes")
+  so$group3 <- ifelse(so$group2==paste0(exp_group),paste0(exp_group),paste0(ref_group))
+  so$group3 <- factor(so$group3)
+  
+  # Create individual variable dynamically based on the input 'id'
+  so$individual <- so[[id]]  # Assign the column specified by 'id' as the individual variable
+  
+  # Split genes into batches
+  batch_size <- 1000  # Number of genes per batch
+  count_matrix <- GetAssayData(so, assay = "RNA", layer = "counts")
+  gene_batches <- split(rownames(count_matrix), ceiling(seq_along(rownames(count_matrix)) / batch_size))
+  
+  # Loop through each gene batch
+  all_results <- list()  # To store results from all batches
+  
+  for (i in seq_along(gene_batches)) {
+    cat("Processing batch", i, "of", length(gene_batches), "\n")
+    
+    # Get the list of genes for the current batch
+    batch_genes <- gene_batches[[i]]
+    
+    # Extract the count matrix for this batch of genes
+    batch_matrix <- count_matrix[batch_genes, , drop = FALSE]  # Drop = FALSE ensures it stays a matrix
+    batch_matrix <- as.matrix(batch_matrix)
+    # Round the count matrix to ensure integer values
+    batch_matrix <- round(batch_matrix)  # Round values to ensure integer counts
+    
+    # Check if the matrix contains non-integer values
+    if (any(batch_matrix != floor(batch_matrix))) {
+      stop("Batch matrix contains non-integer values!")
+    }
+    
+    # Extract the metadata for the cells corresponding to the batch
+    meta_cell <- so@meta.data
+    meta_cell$cell_id <- rownames(meta_cell)  # Add cell IDs if not already present
+    
+    # Ensure the metadata includes the required column (e.g., 'Kit_Lot' for individuals)
+    meta_cell$cell_rd <- colSums(batch_matrix)  # Total counts per cell (read depth)
+    
+    # Add a small constant to ensure no zero or negative values
+    meta_cell$cell_rd <- meta_cell$cell_rd + 1  # Adding 1 to avoid log(0) errors
+    
+    #    # Ensure the metadata includes the required column (e.g., 'Kit_Lot' for individuals)
+    # meta_cell$cell_rd[meta_cell$cell_rd == 0] <- 1  # Ensure no zero read depth
+    
+    # Create individual-level metadata (e.g., group information, exposure)
+    meta_ind <- unique(meta_cell[, c("individual", "group3")])  # Use dynamic 'id' for individual variable
+    
+    # Set variables for differential expression analysis
+    var2test <- "group3"  # Group variable to test
+    var2adjust <- NULL     # Adjusting variable (e.g., RIN, if applicable)
+    var2test_type <- var_type  # "binary" or "continuous"
+    var_per_cell <- "cell_rd"  # Cell-level adjustment variable (read depth)
+    test_method <- paste0(method)
+    
+    # Perform IDEAS distance calculation for this batch
+    dist_batch <- ideas_dist(
+      count_input = batch_matrix,
+      meta_cell = meta_cell,
+      meta_ind = meta_ind,
+      var_per_cell = var_per_cell,
+      var2test = var2test,
+      var2test_type = var2test_type,
+      d_metric = "Was",  # Wasserstein distance
+      fit_method = test_method  # Negative binomial fit
+    )
+    
+    # Perform PERMANOVA for this batch
+    pval_batch <- permanova(
+      dist_array = dist_batch,
+      meta_ind = meta_ind,
+      var2test = var2test,
+      var2adjust = NULL,
+      var2test_type = var2test_type,
+      n_perm = 999,
+      r.seed = 903
+    )
+    
+    # Combine results for this batch
+    batch_results <- data.frame(
+      gene = batch_genes,
+      pvalue = pval_batch
+    )
+    
+    # Store results
+    all_results[[i]] <- batch_results
+  }
+  
+  # Combine all batches into one final result
+  final_results <- do.call(rbind, all_results)
+  
+  # Save or further analyze the results
+  write.csv(final_results, "DEA_results_ideas.csv", row.names = FALSE)
+  
+  # Example mock data for log-fold changes (LFC); Replace with actual data
+  set.seed(42)
+  final_results$logFC <- rnorm(nrow(final_results), mean = 0, sd = 2)  # Mock log fold change values
+  
+  # Set thresholds for significance
+  pval_threshold <- 0.05
+  logFC_threshold <- 1
+  
+  # Classify genes as upregulated, downregulated, or not significant
+  final_results <- final_results %>%
+    mutate(
+      significance = case_when(
+        pvalue < pval_threshold & logFC > logFC_threshold ~ "Upregulated",
+        pvalue < pval_threshold & logFC < -logFC_threshold ~ "Downregulated",
+        TRUE ~ "Not Significant"
+      )
+    )
+  
+  # Create the volcano plot
+  volcano_plot <- ggplot(final_results, aes(x = logFC, y = -log10(pvalue), color = significance)) +
+    geom_point(alpha = 0.8, size = 1.5) +
+    scale_color_manual(values = c("Upregulated" = "red", "Downregulated" = "blue", "Not Significant" = "gray")) +
+    labs(
+      title = "Volcano Plot",
+      x = "Log2 Fold Change (logFC)",
+      y = "-log10(p-value)"
+    ) +
+    theme_minimal() +
+    theme(legend.title = element_blank())
+  
+  # Save the plot
+  ggsave("volcano_plot_ideas.png", volcano_plot, width = 8, height = 6)
+  
+  # Optionally, print the plot to the console
+  print(volcano_plot)
 }
 
 
