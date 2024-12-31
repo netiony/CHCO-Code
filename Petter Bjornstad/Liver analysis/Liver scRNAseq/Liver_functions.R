@@ -217,7 +217,7 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
   if (!is.null(cell)){
   output_file <- fs::path(dir.results,paste0("Results_",cell_name,"_cells_for_",condition,".xlsx"))  
   } else {
-  output_file <- fs::path(dir.results,paste0("Results_for_",condition,".xlsx"))
+  output_file <- fs::path(dir.results,paste0("Bulk_Results_for_",condition,".xlsx"))
   }
 
   sheet_data <- list(
@@ -229,15 +229,169 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
   write_multiple_sheets(output_file, sheet_data)
 }
 
+#Visualize Function ----
+##a. Bulk ----
 
-so=so_liver_sn
-cell=NULL
-exposure=exp
-covariate="diagnosis_of_diabetes"
-gene_set=rownames(so_liver_sn)
-batch_size=100
-exp_group=NULL
-ref_group=NULL
+
+##b. Single Cell ----
+visualize_function <- function(exposure,cell) {
+  
+  # List all files in the results directory
+  all_files <- dir_ls(path = dir.results, glob = "*.xlsx")  # List only .xlsx files
+  
+  # Filter the files that contain the current cell type and exposure in the file name
+  matching_files <- all_files[str_detect(all_files, cell) & str_detect(all_files, exposure)]
+  
+  # Check if matching files exist for the current cell type and exposure
+  if (length(matching_files) > 0) {
+    # Ensure we have at least 3 files
+    if (length(matching_files) >= 3) {
+      # Read in the first, second, and third files as group1, group2, and group3
+      group1 <- read.xlsx(matching_files[1])
+      group2 <- read.xlsx(matching_files[2])
+      group3 <- read.xlsx(matching_files[3])
+      
+    } 
+  }
+  # Create an empty list to store titles
+  group_titles <- list()
+  
+  # Loop through each file in matching_files
+  for (i in 1:length(matching_files)) {
+    file_path <- matching_files[i]
+    
+    # Extract the comparison group from the file name
+    comparison_group <- sub(".*\\((.*?)\\).*", "\\1", basename(file_path))
+    
+    # Assign titles to group1_title, group2_title, etc.
+    group_titles[[paste0("group", i, "_title")]] <- comparison_group
+  }
+  
+  # Now you can access the group titles like this
+  group1_title <- group_titles$group1_title
+  group2_title <- group_titles$group2_title
+  group3_title <- group_titles$group3_title
+  
+  # Define significance threshold
+  significance_threshold <- 0.05
+  
+  # Filter significant genes and classify as upregulated or downregulated
+  get_gene_sets <- function(data) {
+    upregulated <- data %>%
+      filter(p_val_adj < significance_threshold & avg_log2FC > 0) %>%
+      pull(Gene) # Replace 'gene' with the actual column name for gene IDs
+    downregulated <- data %>%
+      filter(p_val_adj < significance_threshold & avg_log2FC < 0) %>%
+      pull(Gene) # Replace 'gene' with the actual column name for gene IDs
+    list(up = upregulated, down = downregulated)
+  }
+  
+  # Calculate gene sets for each group
+  group1_sets <- get_gene_sets(group1)
+  group2_sets <- get_gene_sets(group2)
+  group3_sets <- get_gene_sets(group3)
+  
+  # Extract upregulated and downregulated sets
+  up1 <- group1_sets$up
+  down1 <- group1_sets$down
+  up2 <- group2_sets$up
+  down2 <- group2_sets$down
+  up3 <- group3_sets$up
+  down3 <- group3_sets$down
+  
+  # Find mutual upregulated genes between groups
+  mutual_up12 <- intersect(up1, up2)  # Upregulated in both Group 1 and Group 2
+  mutual_up13 <- intersect(up1, up3)  # Upregulated in both Group 1 and Group 3
+  mutual_up23 <- intersect(up2, up3)  # Upregulated in both Group 2 and Group 3
+  mutual_up_all <- Reduce(intersect, list(up1, up2, up3))  # Upregulated in all three groups
+  
+  # Find mutual downregulated genes between groups
+  mutual_down12 <- intersect(down1, down2)  # Downregulated in both Group 1 and Group 2
+  mutual_down13 <- intersect(down1, down3)  # Downregulated in both Group 1 and Group 3
+  mutual_down23 <- intersect(down2, down3)  # Downregulated in both Group 2 and Group 3
+  mutual_down_all <- Reduce(intersect, list(down1, down2, down3))  # Downregulated in all three groups
+  
+  # Find unique upregulated genes in each group
+  unique_up1 <- setdiff(up1, union(up2, up3))  # Upregulated only in Group 1
+  unique_up2 <- setdiff(up2, union(up1, up3))  # Upregulated only in Group 2
+  unique_up3 <- setdiff(up3, union(up1, up2))  # Upregulated only in Group 3
+  
+  # Find unique downregulated genes in each group
+  unique_down1 <- setdiff(down1, union(down2, down3))  # Downregulated only in Group 1
+  unique_down2 <- setdiff(down2, union(down1, down3))  # Downregulated only in Group 2
+  unique_down3 <- setdiff(down3, union(down1, down2))  # Downregulated only in Group 3
+  
+  
+  
+  # Function to draw Venn diagrams for upregulated and downregulated genes
+  # Function to draw Venn diagrams for upregulated and downregulated genes
+  draw_venn <- function(up1, up2, up3, down1, down2, down3) {
+    
+    # Plot Venn diagram for upregulated genes
+    venn_up <- venn.diagram(
+      x = list(
+        Group1 = up1,
+        Group2 = up2,
+        Group3 = up3
+      ),
+      category.names = c("Group 1", "Group 2", "Group 3"),
+      filename = NULL, # Don't save as file, display in plot window
+      output = TRUE,
+      main = "Upregulated Genes",
+      col = "black",
+      fill = c("lightblue", "lightgreen", "lightcoral"),
+      alpha = 0.5,
+      cex = 1.5,
+      cat.cex = 1.5,
+      cat.pos = c(0, 0, 0),  # Move Group 3 label to the bottom
+      cat.dist = 0.05,
+      margin = 0.1
+    )
+    
+    # Plot Venn diagram for downregulated genes
+    venn_down <- venn.diagram(
+      x = list(
+        Group1 = down1,
+        Group2 = down2,
+        Group3 = down3
+      ),
+      category.names = c("Group 1", "Group 2", "Group 3"),
+      filename = NULL, # Don't save as file, display in plot window
+      output = TRUE,
+      main = "Downregulated Genes",
+      col = "black",
+      fill = c("lightblue", "lightgreen", "lightcoral"),
+      alpha = 0.5,
+      cex = 1.5,
+      cat.cex = 1.5,
+      cat.pos = c(0, 0, 0),  # Move Group 3 label to the bottom
+      cat.dist = 0.05,
+      margin = 0.1
+    )
+    
+    # Draw the upregulated genes Venn diagram
+    grid.draw(venn_up)
+    
+    # Draw a new page for downregulated Venn diagram
+    grid.newpage() 
+    
+    # Draw the downregulated genes Venn diagram
+    grid.draw(venn_down)
+  }
+  draw_venn(up1, up2, up3, down1, down2, down3)
+  
+ print(paste0("Group 1 = ",group1_title),paste0("Group 2 = ",group2_title),paste0("Group 3 = ",group3_title))
+}
+
+#so=so_liver_sn
+#cell=NULL
+#exposure=exp
+#covariate="diagnosis_of_diabetes"
+#gene_set=rownames(so_liver_sn)
+#batch_size=100
+#exp_group=NULL
+#ref_group=NULL
+
 #Mast Function----
 mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,ref_group) {
   DefaultAssay(so) <- "RNA"
