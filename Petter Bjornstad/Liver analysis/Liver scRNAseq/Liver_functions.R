@@ -186,7 +186,10 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
     dev.off()
     
   }
-  
+  #Make sure gene nemaes are in printed file
+  deg_results <- m 
+  deg_results$Gene <- rownames(deg_results)
+    
   #save results to excel file
   write_multiple_sheets <- function(output_file, sheet_data) {
     # Create a new workbook
@@ -207,7 +210,7 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
     message("Excel file with multiple sheets created: ", output_file)
   } 
   # Example usage
-  df1 <- m
+  df1 <- deg_results
   df2 <- eaRes
   
   # Specify the file name and data
@@ -227,14 +230,14 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
 }
 
 
-#so=so_liver_sn
-#cell=NULL
-#exposure=exp
-#covariate="diagnosis_of_diabetes"
-#gene_set=rownames(so_liver_sn)
-#batch_size=100
-#exp_group=NULL
-#ref_group=NULL
+so=so_liver_sn
+cell=NULL
+exposure=exp
+covariate="diagnosis_of_diabetes"
+gene_set=rownames(so_liver_sn)
+batch_size=100
+exp_group=NULL
+ref_group=NULL
 #Mast Function----
 mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,ref_group) {
   DefaultAssay(so) <- "RNA"
@@ -246,6 +249,12 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
     condition <- paste0(str_to_title(exposure))
   }
 
+  #Filter so to specified cell type
+  if (!is.null(cell)){
+    so <- subset(so,celltype2==cell)
+    DefaultAssay(so) <- "RNA"
+  } 
+  
   #Association by Group
   combined_results <- data.frame()
   num_genes <- length(gene_set)
@@ -253,23 +262,17 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
     
     end_batch <- min(start_batch + batch_size - 1, num_genes)
     batch <- gene_set[start_batch:end_batch]
-    #Filter so to specified cell type
-    if (!is.null(cell)){
-    so_sub <- subset(so,celltype2==cell)
-    DefaultAssay(so) <- "RNA"
-    subset <- intersect(batch, rownames(so_sub))
-    # Subset the Seurat object to include only genes in sens_gene_in_data
+    
+    # Subset the Seurat object to include only genes in the gene set
+    subset <- intersect(batch, rownames(so))
     so_sub <- subset(so_sub, features = subset)
-    } else {
-      so_sub <- so
-    }
     
     # Extract the expression data matrix from so (e.g., normalized counts)
     expression_matrix <- as.matrix(GetAssayData(so_sub, layer = "data"))
     
     # Extract metadata
     cell_metadata <- so_sub@meta.data
-    cell_metadata[[exposure]] <- factor(cell_metadata[[exposure]])
+    #cell_metadata[[exposure]] <- factor(cell_metadata[[exposure]])
     
     # Create SingleCellAssay object
     sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
@@ -278,14 +281,15 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
     sca_gene_set <- sca[rownames(sca) %in% gene_set, ]
     
     #Define the formula
-    model_formula <- as.formula(paste0("~", exposure,"+",covariate))
+    model_formula <- as.formula(paste0("~", exposure))
+    model_formula <- ~ast
     exp <- paste0(exposure,exp_group)
     
     # Run the linear model with zlm
     zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
     
     # Summarize results and perform likelihood ratio test (LRT) for outcome
-    summary_zlm <- summary(zlm_results, doLRT = exp)
+    summary_zlm <- summary(zlm_results, doLRT = "ast")
     
     # Convert the summary to a data table for easy manipulation
     summary_dt <- summary_zlm$datatable
