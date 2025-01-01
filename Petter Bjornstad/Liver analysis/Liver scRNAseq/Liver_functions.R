@@ -63,19 +63,40 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
   colnames(m)[2] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group,")")
   colnames(m)[3] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",ref_group,")")
   
-  #Plot DEGs
+  # Filter for significant genes
   m_top <- m
   significant_genes <- m_top %>% filter(p_val_adj < 0.05)
   
-  # # Select the top 10 positive and top 10 negative log2FC genes that are significant
-  # top_genes <- rbind(
-  #   significant_genes %>% arrange(desc(avg_log2FC)) %>% head(40),  # Top 10 positive log2FC
-  #   significant_genes %>% arrange(avg_log2FC) %>% head(40)         # Top 10 negative log2FC
-  # )
+  # Select the top 10 positive and 10 negative log2FC genes based on the largest magnitude of fold change
+  top_positive_by_fc <- significant_genes %>% 
+    filter(avg_log2FC > 0) %>% 
+    arrange(desc(abs(avg_log2FC))) %>%  # Sort by absolute fold change (largest first)
+    head(10)  # Top 10 positive fold changes
+  
+  top_negative_by_fc <- significant_genes %>% 
+    filter(avg_log2FC < 0) %>% 
+    arrange(desc(abs(avg_log2FC))) %>%  # Sort by absolute fold change (largest first)
+    head(10)  # Top 10 negative fold changes
+  
+  # Select the top 10 positive and 10 negative log2FC genes based on significance (p_val_adj)
+  top_positive_by_significance <- significant_genes %>% 
+    filter(avg_log2FC > 0) %>% 
+    arrange(p_val_adj) %>%  # Sort by smallest p-value (most significant)
+    head(10)  # Top 10 most significant positive fold changes
+  
+  top_negative_by_significance <- significant_genes %>% 
+    filter(avg_log2FC < 0) %>% 
+    arrange(p_val_adj) %>%  # Sort by smallest p-value (most significant)
+    head(10)  # Top 10 most significant negative fold changes
+  
+  # Combine top fold-change based and significance-based genes into a final list
   top_genes <- rbind(
-    significant_genes %>% filter(avg_log2FC > 0) %>% arrange(p_val_adj) %>% head(20),  # Top 10 positive significant genes
-    significant_genes %>% filter(avg_log2FC < 0) %>% arrange(p_val_adj) %>% head(20)  # Top 10 negative significant genes
+    top_positive_by_fc %>% mutate(Selection = "Top 10 by Fold Change"),
+    top_negative_by_fc %>% mutate(Selection = "Top 10 by Fold Change"),
+    top_positive_by_significance %>% mutate(Selection = "Top 10 by Significance"),
+    top_negative_by_significance %>% mutate(Selection = "Top 10 by Significance")
   )
+  
   
   if (!is.null(cell)){
     title <- paste0("DEGs in ",cell_name," cells for ",condition)
@@ -106,7 +127,7 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
   } else {
     filename <- paste0("Bulk_DEGs_for_",condition,".pdf") 
   }
-  pdf(fs::path(dir.results,filename),width=20,height=20)
+  pdf(fs::path(dir.results,filename),width=20,height=10)
   plot(p)
   dev.off()
   
@@ -231,6 +252,143 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
 
 #Visualize Function ----
 ##a. Bulk ----
+visualize_function_bulk <- function(exposure) {
+  
+  # List all files in the results directory
+  all_files <- dir_ls(path = dir.results, glob = "*.xlsx")  # List only .xlsx files
+  
+  # Filter the files that contain both the exposure and the word "Bulk" in the file name
+  matching_files <- all_files[str_detect(all_files, exposure) & str_detect(all_files, "Bulk")]
+  
+  # Check if matching files exist for the current exposure
+  if (length(matching_files) > 0) {
+    # Ensure we have at least 3 files
+    if (length(matching_files) >= 3) {
+      # Read in the first, second, and third files as group1, group2, and group3
+      group1 <- read.xlsx(matching_files[1])
+      group2 <- read.xlsx(matching_files[2])
+      group3 <- read.xlsx(matching_files[3])
+    } else {
+      # If there are not enough matching files, return a message
+      print("Not enough matching files found.")
+      return(NULL)
+    }
+  } else {
+    # If no matching files, return a message
+    print("No matching files found.")
+    return(NULL)
+  }
+  
+  # Create an empty list to store titles
+  group_titles <- list()
+  
+  # Loop through each file in matching_files to extract titles
+  for (i in 1:length(matching_files)) {
+    file_path <- matching_files[i]
+    
+    # Extract the comparison group from the file name
+    comparison_group <- sub(".*\\((.*?)\\).*", "\\1", basename(file_path))
+    
+    # Assign titles to group1_title, group2_title, etc.
+    group_titles[[paste0("group", i, "_title")]] <- comparison_group
+  }
+  
+  # Now you can access the group titles like this
+  group1_title <- group_titles$group1_title
+  group2_title <- group_titles$group2_title
+  group3_title <- group_titles$group3_title
+  
+  # Define significance threshold
+  significance_threshold <- 0.05
+  
+  # Filter significant genes and classify as upregulated or downregulated
+  get_gene_sets <- function(data) {
+    upregulated <- data %>%
+      filter(p_val_adj < significance_threshold & avg_log2FC > 0) %>%
+      pull(Gene) # Replace 'Gene' with the actual column name for gene IDs
+    downregulated <- data %>%
+      filter(p_val_adj < significance_threshold & avg_log2FC < 0) %>%
+      pull(Gene) # Replace 'Gene' with the actual column name for gene IDs
+    list(up = upregulated, down = downregulated)
+  }
+  
+  # Calculate gene sets for each group
+  group1_sets <- get_gene_sets(group1)
+  group2_sets <- get_gene_sets(group2)
+  group3_sets <- get_gene_sets(group3)
+  
+  # Extract upregulated and downregulated sets
+  up1 <- group1_sets$up
+  down1 <- group1_sets$down
+  up2 <- group2_sets$up
+  down2 <- group2_sets$down
+  up3 <- group3_sets$up
+  down3 <- group3_sets$down
+  
+  # Function to draw Venn diagrams for upregulated and downregulated genes
+  draw_venn <- function(up1, up2, up3, down1, down2, down3) {
+    
+    # Plot Venn diagram for upregulated genes
+    venn_up <- venn.diagram(
+      x = list(
+        Group1 = up1,
+        Group2 = up2,
+        Group3 = up3
+      ),
+      category.names = c("Group 1", "Group 2", "Group 3"),
+      filename = NULL, # Don't save as file, display in plot window
+      output = TRUE,
+      main = "Upregulated Genes",
+      col = "black",
+      fill = c("lightblue", "lightgreen", "lightcoral"),
+      alpha = 0.5,
+      cex = 1.5,
+      cat.cex = 1.5,
+      cat.pos = c(0, 0, 0),  # Move Group 3 label to the bottom
+      cat.dist = 0.05,
+      margin = 0.1
+    )
+    
+    # Plot Venn diagram for downregulated genes
+    venn_down <- venn.diagram(
+      x = list(
+        Group1 = down1,
+        Group2 = down2,
+        Group3 = down3
+      ),
+      category.names = c("Group 1", "Group 2", "Group 3"),
+      filename = NULL, # Don't save as file, display in plot window
+      output = TRUE,
+      main = "Downregulated Genes",
+      col = "black",
+      fill = c("lightblue", "lightgreen", "lightcoral"),
+      alpha = 0.5,
+      cex = 1.5,
+      cat.cex = 1.5,
+      cat.pos = c(0, 0, 0),  # Move Group 3 label to the bottom
+      cat.dist = 0.05,
+      margin = 0.1
+    )
+    
+    # Draw the upregulated genes Venn diagram
+    grid.draw(venn_up)
+    
+    # Draw a new page for downregulated Venn diagram
+    grid.newpage() 
+    
+    # Draw the downregulated genes Venn diagram
+    grid.draw(venn_down)
+  }
+  
+  # Call the function to draw Venn diagrams
+  draw_venn(up1, up2, up3, down1, down2, down3)
+  
+  # Print the titles for the groups
+  print(paste0("Group 1 = ", group1_title))
+  print(paste0("Group 2 = ", group2_title))
+  print(paste0("Group 3 = ", group3_title))
+}
+
 
 
 ##b. Single Cell ----
