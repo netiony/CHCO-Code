@@ -1,12 +1,7 @@
 library(redcapAPI)
 library(tidyverse)
 library(Hmisc)
-home_dir <- switch(Sys.info()["sysname"],
-  "Darwin" = "/Users/timvigers/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/Vigers/BDC/Janet Snell-Bergeon/CALICO",
-  "Windows" = "C:/Users/timvigers/OneDrive - The University of Colorado Denver/Vigers/BDC/Janet Snell-Bergeon/CALICO",
-  "Linux" = "/home/timvigers/OneDrive/Vigers/BDC/Janet Snell-Bergeon/CALICO"
-)
-setwd(home_dir)
+setwd("/Users/timvigers/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/Vigers/BDC/Janet Snell-Bergeon/CALICO")
 # Open REDCap
 unlockREDCap(c(rcon = "CALICO"),
   keyring = "API_KEYs",
@@ -432,6 +427,25 @@ larc_users <- unique(df$record_number[df$larc == "Yes"])
 df$larc_ever <- "No"
 df$larc_ever[df$record_number %in% larc_users] <- "Yes"
 df$larc_ever <- factor(df$larc_ever, levels = c("No", "Yes"))
+# Same as LARC, but for estrogen-containing medications (EC)
+df$ec <- df$cv_medications___5 == "Checked" |
+  df$cv_medications___6 == "Checked" | df$cv_medications___7 == "Checked"
+df$ec <- factor(df$ec, levels = c(F, T), labels = c("No", "Yes"))
+df <- df %>%
+  group_by(record_number) %>%
+  mutate(age_first_ec = first(na.omit(cv_age[ec == "Yes"]))) %>%
+  ungroup() %>%
+  mutate(
+    time_pcos_to_first_ec = age_first_ec - pcosdx_age,
+    time_menarche_to_first_ec = age_first_ec - pcosdx_menarche
+  )
+label(df$age_first_ec) <- "Age at First EC"
+label(df$time_pcos_to_first_ec) <- "Years From PCOS Dx to First EC"
+label(df$time_menarche_to_first_ec) <- "Years From Menarche to First EC"
+ec_users <- unique(df$record_number[df$ec == "Yes"])
+df$ec_ever <- "No"
+df$ec_ever[df$record_number %in% ec_users] <- "Yes"
+df$ec_ever <- factor(df$ec_ever, levels = c("No", "Yes"))
 # Age group at diagnosis
 df$age_group <- cut(df$pcosdx_age, c(-Inf, 15, Inf),
   right = F, labels = c("< 15 years", ">= 15 years")
