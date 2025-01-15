@@ -1,5 +1,5 @@
 ---
-title: "Liver Single Nuclei Analysis"
+title: "Liver Analysis"
 author: "Hailey Hampson"
 date: "2024-09-24"
 output: html_document
@@ -62,18 +62,25 @@ library(doParallel)
 library(fs)
 registerDoParallel(cores = 6)
 library(VennDiagram)
+#install.packages("survival")
+library(survival)
+#install.packages("lme4")  # If not already installed
+library(lme4)
+#install.packages("lmerTest")
+library(lmerTest)
+
 
 
 #Local file path
-dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
-dir.dat2 <- c("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean")
-dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
-dir.results <- c("/Users/hhampson/Documents/UW/1_Ongoing Projects/Liver scRNAseq/2_Results")
+# dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
+# dir.dat2 <- c("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean")
+# dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+# dir.results <- c("/Users/hhampson/Documents/UW/1_Ongoing Projects/Liver scRNAseq/2_Results")
 
 #Lambda file path
-# dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
-# dir.code <- c("/home/Github_Repo/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
-# dir.results <- c(fs::path(dir.dat,"Liver project/Results"))
+dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
+dir.code <- c("/home/Github_Repo/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+dir.results <- c(fs::path(dir.dat,"Liver project/Results"))
 
 #Load functions
 source("Liver_functions.R")
@@ -85,9 +92,9 @@ source("Liver_functions.R")
 # Liver snRNA data processing
 gc()
 #Local
-so_liver_sc <- readRDS(fs::path(dir.dat,"scRNA","data_raw","PB_Liver_7SingleCellDatasets.RDS"))
+# so_liver_sn <- readRDS(fs::path(dir.dat,"scRNA","data_raw","NoRef_PetterLiver_ClinData_Labels_Char_041924.RDS"))
 #Lambda
-# so_liver_sc <- readRDS(fs::path(dir.dat,"scRNA","data_raw","NoRef_PetterLiver_ClinData_Labels_Char_041924.RDS"))
+so_liver_sn <- readRDS(fs::path(dir.dat,"scRNA","data_raw","NoRef_PetterLiver_ClinData_Labels_Char_041924.RDS"))
 
 gc()
 #Local
@@ -95,47 +102,50 @@ gc()
 #Lambda
 meta_liver_raw <- read.csv(fs::path(dir.dat,"scRNA","data_clean","liver_biopsy_metadata_PN.csv"))
 
-meta_liver_sn <-  so_liver_sc@meta.data[,1:11] %>%
+meta_liver_sn <-  so_liver_sn@meta.data[,1:11] %>%
   dplyr::mutate(RNAlater_ID = SampleID) %>%
   left_join(meta_liver_raw)
 
-rownames(meta_liver_sn) <- rownames(so_liver_sc@meta.data)
-so_liver_sc <- AddMetaData(so_liver_sc, meta_liver_sn)
+rownames(meta_liver_sn) <- rownames(so_liver_sn@meta.data)
+so_liver_sn <- AddMetaData(so_liver_sn, meta_liver_sn)
 rm(meta_liver_sn,meta_liver_raw)
 
 #Switch default assay in seurat object to RNA
-DefaultAssay(so_liver_sc) <- "RNA"
+DefaultAssay(so_liver_sn) <- "RNA"
 gc()
 
 #Create liver disease and drug groups
-so_liver_sc@meta.data <- so_liver_sc@meta.data %>% 
-  mutate(both=ifelse(glp1agonist=="Yes" & sglt2=="Yes","Yes","No")) %>% 
-  mutate(sglt2_exclusive=ifelse(sglt2=="Yes" & glp1agonist=="No","Yes","No")) %>% 
-  mutate(glp1_exclusive=ifelse(sglt2=="No" & glp1agonist=="Yes","Yes","No")) %>% 
-  mutate(neither=ifelse(sglt2=="No" & glp1agonist=="No","Yes","No"))
+so_liver_sn@meta.data <- so_liver_sn@meta.data %>% 
+  mutate(both=ifelse(diagnosis_of_diabetes=="Yes" & glp1agonist=="Yes" & sglt2=="Yes","Yes","No")) %>% 
+  mutate(sglt2_exclusive=ifelse(diagnosis_of_diabetes=="Yes" & sglt2=="Yes" & glp1agonist=="No","Yes","No")) %>% 
+  mutate(glp1_exclusive=ifelse(diagnosis_of_diabetes=="Yes" & sglt2=="No" & glp1agonist=="Yes","Yes","No")) %>% 
+  mutate(neither=ifelse(diagnosis_of_diabetes=="Yes" & sglt2=="No" & glp1agonist=="No","Yes","No")) %>%
+  mutate(hc=ifelse(diagnosis_of_diabetes=="No","Yes","No"))
 
 # Create a single grouping variable
-so_liver_sc@meta.data <- so_liver_sc@meta.data %>% 
+so_liver_sn@meta.data <- so_liver_sn@meta.data %>% 
   mutate(group2=case_when(both == "Yes" ~ "both",
-                         sglt2_exclusive == "Yes" ~ "sglt2_exclusive",
-                         glp1_exclusive == "Yes" ~ "glp1_exclusive",
-                         neither == "Yes" ~ "neither"))
+                          sglt2_exclusive == "Yes" ~ "sglt2_exclusive",
+                          glp1_exclusive == "Yes" ~ "glp1_exclusive",
+                          neither == "Yes" ~ "neither",
+                          hc == "Yes" ~ "obese_control"))
 
-so_liver_sc@meta.data$group2 <- factor(so_liver_sc@meta.data$group2, levels = c("neither", "sglt2_exclusive", "glp1_exclusive","both"))
+so_liver_sn@meta.data$group2 <- factor(so_liver_sn@meta.data$group2, levels = c("obese_control","neither", "sglt2_exclusive", "glp1_exclusive","both"))
 
-#Create Diabetes only seurat object
-#so_diab <- subset(so_liver_sc,diagnosis_of_diabetes=="Yes")
+# #Create Diabetes only seurat object
+# so_diab <- subset(so_liver_sn,diagnosis_of_diabetes=="Yes")
 
 #Create senesence so in all cell types
-<<<<<<< Updated upstream
-sens_gene_in_data <- intersect(sens_genes, rownames(so_liver_sc))
-# Subset the Seurat object to include only genes in sens_gene_in_data
-so_sens_all <- subset(so_liver_sc, features = sens_gene_in_data)
-=======
-#sens_gene_in_data <- intersect(sens_genes, rownames(so_liver_sn))
+sens_gene_in_data <- intersect(sens_genes, rownames(so_liver_sn))
 # Subset the Seurat object to include only genes in sens_gene_in_data
 #so_sens_all <- subset(so_liver_sn, features = sens_gene_in_data)
->>>>>>> Stashed changes
+
+# #Filter to hepatocytes only
+# so_liver_sn$Hepatocyte <- ifelse(grepl("Hep-",so_liver_sn$celltype),"Yes","No")
+# so_hep <- subset(so_liver_sn, Hepatocyte=="Yes")
+# rm(so_liver_sn)
+# DefaultAssay(so_hep) <- "RNA"  
+
 ```
 
 #3. Descriptive Statistics
@@ -146,7 +156,7 @@ dat <- dat %>%
   mutate(both=ifelse(glp1agonist=="Yes" & sglt2=="Yes","Yes","No")) %>% 
   mutate(sglt2_exclusive=ifelse(sglt2=="Yes" & glp1agonist=="No","Yes","No")) %>% 
   mutate(glp1_exclusive=ifelse(sglt2=="No" & glp1agonist=="Yes","Yes","No")) %>% 
-  mutate(neither=ifelse(sglt2=="No" & glp1agonist=="No","Yes","No"))
+  mutate(neither=ifelse(sglt2=="No" & glp1agonist=="No","Yes","No")) 
 
 table(dat2$sglt2_exclusive) #-/+ #5 No, 0 yes
 table(dat2$glp1_exclusive) #+/- # 2 Yes, 3 No
@@ -271,25 +281,12 @@ summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, t
 #Both +/+ #1 Both, 4 not both
 #Neither-/- #3 neither, 2 on someting
 
-all_genes <- rownames(so_liver_sc)
+all_genes <- rownames(so_liver_sn)
 #Diabetes yes vs. no
-<<<<<<< Updated upstream
-degs_fxn(so=so_liver_sc,cell=NULL,gene_set=all_genes,exposure="diagnosis_of_diabetes",exp_group="Yes",ref_group="No",enrichment="Yes",top_gsea = 30)
-
-#Ast (High vs. Low by mean)
-all_genes <- rownames(so_liver_sc)
-so_liver_sc$ast_di <- ifelse(so_liver_sc$ast>mean(so_liver_sc$ast,na.rm=T),"High","Low")
-degs_fxn(so=so_liver_sc,cell=NULL,gene_set=all_genes,exposure="ast_di",exp_group="High",ref_group="Low",enrichment="Yes",top_gsea = 30)
-
-#ALT (High vs. Low by mean)
-so_liver_sc$alt_di <- ifelse(so_liver_sc$alt>mean(so_liver_sc$alt,na.rm=T),"High","Low")
-degs_fxn(so=so_liver_sc,cell=NULL,gene_set=all_genes,exposure="alt_di",exp_group="High",ref_group="Low",enrichment="Yes",top_gsea = 30)
-=======
 degs_fxn(so=so_liver_sn,cell=NULL,gene_set=all_genes,exposure="diagnosis_of_diabetes",exp_group="Yes",ref_group="No",enrichment="Yes",top_gsea = 30)
->>>>>>> Stashed changes
-                             
+
 #Create diab so
-so_diab <- subset(so_liver_sc,diagnosis_of_diabetes=="Yes")
+so_diab <- subset(so_liver_sn,diagnosis_of_diabetes=="Yes")
 #GLP-1 vs. None
 so_sub <- subset(so_diab,group2!="both")
 so_sub$group2 <- factor(so_sub$group2)
@@ -314,34 +311,20 @@ degs_fxn(so=so_sub,cell=NULL,gene_set=all_genes,exposure="group2",exp_group="bot
 ##b. Specific Cell Types
 ```{r}
 #Major Cell Types
-#unique(so_liver_sc$celltype)
-so_liver_sc$celltype <- as.character(so_liver_sc$celltype)
-so_liver_sc$celltype2 <- ifelse(grepl("Hep-",so_liver_sc$celltype),"Hepatocyte",
-                                ifelse(grepl("Stellate-",so_liver_sc$celltype),"Stellate",
-                                       ifelse(grepl("EC-",so_liver_sc$celltype),"EC",so_liver_sc$celltype)))
-all_cell_types <- unique(so_liver_sc$celltype2)
-all_genes <- rownames(so_liver_sc)
+#unique(so_liver_sn$celltype)
+so_liver_sn$celltype <- as.character(so_liver_sn$celltype)
+so_liver_sn$celltype2 <- ifelse(grepl("Hep-",so_liver_sn$celltype),"Hepatocyte",
+                                ifelse(grepl("Stellate-",so_liver_sn$celltype),"Stellate",
+                                       ifelse(grepl("EC-",so_liver_sn$celltype),"EC",so_liver_sn$celltype)))
+all_cell_types <- unique(so_liver_sn$celltype2)
+all_genes <- rownames(so_liver_sn)
 #Diabetes yes vs. no
 for (cell_type in all_cell_types) {
-degs_fxn(so=so_liver_sc,cell=cell_type,gene_set=all_genes,exposure="diagnosis_of_diabetes",exp_group="Yes",ref_group="No",enrichment="Yes",top_gsea = 30)
+  degs_fxn(so=so_liver_sn,cell=cell_type,gene_set=all_genes,exposure="diagnosis_of_diabetes",exp_group="Yes",ref_group="No",enrichment="Yes",top_gsea = 30)
 }
 
-<<<<<<< Updated upstream
-#AST
-for (cell_type in all_cell_types) {
-degs_fxn(so=so_liver_sc,cell=cell_type,gene_set=all_genes,exposure="ast_di",exp_group="High",ref_group="Low",enrichment="Yes",top_gsea = 30)
-}
-
-#ALT
-for (cell_type in all_cell_types) {
-degs_fxn(so=so_liver_sc,cell=cell_type,gene_set=all_genes,exposure="alt_di",exp_group="High",ref_group="Low",enrichment="Yes",top_gsea = 30)
-}
-
-
-=======
->>>>>>> Stashed changes
 #Create diab so 
-so_diab <- subset(so_liver_sc,diagnosis_of_diabetes=="Yes")
+so_diab <- subset(so_liver_sn,diagnosis_of_diabetes=="Yes")
 
 #GLP-1 vs. None
 so_sub <- subset(so_diab,group2!="both")
@@ -350,7 +333,7 @@ so_sub$group2 <- factor(so_sub$group2)
 all_genes <- rownames(so_sub)
 all_cell_types <- unique(so_sub$celltype2)[-6]
 for (cell_type in all_cell_types) {
-degs_fxn(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="group2",exp_group="glp1_exclusive",ref_group="neither",enrichment="Yes",top_gsea = 30)
+  degs_fxn(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="group2",exp_group="glp1_exclusive",ref_group="neither",enrichment="Yes",top_gsea = 30)
 }
 #GLP-1 vs. Both
 so_sub <- subset(so_diab,group2!="neither")
@@ -359,7 +342,7 @@ so_sub$group2 <- factor(so_sub$group2)
 all_genes <- rownames(so_sub)
 all_cell_types <- unique(so_sub$celltype2)[-6]
 for (cell_type in all_cell_types) {
-degs_fxn(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="group2",exp_group="both",ref_group="glp1_exclusive",enrichment="Yes",top_gsea = 30)
+  degs_fxn(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="group2",exp_group="both",ref_group="glp1_exclusive",enrichment="Yes",top_gsea = 30)
 }
 #Both vs. None
 so_sub <- subset(so_diab,group2!="glp1_exclusive")
@@ -368,7 +351,7 @@ so_sub$group2 <- factor(so_sub$group2)
 all_genes <- rownames(so_sub)
 all_cell_types <- unique(so_sub$celltype2)[-11]
 for (cell_type in all_cell_types) {
-degs_fxn(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="group2",exp_group="both",ref_group="neither",enrichment="Yes",top_gsea = 30)
+  degs_fxn(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="group2",exp_group="both",ref_group="neither",enrichment="Yes",top_gsea = 30)
 }
 ```
 ##c. Senescence Pseudobulk
@@ -383,31 +366,43 @@ all_genes <- rownames(so_sens_all)
 #Diabetes yes vs. no
 degs_fxn_sens(so=so_sens_all,cell=NULL,gene_set=all_genes,exposure="diagnosis_of_diabetes",exp_group="Yes",ref_group="No",enrichment="No",top_gsea = 30)
 
-#Ast (High vs. Low by mean)
-all_genes <- rownames(so_sens_all)
-so_sens_all$ast_di <- ifelse(so_sens_all$ast>mean(so_sens_all$ast,na.rm=T),"High","Low")
-degs_fxn_sens(so=so_sens_all,cell=NULL,gene_set=all_genes,exposure="ast_di",exp_group="High",ref_group="Low",enrichment="No",top_gsea = 30)
-
-#ALT (High vs. Low by mean)
-so_sens_all$alt_di <- ifelse(so_sens_all$alt>mean(so_sens_all$alt,na.rm=T),"High","Low")
-degs_fxn_sens(so=so_sens_all,cell=NULL,gene_set=all_genes,exposure="alt_di",exp_group="High",ref_group="Low",enrichment="No",top_gsea = 30)
-                             
 #Create diab so
-so_diab <- subset(so_sens_all,diagnosis_of_diabetes=="Yes")
+#so_diab <- subset(so_sens_all,diagnosis_of_diabetes=="Yes")
+#None vs. OC 
+so_sub <- subset(so_sens_all,group2=="neither" | group2 == "obese_control")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+degs_fxn_sens(so=so_sub,cell=NULL,gene_set=all_genes,exposure="group2",exp_group="neither",ref_group="obese_control",enrichment="No",top_gsea = 30)
+
+#GLP-1 vs. OC
+so_sub <- subset(so_sens_all,group2=="glp1_exclusive" | group2 == "obese_control")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+degs_fxn_sens(so=so_sub,cell=NULL,gene_set=all_genes,exposure="group2",exp_group="glp1_exclusive",ref_group="obese_control",enrichment="No",top_gsea = 30)
+
+#Both vs. OC
+so_sub <- subset(so_sens_all,group2=="both" | group2 == "obese_control")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+degs_fxn_sens(so=so_sub,cell=NULL,gene_set=all_genes,exposure="group2",exp_group="both",ref_group="obese_control",enrichment="No",top_gsea = 30)
+
 #GLP-1 vs. None
-so_sub <- subset(so_diab,group2!="both")
+so_sub <- subset(so_sens_all,group2=="glp1_exclusive" | group2=="neither")
 so_sub$group2 <- factor(so_sub$group2)
 #Define genes
 all_genes <- rownames(so_sub)
 degs_fxn_sens(so=so_sub,cell=NULL,gene_set=all_genes,exposure="group2",exp_group="glp1_exclusive",ref_group="neither",enrichment="No",top_gsea = 30)
 #GLP-1 vs. Both
-so_sub <- subset(so_diab,group2!="neither")
+so_sub <- subset(so_sens_all,group2=="both" | group2=="glp1_exclusive")
 so_sub$group2 <- factor(so_sub$group2)
 #Define genes
 all_genes <- rownames(so_sub)
 degs_fxn_sens(so=so_sub,cell=NULL,gene_set=all_genes,exposure="group2",exp_group="both",ref_group="glp1_exclusive",enrichment="No",top_gsea = 30)
 #Both vs. None
-so_sub <- subset(so_diab,group2!="glp1_exclusive")
+so_sub <- subset(so_sens_all,group2=="both" | group2=="neither")
 so_sub$group2 <- factor(so_sub$group2)
 #Define genes
 all_genes <- rownames(so_sub)
@@ -426,69 +421,1303 @@ all_cell_types <- unique(so_sens_all$celltype2)
 all_genes <- rownames(so_sens_all)
 #Diabetes yes vs. no
 for (cell_type in all_cell_types) {
-degs_fxn_sens(so=so_sens_all,cell=cell_type,gene_set=all_genes,exposure="diagnosis_of_diabetes",exp_group="Yes",ref_group="No",enrichment="No",top_gsea = 30)
+  degs_fxn_sens(so=so_sens_all,cell=cell_type,gene_set=all_genes,exposure="diagnosis_of_diabetes",exp_group="Yes",ref_group="No",enrichment="No",top_gsea = 30)
 }
-
-#AST
-for (cell_type in all_cell_types) {
-degs_fxn_sens(so=so_sens_all,cell=cell_type,gene_set=all_genes,exposure="ast_di",exp_group="High",ref_group="Low",enrichment="No",top_gsea = 30)
-}
-
-#ALT
-for (cell_type in all_cell_types) {
-degs_fxn_sens(so=so_sens_all,cell=cell_type,gene_set=all_genes,exposure="alt_di",exp_group="High",ref_group="Low",enrichment="No",top_gsea = 30)
-}
-
 
 #Create diab so 
-so_diab <- subset(so_sens_all,diagnosis_of_diabetes=="Yes")
+#so_diab <- subset(so_sens_all,diagnosis_of_diabetes=="Yes")
+#None vs. OC
+so_sub <- subset(so_sens_all,group2=="neither" | group2 == "obese_control")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+all_cell_types <- unique(so_sub$celltype2)[-11]
+for (cell_type in all_cell_types) {
+  degs_fxn_sens(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="group2",exp_group="neither",ref_group="obese_control",enrichment="No",top_gsea = 30)
+}
+
+#GLP-1 vs. OC
+so_sub <- subset(so_sens_all,group2=="glp1_exclusive" | group2 == "obese_control")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+all_cell_types <- unique(so_sub$celltype2)
+for (cell_type in all_cell_types) {
+  degs_fxn_sens(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="group2",exp_group="glp1_exclusive",ref_group="obese_control",enrichment="No",top_gsea = 30)
+}
+#Both vs. OC
+so_sub <- subset(so_sens_all,group2=="both" | group2 == "obese_control")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+all_cell_types <- unique(so_sub$celltype2)[-11]
+for (cell_type in all_cell_types) {
+  degs_fxn_sens(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="group2",exp_group="both",ref_group="obese_control",enrichment="No",top_gsea = 30)
+}
 
 #GLP-1 vs. None
-so_sub <- subset(so_diab,group2!="both")
+so_sub <- subset(so_sens_all,group2=="glp1_exclusive" | group2=="neither")
 so_sub$group2 <- factor(so_sub$group2)
 #Define genes
 all_genes <- rownames(so_sub)
 all_cell_types <- unique(so_sub$celltype2)[-6]
 for (cell_type in all_cell_types) {
-degs_fxn_sens(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="group2",exp_group="glp1_exclusive",ref_group="neither",enrichment="No",top_gsea = 30)
+  degs_fxn_sens(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="group2",exp_group="glp1_exclusive",ref_group="neither",enrichment="No",top_gsea = 30)
 }
 #GLP-1 vs. Both
-so_sub <- subset(so_diab,group2!="neither")
+so_sub <- subset(so_sens_all,group2=="both" | group2=="glp1_exclusive")
 so_sub$group2 <- factor(so_sub$group2)
 #Define genes
 all_genes <- rownames(so_sub)
 all_cell_types <- unique(so_sub$celltype2)[-6]
 for (cell_type in all_cell_types) {
-degs_fxn_sens(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="group2",exp_group="both",ref_group="glp1_exclusive",enrichment="No",top_gsea = 30)
+  degs_fxn_sens(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="group2",exp_group="both",ref_group="glp1_exclusive",enrichment="No",top_gsea = 30)
 }
 #Both vs. None
-so_sub <- subset(so_diab,group2=="both" | group2=="neither")
+so_sub <- subset(so_sens_all,group2=="both" | group2=="neither")
 so_sub$group2 <- factor(so_sub$group2)
 #Define genes
 all_genes <- rownames(so_sub)
 all_cell_types <- unique(so_sub$celltype2)[-c(10,11)]
 for (cell_type in all_cell_types) {
-degs_fxn_sens(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="group2",exp_group="both",ref_group="neither",enrichment="No",top_gsea = 30)
+  degs_fxn_sens(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="group2",exp_group="both",ref_group="neither",enrichment="No",top_gsea = 30)
 }
 ```
 
 #5. MAST Associations
 ##a. All Cell Types
 ```{r}
-exposure_vars <- c("ast","alt")
-for (exp in exposure_vars){
-mast_fxn(so=so_liver_sc,cell=NULL,exposure=exp,covariate="diagnosis_of_diabetes",gene_set=rownames(so_liver_sc),batch_size=100,exp_group=NULL,ref_group=NULL)
+#Diabetes
+mast_fxn_sens(so=so_sens_all,cell=NULL,exposure="diagnosis_of_diabetes",gene_set=rownames(so_sens_all),exp_group="Yes",ref_group="No")
+
+#AST/ALT
+so_diab <- subset(so_sens_all, diagnosis_of_diabetes=="Yes")
+gene_set <- rownames(so_diab)
+
+#AST
+mast_fxn_sens(so=so_diab,cell=NULL,exposure="ast",covariate=NULL,gene_set=gene_set,exp_group=NULL,ref_group=NULL)
+
+#ALT
+mast_fxn_sens(so=so_diab,cell=NULL,exposure="alt",covariate=NULL,gene_set=gene_set,exp_group=NULL,ref_group=NULL)
+
+#Medication Groups
+#Neither vs. OC
+so_subset <- subset(so_sens_all,group2=="obese_control" | group2=="neither")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+gene_set <- rownames(so_subset)
+mast_fxn_sens(so=so_subset,cell=NULL,exposure="Medication",covariate="alt",gene_set=gene_set,exp_group="neither",ref_group="obese_control")
+
+#GLP-1 vs. OC
+so_subset <- subset(so_sens_all,group2=="obese_control" | group2=="glp1_exclusive")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+gene_set <- rownames(so_subset)
+mast_fxn_sens(so=so_subset,cell=NULL,exposure="Medication",covariate="alt",gene_set=gene_set,exp_group="glp1_exclusive",ref_group="obese_control")
+
+#Both vs. OC
+so_subset <- subset(so_sens_all,group2=="obese_control" | group2=="both")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+gene_set <- rownames(so_subset)
+mast_fxn_sens(so=so_subset,cell=NULL,covariate="alt",exposure="Medication",gene_set=gene_set,exp_group="both",ref_group="obese_control")
+
+#GLP-1 vs. Neither
+so_diab <- subset(so_sens_all,diagnosis_of_diabetes=="Yes")
+so_subset <- subset(so_diab, group2=="neither"|group2=="glp1_exclusive")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+gene_set <- rownames(so_subset)
+mast_fxn_sens(so=so_subset,cell=NULL,covariate="alt",exposure="Medication",gene_set=gene_set,exp_group="glp1_exclusive",ref_group="neither")
+
+#Both vs. Neither
+so_subset <- subset(so_diab, group2=="neither"|group2=="both")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+gene_set <- rownames(so_subset)
+mast_fxn_sens(so=so_subset,cell=NULL,covariate="alt",exposure="Medication",gene_set=gene_set,exp_group="both",ref_group="neither")
+
+#Both vs. GLP-1
+so_subset <- subset(so_diab, group2=="glp1_exclusive"|group2=="both")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+gene_set <- rownames(so_subset)
+mast_fxn_sens(so=so_subset,cell=NULL,covariate="alt",exposure="Medication",gene_set=gene_set,exp_group="both",ref_group="glp1_exclusive")
+
+# Extract the expression data matrix from so (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_diab, layer = "data"))
+
+# Extract metadata
+cell_metadata <- so_diab@meta.data
+#cell_metadata[[exposure]] <- factor(cell_metadata[[exposure]])
+
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+
+# Assuming gene_set is a vector of gene names
+sca_gene_set <- sca[rownames(sca) %in% gene_set, ]
+
+#Define the formula
+# model_formula <- as.formula(paste0("~", exposure,"+",covariate))
+model_formula <- ~ast+group2
+exp <- paste0("ast")
+
+# Run the linear model with zlm
+zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+
+# Summarize results and perform likelihood ratio test (LRT) for outcome
+summary_zlm <- summary(zlm_results, doLRT = exp)
+
+# Convert the summary to a data table for easy manipulation
+summary_dt <- summary_zlm$datatable
+
+#Overall with Hurdle and logFC
+fcHurdle1 <- merge(summary_dt[contrast==exp & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle1[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle1$component <- "FC_H"
+# fcHurdle2 <- merge(summary_dt[contrast==exp & component=='C',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+#                    summary_dt[contrast==exp & component=='C', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+# fcHurdle2[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+# fcHurdle2$component <- "C"
+# fcHurdle3 <- merge(summary_dt[contrast==exp & component=='D',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+#                    summary_dt[contrast==exp & component=='D', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+# fcHurdle3[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+# fcHurdle3$component <- "D"
+
+# fcHurdle <- rbind(fcHurdle2,fcHurdle3)
+
+result1 <- fcHurdle1
+result1 <- result1 %>%
+  filter(fdr<0.05) %>%
+  dplyr::rename(LogFoldChange=coef) %>% 
+  dplyr::rename(Gene=primerid)
+
+# #Only plot C component if D component is significant - aka significant expression of gene
+# sig_results <- result1 %>% 
+#   filter(component=="D") %>% 
+#   filter(fdr<0.05) %>% 
+#   pull(Gene)
+# result1 <- result1 %>% 
+#   filter(component=="C") %>% 
+#   filter(Gene %in% sig_results) %>% 
+#   filter(fdr<0.05)
+
+write.csv(result1,fs::path(dir.results,paste0("Mast_AST_LogFC_all_participants.csv")))
+
+# Filter top 10 positive and negative log2FoldChange
+top_pos_C <- as.data.frame(result1) %>%
+  # filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange>0) %>% 
+  arrange(desc(LogFoldChange)) 
+# dplyr::slice(1:30) 
+# dplyr::rename(Gene=primerid,
+#               LogFC=coef)
+
+top_neg_C <- as.data.frame(result1) %>%
+  # filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange<0)  %>% 
+  arrange(LogFoldChange)
+# dplyr::slice(1:30) 
+
+top_pos_C$Direction <- "Positive"
+top_neg_C$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes_C <- bind_rows(top_pos_C, top_neg_C)
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes_C <- top_genes_C %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, LogFoldChange)]))  # Order by Direction and log2FC
+
+# if (!is.null(cell)) {
+#   title <- paste0("Continuous Estimate for ",condition," among", cell," cells")
+# } else {
+#   title <- paste0("Continuous Estimate for ",condition)
+# }
+# # Bar chart with flipped x and y axes
+p_C <- ggplot(top_genes_C, aes(x = LogFoldChange, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "LogFC", y = "Gene",title="Pairwise LogFC for AST among All Participants") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(element_text(family="Times",size=20))+
+  theme(legend.position="none")
+
+pdf(fs::path(dir.results,"Mast_Barchart_LogFC_Ast_All_Participants.pdf"),width=10,height=10)
+plot(p_C)
+dev.off()
+
+#ALT
+so_diab <- subset(so_sens_all, diagnosis_of_diabetes=="Yes")
+gene_set <- rownames(so_diab)
+# exposure_vars <- c("ast","alt")
+# for (exp in exposure_vars){
+#   mast_fxn(so=so_sens_all,cell=NULL,exposure=exp,covariate=NULL,gene_set=rownames(so_sens_all),batch_size=length(rownames(so_sens_all)),exp_group=NULL,ref_group=NULL)
+# }
+
+# Extract the expression data matrix from so (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_diab, layer = "data"))
+
+# Extract metadata
+cell_metadata <- so_diab@meta.data
+#cell_metadata[[exposure]] <- factor(cell_metadata[[exposure]])
+
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+
+# Assuming gene_set is a vector of gene names
+sca_gene_set <- sca[rownames(sca) %in% gene_set, ]
+
+#Define the formula
+# model_formula <- as.formula(paste0("~", exposure,"+",covariate))
+model_formula <- ~alt
+exp <- paste0("alt")
+
+# Run the linear model with zlm
+zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+
+# Summarize results and perform likelihood ratio test (LRT) for outcome
+summary_zlm <- summary(zlm_results, doLRT = exp)
+
+# Convert the summary to a data table for easy manipulation
+summary_dt <- summary_zlm$datatable
+
+#Overall with Hurdle and logFC
+fcHurdle1 <- merge(summary_dt[contrast==exp & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle1[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle1$component <- "FC_H"
+# fcHurdle2 <- merge(summary_dt[contrast==exp & component=='C',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+#                    summary_dt[contrast==exp & component=='C', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+# fcHurdle2[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+# fcHurdle2$component <- "C"
+# fcHurdle3 <- merge(summary_dt[contrast==exp & component=='D',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+#                    summary_dt[contrast==exp & component=='D', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+# fcHurdle3[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+# fcHurdle3$component <- "D"
+
+# fcHurdle <- rbind(fcHurdle2,fcHurdle3)
+
+result1 <- fcHurdle1
+result1 <- result1 %>%
+  filter(fdr<0.05) %>%
+  dplyr::rename(LogFoldChange=coef) %>% 
+  dplyr::rename(Gene=primerid)
+
+# #Only plot C component if D component is significant - aka significant expression of gene
+# sig_results <- result1 %>% 
+#   filter(component=="D") %>% 
+#   filter(fdr<0.05) %>% 
+#   pull(Gene)
+# result1 <- result1 %>% 
+#   filter(component=="C") %>% 
+#   filter(Gene %in% sig_results) %>% 
+#   filter(fdr<0.05)
+
+write.csv(result1,fs::path(dir.results,paste0("Mast_ALT_LogFC.csv")))
+
+# Filter top 10 positive and negative log2FoldChange
+top_pos_C <- as.data.frame(result1) %>%
+  # filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange>0) %>% 
+  arrange(desc(LogFoldChange)) 
+# dplyr::slice(1:30) 
+# dplyr::rename(Gene=primerid,
+#               LogFC=coef)
+
+top_neg_C <- as.data.frame(result1) %>%
+  # filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange<0)  %>% 
+  arrange(LogFoldChange)
+# dplyr::slice(1:30) 
+
+top_pos_C$Direction <- "Positive"
+top_neg_C$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes_C <- bind_rows(top_pos_C, top_neg_C)
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes_C <- top_genes_C %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, LogFoldChange)]))  # Order by Direction and log2FC
+
+# if (!is.null(cell)) {
+#   title <- paste0("Continuous Estimate for ",condition," among", cell," cells")
+# } else {
+#   title <- paste0("Continuous Estimate for ",condition)
+# }
+# # Bar chart with flipped x and y axes
+p_C <- ggplot(top_genes_C, aes(x = LogFoldChange, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "LogFC", y = "Gene",title="Pairwise LogFC for ALT among YT2D") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(element_text(family="Times",size=20))+
+  theme(legend.position="none")
+
+pdf(fs::path(dir.results,"Mast_Barchart_LogFC_ALT.pdf"),width=10,height=10)
+plot(p_C)
+dev.off()
+
+so_diab <- subset(so_sens_all, diagnosis_of_diabetes=="Yes")
+gene_set <- rownames(so_diab)
+# exposure_vars <- c("ast","alt")
+# for (exp in exposure_vars){
+#   mast_fxn(so=so_sens_all,cell=NULL,exposure=exp,covariate=NULL,gene_set=rownames(so_sens_all),batch_size=length(rownames(so_sens_all)),exp_group=NULL,ref_group=NULL)
+# }
+
+# Extract the expression data matrix from so (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_diab, layer = "data"))
+
+# Extract metadata
+cell_metadata <- so_diab@meta.data
+#cell_metadata[[exposure]] <- factor(cell_metadata[[exposure]])
+
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+
+# Assuming gene_set is a vector of gene names
+sca_gene_set <- sca[rownames(sca) %in% gene_set, ]
+
+#Define the formula
+# model_formula <- as.formula(paste0("~", exposure,"+",covariate))
+model_formula <- ~alt
+exp <- paste0("alt")
+
+# Run the linear model with zlm
+zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+
+# Summarize results and perform likelihood ratio test (LRT) for outcome
+summary_zlm <- summary(zlm_results, doLRT = exp)
+
+# Convert the summary to a data table for easy manipulation
+summary_dt <- summary_zlm$datatable
+
+#Overall with Hurdle and logFC
+fcHurdle2 <- merge(summary_dt[contrast==exp & component=='C',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='C', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle2[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle2$component <- "C"
+fcHurdle3 <- merge(summary_dt[contrast==exp & component=='D',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='D', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle3[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle3$component <- "D"
+
+fcHurdle <- rbind(fcHurdle2,fcHurdle3)
+
+result1 <- fcHurdle
+result1 <- result1 %>%
+  filter(fdr<0.05) %>%
+  dplyr::rename(LogFoldChange=coef) %>% 
+  dplyr::rename(Gene=primerid)
+
+#Only plot C component if D component is significant - aka significant expression of gene
+sig_results <- result1 %>% 
+  filter(component=="D") %>% 
+  filter(fdr<0.05) %>% 
+  pull(Gene)
+result1 <- result1 %>% 
+  filter(component=="C") %>% 
+  filter(Gene %in% sig_results) %>% 
+  filter(fdr<0.05)
+
+write.csv(result1,fs::path(dir.results,paste0("Mast_ALT.csv")))
+
+# Filter top 10 positive and negative log2FoldChange
+top_pos_C <- as.data.frame(result1) %>%
+  filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange>0) %>% 
+  arrange(desc(LogFoldChange)) 
+# dplyr::slice(1:30) 
+# dplyr::rename(Gene=primerid,
+#               LogFC=coef)
+
+top_neg_C <- as.data.frame(result1) %>%
+  filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange<0)  %>% 
+  arrange(LogFoldChange)
+# dplyr::slice(1:30) 
+
+top_pos_C$Direction <- "Positive"
+top_neg_C$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes_C <- bind_rows(top_pos_C, top_neg_C)
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes_C <- top_genes_C %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, LogFoldChange)]))  # Order by Direction and log2FC
+
+# if (!is.null(cell)) {
+#   title <- paste0("Continuous Estimate for ",condition," among", cell," cells")
+# } else {
+#   title <- paste0("Continuous Estimate for ",condition)
+# }
+# # Bar chart with flipped x and y axes
+p_C <- ggplot(top_genes_C, aes(x = LogFoldChange, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Effect Estimate", y = "Gene",title="Continuous Estimate for ALT among YT2D") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(element_text(family="Times",size=20))+
+  theme(legend.position="none")
+
+pdf(fs::path(dir.results,"Mast_Barchart_Continuous_Estimate_Alt.pdf"),width=10,height=10)
+plot(p_C)
+dev.off()
+
+#AST
+ast_prot_pos <- read.csv(fs::path(dir.results,"AST_cox_results_adjusted.csv")) %>% 
+  filter(sig=="Significant Positive") %>% 
+  pull(EntrezGeneSymbol)
+ast_prot_neg <- read.csv(fs::path(dir.results,"AST_cox_results_adjusted.csv")) %>% 
+  filter(sig=="Significant Negative")%>% 
+  pull(EntrezGeneSymbol)
+
+ast_mast_pos <- read.csv(fs::path(dir.results,"Ast.csv")) %>% 
+  filter(component=="C") %>% 
+  filter(LogFoldChange>0) %>% 
+  pull(Gene)
+ast_prot_pos[which(ast_prot_pos %in% ast_mast_pos)] #"ACVR1B" "NRG1"
+ast_mast_pos[which(ast_mast_pos %in% ast_prot_pos)]
+
+ast_mast_neg <- read.csv(fs::path(dir.results,"Ast.csv")) %>% 
+  filter(component=="C") %>% 
+  filter(LogFoldChange<0) %>% 
+  pull(Gene)
+ast_prot_neg[which(ast_prot_neg %in% ast_mast_neg)] "ANG"
+ast_mast_neg[which(ast_mast_neg %in% ast_prot_neg)]
+
+#ALT
+alt_prot_pos <- read.csv(fs::path(dir.results,"ALT_cox_results_adjusted.csv")) %>% 
+  filter(sig=="Significant Positive") %>% 
+  pull(EntrezGeneSymbol)
+alt_prot_neg <- read.csv(fs::path(dir.results,"ALT_cox_results_adjusted.csv")) %>% 
+  filter(sig=="Significant Negative")%>% 
+  pull(EntrezGeneSymbol)
+
+alt_mast_pos <- read.csv(fs::path(dir.results,"Alt.csv")) %>% 
+  filter(component=="C") %>% 
+  filter(LogFoldChange>0) %>% 
+  pull(Gene)
+alt_prot_pos[which(alt_prot_pos %in% alt_mast_pos)] #"IL7"     "ACVR1B"  "ANGPTL4" "C3"      "NRG1" 
+alt_mast_pos[which(alt_mast_pos %in% alt_prot_pos)]
+
+alt_mast_neg <- read.csv(fs::path(dir.results,"Alt.csv")) %>% 
+  filter(component=="C") %>% 
+  filter(LogFoldChange<0) %>% 
+  pull(Gene)
+alt_prot_neg[which(alt_prot_neg %in% alt_mast_neg)] #"ANG"
+alt_mast_neg[which(alt_mast_neg %in% alt_prot_neg)]#"ANG"  "LCP1"
+
+#Medication
+#Neither vs. OC
+so_subset <- subset(so_sens_all,group2=="obese_control" | group2=="neither")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+gene_set=rownames(so_subset)
+# mast_fxn(so=so_subset,cell=NULL,exposure="Medication",covariate="alt",gene_set=rownames(so_subset),batch_size=length(rownames(so_subset)),exp_group="neither",ref_group="obese_control")
+
+# Extract the expression data matrix from so (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_subset, layer = "data"))
+
+# Extract metadata
+cell_metadata <- so_subset@meta.data
+#cell_metadata[[exposure]] <- factor(cell_metadata[[exposure]])
+
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+
+# Assuming gene_set is a vector of gene names
+sca_gene_set <- sca[rownames(sca) %in% gene_set, ]
+
+#Define the formula
+# model_formula <- as.formula(paste0("~", exposure,"+",covariate))
+model_formula <- ~Medication + ast
+exp <- paste0("Medicationneither")
+
+# Run the linear model with zlm
+zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+
+# Summarize results and perform likelihood ratio test (LRT) for outcome
+summary_zlm <- summary(zlm_results, doLRT = exp)
+
+# Convert the summary to a data table for easy manipulation
+summary_dt <- summary_zlm$datatable
+
+#Overall with Hurdle and logFC
+fcHurdle2 <- merge(summary_dt[contrast==exp & component=='C',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='C', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle2[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle2$component <- "C"
+fcHurdle3 <- merge(summary_dt[contrast==exp & component=='D',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='D', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle3[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle3$component <- "D"
+
+fcHurdle <- rbind(fcHurdle2,fcHurdle3)
+
+result1 <- fcHurdle
+result1 <- result1 %>%
+  filter(fdr<0.05) %>%
+  dplyr::rename(LogFoldChange=coef) %>% 
+  dplyr::rename(Gene=primerid)
+
+#Only plot C component if D component is significant - aka significant expression of gene
+sig_results <- result1 %>% 
+  filter(component=="D") %>% 
+  filter(fdr<0.05) %>% 
+  pull(Gene)
+result1 <- result1 %>% 
+  filter(component=="C") %>% 
+  filter(Gene %in% sig_results) %>% 
+  filter(fdr<0.05)
+
+write.csv(result1,fs::path(dir.results,paste0("Medication_Neither_OC_adjusted_ast.csv")))
+
+#GLP-1 vs. OC
+so_subset <- subset(so_sens_all,group2=="obese_control" | group2=="glp1_exclusive")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+# mast_fxn(so=so_subset,cell=NULL,exposure="Medication",covariate=NULL,gene_set=rownames(so_subset),batch_size=length(rownames(so_subset)),exp_group="neither",ref_group="obese_control")
+# Extract the expression data matrix from so (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_subset, layer = "data"))
+
+# Extract metadata
+cell_metadata <- so_subset@meta.data
+#cell_metadata[[exposure]] <- factor(cell_metadata[[exposure]])
+
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+
+# Assuming gene_set is a vector of gene names
+sca_gene_set <- sca[rownames(sca) %in% gene_set, ]
+
+#Define the formula
+# model_formula <- as.formula(paste0("~", exposure,"+",covariate))
+model_formula <- ~Medication + ast
+exp <- paste0("Medicationglp1_exclusive")
+
+# Run the linear model with zlm
+zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+
+# Summarize results and perform likelihood ratio test (LRT) for outcome
+summary_zlm <- summary(zlm_results, doLRT = exp)
+
+# Convert the summary to a data table for easy manipulation
+summary_dt <- summary_zlm$datatable
+
+#Overall with Hurdle and logFC
+fcHurdle2 <- merge(summary_dt[contrast==exp & component=='C',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='C', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle2[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle2$component <- "C"
+fcHurdle3 <- merge(summary_dt[contrast==exp & component=='D',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='D', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle3[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle3$component <- "D"
+
+fcHurdle <- rbind(fcHurdle2,fcHurdle3)
+
+result1 <- fcHurdle
+result1 <- result1 %>%
+  filter(fdr<0.05) %>%
+  dplyr::rename(LogFoldChange=coef) %>% 
+  dplyr::rename(Gene=primerid)
+
+#Only plot C component if D component is significant - aka significant expression of gene
+sig_results <- result1 %>% 
+  filter(component=="D") %>% 
+  filter(fdr<0.05) %>% 
+  pull(Gene)
+result1 <- result1 %>% 
+  filter(component=="C") %>% 
+  filter(Gene %in% sig_results) %>% 
+  filter(fdr<0.05)
+
+write.csv(result1,fs::path(dir.results,paste0("Medication_GLP1_OC_adjusted_ast.csv")))
+
+# Filter top 10 positive and negative log2FoldChange
+top_pos_C <- as.data.frame(result1) %>%
+  filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange>0) %>% 
+  arrange(desc(LogFoldChange)) 
+# dplyr::slice(1:30) 
+# dplyr::rename(Gene=primerid,
+#               LogFC=coef)
+
+top_neg_C <- as.data.frame(result1) %>%
+  filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange<0)  %>% 
+  arrange(LogFoldChange)
+# dplyr::slice(1:30) 
+
+top_pos_C$Direction <- "Positive"
+top_neg_C$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes_C <- bind_rows(top_pos_C, top_neg_C)
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes_C <- top_genes_C %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, LogFoldChange)]))  # Order by Direction and log2FC
+
+# if (!is.null(cell)) {
+#   title <- paste0("Continuous Estimate for ",condition," among", cell," cells")
+# } else {
+#   title <- paste0("Continuous Estimate for ",condition)
+# }
+# # Bar chart with flipped x and y axes
+p_C <- ggplot(top_genes_C, aes(x = LogFoldChange, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Effect Estimate", y = "Gene",title="Continuous Estimate for GLP-1 vs. Obese Control") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(element_text(family="Times",size=20))+
+  theme(legend.position="none")
+
+pdf(fs::path(dir.results,"Mast_Barchart_Continuous_Estimate_GLP1_OC_Adj_Ast.pdf"),width=10,height=10)
+plot(p_C)
+dev.off()
+
+#Both vs. OC
+so_subset <- subset(so_sens_all,group2=="obese_control" | group2=="both")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+# mast_fxn(so=so_subset,cell=NULL,exposure="Medication",covariate=NULL,gene_set=rownames(so_subset),batch_size=length(rownames(so_subset)),exp_group="neither",ref_group="obese_control")
+# Extract the expression data matrix from so (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_subset, layer = "data"))
+
+# Extract metadata
+cell_metadata <- so_subset@meta.data
+#cell_metadata[[exposure]] <- factor(cell_metadata[[exposure]])
+
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+
+# Assuming gene_set is a vector of gene names
+sca_gene_set <- sca[rownames(sca) %in% gene_set, ]
+
+#Define the formula
+# model_formula <- as.formula(paste0("~", exposure,"+",covariate))
+model_formula <- ~Medication + ast
+exp <- paste0("Medicationboth")
+
+# Run the linear model with zlm
+zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+
+# Summarize results and perform likelihood ratio test (LRT) for outcome
+summary_zlm <- summary(zlm_results, doLRT = exp)
+
+# Convert the summary to a data table for easy manipulation
+summary_dt <- summary_zlm$datatable
+
+#Overall with Hurdle and logFC
+fcHurdle2 <- merge(summary_dt[contrast==exp & component=='C',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='C', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle2[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle2$component <- "C"
+fcHurdle3 <- merge(summary_dt[contrast==exp & component=='D',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='D', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle3[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle3$component <- "D"
+
+fcHurdle <- rbind(fcHurdle2,fcHurdle3)
+
+result1 <- fcHurdle
+result1 <- result1 %>%
+  filter(fdr<0.05) %>%
+  dplyr::rename(LogFoldChange=coef) %>% 
+  dplyr::rename(Gene=primerid)
+
+#Only plot C component if D component is significant - aka significant expression of gene
+sig_results <- result1 %>% 
+  filter(component=="D") %>% 
+  filter(fdr<0.05) %>% 
+  pull(Gene)
+result1 <- result1 %>% 
+  filter(component=="C") %>% 
+  filter(Gene %in% sig_results) %>% 
+  filter(fdr<0.05)
+
+write.csv(result1,fs::path(dir.results,paste0("Medication_Both_OC_adjusted_ast.csv")))
+
+# Filter top 10 positive and negative log2FoldChange
+top_pos_C <- as.data.frame(result1) %>%
+  filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange>0) %>% 
+  arrange(desc(LogFoldChange)) 
+# dplyr::slice(1:30) 
+# dplyr::rename(Gene=primerid,
+#               LogFC=coef)
+
+top_neg_C <- as.data.frame(result1) %>%
+  filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange<0)  %>% 
+  arrange(LogFoldChange)
+# dplyr::slice(1:30) 
+
+top_pos_C$Direction <- "Positive"
+top_neg_C$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes_C <- bind_rows(top_pos_C, top_neg_C)
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes_C <- top_genes_C %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, LogFoldChange)]))  # Order by Direction and log2FC
+
+# # Bar chart with flipped x and y axes
+p_C <- ggplot(top_genes_C, aes(x = LogFoldChange, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Effect Estimate", y = "Gene",title="Continuous Estimate for GLP-1 + SLGT2 vs. Obese Control") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(element_text(family="Times",size=20))+
+  theme(legend.position="none")
+
+pdf(fs::path(dir.results,"Mast_Barchart_Continuous_Estimate_Both_OC_Adj_Ast.pdf"),width=10,height=10)
+plot(p_C)
+dev.off()
+
+
+#GLP-1 vs. None
+so_diab <- subset(so_sens_all, diagnosis_of_diabetes=="Yes")
+so_subset <- subset(so_diab, group2=="glp1_exclusive" | group2=="neither")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+gene_set <- rownames(so_subset)
+# exposure_vars <- c("ast","alt")
+# for (exp in exposure_vars){
+#   mast_fxn(so=so_sens_all,cell=NULL,exposure=exp,covariate=NULL,gene_set=rownames(so_sens_all),batch_size=length(rownames(so_sens_all)),exp_group=NULL,ref_group=NULL)
+# }
+
+# Extract the expression data matrix from so (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_subset, layer = "data"))
+
+# Extract metadata
+cell_metadata <- so_subset@meta.data
+#cell_metadata[[exposure]] <- factor(cell_metadata[[exposure]])
+
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+
+# Assuming gene_set is a vector of gene names
+sca_gene_set <- sca[rownames(sca) %in% gene_set, ]
+
+#Define the formula
+# model_formula <- as.formula(paste0("~", exposure,"+",covariate))
+model_formula <- ~Medication + ast
+exp <- paste0("Medicationglp1_exclusive")
+
+# Run the linear model with zlm
+zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+
+# Summarize results and perform likelihood ratio test (LRT) for outcome
+summary_zlm <- summary(zlm_results, doLRT = exp)
+
+# Convert the summary to a data table for easy manipulation
+summary_dt <- summary_zlm$datatable
+
+#Overall with Hurdle and logFC
+fcHurdle1 <- merge(summary_dt[contrast==exp & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle1[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle1$component <- "FC_H"
+# fcHurdle2 <- merge(summary_dt[contrast==exp & component=='C',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+#                    summary_dt[contrast==exp & component=='C', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+# fcHurdle2[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+# fcHurdle2$component <- "C"
+# fcHurdle3 <- merge(summary_dt[contrast==exp & component=='D',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+#                    summary_dt[contrast==exp & component=='D', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+# fcHurdle3[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+# fcHurdle3$component <- "D"
+
+# fcHurdle <- rbind(fcHurdle2,fcHurdle3)
+
+result1 <- fcHurdle1
+result1 <- result1 %>%
+  filter(fdr<0.05) %>%
+  dplyr::rename(LogFoldChange=coef) %>% 
+  dplyr::rename(Gene=primerid)
+
+# #Only plot C component if D component is significant - aka significant expression of gene
+# sig_results <- result1 %>% 
+#   filter(component=="D") %>% 
+#   filter(fdr<0.05) %>% 
+#   pull(Gene)
+# result1 <- result1 %>% 
+#   filter(component=="C") %>% 
+#   filter(Gene %in% sig_results) %>% 
+#   filter(fdr<0.05)
+
+write.csv(result1,fs::path(dir.results,paste0("Mast_GLP1_neither_LogFC.csv")))
+
+# Filter top 10 positive and negative log2FoldChange
+top_pos_C <- as.data.frame(result1) %>%
+  # filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange>0) %>% 
+  arrange(desc(LogFoldChange)) 
+# dplyr::slice(1:30) 
+# dplyr::rename(Gene=primerid,
+#               LogFC=coef)
+
+top_neg_C <- as.data.frame(result1) %>%
+  # filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange<0)  %>% 
+  arrange(LogFoldChange)
+# dplyr::slice(1:30) 
+
+top_pos_C$Direction <- "Positive"
+top_neg_C$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes_C <- bind_rows(top_pos_C, top_neg_C)
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes_C <- top_genes_C %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, LogFoldChange)]))  # Order by Direction and log2FC
+
+# if (!is.null(cell)) {
+#   title <- paste0("Continuous Estimate for ",condition," among", cell," cells")
+# } else {
+#   title <- paste0("Continuous Estimate for ",condition)
+# }
+# # Bar chart with flipped x and y axes
+p_C <- ggplot(top_genes_C, aes(x = LogFoldChange, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "LogFC", y = "Gene",title="Pairwise LogFC for GLP-1 vs. No Medication among YT2D") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(element_text(family="Times",size=20))+
+  theme(legend.position="none")
+
+pdf(fs::path(dir.results,"Mast_Barchart_LogFC_GLP1_Neither.pdf"),width=10,height=10)
+plot(p_C)
+dev.off()
+
+so_subset <- subset(so_sens_all,group2=="glp1_exclusive" | group2=="neither")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+so_subset$ast <- factor(as.character(so_subset$ast))
+# mast_fxn(so=so_subset,cell=NULL,exposure="Medication",covariate=NULL,gene_set=rownames(so_subset),batch_size=length(rownames(so_subset)),exp_group="neither",ref_group="obese_control")
+# Extract the expression data matrix from so (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_subset, layer = "data"))
+
+# Extract metadata
+cell_metadata <- so_subset@meta.data
+#cell_metadata[[exposure]] <- factor(cell_metadata[[exposure]])
+
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+
+# Assuming gene_set is a vector of gene names
+sca_gene_set <- sca[rownames(sca) %in% gene_set, ]
+
+#Define the formula
+# model_formula <- as.formula(paste0("~", exposure,"+",covariate))
+model_formula <- ~Medication 
+exp <- paste0("Medicationglp1_exclusive")
+
+# Run the linear model with zlm
+zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+
+# Summarize results and perform likelihood ratio test (LRT) for outcome
+summary_zlm <- summary(zlm_results, doLRT = exp)
+
+# Convert the summary to a data table for easy manipulation
+summary_dt <- summary_zlm$datatable
+
+#Overall with Hurdle and logFC
+fcHurdle2 <- merge(summary_dt[contrast==exp & component=='C',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='C', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle2[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle2$component <- "C"
+fcHurdle3 <- merge(summary_dt[contrast==exp & component=='D',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='D', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle3[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle3$component <- "D"
+
+fcHurdle <- rbind(fcHurdle2,fcHurdle3)
+
+result1 <- fcHurdle
+result1 <- result1 %>%
+  filter(fdr<0.05) %>%
+  dplyr::rename(LogFoldChange=coef) %>% 
+  dplyr::rename(Gene=primerid)
+
+#Only plot C component if D component is significant - aka significant expression of gene
+sig_results <- result1 %>% 
+  filter(component=="D") %>% 
+  filter(fdr<0.05) %>% 
+  pull(Gene)
+result1 <- result1 %>% 
+  filter(component=="C") %>% 
+  filter(Gene %in% sig_results) %>% 
+  filter(fdr<0.05)
+
+write.csv(result1,fs::path(dir.results,paste0("Medication_GLP1_neither_crude.csv")))
+
+# Filter top 10 positive and negative log2FoldChange
+top_pos_C <- as.data.frame(result1) %>%
+  filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange>0) %>% 
+  arrange(desc(LogFoldChange)) 
+# dplyr::slice(1:30) 
+# dplyr::rename(Gene=primerid,
+#               LogFC=coef)
+
+top_neg_C <- as.data.frame(result1) %>%
+  filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange<0)  %>% 
+  arrange(LogFoldChange)
+# dplyr::slice(1:30) 
+
+top_pos_C$Direction <- "Positive"
+top_neg_C$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes_C <- bind_rows(top_pos_C, top_neg_C)
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes_C <- top_genes_C %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, LogFoldChange)]))  # Order by Direction and log2FC
+
+# # Bar chart with flipped x and y axes
+p_C <- ggplot(top_genes_C, aes(x = LogFoldChange, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Effect Estimate", y = "Gene",title="Continuous Estimate for GLP-1 vs. No Medication") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(element_text(family="Times",size=20))+
+  theme(legend.position="none")
+
+pdf(fs::path(dir.results,"Mast_Barchart_Continuous_Estimate_GLP1_Neither.pdf"),width=10,height=10)
+plot(p_C)
+dev.off()
+
+#Both vs. GLP-1
+so_subset <- subset(so_sens_all,group2=="glp1_exclusive" | group2=="both")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+so_subset$ast <- factor(as.character(so_subset$ast))
+# mast_fxn(so=so_subset,cell=NULL,exposure="Medication",covariate=NULL,gene_set=rownames(so_subset),batch_size=length(rownames(so_subset)),exp_group="neither",ref_group="obese_control")
+# Extract the expression data matrix from so (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_subset, layer = "data"))
+
+# Extract metadata
+cell_metadata <- so_subset@meta.data
+#cell_metadata[[exposure]] <- factor(cell_metadata[[exposure]])
+
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+
+# Assuming gene_set is a vector of gene names
+sca_gene_set <- sca[rownames(sca) %in% gene_set, ]
+
+#Define the formula
+# model_formula <- as.formula(paste0("~", exposure,"+",covariate))
+model_formula <- ~Medication 
+exp <- paste0("Medicationboth")
+
+# Run the linear model with zlm
+zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+
+# Summarize results and perform likelihood ratio test (LRT) for outcome
+summary_zlm <- summary(zlm_results, doLRT = exp)
+
+# Convert the summary to a data table for easy manipulation
+summary_dt <- summary_zlm$datatable
+
+#Overall with Hurdle and logFC
+fcHurdle2 <- merge(summary_dt[contrast==exp & component=='C',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='C', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle2[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle2$component <- "C"
+fcHurdle3 <- merge(summary_dt[contrast==exp & component=='D',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='D', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle3[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle3$component <- "D"
+
+fcHurdle <- rbind(fcHurdle2,fcHurdle3)
+
+result1 <- fcHurdle
+result1 <- result1 %>%
+  filter(fdr<0.05) %>%
+  dplyr::rename(LogFoldChange=coef) %>% 
+  dplyr::rename(Gene=primerid)
+
+#Only plot C component if D component is significant - aka significant expression of gene
+sig_results <- result1 %>% 
+  filter(component=="D") %>% 
+  filter(fdr<0.05) %>% 
+  pull(Gene)
+result1 <- result1 %>% 
+  filter(component=="C") %>% 
+  filter(Gene %in% sig_results) %>% 
+  filter(fdr<0.05)
+
+write.csv(result1,fs::path(dir.results,paste0("Medication_both_GLP1_crude.csv")))
+
+# Filter top 10 positive and negative log2FoldChange
+top_pos_C <- as.data.frame(result1) %>%
+  filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange>0) %>% 
+  arrange(desc(LogFoldChange)) 
+# dplyr::slice(1:30) 
+# dplyr::rename(Gene=primerid,
+#               LogFC=coef)
+
+top_neg_C <- as.data.frame(result1) %>%
+  filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange<0)  %>% 
+  arrange(LogFoldChange)
+# dplyr::slice(1:30) 
+
+top_pos_C$Direction <- "Positive"
+top_neg_C$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes_C <- bind_rows(top_pos_C, top_neg_C)
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes_C <- top_genes_C %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, LogFoldChange)]))  # Order by Direction and log2FC
+
+# # Bar chart with flipped x and y axes
+p_C <- ggplot(top_genes_C, aes(x = LogFoldChange, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Effect Estimate", y = "Gene",title="Continuous Estimate for GLP-1 + SGLT2 vs. GLP1") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(element_text(family="Times",size=20))+
+  theme(legend.position="none")
+
+pdf(fs::path(dir.results,"Mast_Barchart_Continuous_Estimate_Both_GLP1.pdf"),width=10,height=10)
+plot(p_C)
+dev.off()
+
+#Both vs. Neither
+so_subset <- subset(so_sens_all,group2=="neither" | group2=="both")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+so_subset$ast <- factor(as.character(so_subset$ast))
+# mast_fxn(so=so_subset,cell=NULL,exposure="Medication",covariate=NULL,gene_set=rownames(so_subset),batch_size=length(rownames(so_subset)),exp_group="neither",ref_group="obese_control")
+# Extract the expression data matrix from so (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_subset, layer = "data"))
+
+# Extract metadata
+cell_metadata <- so_subset@meta.data
+#cell_metadata[[exposure]] <- factor(cell_metadata[[exposure]])
+
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+
+# Assuming gene_set is a vector of gene names
+sca_gene_set <- sca[rownames(sca) %in% gene_set, ]
+
+#Define the formula
+# model_formula <- as.formula(paste0("~", exposure,"+",covariate))
+model_formula <- ~Medication 
+exp <- paste0("Medicationboth")
+
+# Run the linear model with zlm
+zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+
+# Summarize results and perform likelihood ratio test (LRT) for outcome
+summary_zlm <- summary(zlm_results, doLRT = exp)
+
+# Convert the summary to a data table for easy manipulation
+summary_dt <- summary_zlm$datatable
+
+#Overall with Hurdle and logFC
+fcHurdle2 <- merge(summary_dt[contrast==exp & component=='C',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='C', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle2[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle2$component <- "C"
+fcHurdle3 <- merge(summary_dt[contrast==exp & component=='D',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                   summary_dt[contrast==exp & component=='D', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle3[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+fcHurdle3$component <- "D"
+
+fcHurdle <- rbind(fcHurdle2,fcHurdle3)
+
+result1 <- fcHurdle
+result1 <- result1 %>%
+  filter(fdr<0.05) %>%
+  dplyr::rename(LogFoldChange=coef) %>% 
+  dplyr::rename(Gene=primerid)
+
+#Only plot C component if D component is significant - aka significant expression of gene
+sig_results <- result1 %>% 
+  filter(component=="D") %>% 
+  filter(fdr<0.05) %>% 
+  pull(Gene)
+result1 <- result1 %>% 
+  filter(component=="C") %>% 
+  filter(Gene %in% sig_results) %>% 
+  filter(fdr<0.05)
+
+write.csv(result1,fs::path(dir.results,paste0("Medication_both_neither_crude.csv")))
+
+# Filter top 10 positive and negative log2FoldChange
+top_pos_C <- as.data.frame(result1) %>%
+  filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange>0) %>% 
+  arrange(desc(LogFoldChange)) 
+# dplyr::slice(1:30) 
+# dplyr::rename(Gene=primerid,
+#               LogFC=coef)
+
+top_neg_C <- as.data.frame(result1) %>%
+  filter(component=="C") %>% 
+  filter(fdr<0.05) %>%
+  filter(LogFoldChange<0)  %>% 
+  arrange(LogFoldChange)
+# dplyr::slice(1:30) 
+
+top_pos_C$Direction <- "Positive"
+top_neg_C$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes_C <- bind_rows(top_pos_C, top_neg_C)
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes_C <- top_genes_C %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, LogFoldChange)]))  # Order by Direction and log2FC
+
+# # Bar chart with flipped x and y axes
+p_C <- ggplot(top_genes_C, aes(x = LogFoldChange, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Effect Estimate", y = "Gene",title="Continuous Estimate for GLP-1 + SGLT2 vs. No Medication") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(element_text(family="Times",size=20))+
+  theme(legend.position="none")
+
+pdf(fs::path(dir.results,"Mast_Barchart_Continuous_Estimate_Both_Neither.pdf"),width=10,height=10)
+plot(p_C)
+dev.off()
+```
+
+##b. Single Cell
+```{r}
+#Major Cell Types
+#unique(so_sens_all$celltype)
+so_sens_all$celltype <- as.character(so_sens_all$celltype)
+so_sens_all$celltype2 <- ifelse(grepl("Hep-",so_sens_all$celltype),"Hepatocyte",
+                                ifelse(grepl("Stellate-",so_sens_all$celltype),"Stellate",
+                                       ifelse(grepl("EC-",so_sens_all$celltype),"EC",so_sens_all$celltype)))
+all_cell_types <- unique(so_sens_all$celltype2)
+gene_set <- rownames(so_sens_all)
+#Diabetes
+for (cell in all_cell_types){
+  mast_fxn_sens(so=so_sens_all,cell=cell,exposure="diagnosis_of_diabetes",gene_set=gene_set,exp_group="Yes",ref_group="No")
+}
+
+
+#AST/ALT
+so_diab <- subset(so_sens_all, diagnosis_of_diabetes=="Yes")
+gene_set <- rownames(so_diab)
+
+#AST
+for (cell in all_cell_types){
+  mast_fxn_sens(so=so_diab,cell=cell,exposure="ast",covariate=NULL,gene_set=gene_set,exp_group=NULL,ref_group=NULL)
+} 
+
+#ALT
+for (cell in all_cell_types){
+  mast_fxn_sens(so=so_diab,cell=cell,exposure="alt",covariate=NULL,gene_set=gene_set,exp_group=NULL,ref_group=NULL)
+}
+
+#Medication Groups
+#Neither vs. OC
+so_subset <- subset(so_sens_all,group2=="obese_control" | group2=="neither")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+gene_set <- rownames(so_subset)
+all_cell_types <- unique(so_sens_all$celltype2)[-11]
+for (cell in all_cell_types){
+  mast_fxn_sens(so=so_subset,cell=cell,covariate="alt",exposure="Medication",gene_set=gene_set,exp_group="neither",ref_group="obese_control")
+} 
+#GLP-1 vs. OC
+so_subset <- subset(so_sens_all,group2=="obese_control" | group2=="glp1_exclusive")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+gene_set <- rownames(so_subset)
+for (cell in all_cell_types){
+  mast_fxn_sens(so=so_subset,cell=cell,covariate="alt",exposure="Medication",gene_set=gene_set,exp_group="glp1_exclusive",ref_group="obese_control")
+} 
+
+#Both vs. OC
+so_subset <- subset(so_sens_all,group2=="obese_control" | group2=="both")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+gene_set <- rownames(so_subset)
+for (cell in all_cell_types){
+  mast_fxn_sens(so=so_subset,cell=cell,covariate="alt",exposure="Medication",gene_set=gene_set,exp_group="both",ref_group="obese_control")
+}
+
+#GLP-1 vs. Neither
+# so_diab <- subset(so_sens_all,diagnosis_of_diabetes=="Yes")
+# so_subset <- subset(so_diab, group2=="neither"|group2=="glp1_exclusive")
+so_subset <- subset(so_sens_all, group2=="neither"|group2=="glp1_exclusive")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+gene_set <- rownames(so_subset)
+for (cell in all_cell_types){
+  mast_fxn_sens(so=so_subset,cell=cell,covariate="alt",exposure="Medication",gene_set=gene_set,exp_group="glp1_exclusive",ref_group="neither")
+}
+
+#Both vs. Neither
+# so_subset <- subset(so_diab, group2=="neither"|group2=="both")
+so_subset <- subset(so_sens_all, group2=="neither"|group2=="both")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+gene_set <- rownames(so_subset)
+for (cell in all_cell_types){
+  mast_fxn_sens(so=so_subset,cell=cell,covariate="alt",exposure="Medication",gene_set=gene_set,exp_group="both",ref_group="neither")
+} 
+
+#Both vs. GLP-1
+# so_subset <- subset(so_diab, group2=="glp1_exclusive"|group2=="both")
+so_subset <- subset(so_sens_all, group2=="glp1_exclusive"|group2=="both")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+gene_set <- rownames(so_subset)
+for (cell in all_cell_types){
+  mast_fxn_sens(so=so_subset,cell=cell,covariate="alt",exposure="Medication",gene_set=gene_set,exp_group="both",ref_group="glp1_exclusive")
 }
 ```
 
-##b. Specific Cell Types
+
+
+#6. GSEA
 ```{r}
-Idents(so_liver_sc) <- so_liver_sc$celltype
-de.markers(so_liver_sc, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", NULL, "_top")
+Idents(so_liver_sn) <- so_liver_sn$celltype
+de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", NULL, "_top")
 
 #Gene set enrichment analysis
-sce_sn_hep <- as.SingleCellExperiment(so_liver_sc_hep)
-rm(so_liver_sc_hep)
+sce_sn_hep <- as.SingleCellExperiment(so_liver_sn_hep)
+rm(so_liver_sn_hep)
 ## C2 category is according to canonical pathways: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
 geneSets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG")
 ### filter background to only include genes that we assessed
@@ -582,7 +1811,7 @@ ggarrange(ipa.plot, gg.ipa.table,
 ```
 
 
-#6. Visualize Results
+#7. Visualize Results
 ##a. All Cell Types
 ```{r}
 exposure <- "Group2"
@@ -614,117 +1843,442 @@ cell_type <- c("Hepatocyte","EC","Stellate","Cholang","NKC/NKT","Kup/MON","dHep"
 cell_type <- str_replace_all(cell_type,"/","_")
 #cFIB/cImmune
 for (cell in cell_type){
-pdf(fs::path(dir.results,paste0("venn_results_",cell,"_",exposure,".pdf")),width=20,height=15)
-visualize_function(exposure,cell)
-dev.off()
+  pdf(fs::path(dir.results,paste0("venn_results_",cell,"_",exposure,".pdf")),width=20,height=15)
+  visualize_function(exposure,cell)
+  dev.off()
 }
 ```
 
-#7. TODAY 
+#8. TODAY 
 ```{r}
 #Load in AST and ALT in today 
-today <- read.csv(fs::path(dir.dat,"TODAY subaward","Clinical data","TODAY","CBL.csv")) # length(unique(today$releaseid)) - 699 ids
-today_M0 <- today %>%
-  filter(mvisit=="M00")
-  #dplyr::select(c("releaseid","ALT","AST"))
+today <- read.csv(fs::path(dir.dat,"TODAY subaward","Clinical data","TODAY","CBL.csv"))
+# length(unique(today$releaseid)) - 699 ids
+# today_M0 <- today %>%
+#   filter(mvisit=="M00")
+#dplyr::select(c("releaseid","ALT","AST"))
 #Load in Proteomics in Today
 prot <- readRDS(fs::path(dir.dat,"Liver project","TODAY_proteomics.rds"))
-prot <- prot[c(7326,which(grepl("seq.",colnames(prot))))] #length(unique(prot$releaseid)) - 376 unique ids
+prot <- prot[c(7326,7404,7397,which(grepl("seq.",colnames(prot))))] #length(unique(prot$releaseid)) - 376 unique ids
 proteins <- colnames(prot)[which(grepl("seq.",colnames(prot)))]
 
 #rm(today,today_M0,prot)
 
-#Determine which proteins correlate with genes associated with alt and ast
-#AST
-ast_genes <- read.xlsx(fs::path(dir.dat,"Liver project","Results","Bulk_Results_for_Ast Di (High vs. Low).xlsx"))
-ast_genes_pos <- ast_genes %>%
-  filter(p_val_adj<0.05) %>%
-  filter(avg_log2FC>0) %>%
-  arrange(desc(avg_log2FC)) %>%
-  dplyr::slice(1:200) 
-ast_genes_pos <- ast_genes_pos$Gene
-ast_genes_neg <- ast_genes %>%
-  filter(p_val_adj<0.05) %>%
-  filter(avg_log2FC<0) %>%
-  arrange(avg_log2FC) %>%
-  dplyr::slice(1:200) 
-ast_genes_neg <- ast_genes_neg$Gene
-ast_genes <- c(ast_genes_pos,ast_genes_neg)
+# #Determine which proteins correlate with genes associated with alt and ast
+# #AST
+# ast_genes <- read.xlsx(fs::path(dir.dat,"Liver project","Results","Bulk_Results_for_Ast Di (High vs. Low).xlsx"))
+# ast_genes_pos <- ast_genes %>%
+#   filter(p_val_adj<0.05) %>%
+#   filter(avg_log2FC>0) %>%
+#   arrange(desc(avg_log2FC)) %>%
+#   dplyr::slice(1:200) 
+# ast_genes_pos <- ast_genes_pos$Gene
+# ast_genes_neg <- ast_genes %>%
+#   filter(p_val_adj<0.05) %>%
+#   filter(avg_log2FC<0) %>%
+#   arrange(avg_log2FC) %>%
+#   dplyr::slice(1:200) 
+# ast_genes_neg <- ast_genes_neg$Gene
+# ast_genes <- c(ast_genes_pos,ast_genes_neg)
 
 #Key Protein Gene
 key <- readRDS(fs::path(dir.dat,"Liver project","gene_prot.RDS"))
-sig_proteins_ast <- key$AptName[which(ast_genes %in% key$EntrezGeneSymbol)]
-prot_ast <- prot[c("releaseid",sig_proteins_ast)]
-dat_ast <- tidylog::right_join(today_M0,prot_ast,by="releaseid")
+sens_proteins <- key$AptName[which(key$EntrezGeneSymbol %in% sens_genes)]
+prot_sens <- prot[c("releaseid","AGEBASE","sex",sens_proteins)]
+data <- tidylog::right_join(today,prot_sens,by="releaseid")
+data <- data %>% #filter out recruitment visits
+  filter(mvisit!="R")
 
-#Create loop for linear regression between proteins & liver enzymes
-results <- data.frame()
-for (x in sig_proteins_ast) {
-  M0 <- as.formula(paste0("AST ~ ",x))
-  M1 <- lm(M0,data=dat_ast)
-  beta <- summary(M1)$coef[2,1]
-  pval <- summary(M1)$coef[2,4]
-  results_full <- data.frame(Protein=x,Estimate=beta,Pvalue=pval)
-  results <- rbind(results,results_full)
-}
-results_fdr <- results %>%
-  mutate(fdr = p.adjust(Pvalue,method="fdr"))
-results_sig <- results_fdr %>%
-  filter(fdr<0.05)
- 
+# Compute baseline ALT for each participant
+data <- data %>%
+  group_by(releaseid) %>%
+  mutate(baseline_alt = first(ALT)) %>% 
+  mutate(baseline_ast = first(AST)) %>% 
+  ungroup()
+
+#Check if ALT has doubled at each visit
+data <- data %>%
+  mutate(event_alt = ifelse(ALT >= 2 * baseline_alt, 1, 0)) %>% 
+  mutate(event_ast = ifelse(AST >= 2 * baseline_ast, 1, 0))
+
+# Ensure the event persists after it occurs
+data <- data %>%
+  group_by(releaseid) %>%
+  mutate(event_alt = cummax(event_alt)) %>%  # Marks 1 for all visits after doubling occurs
+  mutate(event_ast = cummax(event_ast)) %>% 
+  ungroup() %>% 
+  mutate(days_to_alt = ifelse(event_alt==1,days,))
+
+#Censor individuals who didnt develop event
+
+
+#Create loop for cox proportional hazards
 #ALT
-alt_genes <- read.xlsx(fs::path(dir.dat,"Liver project","Results","Bulk_Results_for_Alt Di (High vs. Low).xlsx"))
-alt_genes_pos <- alt_genes %>%
-  filter(p_val_adj<0.05) %>%
-  filter(avg_log2FC>0) %>%
-  arrange(desc(avg_log2FC)) %>%
-  dplyr::slice(1:200) 
-alt_genes_pos <- alt_genes_pos$Gene
-alt_genes_neg <- alt_genes %>%
-  filter(p_val_adj<0.05) %>%
-  filter(avg_log2FC<0) %>%
-  arrange(avg_log2FC) %>%
-  dplyr::slice(1:200) 
-alt_genes_neg <- alt_genes_neg$Gene
-alt_genes <- c(alt_genes_pos,alt_genes_neg)
-sig_proteins_alt <- key$AptName[which(alt_genes %in% key$EntrezGeneSymbol)]
-prot_alt <- prot[c("releaseid",sig_proteins_ast)]
-dat_alt <- tidylog::right_join(today_M0,prot_alt,by="releaseid")
-
-#Create loop for linear regression between proteins & liver enzymes
-results2 <- data.frame()
-for (x in sig_proteins_alt) {
-  M0 <- as.formula(paste0("ALT ~ ",x))
-  M1 <- lm(M0,data=dat_alt)
-  beta <- summary(M1)$coef[2,1]
-  pval <- summary(M1)$coef[2,4]
-  results_full2 <- data.frame(Protein=x,Estimate=beta,Pvalue=pval)
-  results2 <- rbind(results2,results_full2)
+results_alt <- data.frame()
+for (protein in sens_proteins){
+  # formula <- as.formula(paste0("Surv(days, event_alt) ~ ", protein))
+  formula <- as.formula(paste0("Surv(days, event_alt) ~ ", protein,"+AGEBASE+sex+HbA1c"))
+  # Fit the Cox model
+  cox_model <- coxph(formula, data = data)
+  
+  # Store the summary or model output
+  LogHR <- summary(cox_model)$coef[1,1]
+  Risk <- ifelse(LogHR>0,"Increased",
+                 ifelse(LogHR<0,"Decreased","No Effect"))
+  Pvalue <- summary(cox_model)$coef[1,5]
+  results_data_alt <- data.frame(Protein=protein,Outcome="ALT",LogHazardRatio=LogHR,Risk=Risk,Pvalue=Pvalue)
+  results_alt <- rbind(results_alt,results_data_alt)
 }
-results_fdr2 <- results2 %>%
-  mutate(fdr = p.adjust(Pvalue,method="fdr"))
-results_sig2 <- results_fdr2 %>%
-  filter(fdr<0.05)
+rm(results_data_alt)
+results_alt <- results_alt %>% 
+  mutate(fdr = p.adjust(Pvalue,method="fdr")) %>% 
+  mutate(sig=case_when(fdr<0.05 & Risk=="Increased" ~ "Significant Positive",
+                       fdr<0.05 & Risk=="Decreased" ~"Significant Negative",
+                       fdr>0.05~"Not Significant"))
 
-results_sig2$Gene <- key$EntrezGeneSymbol[which(results_sig2$Protein %in% key$AptName)]
-results_sig2$Gene %in% alt_genes
+#AST
+results_ast <- data.frame()
+for (protein in sens_proteins){
+  # formula <- as.formula(paste0("Surv(days, event_ast) ~ ", protein))
+  formula <- as.formula(paste0("Surv(days, event_ast) ~ ", protein,"+AGEBASE+sex+HbA1c"))
+  # Fit the Cox model
+  cox_model <- coxph(formula, data = data)
+  
+  # Store the summary or model output
+  LogHR <- summary(cox_model)$coef[1,1]
+  Risk <- ifelse(LogHR>0,"Increased",
+                 ifelse(LogHR<0,"Decreased","No Effect"))
+  Pvalue <- summary(cox_model)$coef[1,5]
+  results_data_ast <- data.frame(Protein=protein,Outcome="AST",LogHazardRatio=LogHR,Risk=Risk,Pvalue=Pvalue)
+  results_ast <- rbind(results_ast,results_data_ast)
+}
+rm(results_data_ast)
+results_ast <- results_ast %>% 
+  mutate(fdr = p.adjust(Pvalue,method="fdr")) %>% 
+  mutate(sig=case_when(fdr<0.05 & Risk=="Increased" ~ "Significant Positive",
+                       fdr<0.05 & Risk=="Decreased" ~"Significant Negative",
+                       fdr>0.05~"Not Significant"))
+
+#Combine Results
+results <- rbind(results_ast,results_alt)
+results <- results %>% 
+  dplyr::rename(AptName=Protein)
+results <- tidylog::left_join(results,key,by="AptName")
+results <- results %>% 
+  mutate(Gene_Name=paste0(EntrezGeneSymbol,"_",SeqId))
+results_alt <- results %>% 
+  filter(Outcome=="ALT") 
+results_ast <- results %>% 
+  filter(Outcome=="AST") 
+
+#Save results
+# write.csv(results_alt,fs::path(dir.results,"ALT_cox_results_unadjusted.csv"))
+# write.csv(results_ast,fs::path(dir.results,"AST_cox_results_unadjusted.csv"))
+write.csv(results_alt,fs::path(dir.results,"ALT_cox_results_adjusted.csv"))
+write.csv(results_ast,fs::path(dir.results,"AST_cox_results_adjusted.csv"))
+
+# Create the volcano plot
+volcano_plot_alt <- ggplot(results_alt, aes(x = LogHazardRatio, y = -log10(fdr), color = sig)) +
+  geom_point(alpha = 0.8, size = 2) +  # Points with transparency
+  # scale_color_manual(values = c("grey", "red")) +  # Custom colors for significance
+  scale_color_manual(values = c("Not Significant" = "grey", 
+                                "Significant Positive" = "red", 
+                                "Significant Negative" = "blue")) +
+  theme_minimal() +  # Clean theme
+  labs(
+    title = "Cox Proportional Hazards Model for Senescence Proteins and Doubling of ALT (U/L), adjusted for Age, Sex, and HbA1c",
+    # title = "Cox Proportional Hazards Model for Senescence Proteins and Doubling of ALT (U/L)",
+    x = "Log Hazard Ratio",
+    y = "-log10(FDR)"
+  ) +
+  theme(
+    legend.position = "top",
+    legend.title = element_blank()
+  )
+
+# Highlight top significant genes (optional)
+top_genes_alt <- subset(results_alt, sig== "Significant Positive" | sig=="Significant Negative")
+if (nrow(top_genes_alt) > 0) {
+  volcano_plot_alt <- volcano_plot_alt +
+    # geom_text(data = top_genes_alt, aes(label = EntrezGeneSymbol), 
+    #           vjust = 1.5, size = 5, color = "black")
+    geom_text_repel(data = top_genes_alt, aes(label = Gene_Name), 
+                    box.padding = 0.35, 
+                    point.padding = 0.5, 
+                    max.overlaps = Inf,  # Prevent overlap
+                    size = 3, 
+                    color = "black", 
+                    segment.size = 0.5)
+}
+plot(volcano_plot_alt)
+
+# Create the volcano plot
+volcano_plot_ast <- ggplot(results_ast, aes(x = LogHazardRatio, y = -log10(fdr), color = sig)) +
+  geom_point(alpha = 0.8, size = 2) +  # Points with transparency
+  # scale_color_manual(values = c("grey", "red")) +  # Custom colors for significance
+  scale_color_manual(values = c("Not Significant" = "grey", 
+                                "Significant Positive" = "red", 
+                                "Significant Negative" = "blue")) +
+  theme_minimal() +  # Clean theme
+  labs(
+    title = "Cox Proportional Hazards Model for Senescence Proteins and Doubling of AST (U/L), adjusted for Age, Sex, and HbA1c",
+    # title = "Cox Proportional Hazards Model for Senescence Proteins and Doubling of AST (U/L)",
+    x = "Log Hazard Ratio",
+    y = "-log10(FDR)"
+  ) +
+  theme(
+    legend.position = "top",
+    legend.title = element_blank()
+  )
+
+# Highlight top significant genes (optional)
+top_genes_ast <- subset(results_ast, sig== "Significant Positive" | sig=="Significant Negative")
+if (nrow(top_genes_ast) > 0) {
+  volcano_plot_ast <- volcano_plot_ast +
+    # geom_text(data = top_genes_ast, aes(label = EntrezGeneSymbol), 
+    #           vjust = 1.5, size = 5, color = "black")
+    geom_text_repel(data = top_genes_ast, aes(label = Gene_Name), 
+                    box.padding = 0.35, 
+                    point.padding = 0.5, 
+                    max.overlaps = Inf,  # Prevent overlap
+                    size = 3, 
+                    color = "black", 
+                    segment.size = 0.5)
+}
+plot(volcano_plot_ast)
+
+
 
 ```
 
-#8. TEEN-LABs
+#9. TEEN-LABs
 ```{r}
 #Proteomics teen labs 
 load(fs::path(dir.dat,"Teen Labs","Data_Cleaned","analysis_dataset.RData"))
+#Senescence Proteins
+sens_proteins <- analyte_info$AptName[which(analyte_info$EntrezGeneSymbol %in% sens_genes)]
+
+alt_ast <- read.csv(fs::path(dir.dat,"Liver Project","Teen-LABS_AST_ALT.csv")) %>% 
+  filter(Visit==1|Visit==6) %>% 
+  mutate(Visit=ifelse(Visit==1,"PreSurgery","PostSurgery"))
+df_baseline <- df %>% 
+  filter(visit=="Month 1") %>% 
+  dplyr::rename(Visit=visit) %>% 
+  mutate(Visit="PreSurgery") %>% 
+  mutate(ID=as.character(ID)) %>% 
+  dplyr::select(all_of(c("ID",sens_proteins)))
+# df_followup <- df %>% 
+#   filter(visit=="Month 6") %>% 
+#   dplyr::rename(Visit=visit) %>% 
+#   mutate(Visit="PostSurgery") %>% 
+#   mutate(ID=as.character(ID)) %>% 
+#   dplyr::select(all_of(c("ID","Visit",sens_proteins)))
+
+#Prepare data
+dat_baseline <- tidylog::left_join(alt_ast,df_baseline,by=c("ID"))
+dat <- dat_baseline
+rm(dat_baseline)
+# dat_followup <- tidylog::left_join(dat,df_followup,by=c("ID"))
+# dat_all <- tidylog::left_join(dat,df,by=c("ID","Visit"))
+
+hist(dat$AST)
+hist(dat$ALT)
+#Log transform alt and ast
+dat$ALT_log <- log(dat$ALT)
+dat$AST_log <- log(dat$AST)
+dat$Visit <- factor(dat$Visit)
+dat$Visit <- relevel(dat$Visit, ref = "PreSurgery")
+
+# #Make sure everyone has baseline proteins
+# prot <- df %>% 
+#   dplyr::select(c("ID","Visit",sens_proteins))
+
+#Linear Mixed Effects Model
+#ALT
+plot_list <- list()
+results <- data.frame()
+for (protein in sens_proteins) {
+  gene_name <- paste0(analyte_info$EntrezGeneSymbol[which(analyte_info$AptName %in% protein)],"_",analyte_info$SeqId[which(analyte_info$AptName %in% protein)])
+  M0 <- as.formula(paste0("ALT_log ~ ",protein,"*Visit + (1 | ID)"))
+  M1 <- lmer(M0, data = dat)
+  main_effect <- summary(M1)$coef[2,1]
+  main_p <- summary(M1)$coef[2,5]
+  time_effect <- summary(M1)$coef[3,1]
+  time_p <- summary(M1)$coef[3,5]
+  int_effect <- summary(M1)$coef[4,1]
+  int_p <- summary(M1)$coef[4,5]
+  results_dat <- data.frame(Apt=gene_name,Outcome="ALT_log",MainEffect=main_effect,MainPVal=main_p,TimeEffect=time_effect,TimePVal=time_p,Interaction=int_effect,IntPVal=int_p)
+  results <- rbind(results,results_dat)
+  
+  int_plot <- ggplot(dat, aes(x = !!sym(protein), y = ALT_log, color = Visit)) +
+    geom_point() +
+    geom_smooth(method = "lm", se = TRUE) +
+    labs(title = paste0("Interaction between ",gene_name," and Visit on ALT_log"))+
+    theme_minimal()
+  
+  # Create the spaghetti plot
+  spaghetti_plot <- ggplot(dat, aes(x = Visit, y = ALT_log, group = ID, color = !!sym(protein))) +
+    geom_line() +  # Connect ALT levels for each individual
+    geom_point() +  # Add points for ALT levels at each time point
+    # scale_color_viridis_d(guide = "none") +  # Optional: Viridis color palette, hide legend
+    # scale_color_viridis_c(guide = "colorbar", name = "Protein") +
+    scale_color_gradient(low = "blue", high = "red", name = gene_name) +
+    # scale_color_gradient2(low = "blue", mid = "white", high = "red", midpoint = median(dat[[protein]],na.rm=T), name = "Protein") +
+    labs(
+      title = paste0("Spaghetti Plot of ALT Levels Pre- and Post-Surgery by ",gene_name),
+      x = "Visit",
+      y = "ALT Levels"
+    ) +
+    theme_minimal() +
+    theme(panel.grid.major = element_line(color = "gray85")) 
+  
+  # Combine the two plots
+  combined_plot <- plot_grid(int_plot, spaghetti_plot, ncol = 1, labels = c("A", "B"))
+  
+  # Add to the list
+  plot_list[[protein]] <- combined_plot
+}
+
+write.csv(results,fs::path(dir.results,paste0("Interaction between ",gene_name," and Visit on ALT_log.csv")))
+# # Save all combined plots to a single PDF
+# pdf("combined_interaction_and_spaghetti_plots.pdf", width = 10, height = 14)
+# for (combined_plot in plot_list) {
+#   plot(combined_plot)
+# }
+# dev.off()
+
+#AST
+plot_list <- list()
+results <- data.frame()
+for (protein in sens_proteins) {
+  gene_name <- paste0(analyte_info$EntrezGeneSymbol[which(analyte_info$AptName %in% protein)],"_",analyte_info$SeqId[which(analyte_info$AptName %in% protein)])
+  M0 <- as.formula(paste0("AST_log ~ ",protein,"*Visit + (1 | ID)"))
+  M1 <- lmer(M0, data = dat)
+  main_effect <- summary(M1)$coef[2,1]
+  main_p <- summary(M1)$coef[2,5]
+  time_effect <- summary(M1)$coef[3,1]
+  time_p <- summary(M1)$coef[3,5]
+  int_effect <- summary(M1)$coef[4,1]
+  int_p <- summary(M1)$coef[4,5]
+  results_dat <- data.frame(Apt=gene_name,Outcome="AST_log",MainEffect=main_effect,MainPVal=main_p,TimeEffect=time_effect,TimePVal=time_p,Interaction=int_effect,IntPVal=int_p)
+  results <- rbind(results,results_dat)
+  
+  int_plot <- ggplot(dat, aes(x = !!sym(protein), y = ALT_log, color = Visit)) +
+    geom_point() +
+    geom_smooth(method = "lm", se = TRUE) +
+    labs(title = paste0("Interaction between ",gene_name," and Visit on AST_log"))+
+    theme_minimal()
+  
+  # Create the spaghetti plot
+  spaghetti_plot <- ggplot(dat, aes(x = Visit, y = ALT_log, group = ID, color = !!sym(protein))) +
+    geom_line() +  # Connect ALT levels for each individual
+    geom_point() +  # Add points for ALT levels at each time point
+    # scale_color_viridis_d(guide = "none") +  # Optional: Viridis color palette, hide legend
+    # scale_color_viridis_c(guide = "colorbar", name = "Protein") +
+    scale_color_gradient(low = "blue", high = "red", name = gene_name) +
+    # scale_color_gradient2(low = "blue", mid = "white", high = "red", midpoint = median(dat[[protein]],na.rm=T), name = "Protein") +
+    labs(
+      title = paste0("Spaghetti Plot of AST Levels Pre- and Post-Surgery by ",gene_name),
+      x = "Visit",
+      y = "ALT Levels"
+    ) +
+    theme_minimal() +
+    theme(panel.grid.major = element_line(color = "gray85")) 
+  
+  # Combine the two plots
+  combined_plot <- plot_grid(int_plot, spaghetti_plot, ncol = 1, labels = c("A", "B"))
+  
+  # Add to the list
+  plot_list[[protein]] <- combined_plot
+}
+
+write.csv(results,fs::path(dir.results,paste0("Interaction between ",gene_name," and Visit on AST_log.csv")))
+# # Save all combined plots to a single PDF
+# pdf("combined_interaction_and_spaghetti_plots.pdf", width = 10, height = 14)
+# for (combined_plot in plot_list) {
+#   plot(combined_plot)
+# }
+# dev.off()
+
 
 ```
 
-#9. Pseudotime Analysis - Hepatocytes
+#10. Pseudotime Analysis - Hepatocytes
 ```{r}
+#Marker genes of healthy hepatocytes: 
+healthy_hepatocyte_genes <- c("ALB", "CYP3A4", "ARG1", "IGF1", "HNF4A", "APOE", "SLC10A2", "FASN", "ABCB1", "GLUL")
+
+#Marker genes of adaptive/mal adaptive hepatocytes: 
+adaptive_maladaptive_genes <- c("COL1A1", "ACTA2", "TNF", "IL6", "FASN", "CASP3", "SOD1", "CAT", "HGF", "PCNA")
 
 
 ```
 
-#10. Targeted DEGs 
+#11. Senescence Score 
+```{r}
+sens_genes <- intersect(sens_genes, rownames(so_liver_sn))
+
+so_liver_sn <- AddModuleScore(
+  object =so_liver_sn,
+  features = list(sens_genes),
+  name = "SenescenceScore",
+  replace = TRUE
+)
+
+# Extract normalized expression data
+expr_data <- as.data.frame(t(so_liver_sn@assays$RNA@data))
+
+# Add participant IDs
+expr_data$kit_id <- so_liver_sn@meta.data$kit_id
+
+# Add group information if available
+expr_data$group <- seurat_obj@meta.data$group
+
+# Aggregate data by participant
+agg_data <- expr_data %>%
+  group_by(participant_id, group) %>%
+  summarise(across(where(is.numeric), mean, .names = "mean_{col}"))
+
+
+#Correlate with alt/ast
+#AST
+cor.test(so_liver_sn@meta.data$SenescenceScore1, so_liver_sn@meta.data$ast)
+lm_model <- lm(SenescenceScore1 ~ ast, data = so_liver_sn@meta.data)
+summary(lm_model)
+#ALT
+cor.test(so_liver_sn@meta.data$SenescenceScore1, so_liver_sn@meta.data$ast)
+lm_model <- lm(SenescenceScore1 ~ ast, data = so_liver_sn@meta.data)
+summary(lm_model)
+
+#Medication
+ggplot(so_liver_sn@meta.data, aes(x = group2, y = SenescenceScore1)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(x = "Group", y = "Senescence Score")
+
+# Perform ANOVA
+anova_result <- aov(SenescenceScore1 ~ group2, data = so_liver_sn@meta.data)
+
+# Summary of the ANOVA
+summary(anova_result)
+shapiro.test(so_liver_sn@meta.data$SenescenceScore1) # For the whole dataset
+
+
+```
+
+#12. Oroborus Analysis
+```{r}
+oro_vars <- colnames(so_liver_sn@meta.data)[85:114]
+
+#Association between oro vars and senescence genes
+cor.test()
+
+#Association between oro vars and senescence score
+
+```
+
+
+#13. Targeted DEGs 
 ```{r}
 
 
