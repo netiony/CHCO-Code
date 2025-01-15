@@ -46,7 +46,7 @@ de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, exten
 }
 
 #DEG & GSEA Function ----
-##a. All Genes ----
+#a. All Genes ----
 degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,top_gsea) {
   DefaultAssay(so) <- "RNA"
   
@@ -250,8 +250,7 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
   # Call the function
   write_multiple_sheets(output_file, sheet_data)
 }
-
-##b. Senescence Genes ----
+#b. Senescence Genes
 degs_fxn_sens <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,top_gsea) {
   DefaultAssay(so) <- "RNA"
   
@@ -329,11 +328,11 @@ degs_fxn_sens <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichme
                        boxedLabels = TRUE,
                        max.overlaps=60)
   if (!is.null(cell)){
-    filename <- paste0("Senescence_DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
+    filename <- paste0("Senescence DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
   } else {
-    filename <- paste0("Senescence_Bulk_DEGs_for_",condition,".pdf") 
+    filename <- paste0("Senescence Bulk_DEGs_for_",condition,".pdf") 
   }
-  pdf(fs::path(dir.results,filename),width=10,height=7)
+  pdf(fs::path(dir.results,filename),width=20,height=10)
   plot(p)
   dev.off()
   
@@ -404,9 +403,9 @@ degs_fxn_sens <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichme
     
     
     if (!is.null(cell)){
-      filename <- paste0("Senescence_GSEA_top_",top_gsea,"_pathways_",cell_name,"_cells_for",condition,".pdf")
+      filename <- paste0("GSEA_top_",top_gsea,"_pathways_",cell_name,"_cells_for",condition,".pdf")
     } else {
-      filename <- paste0("Senescence_Bulk_GSEA_for_",condition,".pdf") 
+      filename <- paste0("Bulk_GSEA_for_",condition,".pdf") 
     }
     pdf(fs::path(dir.results,filename),width=20,height=20)
     plot(gsea_plot)
@@ -438,17 +437,13 @@ degs_fxn_sens <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichme
   } 
   # Example usage
   df1 <- deg_results
-  if (enrichment=="Yes") {
   df2 <- eaRes
-  } else {
-    df2 <- NULL
-  }
   
   # Specify the file name and data
   if (!is.null(cell)){
-    output_file <- fs::path(dir.results,paste0("Senescence_Results_",cell_name,"_cells_for_",condition,".xlsx"))  
+    output_file <- fs::path(dir.results,paste0("Senescence Results_",cell_name,"_cells_for_",condition,".xlsx"))  
   } else {
-    output_file <- fs::path(dir.results,paste0("Senescence_Bulk_Results_for_",condition,".xlsx"))
+    output_file <- fs::path(dir.results,paste0("Senescence Bulk_Results_for_",condition,".xlsx"))
   }
   
   sheet_data <- list(
@@ -459,7 +454,6 @@ degs_fxn_sens <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichme
   # Call the function
   write_multiple_sheets(output_file, sheet_data)
 }
-
 
 #Visualize Function ----
 ##a. Bulk ----
@@ -603,7 +597,6 @@ visualize_function_bulk <- function(exposure) {
 
 
 ##b. Single Cell ----
-###i. Venn Diagrams ----
 visualize_function <- function(exposure,cell) {
   
   # List all files in the results directory
@@ -753,163 +746,13 @@ visualize_function <- function(exposure,cell) {
  print(paste0("Group 1 = ",group1_title),paste0("Group 2 = ",group2_title),paste0("Group 3 = ",group3_title))
 }
 
-###ii. Bar/Dot plot ----
-#exposure = "Group2"
-#exp_group = "glp1_exclusive"
-#ref_group = "neither"
-#cell_types <- c("Hepatocyte","EC","Stellate","Cholang","NKC/NKT","Kup/MON","dHep","Kup/MAC","B/Plasma","Hep/Immune")
-#cell_types <- str_replace_all(cell_type,"/","_")
-
-# Function to extract cell type from file name using a list of cell types
-extract_cell_type <- function(filename, cell_types) {
-  for (cell_type in cell_types) {
-    if (str_detect(filename, cell_type)) {
-      return(cell_type)
-    }
-  }
-  return(NA)  # Return NA if no cell type is found
-}
-
-visualize_cell <- function(exposure,exp_group,ref_group) {
-  
-  # List all files in the results directory
-  all_files <- dir_ls(path = dir.results, glob = "*.xlsx")  # List only .xlsx files
-  
-  # Filter the files that contain both the exposure and the word "Bulk" in the file name
-  matching_files <- all_files[str_detect(all_files, exposure) & str_detect(all_files, exp_group) & str_detect(all_files, ref_group) & !str_detect(all_files,"Bulk") & str_detect(all_files,"Senescence")]
-  
-  # Check if matching files exist for the current cell type and exposure
-  if (length(matching_files) > 0) {
-    # Loop through each matching file
-    for (file in matching_files) {
-      # Extract cell type from the filename
-      cell_type <- extract_cell_type(basename(file), cell_types)
-      
-      # Dynamically assign the data to a variable named after the cell type
-      if (!is.na(cell_type)) {
-        assign(make.names(cell_type), read.xlsx(file), envir = .GlobalEnv)
-      }
-    }
-  }
-  
-  # Initialize a list to store data
-  all_data <- list()
-  # Loop through each file and process
-  for (file in matching_files) {
-    # Read the file (assuming CSV format, modify if needed)
-    data <- read.xlsx(file)
-    
-    # Extract cell type from the filename
-    cell_type <- extract_cell_type(basename(file), cell_types)
-    
-    # Add the cell type as a column
-    data$Cell_Type <- cell_type
-    
-    # Append to the list
-    all_data[[length(all_data) + 1]] <- data
-  }
-  
-  # Combine all data into a single dataframe
-  combined_data <- bind_rows(all_data)
-  combined_data$sig <- ifelse(combined_data$p_val_adj<0.05,"Significant","Non-Significant")
-  combined_data$sig <- factor(combined_data$sig)
-  
-  # Filter significant data
-  significant_data <- combined_data %>%
-    filter(sig == "Significant")
-  
-  # Get top 3 positive and negative genes for each Cell_Type
-  top_positive_per_cell_type <- significant_data %>%
-    filter(avg_log2FC > 0) %>%  # Only positive values
-    group_by(Cell_Type) %>%
-    arrange(desc(avg_log2FC)) %>%
-    slice_head(n = 3) %>%
-    mutate(pos_or_neg = "Positive")
-  
-  top_negative_per_cell_type <- significant_data %>%
-    filter(avg_log2FC < 0) %>%  # Only negative values
-    group_by(Cell_Type) %>%
-    arrange(avg_log2FC) %>%  # Sort in ascending order for negative values
-    slice_head(n = 3) %>%
-    mutate(pos_or_neg = "Negative")
-  
-  # Combine both positive and negative data
-  top_genes_per_cell_type <- bind_rows(top_positive_per_cell_type, top_negative_per_cell_type)
-  
-  range_data <- combined_data %>%
-    group_by(Cell_Type) %>%
-    summarise(
-      min_log2FC = min(avg_log2FC, na.rm = TRUE),
-      max_log2FC = max(avg_log2FC, na.rm = TRUE)
-    )
-  exposure <- "Treatment"
-  # Create the plot
-p <- ggplot(combined_data, aes(x = Cell_Type, y = avg_log2FC)) +
-  # Add the bar chart (range from min to max)
-  #geom_linerange(
-  #  data = range_data,
-  #  aes(x = Cell_Type, ymin = min_log2FC, ymax = max_log2FC),
-  #  color = "lightblue",
-  #  linewidth = 20,
-  #  alpha = 0.5,
-  #  inherit.aes = FALSE  # Disable inheriting global aesthetics
-  #) +
-  geom_rect(
-    data = range_data,
-    aes(
-      xmin = as.numeric(as.factor(Cell_Type)) - 0.4,
-      xmax = as.numeric(as.factor(Cell_Type)) + 0.4,
-      ymin = min_log2FC,
-      ymax = max_log2FC
-    ),
-    fill = "lightblue",
-    color = "black", # Black border
-    alpha = 0.5,
-    inherit.aes = FALSE
-  ) +
-  geom_hline(yintercept = 0, color = "black", linewidth = 0.5)+
-  # Overlay jittered dots
-  geom_jitter(aes(color = sig), width = 0.3, alpha = 0.5, size = 0.3) +
-  
-  # Custom colors for dots
-  scale_color_manual(values = c("Significant" = "red", "Non-Significant" = "darkblue")) +
-  
-  # Add non-overlapping text labels
-  geom_text_repel(
-    data = top_genes_per_cell_type,
-    aes(label = Gene),
-    color = "black",
-    size = 2,
-    box.padding = 0.35,      # Padding around text boxes
-    point.padding = 0.2,    # Padding around data points
-    segment.color = "gray", # Line color connecting labels to points
-    max.overlaps = 10,       # Allow up to 10 overlaps (adjust as needed)
-    angle = 45 
-  ) +
-  
-  # Adjust theme and labels
-  theme_minimal() +
-  theme_minimal() +
-  labs(
-    title = paste0("Top Senescence Genes by ",exposure," Group (",exp_group," vs. ",ref_group,") by Cell Type"),
-    x = "Cell Type",
-    y = "Average Log2 Fold Change"
-  ) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
-
-pdf(fs::path(dir.results,paste0(exposure,"_",exp_group,"_",ref_group,".pdf")),width=10,height=10)
-plot(p)
-dev.off()
-}
-
-#so=so_liver_sn
+#so=so_sub
 #cell=NULL
-#exposure=exp
-#covariate="diagnosis_of_diabetes"
-#gene_set=rownames(so_liver_sn)
-#batch_size=100
-#exp_group=NULL
-#ref_group=NULL
+#exposure="Diabetes"
+#gene_set=rownames(so_sub)
+#batch_size=1000
+#exp_group="Type 2 Diabetes"
+#ref_group="Lean Control"
 
 #Mast Function----
 mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,ref_group) {
@@ -938,7 +781,7 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
     
     # Subset the Seurat object to include only genes in the gene set
     subset <- intersect(batch, rownames(so))
-    so_sub <- subset(so_sub, features = subset)
+    so_sub <- subset(so, features = subset)
     
     # Extract the expression data matrix from so (e.g., normalized counts)
     expression_matrix <- as.matrix(GetAssayData(so_sub, layer = "data"))
@@ -955,14 +798,13 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
     
     #Define the formula
     model_formula <- as.formula(paste0("~", exposure))
-    model_formula <- ~ast
     exp <- paste0(exposure,exp_group)
     
     # Run the linear model with zlm
     zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
     
     # Summarize results and perform likelihood ratio test (LRT) for outcome
-    summary_zlm <- summary(zlm_results, doLRT = "ast")
+    summary_zlm <- summary(zlm_results, doLRT = exp)
     
     # Convert the summary to a data table for easy manipulation
     summary_dt <- summary_zlm$datatable
@@ -991,7 +833,7 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
       dplyr::rename(Gene=primerid)
     
     # Append the batch results to the combined results using rbindlist
-    # combined_results <- rbind(combined_results, batch_results)
+    #combined_results <- rbind(combined_results, result1)
     combined_results <- rbindlist(list(combined_results, result1), use.names = TRUE, fill = TRUE)
     
   }
@@ -1003,7 +845,7 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
     output_file <- paste0("Results_for_",condition,".xlsx")
   }
 
-  write.csv(combined_results,fs::path(output_file))
+  write.csv(combined_results,fs::path(dir.results,output_file))
   
   # Filter top 10 positive and negative log2FoldChange
   top_pos <- as.data.frame(combined_results) %>%
