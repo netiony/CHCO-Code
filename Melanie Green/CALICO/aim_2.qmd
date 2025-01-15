@@ -1,0 +1,723 @@
+---
+title: "CALICO Aim 2 Analyses"
+author: "Tim Vigers"
+date: "today"
+date-format: long
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
+    code-fold: true
+    self-contained: true
+    fig-cap-location: top
+    fig-width: 12
+    fig-height: 9
+    page-layout: full
+    theme:
+      light: flatly
+      dark: darkly
+bibliography: /Users/timvigers/Library/CloudStorage/Dropbox/Miscellaneous/zotero.bib
+csl: /Users/timvigers/Library/CloudStorage/Dropbox/GitHub/styles/american-medical-association.csl
+editor: source
+execute:
+  warning: false
+---
+
+```{r setup}
+#| include: false
+library(Hmisc)
+library(tidyverse)
+library(arsenal)
+library(lmerTest)
+library(performance)
+library(emmeans)
+library(gt)
+library(plotly)
+knitr::opts_knit$set(root.dir = "/Users/timvigers/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/Vigers/BDC/Janet Snell-Bergeon/CALICO")
+```
+
+```{r data import}
+#| include: false
+# Load data
+load("./Data_Clean/analysis_data.RData")
+# Combine factor levels
+levels(df$insur_type) <- c(
+  "Public", "Private", "Military", "Other/None", "Other/None"
+)
+levels(df$combined_race) <- c(
+  "African American", "Other", "Asian", "Caucasian", "More than one", "Other",
+  "Other"
+)
+# Set table options
+mycontrols <-
+  tableby.control(numeric.stats = c("Nmiss2", "meansd", "medianq1q3", "range"))
+# First visit only
+cv1 <- df %>%
+  group_by(record_number) %>%
+  slice_min(redcap_repeat_instance) %>%
+  ungroup()
+# Remove crazy values for now (ask Grayson to fix in REDCap)
+df$cv_monthssincepcosdx[which.max(df$cv_monthssincepcosdx)] <- NA
+df$cv_weight[which.max(df$cv_weight)] <- NA
+df$cv_weight[which.max(df$cv_weight)] <- NA
+df$cv_bmi[which.max(df$cv_bmi)] <- NA
+df$cv_bmi[which.max(df$cv_bmi)] <- NA
+df$cv_bmi[which.max(df$cv_bmi)] <- NA
+df$cv_dbp[which.max(df$cv_dbp)] <- NA
+```
+
+# Data cleaning
+
+- Participants were considered to be on estrogen-containing (EC) medications when `cv_medications___5` (estrogen-containing pill), `cv_medications___6` (estrogen-containing patch), or `cv_medications___7` (estrogen-containing ring) boxes were checked in REDCap.
+
+- KC_16's 5th visit has a `cv_monthssincepcosdx` value of 12,027 because the date of follow up is 09-03-3019. This visit is excluded for now.
+
+- DEN-3010 has a weight of 1,152, which is excluded for now.
+
+- DEN-3004 has a weight of 1,123.3, which is excluded for now. Same with their high BMI.
+
+- DEN-3006 has a height of 1.55 cm, so their BMI is excluded for now.
+
+- DEN-3010 has a BMI of 443.9, which is excluded for now.
+
+- COL-1624 has a DBP of 701, which is excluded for now.
+
+# Mixed models
+
+For each continuous outcome, we fit a linear mixed effects model with random effects for participant and time (months from PCOS diagnosis), and an interaction effect between time and medication status. 
+
+To evaluate the effect of starting a new medication on each outcome, we also fit a linear spline model with years from medication start as the time variable and a single knot at 0 (medication start). If models did not converge or produced serious warnings/errors, only the random effect for participant was included.
+
+All mixed models were fit using the `lme4` R package in version `r paste0(R.version$major,".",R.version$minor)`. @rcoreteamLanguageEnvironmentStatistical2024
+
+```{r}
+# Make a dataset for spline models
+ec_only <- df %>%
+  filter(ec_ever == "Yes") %>%
+  mutate(
+    time_from_first_ec = cv_age - age_first_ec,
+    x = (time_from_first_ec > 0) * time_from_first_ec
+  ) %>%
+  dplyr::select(
+    record_number, redcap_repeat_instance, cv_weight, cv_bmi, cv_hirsutism_num,
+    cv_hgb, cv_ldl, cv_hdl, cv_sbp, cv_dbp, ec, cv_age,
+    cv_monthssincepcosdx, age_first_ec, time_from_first_ec, x
+  )
+label(ec_only$time_from_first_ec) <- "Time From First EC"
+label(ec_only$x) <- "Slope Change After EC"
+```
+
+## Weight (kg)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(ec)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_weight, group = record_number,
+    color = ec
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On EC?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### EC users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_weight ~ cv_monthssincepcosdx * ec +
+    (1 + cv_monthssincepcosdx | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_weight, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = ec, color = ec)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On EC?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "ec", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+#### Change pre- vs. post-EC (EC users only)
+
+```{r}
+# Fit mixed model with change point
+change_mod <- lmer(cv_weight ~ time_from_first_ec + x +
+  (1 + time_from_first_ec | record_number), data = ec_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA)
+p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
+  geom_point(aes(y = cv_weight, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From EC Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+## BMI
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(ec)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_bmi, group = record_number,
+    color = ec
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On EC?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### EC users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_bmi ~ cv_monthssincepcosdx * ec +
+    (1 + cv_monthssincepcosdx | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_bmi, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = ec, color = ec)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On EC?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "ec", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+#### Change pre- vs. post-EC (EC users only)
+
+```{r}
+# Fit mixed model
+change_mod <- lmer(cv_bmi ~ time_from_first_ec + x +
+  (1 + time_from_first_ec | record_number), data = ec_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA)
+p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
+  geom_point(aes(y = cv_bmi, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From EC Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+## Numerical FGS score
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(ec)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_hirsutism_num, group = record_number,
+    color = ec
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On EC?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### EC users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_hirsutism_num ~ cv_monthssincepcosdx * ec + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_hirsutism_num, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = ec, color = ec)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On EC?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "ec", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+#### Change pre- vs. post-EC (EC users only)
+
+```{r}
+# Fit mixed model
+change_mod <- lmer(cv_hirsutism_num ~ time_from_first_ec + x +
+  (1 + time_from_first_ec | record_number), data = ec_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA)
+p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
+  geom_point(aes(y = cv_hirsutism_num, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From EC Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+## Hemoglobin (g/dL)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(ec)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_hgb, group = record_number,
+    color = ec
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On EC?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### EC users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(cv_hgb ~ cv_monthssincepcosdx * ec + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_hgb, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = ec, color = ec)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On EC?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "ec", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+#### Change pre- vs. post-EC (EC users only)
+
+```{r}
+# Fit mixed model
+change_mod <- lmer(cv_hgb ~ time_from_first_ec + x + (1 | record_number),
+  data = ec_only
+)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA)
+p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
+  geom_point(aes(y = cv_hgb, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From EC Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+## LDL (mg/dL)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(ec)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_ldl, group = record_number,
+    color = ec
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On EC?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### EC users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(cv_ldl ~ cv_monthssincepcosdx * ec + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_ldl, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = ec, color = ec)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On EC?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "ec", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+#### Change pre- vs. post-EC (EC users only)
+
+```{r}
+# Fit mixed model
+change_mod <- lmer(cv_ldl ~ time_from_first_ec + x +
+  (1 + time_from_first_ec | record_number), data = ec_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA)
+p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
+  geom_point(aes(y = cv_ldl, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From EC Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+``` 
+           
+## HDL (mg/dL)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(ec)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_hdl, group = record_number,
+    color = ec
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On EC?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### EC users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(cv_hdl ~ cv_monthssincepcosdx * ec + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_hdl, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = ec, color = ec)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On EC?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "ec", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+#### Change pre- vs. post-EC (EC users only)
+
+```{r}
+# Fit mixed model
+change_mod <- lmer(cv_hdl ~ time_from_first_ec + x +
+  (1 | record_number), data = ec_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA)
+p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
+  geom_point(aes(y = cv_hdl, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From EC Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+``` 
+             
+## Systolic BP (mmHg)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(ec)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_sbp, group = record_number,
+    color = ec
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On EC?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### EC users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(cv_sbp ~ cv_monthssincepcosdx * ec + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_sbp, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = ec, color = ec)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On EC?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "ec", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+#### Change pre- vs. post-EC (EC users only)
+
+```{r}
+# Fit mixed model
+change_mod <- lmer(cv_sbp ~ time_from_first_ec + x +
+  (1 | record_number), data = ec_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA)
+p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
+  geom_point(aes(y = cv_sbp, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From EC Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```      
+     
+## Diastolic BP (mmHg)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(ec)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_dbp, group = record_number,
+    color = ec
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On EC?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### EC users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(cv_dbp ~ cv_monthssincepcosdx * ec + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_dbp, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = ec, color = ec)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On EC?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "ec", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+#### Change pre- vs. post-EC (EC users only)
+
+```{r}
+# Fit mixed model
+change_mod <- lmer(cv_dbp ~ time_from_first_ec + x +
+  (1 + time_from_first_ec | record_number), data = ec_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA)
+p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
+  geom_point(aes(y = cv_dbp, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From EC Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```

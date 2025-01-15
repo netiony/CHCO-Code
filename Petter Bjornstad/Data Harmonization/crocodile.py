@@ -302,7 +302,8 @@ def clean_crocodile():
               "erpf_raw": "erpf_raw_plasma_urine", "erpf": "erpf_bsa_plasma_urine",
               "gfr_15mgmin": "gfr_raw_plasma", "gfrbsa": "gfr_bsa_plasma",
               "erpf_pah_85": "erpf_raw_plasma", "erpfbsa": "erpf_bsa_plasma",
-              "pah_bsa": "pah_bsa_plasma_urine", "pahbsa": "pah_clear_bsa"}
+              "pah_bsa": "pah_bsa_plasma_urine", "pahbsa": "pah_clear_bsa",
+              "pahcl_12_8mgmin": "pah_clear_abs"}
     rct.rename(rename, axis=1, inplace=True)
 
     # Calculate variables
@@ -342,7 +343,7 @@ def clean_crocodile():
     # Reduce rct dataset
     rct = rct[["record_id", "ff", "kfg", "deltapf", "cm", "pg",
                "glomerular_pressure", "rbf", "rvr", "ra", "re", 
-               "pah_raw", "pah_sd", "pah_cv", "pahcl_12_8mgmin"] + list(rename.values())]
+               "pah_raw", "pah_sd", "pah_cv"] + list(rename.values())]
     rct["procedure"] = "clamp"
     rct["visit"] = "baseline"
 

@@ -6,9 +6,9 @@ library(Hmisc)
 library(sas7bdat)
 library(dplyr)
 # Clinical Data
-clinical <- read.sas7bdat("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/bjornstad_03_15_2023.sas7bdat")
+clinical <- read.sas7bdat("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Teen Labs/Data_Cleaned/bjornstad_03_15_2023.sas7bdat")
 # Proteomics data
-soma <- read_adat("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Raw/WUS_22_007_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
+soma <- read_adat("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Teen Labs/Data_Raw/WUS_22_007_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
 soma <- soma %>%
   # Remove flagged rows, QC samples, and excluded samples
   filter(
@@ -149,9 +149,8 @@ df$eGFR.fas_cr_cysc <- 107.3 / ((0.5*df$f1) + (df$f2*df$f3))
 label(df$eGFR.fas_cr_cysc) <- "eGFR FAS Cr Cys-C"
 label(df$eGFR.fas_cr) <- "eGFR FAS Cr"
 
-
 # read in NAFLD data
-nafld <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/Pyle NAFLD 02_06_24.csv")
+nafld <- read.csv("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Teen Labs/Data_Cleaned/Pyle NAFLD 02_06_24.csv")
 nafld <- unique(nafld)
 nafld <- nafld %>%
   mutate(visit = case_when(
@@ -162,9 +161,33 @@ nafld <- nafld %>%
   )) 
 df <- left_join(df, nafld, by = c("ID", "visit"))
 
+# read in diabetes data
+diabetes <- read.csv('/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Teen Labs/Data_Cleaned/Teen-LABS_DM.csv')
+diabetes <- unique(diabetes)
+diabetes$visit <- diabetes$Visit
+diabetes$Visit <- NULL
+diabetes <- diabetes %>%
+  mutate(visit = case_when(
+    visit == 1 ~ "Month 1",
+    visit == 6 ~ "Month 6",
+    visit == 12 ~ "Year 1",
+    visit == 36 ~ "Year 3"
+  )) 
+diabetes <- diabetes %>%
+  mutate(diabetes_duration = case_when(
+    DBTOTAL == -2 ~ NA,
+    DBTOTAL == -5 ~ NA,
+    DBTOTAL == -10 ~ NA,
+    .default = DBTOTAL
+  )) 
+# drop DIABETES variable as diab has missing values completed, also drop HBA1C
+diabetes <- diabetes %>% select("ID", "visit", "DBTOTAL", "diabetes_duration")
+df <- left_join(df, diabetes, by = c("ID", "visit"))
+
+
 # read in Olink data
-olink <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Olink data/TL_baseline_proteomics_processed_wide.csv")
-linking_file <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Olink data/Pyle 01_19_24.csv")
+olink <- read.csv("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Teen Labs/Olink data/TL_baseline_proteomics_processed_wide.csv")
+linking_file <- read.csv("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Teen Labs/Olink data/Pyle 01_19_24.csv")
 linking_file <- linking_file %>% filter(visit == 1)
 # drop NIH ID because we don't have that information in the Olink file
 linking_file <- linking_file %>% select(key, visit, TLID)
@@ -175,7 +198,7 @@ olink$visit <- ifelse(olink$visit == 1, "Month 1", olink$visit)
 df <- left_join(df, olink, by = c("ID", "visit"))
 
 # Labels
-dict <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/DataDictionary.xlsx")
+dict <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Teen Labs/Data_Cleaned/DataDictionary.xlsx")
 analytes <- getAnalytes(soma)
 analyte_info <- getAnalyteInfo(soma)
 labels <- dict$Description[match(names(df), dict$Name)]
@@ -191,4 +214,7 @@ label(df$diab_baseline) = "Diabetes at Baseline"
 # As regular dataframe
 df <- as.data.frame(df)
 # Save
-save(df,analyte_info, file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Teen Labs/Data_Cleaned/analysis_dataset.RData")
+save(df,analyte_info, file = "/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Teen Labs/Data_Cleaned/analysis_dataset.RData")
+# write list of IDs
+write.csv(unique(df$ID), file = "/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Teen Labs/Data_Cleaned/id_list.csv",
+          row.names = F)

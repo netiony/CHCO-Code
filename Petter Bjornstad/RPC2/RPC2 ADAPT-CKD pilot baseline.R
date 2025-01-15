@@ -13,7 +13,11 @@ rpc2_tok <- api_tok[api_tok$Study == "RPC2",]$Token
 uri <- "https://redcap.ucdenver.edu/api/"
 # read from REDCap
 rpc2 <- redcap_read(redcap_uri = uri, token = rpc2_tok)$data
-
+rpc2_meta <- redcap_metadata_read(redcap_uri = uri, token = rpc2_tok)$data
+rpc2_lab <- rpc2_meta %>%
+  filter(form_name == "labs") %>%
+  filter(is.na(select_choices_or_calculations))
+rpc2_lab_names <- rpc2_lab$field_name
 # read ATC codes for meds
 rxnorm <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Ye Ji Choi/RXNORM.csv") 
 
@@ -29,9 +33,12 @@ meds_biopsy <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/
          medname=NA, medindication=NA, meddose=NA, 
          medfreq=NA, medstart=NA, medcontinues=NA, medstop=NA,
          creatinine_s=NA, cystatin_c_s=NA, bun=NA, height=NA,
-         screen_urine_acr=NA,
+         screen_urine_acr=NA, 
          source = "EPIC") %>%
   dplyr::rename(subject_id = "record_id")
+for (lab_name in rpc2_lab_names) {
+  meds_biopsy[[lab_name]] <- NA
+}
 
 # subset to data of interest
 # IDs requested by Tomas
@@ -59,7 +66,8 @@ rpc2_subset <- rpc2 %>%
   dplyr::select(subject_id, age_current, gender, race, ethnicity, 
                 medname, Preferred.Label, medindication, meddose, 
                 medfreq, medstart, medcontinues, medstop, 
-                creatinine_s, cystatin_c_s, bun, height, screen_urine_acr) %>%
+                creatinine_s, cystatin_c_s, bun, height, screen_urine_acr,
+                all_of(rpc2_lab_names)) %>%
   dplyr::mutate(Preferred.Label = case_when(medname == "798928" ~ "acetaminophen 500 MG Oral Tablet [Tactinal]", 
                                      T ~ Preferred.Label),
          gender = case_when(gender == 0 ~ "Female", gender == 1 ~ "Male", gender == 0 ~ "Other"),
@@ -68,7 +76,8 @@ rpc2_subset <- rpc2 %>%
   rbind(meds_biopsy) %>%
   ungroup() %>% group_by(subject_id) %>%
   fill(age_current, gender, race, ethnicity, kidneybx_1, kidneybx_2, 
-       creatinine_s, cystatin_c_s, bun, height, screen_urine_acr,
+       creatinine_s, cystatin_c_s, bun, height, screen_urine_acr, 
+       all_of(rpc2_lab_names),
        .direction = "updown") %>%
   filter(!is.na(Preferred.Label)) %>%
   arrange(subject_id)
@@ -81,11 +90,13 @@ rpc2_subset <- rpc2_subset %>%
 # Petter wants just the EPIC pulled meds and in wide format
 rpc2_subset_epic <- rpc2_subset %>%
   filter(source == "EPIC") %>%
-  dplyr::select(1:11, 18:22, -medname, -source) %>%
+  dplyr::select(1:11, 18:22, -medname, -source, all_of(rpc2_lab_names)) %>%
   pivot_wider(names_from = "Preferred.Label", values_from = "med_yn") %>%
   left_join(subset(rpc2, select = c(subject_id, redcap_event_name, screen_egfr), 
                    !is.na(screen_egfr))) %>%
   mutate(visit = substr(redcap_event_name, 1,2)) %>%
   select(-redcap_event_name)
+
+#subset(rpc2_subset_epic, is.na(hba1c))$subject_id
 
 write.csv(rpc2_subset_epic, "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/rpc2_biopsy_meds.csv", row.names = F, na = "")

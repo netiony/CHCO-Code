@@ -84,7 +84,6 @@ de.markers(so_liver_sn_hep, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Y
 write.csv(m,fs::path(dir.code,"Differential_Expression_Diabetes.csv"))
 
 m_top <- m
-rm(m)
 significant_genes <- m_top %>% filter(p_val_adj < 0.05)
 
 # Select the top 10 positive and top 10 negative log2FC genes that are significant
@@ -707,3 +706,22 @@ pdf(file=fs::path(dir.results,"GSEA_Top_20_Liver_Diabetes_All_Cell_Types.pdf"),w
 plot(enrich.p)
 dev.off()
 >>>>>>> Stashed changes
+
+
+
+
+
+
+
+grid.draw(
+  venn.diagram(
+    x = list(
+      "ACR" = acr_neg,
+      "GLP1" = glp1_neg,
+      "SGLT2" = sglt2_neg,
+      "Type2" = type2_neg
+    ),
+    category.names = c("ACR", "GLP1", "SGLT2", "Type2"),
+    filename = NULL
+  )
+)

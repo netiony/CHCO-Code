@@ -1,5 +1,5 @@
 ---
-  title: "Liver scRNA analysis HEH"
+title: "Liver scRNA analysis HEH"
 author: "Hailey Hampson"
 date: "2024-09-24"
 output: html_document
@@ -38,36 +38,43 @@ library(MAST)
 library(ggrepel)
 # library(qpcR)
 library(ggpubr)
+library(openxlsx)
+library(ggplot2)
+library(GGally)
+library(GSEABase)
+library(limma)
+library(reshape2)
+library(data.table)
+library(knitr)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(stringr)
+library(NMF)
+library(rsvd)
+library(RColorBrewer)
+library(MAST)
+library(devtools)
+# install_github("Sun-lab/ideas",force=T)
+library(ideas)
+library(foreach)
+library(doRNG)
+library(doParallel)
+registerDoParallel(cores = 6)
 
-suppressPackageStartupMessages({
-  library(ggplot2)
-  library(GGally)
-  library(GSEABase)
-  library(limma)
-  library(reshape2)
-  library(data.table)
-  library(knitr)
-  library(TxDb.Hsapiens.UCSC.hg19.knownGene)
-  library(stringr)
-  library(NMF)
-  library(rsvd)
-  library(RColorBrewer)
-  library(MAST)
-})
+
 #options(mc.cores = detectCores() - 1) #if you have multiple cores to spin
 options(mc.cores = 1)
 knitr::opts_chunk$set(message = FALSE,error = FALSE,warning = FALSE,cache = FALSE,fig.width=8,fig.height=6)
 
 #Local file path
-dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
-dir.dat2 <- c("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean")
-dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
-dir.results <- c("/Users/hhampson/Documents/UW/1_Ongoing Projects/Liver scRNAseq/2_Results")
+# dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
+# dir.dat2 <- c("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean")
+# dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+# dir.results <- c("/Users/hhampson/Documents/UW/1_Ongoing Projects/Liver scRNAseq/2_Results")
 
-# #Lambda file path
-# dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
-# dir.code <- c("/home/Github_Repo/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
-# dir.results <- c(fs::path(dir.dat,"Liver project/Results"))
+#Lambda file path
+dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
+dir.code <- c("/home/Github_Repo/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+dir.results <- c(fs::path(dir.dat,"Liver project/Results"))
 
 
 plan()
@@ -105,6 +112,22 @@ rm(meta_liver_sn,meta_liver_raw)
 #Switch default assay in seurat object to RNA
 DefaultAssay(so_liver_sn) <- "RNA"
 gc()
+
+#Create liver disease and drug groups
+so_liver_sn@meta.data <- so_liver_sn@meta.data %>% 
+  mutate(both=ifelse(glp1agonist=="Yes" & sglt2=="Yes","Yes","No")) %>% 
+  mutate(sglt2_exclusive=ifelse(sglt2=="Yes" & glp1agonist=="No","Yes","No")) %>% 
+  mutate(glp1_exclusive=ifelse(sglt2=="No" & glp1agonist=="Yes","Yes","No")) %>% 
+  mutate(neither=ifelse(sglt2=="No" & glp1agonist=="No","Yes","No"))
+
+# Create a single grouping variable
+so_liver_sn@meta.data <- so_liver_sn@meta.data %>% 
+  mutate(group2=case_when(both == "Yes" ~ "both",
+                         sglt2_exclusive == "Yes" ~ "sglt2_exclusive",
+                         glp1_exclusive == "Yes" ~ "glp1_exclusive",
+                         neither == "Yes" ~ "neither"))
+
+so_liver_sn@meta.data$group2 <- factor(so_liver_sn@meta.data$group2, levels = c("neither", "sglt2_exclusive", "glp1_exclusive","both"))
 ```
 
 -OR-
@@ -172,47 +195,68 @@ so_kidney_sc <- AddMetaData(so_kidney_sc, so_meta_combined)
 rm(so_meta_combined)
 gc()
 
-#Create senesence so in all cell types
-sens_genes <- c(sens_genes,"CDKN1A")
-sens_gene_in_data <- intersect(sens_genes, rownames(so_kidney_sc))
-# Subset the Seurat object to include only genes in sens_gene_in_data
-so_sens_all <- subset(so_kidney_sc, features = sens_gene_in_data)
+#Define 4 exposure groups: 
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
+so_kidney_sc@meta.data <- so_kidney_sc@meta.data %>% 
+  mutate(both=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
+  mutate(exclusive_sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
+  mutate(exclusive_glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
+  mutate(neither=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+
+
+so_kidney_sc@meta.data <- so_kidney_sc@meta.data %>% 
+  mutate(group2 = case_when(both == "Yes" ~ "both",
+                            exclusive_sglt2 == "Yes" ~ "exclusive_sglt2",
+                            exclusive_glp1 == "Yes" ~ "exclusive_glp1",
+                            neither == "Yes" ~ "neither"))
+
+so_kidney_sc@meta.data$group2 <- factor(so_kidney_sc@meta.data$group2, levels = c("neither", "both", "exclusive_sglt2", "exclusive_glp1"))
+
+so_diab <- subset(so_kidney_sc,group=="Type 2 Diabetes")
+rm(so_kidney_sc)
+gc()
+
+# #Create senesence so in all cell types
+# sens_genes <- c(sens_genes,"CDKN1A")
+# sens_gene_in_data <- intersect(sens_genes, rownames(so_kidney_sc))
+# # Subset the Seurat object to include only genes in sens_gene_in_data
+# so_sens_all <- subset(so_kidney_sc, features = sens_gene_in_data)
 # rm(so_kidney_sc)
-# saveRDS(so_sens_all,fs::path(dir.dat2,"so_sens_genes_all_cells_KIDNEY.RDS"))
-# rm(so_sens_all)
+# # saveRDS(so_sens_all,fs::path(dir.dat,"so_sens_genes_all_cells_KIDNEY.RDS"))
+# # rm(so_sens_all)
+# # 
+# # #Load sens all cells
+# # so_sens <- readRDS(fs::path(dir.dat,"so_sens_genes_all_cells_KIDNEY.RDS"))
+# # dat <- so_sens@meta.data
+# # so_diab <- subset(so_sens, diagnosis_of_diabetes == "Yes")
+# # 
+# #PT Cells
+# so_sens_all@meta.data$PT <- ifelse(grepl("PT-",so_sens_all@meta.data$celltype_rpca),"PT","Non-PT")
+# Idents(so_sens_all) <- so_sens_all$PT
+# so_sens <- subset(so_sens_all, PT=="PT")
+# # saveRDS(so_sens,fs::path(dir.dat,"so_sens_genes_PT_Cells_KIDNEY.RDS"))
+# rm(so_sens_all,so_sens)
+# so_sens_PT <- readRDS(fs::path(dir.dat,"Liver Project","so_sens_genes_PT_Cells_KIDNEY.RDS"))
+# so_sens_PT@meta.data$group1 <- ifelse(so_sens_PT@meta.data$group=="Type 2 Diabetes" | so_sens_PT@meta.data$group=="Lean Control" ,"Yes","No")
+# so_sens_PT1 <- subset(so_sens_PT, group1=="Yes")
+# so_sens_PT@meta.data$group2 <- ifelse(so_sens_PT@meta.data$group=="Type 2 Diabetes","Yes","No")
+# so_sens_PT2 <- subset(so_sens_PT, group2=="Yes")
+# so_sens_PT3 <- subset(so_sens_PT, group=="Type 2 Diabetes")
 # 
-# #Load sens all cells
-# so_sens <- readRDS(fs::path(dir.dat2,"so_sens_genes_all_cells_KIDNEY.RDS"))
-# dat <- so_sens@meta.data
-# so_diab <- subset(so_sens, diagnosis_of_diabetes == "Yes")
 # 
-#PT Cells
-so_sens_all@meta.data$PT <- ifelse(grepl("PT-",so_sens_all@meta.data$celltype_rpca),"PT","Non-PT")
-Idents(so_sens_all) <- so_sens_all$PT
-so_sens <- subset(so_sens_all, PT=="PT")
-# saveRDS(so_sens,fs::path(dir.dat,"so_sens_genes_PT_Cells_KIDNEY.RDS"))
-rm(so_sens_all,so_sens)
-so_sens_PT <- readRDS(fs::path(dir.dat,"Liver Project","so_sens_genes_PT_Cells_KIDNEY.RDS"))
-so_sens_PT@meta.data$group1 <- ifelse(so_sens_PT@meta.data$group=="Type 2 Diabetes" | so_sens_PT@meta.data$group=="Obese Control","Yes","No")
-so_sens_PT1 <- subset(so_sens_PT, group1=="Yes")
-so_sens_PT@meta.data$group2 <- ifelse(so_sens_PT@meta.data$group=="Type 2 Diabetes" | so_sens_PT@meta.data$group=="Lean Control","Yes","No")
-so_sens_PT2 <- subset(so_sens_PT, group2=="Yes")
-so_sens_PT3 <- subset(so_sens_PT, group=="Type 2 Diabetes")
-
-
-
-#TAL Cells
-so_sens_all@meta.data$TAL <- ifelse(grepl("TAL",so_sens_all@meta.data$celltype_rpca),"TAL","Non-TAL")
-Idents(so_sens_all) <- so_sens_all$TAL
-so_sens <- subset(so_sens_all, TAL=="TAL")
-saveRDS(so_sens,fs::path(dir.dat,"so_sens_genes_TAL_Cells_KIDNEY.RDS"))
-rm(so_sens_all,so_sens,so_sens_TAL,so_sens_TAL1)
-so_sens_TAL <- readRDS(fs::path(dir.dat,"Liver Project","so_sens_genes_TAL_Cells_KIDNEY.RDS"))
-so_sens_TAL@meta.data$group1 <- ifelse(so_sens_TAL@meta.data$group=="Type 2 Diabetes" | so_sens_TAL@meta.data$group=="Obese Control","Yes","No")
-so_sens_TAL1 <- subset(so_sens_TAL, group1=="Yes")
-so_sens_TAL@meta.data$group2 <- ifelse(so_sens_TAL@meta.data$group=="Type 2 Diabetes" | so_sens_TAL@meta.data$group=="Lean Control","Yes","No")
-so_sens_TAL2 <- subset(so_sens_TAL, group2=="Yes")
-so_sens_TAL3 <- subset(so_sens_TAL, group=="Type 2 Diabetes")
+# 
+# #TAL Cells
+# so_sens_all@meta.data$TAL <- ifelse(grepl("TAL",so_sens_all@meta.data$celltype_rpca),"TAL","Non-TAL")
+# Idents(so_sens_all) <- so_sens_all$TAL
+# so_sens <- subset(so_sens_all, TAL=="TAL")
+# # saveRDS(so_sens,fs::path(dir.dat,"so_sens_genes_TAL_Cells_KIDNEY.RDS"))
+# rm(so_sens_all,so_sens,so_sens_TAL,so_sens_TAL1)
+# so_sens_TAL <- readRDS(fs::path(dir.dat,"Liver Project","so_sens_genes_TAL_Cells_KIDNEY.RDS"))
+# so_sens_TAL@meta.data$group1 <- ifelse(so_sens_TAL@meta.data$group=="Type 2 Diabetes"| so_sens_TAL@meta.data$group=="Lean Control","Yes","No")
+# so_sens_TAL1 <- subset(so_sens_TAL, group1=="Yes")
+# so_sens_TAL@meta.data$group2 <- ifelse(so_sens_TAL@meta.data$group=="Type 2 Diabetes","Yes","No")
+# so_sens_TAL2 <- subset(so_sens_TAL, group2=="Yes")
+# so_sens_TAL3 <- subset(so_sens_TAL, group=="Type 2 Diabetes")
 ```
 
 #3a. Visualize Kidney Data
@@ -221,11 +265,11 @@ so_sens_TAL3 <- subset(so_sens_TAL, group=="Type 2 Diabetes")
 so_kidney_sc <- FindVariableFeatures(object = so_kidney_sc)
 so_kidney_sc <- RunPCA(so_kidney_sc, features = VariableFeatures(object = so_kidney_sc))
 ElbowPlot(so_kidney_sc)
+gc()
 so_kidney_sc <- FindNeighbors(so_kidney_sc, dims = 1:15)
 so_kidney_sc <- FindClusters(so_kidney_sc, resolution = 0.5)
 so_kidney_sc <- RunUMAP(so_kidney_sc, dims = 1:15)
 
-gc()
 
 DimPlot(so_kidney_sc, reduction = "umap", raster = F)
 # so_kidney_sc$celltype_rpca
@@ -351,18 +395,18 @@ umap1 +
 # Plot UMAP with gradient of senescence gene expression
 umap_plot <- FeaturePlot(so_kidney_sc, features = "MeanExpression", raster=T,
                          reduction = "umap") 
-                         # min.cutoff = 0, max.cutoff = 1127.136)+
-  # scale_color_gradientn(
-  #   colors = c("gray", "lightblue1", "lightblue2","lightblue3","blue", "darkblue"),  # Red for 0, transitioning to dark blue
-  #   values = scales::rescale(c(0,25,50,75,100,125,150,175,200,1127.136)),           # Control how the colors map to the expression values
-  #   limits = c(0, 1127.136)                                    # Explicitly set the limits of the color scale
-  # ) +
-  labs(color = "Normalized Expression") +
+# min.cutoff = 0, max.cutoff = 1127.136)+
+# scale_color_gradientn(
+#   colors = c("gray", "lightblue1", "lightblue2","lightblue3","blue", "darkblue"),  # Red for 0, transitioning to dark blue
+#   values = scales::rescale(c(0,25,50,75,100,125,150,175,200,1127.136)),           # Control how the colors map to the expression values
+#   limits = c(0, 1127.136)                                    # Explicitly set the limits of the color scale
+# ) +
+labs(color = "Normalized Expression") +
   ggtitle("UMAP with Gradient of Senescence Gene Expression by Cell Type") +
   theme_void()
 
 # Assign colors based on Sens_Expression
-  DimPlot(so_kidney_sc, reduction = "umap", group.by = "AverageExpression", raster=F)
+DimPlot(so_kidney_sc, reduction = "umap", group.by = "AverageExpression", raster=F)
 umap_plot <- FeaturePlot(so_kidney_sc, features = "AverageExpression", raster = TRUE,
                          reduction = "umap",
                          min.cutoff = 0, max.cutoff = 110) +
@@ -829,8 +873,24 @@ dot_plot
 #4. Descriptive Statistics
 ##a. Liver
 ```{r echo = F}
-meta_liver_raw <- read.csv(fs::path(dir.dat,"scRNA","data_clean","liver_biopsy_metadata_PN.csv"))
-dat <- meta_liver_raw
+#Define disease and drug groups
+dat <- meta_liver_raw <- read.csv(fs::path(dir.dat,"scRNA","data_clean","liver_biopsy_metadata_PN.csv"))
+dat <- dat %>% 
+  # filter(kit_id %in% unique(so_kidney_sc$kit_id)) %>%
+  mutate(both=ifelse(glp1agonist=="Yes" & sglt2=="Yes","Yes","No")) %>% 
+  mutate(sglt2_exclusive=ifelse(sglt2=="Yes" & glp1agonist=="No","Yes","No")) %>% 
+  mutate(glp1_exclusive=ifelse(sglt2=="No" & glp1agonist=="Yes","Yes","No")) %>% 
+  mutate(neither=ifelse(sglt2=="No" & glp1agonist=="No","Yes","No"))
+dat2 <- dat %>% 
+  filter(diagnosis_of_diabetes=="Yes")
+
+table(dat2$sglt2_exclusive) #-/+ #5 No
+table(dat2$glp1_exclusive) #+/- # 2 Yes, 3 No
+table(dat2$both) #+/+ #1 Both, 4 not both
+table(dat2$neither) #-/- #3 neither, 2 on someting
+
+#Create table 1
+dat <- read.csv(fs::path(dir.dat,"scRNA","data_clean","liver_biopsy_metadata_PN.csv"))
 dat <- dat %>% 
   filter(diagnosis_of_diabetes=="Yes")
 cor(dat$ast,dat$alt,method="pearson")
@@ -933,6 +993,25 @@ summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, t
 ##b. Kidney
 ```{r echo = F}
 dat <- readRDS("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/PB90_clinical_metadata_only_12_10.rds")
+unique(so_kidney_sc$kit_id)
+dat <- dat %>% 
+  filter(kit_id %in% unique(so_kidney_sc$kit_id)) %>%
+  mutate(both=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
+  mutate(exclusive_sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
+  mutate(exclusive_glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
+  mutate(neither=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+dat <- dat %>% 
+  filter(group=="Type 2 Diabetes")
+
+dat$record_id %in% unique(so_kidney_sc$record_id)
+unique(so_kidney_sc$record_id)
+table(dat$exclusive_sglt2) #-/+ #27 no, 10 yes
+table(dat$exclusive_glp1) #+/- #29 no, 8 yes
+table(dat$both) #+/+ #33 no, 4 yes
+table(dat$neither) #-/- #22 no, 15 yes
+
+
+
 
 # dat <- dat %>% 
 #   filter(diagnosis_of_diabetes=="Yes")
@@ -1345,12 +1424,33 @@ ggarrange(ipa.plot, gg.ipa.table,
 
 ###ii. PT Cells
 ```{r}
-#Hepatocytes only
-# rm(so_liver_sn)
-genes <- unique(rownames(so_liver_sn_hep))
-de.markers(so_liver_sn_hep, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", "Hepatocyte", "")
+so_kidney_sc@meta.data$PT <- ifelse(grepl("PT-",so_kidney_sc@meta.data$celltype_rpca),"PT","Non-PT")
+Idents(so_kidney_sc) <- so_kidney_sc$PT
+sens_genes <- c(sens_genes,"CDKN1A")
+de.markers(so_kidney_sc, sens_genes, "epic_glp1ra_1", id2 = "No", id1 = "Yes", "PT", "")
 # write.csv(m,fs::path(dir.results,"DEG_Diabetes_Hepatocytes.csv"))
 
+ggmaplot(
+  data,
+  fdr = 0.05,
+  fc = 1.5,
+  genenames = NULL,
+  detection_call = NULL,
+  size = NULL,
+  alpha = 1,
+  seed = 42,
+  font.label = c(12, "plain", "black"),
+  label.rectangle = FALSE,
+  palette = c("#B31B21", "#1465AC", "darkgray"),
+  top = 15,
+  select.top.method = c("padj", "fc"),
+  label.select = NULL,
+  main = NULL,
+  xlab = "Log2 mean expression",
+  ylab = "Log2 fold change",
+  ggtheme = theme_classic(),
+  ...
+)
 
 #Gene set enrichment analysis
 sce_sn_hep <- as.SingleCellExperiment(so_liver_sn_hep)
@@ -1632,7 +1732,7 @@ b <- ggplot(top_genes, aes(x = avg_log2FC, y = Gene, fill = Direction)) +
   theme_minimal()
 ```
 
-#7. Gene set enrichment analysis
+#7. GSEA: Gene Set enrichment analysis
 ```{r echo = F}
 #sce_sn_hep <- as.SingleCellExperiment(so_liver_sn_hep)
 ## C2 category is according to canonical pathways: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
@@ -1653,9 +1753,153 @@ eaRes$leadingEdge <- sapply(eaRes$leadingEdge, function(x) paste(x, collapse = "
 write.csv(eaRes, "GSEA_Diabetes.csv", row.names = FALSE)
 ```
 
-#8. Association between Genes & Liver Outcomes
+#8. Association between Groups & Genes
 ##a. Full Gene Set
+###i. Kidney
 ```{r}
+so_diab$celltype2 <- ifelse(grepl("TAL-",so_diab$celltype_rpca),"TAL",
+                            ifelse(grepl("PT-",so_diab$celltype_rpca),"PT",
+                                   ifelse(grepl("PC-",so_diab$celltype_rpca),"PC",
+                                          ifelse(grepl("DTL-",so_diab$celltype_rpca),"DTL",
+                                                 ifelse(grepl("IC-",so_diab$celltype_rpca),"IC",so_diab$celltype_rpca)))))
+
+# unique(so_diab$celltype_rpca)
+# unique(so_diab$celltype2)
+
+# genes <- rownames(so_diab)
+
+# Create a single grouping variable
+so_diab@meta.data$group <- with(so_diab@meta.data, case_when(
+  both == "Yes" ~ "both",
+  exclusive_sglt2 == "Yes" ~ "exclusive_sglt2",
+  exclusive_glp1 == "Yes" ~ "exclusive_glp1",
+  neither == "Yes" ~ "neither"
+))
+
+so_diab@meta.data$group <- factor(so_diab@meta.data$group, levels = c("neither", "both", "exclusive_sglt2", "exclusive_glp1"))
+
+#Test 
+# so=so_diab
+# cell="PT"
+# exposure="group"
+# covariate=NULL
+# gene_set=rownames(so_diab)
+# batch_size=2000
+# exp_group="both"
+# ref_group="neither"
+# so <- subset(so_diab,group=="neither" | group == "both")
+# enrichment="Yes"
+# top_gsea_pathways <- 40
+
+#Run function
+# (+/+) : "both"
+# (-/+): "exclusive_sglt2"
+# (+/-): "exclusive_glp1"
+# (-/-): "neither"
+
+#Set full gene set
+genes <- rownames(so_diab)
+# genes <- genes[1:2000]
+
+#(-/-) vs. (+/+)
+all_results <- mast_fxn(so=so_diab,cell="PT",exposure="group",covariate=NULL,gene_set=genes,batch_size=2000,exp_group="both",ref_group="neither",enrichment="Yes",top_gsea_pathways=40)
+#(-/-) vs. (-/+)
+all_results <- mast_fxn(so=so_diab,cell="PT",exposure="group",covariate=NULL,gene_set=genes,batch_size=2000,exp_group="exclusive_sglt2",ref_group="neither",enrichment="Yes",top_gsea_pathways=40)
+#(-/-) vs. (+/-)
+all_results <- mast_fxn(so=so_diab,cell="PT",exposure="group",covariate=NULL,gene_set=genes,batch_size=2000,exp_group="exclusive_glp1",ref_group="neither",enrichment="Yes",top_gsea_pathways=40)
+#(+/+) vs. (-/+)
+all_results <- mast_fxn(so=so_diab,cell="PT",exposure="group",covariate=NULL,gene_set=genes,batch_size=2000,exp_group="exclusive_sglt2",ref_group="both",enrichment="Yes",top_gsea_pathways=40)
+#(+/+) vs. (+/-)
+all_results <- mast_fxn(so=so_diab,cell="PT",exposure="group",covariate=NULL,gene_set=genes,batch_size=2000,exp_group="exclusive_glp1",ref_group="both",enrichment="Yes",top_gsea_pathways=40)
+
+
+```
+
+###ii. Liver
+```{r}
+
+# unique(so_liver_sn$celltype)
+so_liver_sn$celltype2 <- ifelse(grepl("Hep-",so_liver_sn$celltype),"Hepatocyte",
+                                ifelse(grepl("Stellate-",so_liver_sn$celltype),"Stellate",
+                                       ifelse(grepl("EC-",so_liver_sn$celltype),"EC",so_liver_sn$celltype)))
+
+#Set Groups
+# (+/+) : "both"
+# (-/+): "exclusive_sglt2"
+# (+/-): "exclusive_glp1"
+# (-/-): "neither"
+#dat <- read.csv(fs::path(dir.dat,"scRNA","data_clean","liver_biopsy_metadata_PN.csv"))
+
+
+#Set full gene set
+genes <- rownames(so_liver_sn)
+
+#Diabetes (Yes/No)
+
+#ALT
+
+#AST
+
+#Filter to diabetes only
+so_diab <- subset(so_liver_sn,group2)
+
+#(-/-) vs. (+/+)
+all_results <- mast_fxn(so=so_liver_sn,cell="Hepatocyte",exposure="group",covariate=NULL,gene_set=genes,batch_size=2000,exp_group="both",ref_group="neither",enrichment="Yes",top_gsea_pathways=40)
+#(-/-) vs. (-/+)
+all_results <- mast_fxn(so=so_liver_sn,cell="Hepatocyte",exposure="group",covariate=NULL,gene_set=genes,batch_size=2000,exp_group="exclusive_sglt2",ref_group="neither",enrichment="Yes",top_gsea_pathways=40)
+#(-/-) vs. (+/-)
+all_results <- mast_fxn(so=so_liver_sn,cell="Hepatocyte",exposure="group",covariate=NULL,gene_set=genes,batch_size=2000,exp_group="exclusive_glp1",ref_group="neither",enrichment="Yes",top_gsea_pathways=40)
+#(+/+) vs. (-/+)
+all_results <- mast_fxn(so=so_liver_sn,cell="Hepatocyte",exposure="group",covariate=NULL,gene_set=genes,batch_size=2000,exp_group="exclusive_sglt2",ref_group="both",enrichment="Yes",top_gsea_pathways=40)
+#(+/+) vs. (+/-)
+all_results <- mast_fxn(so=so_liver_sn,cell="Hepatocyte",exposure="group",covariate=NULL,gene_set=genes,batch_size=2000,exp_group="exclusive_glp1",ref_group="both",enrichment="Yes",top_gsea_pathways=40)
+
+
+# # Parameters
+# total_genes <- nrow(so_liver_sn)  # Total number of genes
+# batch_size <- 2000                  # Batch size
+# all_genes <- rownames(so_liver_sn) # All gene names
+# cell_type <- "your_cell_type"        # Specify your cell type
+# exposure <- "your_exposure"          # Specify your exposure variable
+# covariate <- "your_covariate"        # Specify your covariate variable
+
+# # Placeholder to store batch results
+# all_results <- list()
+# 
+# # Loop through genes in batches
+# for (start_index in seq(1, total_genes, by = batch_size)) {
+#   # Define the end of the current batch
+#   end_index <- min(start_index + batch_size - 1, total_genes)
+#   
+#   # Subset the current batch of genes
+#   gene_batch <- all_genes[start_index:end_index]
+#   
+#   # Call the function with the current batch
+#   batch_result <- mast_fxn(
+#     so = seurat_object, 
+#     cell = cell_type, 
+#     exposure = exposure, 
+#     covariate = covariate, 
+#     gene_set = gene_batch
+#   )
+#   
+#   # Store results in the list
+#   all_results[[paste0("batch_", start_index, "_to_", end_index)]] <- batch_result
+# }
+# 
+# # Combine all results into a single data frame, if needed
+# combined_results <- do.call(rbind, all_results)
+
+
+# cell <- "Hepatocyte"
+# so <- so_liver_sn
+# exposure <- "diagnosis_of_diabetes"
+# # length(rownames(so_liver_sn))
+# #36601 - batches
+# gene_set <- rownames(so_liver_sn)
+# total_genes <- nrow(so_liver_sn) # Number of genes in the Seurat object
+# batch_size <- 2000
+# exp_group <- "Yes"
 
 mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group) {
   DefaultAssay(so) <- "RNA"
@@ -1668,7 +1912,7 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group) {
     #Filter so to specified cell type
     so_filt <- subset(so,celltype2==cell)
     DefaultAssay(so_filt) <- "RNA"
-    # rm(so)
+    rm(so)
     subset <- intersect(batch, rownames(so_filt))
     # Subset the Seurat object to include only genes in sens_gene_in_data
     so_subset <- subset(so_filt, features = subset)
@@ -1703,16 +1947,33 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group) {
     
     combined_results <- rbind(combined_results, batch_results)
   }
-  return(combined_results)
 }
 
-so_liver_sn$celltype2 <- ifelse(grepl("Hep-",so_liver_sn$celltype),"Hepatocyte",
-                                ifelse(grepl("Stellate-",so_liver_sn$celltype),"Stellate",
-                                       ifelse(grepl("EC-",so_liver_sn$celltype),"EC",so_liver_sn$celltype)))
-
+# so <- so_liver_sn
+# exposure <- "diagnosis_of_diabetes"
+# # length(rownames(so_liver_sn))
+# #36601 - batches
 genes <- rownames(so_liver_sn)
-all_results <- mast_fxn(so=so_liver_sn,cell="Hepatocyte",exposure="diagnosis_of_diabetes",covariate=NULL,gene_set=genes,batch_size=1000,exp_group="Yes")
-write.csv(all_results,dir.results)
+# total_genes <- nrow(so_liver_sn) # Number of genes in the Seurat object
+# batch_size <- 2000
+# exp_group <- "Yes"
+all_results <- mast_fxn(so=so_liver_sn,cell="Hepatocyte",exposure="diagnosis_of_diabetes",covariate=NULL,gene_set=genes,batch_size=2000,exp_group="Yes")
+
+all_genes <- rownames(so_liver_sn)
+
+# Process genes in batches
+for (start_index in seq(1, total_genes, by = batch_size)) {
+  # Get the indices for the current batch
+  end_index <- min(start_index + batch_size - 1, total_genes)
+  
+  # Subset the current batch of genes
+  batch_genes <- all_genes[start_index:end_index]
+  
+  # Run your function on the current batch
+  mast_fxn(batch_genes)
+}
+
+
 
 # Extract the expression data matrix (e.g., normalized counts)
 expression_matrix <- as.matrix(GetAssayData(so_liver_sn_hep, layer = "data"))
@@ -1771,8 +2032,8 @@ sca <- FromMatrix(exprsArray = expression_matrix_filtered, cData = cell_metadata
 
 # 
 #GLP1 diabetes only
-# so_diab@meta.data$alt_scaled <- scale(so_diab@meta.data$alt) %>% 
-#   as.numeric()
+so_diab@meta.data$alt_scaled <- scale(so_diab@meta.data$alt) %>% 
+  as.numeric()
 # Step 1: Extract the expression data matrix (e.g., normalized counts)
 expression_matrix <- as.matrix(GetAssayData(so_diab[["RNA"]], layer = "data"))
 
@@ -1812,27 +2073,35 @@ so_diab@meta.data$diagnosis_of_MASLD <- factor(so_diab@meta.data$diagnosis_of_MA
 so_diab@meta.data$glp1agonist <- factor(so_diab@meta.data$glp1agonist, levels = c("No", "Yes"), labels = c(0, 1))
 so_diab@meta.data$nih_sex <- factor(so_diab@meta.data$nih_sex)
 # so_diab@meta.data$tg <- factor(so_diab@meta.data$tg)
-# so_diab@meta.data$alt_scaled <- (so_diab@meta.data$alt-mean(so_diab@meta.data$alt,na.rm=T))/sd(so_diab@meta.data$alt,na.rm=T)
-# so_diab@meta.data$alt_scaled <- scale(so_diab@meta.data$alt) %>% 
-#   as.numeric()
+so_diab@meta.data$alt_scaled <- (so_diab@meta.data$alt-mean(so_diab@meta.data$alt,na.rm=T))/sd(so_diab@meta.data$alt,na.rm=T)
+so_diab@meta.data$alt_scaled <- scale(so_diab@meta.data$alt) %>% 
+  as.numeric()
 
 #Filter to diabetes only
-model_formula <- ~ steatosis_grade
+model_formula <- ~ glp1agonist + alt_scaled
 #Diabetes status, GLP1 status, age, sex, sbp, HbA1c
 # Run the linear model with zlm
 zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
 # summary_zlm <- summary(zlm_results)
 # Summarize results and perform likelihood ratio test (LRT) for outcome
-summary_zlm <- summary(zlm_results, doLRT = "steatosis_grade3")
+summary_zlm <- summary(zlm_results, doLRT = "glp1agonist1")
 # summary_zlm <- summary(zlm_results)
 # Convert the summary to a data table for easy manipulation
-summary_dt <- summary_zlm$datatable
+summary_dt2 <- summary_zlm$datatable
+
 ```
 
 ###KIDNEY
 ###i. Quality Control & Visualizations
 ```{r}
-so_sens <- so_sens_TAL3
+so_sens <- so_sens_PT2
+# Check the metadata for NA values
+table(is.na(so_sens$acr_u))
+so_sens$missing <- ifelse(is.na(so_sens$acr_u),"Yes","No")
+so_sens <- subset(so_sens, missing != "Yes")
+# Subset the Seurat object to remove cells with NA in "celltype_rpca"
+# so_sens_TAL3 <- subset(so_sens_TAL3, subset = !is.na(acr_u))
+
 # Step 1: Extract the expression data matrix (e.g., normalized counts)
 expression_matrix <- as.matrix(GetAssayData(so_sens[["RNA"]], layer = "data"))
 
@@ -1876,15 +2145,20 @@ sca_gene_set <- sca[rownames(sca) %in% sens_genes, ]
 #"ast","alt","fibrosis_stage","steatosis_grade")
 
 # # Convert count variables to factors
-so_sens@meta.data$steatosis_grade <- factor(so_sens@meta.data$steatosis_grade)
-so_sens@meta.data$fibrosis_stage <- factor(so_sens@meta.data$fibrosis_stage)
-so_sens@meta.data$diagnosis_of_diabetes <- factor(so_sens@meta.data$diagnosis_of_diabetes,levels = c("No", "Yes"), labels = c(0, 1))
-so_sens@meta.data$diagnosis_of_MASLD <- factor(so_sens@meta.data$diagnosis_of_MASLD,levels = c("No", "Yes"), labels = c(0, 1))
-so_sens@meta.data$glp1agonist <- factor(so_sens@meta.data$glp1agonist, levels = c("No", "Yes"), labels = c(0, 1))
+# so_sens@meta.data$steatosis_grade <- factor(so_sens@meta.data$steatosis_grade)
+# so_sens@meta.data$fibrosis_stage <- factor(so_sens@meta.data$fibrosis_stage)
+# so_sens@meta.data$diagnosis_of_diabetes <- factor(so_sens@meta.data$diagnosis_of_diabetes,levels = c("No", "Yes"), labels = c(0, 1))
+# so_sens@meta.data$diagnosis_of_MASLD <- factor(so_sens@meta.data$diagnosis_of_MASLD,levels = c("No", "Yes"), labels = c(0, 1))
+# so_sens@meta.data$glp1agonist <- factor(so_sens@meta.data$glp1agonist, levels = c("No", "Yes"), labels = c(0, 1))
 so_sens@meta.data$acr_u <- factor(so_sens@meta.data$acr_u)
 so_sens@meta.data$group <- factor(so_sens@meta.data$group)
+so_sens@meta.data$group <- relevel(so_sens@meta.data$group, ref = "Lean Control")
+so_sens@meta.data$epic_sglti2_1 <- factor(so_sens@meta.data$epic_sglti2_1)
+so_sens@meta.data$epic_sglti2_1 <- relevel(so_sens@meta.data$epic_sglti2_1, ref = "No")
+so_sens@meta.data$epic_glp1ra_1 <- factor(so_sens@meta.data$epic_glp1ra_1)
+so_sens@meta.data$epic_glp1ra_1 <- relevel(so_sens@meta.data$epic_glp1ra_1, ref = "No")
+# so_sens@meta.data$group2 <- ifelse(so_sens@meta.data$group=="Type 2 Diabetes","T2","LC")
 
-# 
 # so_diab@meta.data$steatosis_grade <- factor(so_diab@meta.data$steatosis_grade)
 # so_diab@meta.data$fibrosis_stage <- factor(so_diab@meta.data$fibrosis_stage)
 # so_diab@meta.data$diagnosis_of_diabetes <- factor(so_diab@meta.data$diagnosis_of_diabetes)
@@ -1897,13 +2171,13 @@ so_sens@meta.data$group <- factor(so_sens@meta.data$group)
 #   as.numeric()
 
 #Filter to diabetes only
-model_formula <- ~ epic_glp1ra_1
+model_formula <- ~ epic_sglti2_1
 #Diabetes status, GLP1 status, age, sex, sbp, HbA1c
 # Run the linear model with zlm
 zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
 # summary_zlm <- summary(zlm_results)
 # Summarize results and perform likelihood ratio test (LRT) for outcome
-summary_zlm <- summary(zlm_results, doLRT = "epic_glp1ra_1Yes")
+summary_zlm <- summary(zlm_results, doLRT = "epic_sglti2_1Yes")
 # summary_zlm <- summary(zlm_results)
 # Convert the summary to a data table for easy manipulation
 summary_dt <- summary_zlm$datatable
@@ -2067,110 +2341,59 @@ data_long <- results_full %>%
 #Heptatocytes
 ```{r}
 #Overall with Hurdle and logFC
-<<<<<<< Updated upstream
-fcHurdle <- merge(summary_dt[contrast=='steatosis_grade3' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
-                  summary_dt[contrast=='steatosis_grade3' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
-=======
-fcHurdle <- merge(summary_dt[contrast=='epic_glp1ra_1Yes' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
-                  summary_dt[contrast=='epic_glp1ra_1Yes' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
->>>>>>> Stashed changes
+fcHurdle <- merge(summary_dt[contrast=='epic_sglti2_1Yes' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                  summary_dt[contrast=='epic_sglti2_1Yes' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
 fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
 # write.csv(fcHurdle,fs::path(dir.results,"Senesence Results","ALT_Senescence_OverallResults.csv"))
 m <- fcHurdle[,c("primerid","coef","fdr")]
-
-# # m$Condition <- "A1c"
-# m$Condition <- "GLP-1 Adj. ALT"
-# # results <- m
-# # results_full <- rbind(results,m)
-# results_full <- rbind(results_full,m)
-# results <- m
-# 
-# #Continous 
-# fcHurdle <- merge(summary_dt[contrast=='glp1agonistYes' & component=='C',.(primerid, `Pr(>Chisq)`)], #hurdle P values
-#                   summary_dt[contrast=='glp1agonistYes' & component=='C', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
-# fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
-# # fcHurdle <- fcHurdle %>%
-# #   mutate(coef=10*coef)
-# # write.csv(fcHurdle,fs::path(dir.results,"Senesence Results","GLP1_Senescence.csv"))
-# m <- fcHurdle[,c("primerid","coef","fdr")]
 
 # Filter top 10 positive and negative log2FoldChange
 top_pos <- as.data.frame(m) %>%
   filter(fdr<0.05) %>%
   # arrange(desc(coef)) %>%
-  filter(coef>0) %>% 
-  # dplyr::slice(1:20) %>%
-  dplyr::rename(Gene=primerid)
-# top_pos$Gene <- rownames(top_pos)
-top_pos <- top_pos[c("Gene","coef","fdr")]
-rownames(top_pos) <- NULL
-top_pos$Direction <- "Positive"
-# top_pos <- as.data.frame(m) %>%
-#   filter(fdr<0.05) %>%
-#   filter(coef>0) %>% 
-#   dplyr::rename(Gene=primerid)
+  filter(coef>0) %>%
+  # dplyr::slice(1:10) %>%
+  dplyr::rename(Gene=primerid,
+                LogFC=coef)
 # top_pos$Gene <- rownames(top_pos)
 # top_pos <- top_pos[c("Gene","coef","fdr")]
 # rownames(top_pos) <- NULL
 top_pos$Direction <- "Positive"
 
-# top_neg <- m %>% 
-#   filter(fdr<0.05) %>%
-#   arrange(coef) %>% 
-#   # dplyr::slice(1:20) %>% 
-#   dplyr::rename(Gene=primerid)
-# # top_neg$Gene <- rownames(top_neg)
-# # top_neg <- top_neg[c("Gene","coef","fdr")]
-# # rownames(top_neg) <- NULL
-# top_neg$Direction <- "Negative"
 top_neg <- as.data.frame(m) %>%
   filter(fdr<0.05) %>%
   filter(coef<0) %>% 
-  dplyr::rename(Gene=primerid)
-# top_pos$Gene <- rownames(top_pos)
-# top_pos <- top_pos[c("Gene","coef","fdr")]
-# rownames(top_pos) <- NULL
+  # arrange(coef) %>%
+  # dplyr::slice(1:10)%>%
+  dplyr::rename(Gene=primerid,
+                LogFC=coef)
 top_neg$Direction <- "Negative"
 
 # Combine and prepare for plotting
-top_genes <- bind_rows(top_pos, top_neg) 
-# genes <- top_genes %>% 
-#   dplyr::select(Gene)
-# saveRDS(genes,fs::path(dir.dat,"Top_Genes_Liver_Fibrosis.rds"))
+top_genes <- bind_rows(top_pos, top_neg)
+# write.csv(top_genes,fs::path(dir.dat,"Liver Project","Top_Senescence_Genes_ACR_u_TALcells.csv"))
 
 # Set sorting order: all negative genes first, then all positive genes
 top_genes <- top_genes %>%
-  mutate(Gene = factor(Gene, levels = Gene[order(Direction, coef)]))  # Order by Direction and log2FC
-# 
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, LogFC)]))  # Order by Direction and log2FC
+
 # # Bar chart with flipped x and y axes
-# b <- ggplot(top_genes, aes(x = coef, y = Gene, fill = Direction)) +
-#   geom_bar(stat = "identity") +
-#   labs(x = "Coefficient", y = "Gene", title = "Association of AST and Gene Expression Among youth with T2D, assuming genes are expressed") +
-#   scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
-#   theme_minimal()
-# 
-# # Bar chart with flipped x and y axes
-b <- ggplot(top_genes, aes(x = coef, y = Gene, fill = Direction)) +
+ggplot(top_genes, aes(x = LogFC, y = Gene, fill = Direction)) +
   geom_bar(stat = "identity") +
-<<<<<<< Updated upstream
-  labs(x = "logFC", y = "Gene", title = "Overall Association of Steatosis Grade and Gene Expression, Among Type 2 Youth") +
-=======
-  labs(x = "logFC", y = "Gene", title = "Overall Association of GLP-1s (Yes vs. No) and Gene Expression, AMong Type 2") +
->>>>>>> Stashed changes
+  # geom_bar(stat = "identity",color = "black", size = 1)+
+  labs(x = "logFC", y = "Gene") +
+  # scale_fill_manual(values = c("orange", "#E65164FF"), labels = c("Lower Expression", "Higher Expression")) +
   scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
   theme_minimal()+
   theme(element_text(family="Times"))+
   theme(legend.position="none")
 
-<<<<<<< Updated upstream
-top_genes_steat <- top_genes
-# top_genes_fib <- top_genes
-top_genes <- tidylog::left_join(top_genes_steat,top_genes_glp1,by="Gene")
-=======
-top_genes_glp_1 <- top_genes 
-top_genes <- tidylog::left_join(top_genes_glp_1,top_genes_diab,by="Gene")
+top_genes_alb <- top_genes
+top_genes_diab <- top_genes 
+top_genes_sglt2 <- top_genes
+top_genes_glp1 <- top_genes
+top_genes <- tidylog::left_join(top_genes_alb,top_genes_sglt2,by="Gene")
 # write.csv(top_genes_glp_1,fs::path(dir.dat,"Liver Project","Kidney_GLP_1s_Genes_T2D_only.csv"))
->>>>>>> Stashed changes
 top_genes <- top_genes %>% 
   mutate(Change=ifelse(Direction.x=="Negative" & Direction.y=="Positive","Upregulated",
                        ifelse(Direction.x=="Positive" & Direction.y=="Negative","Downregulated",
@@ -2178,56 +2401,124 @@ top_genes <- top_genes %>%
 up <- top_genes %>% 
   filter(Change=="Upregulated") %>% 
   dplyr::select(Gene)
-<<<<<<< Updated upstream
-=======
 
 down <- top_genes %>% 
   filter(Change=="Downregulated") %>% 
   dplyr::select(Gene)
->>>>>>> Stashed changes
 
-down <- top_genes %>% 
-  filter(Change=="Downregulated") %>% 
-  dplyr::select(Gene)
-# results <- top_genes %>%
-#   dplyr::select(c(Gene,Direction)) %>%
-#   dplyr::rename(Direction_GLP1_Unadjusted=Direction)
-#   
-results2 <- top_genes %>%
-  dplyr::select(c(Gene,Direction)) %>%
-  dplyr::rename(Direction_GLP1_A1c=Direction)
+library(VennDiagram)
+library(tidyverse)
 
-# results3 <- top_genes %>%
-#   dplyr::select(c(Gene,Direction)) %>%
-#   dplyr::rename(Direction_A1c=Direction)
-# results4 <- top_genes %>%
-#   dplyr::select(c(Gene,Direction)) %>%
-#   dplyr::rename(Direction_GLP1_A1c=Direction)
+# Read the CSV files
+acr_data <- read.csv(fs::path(dir.dat,"Liver Project","Top_Senescence_Genes_ACR_u_TALcells.csv"))
+glp1_data <- read.csv(fs::path(dir.dat,"Liver Project","Top_Senescence_Genes_GLP1_TALcells.csv"))
+sglt2_data <- read.csv(fs::path(dir.dat,"Liver Project","Top_Senescence_Genes_SGLT2_TALcells.csv"))
+type2_data <- read.csv(fs::path(dir.dat,"Liver Project","Top_Senescence_Genes_Type2_TALcells.csv"))
 
-results_full <- tidylog::full_join(results2,results3,by="Gene")
-# results_full <- tidylog::full_join(results_full,results3,by="Gene")
-# results_full <- tidylog::full_join(results_full,results4,by="Gene")
-results_full <-results_full %>% 
-  # mutate(adjustment_change=case_when(Direction_GLP1_Unadjusted=="Positive" & Direction_GLP1=="Negative" ~ "Change",
-  #                                    Direction_GLP1_Unadjusted=="Negative" & Direction_GLP1=="Positive" ~ "Change",
-  #                                    Direction_GLP1_Unadjusted=="Positive" & Direction_GLP1=="Positive" ~ "Same",
-  #                                    Direction_GLP1_Unadjusted=="Negative" & Direction_GLP1=="Negative" ~ "Same")) %>% 
-  mutate(reverse=case_when(Direction_GLP1_A1c=="Positive" & Direction_A1c=="Negative" ~ "Reversed_Down",
-                           Direction_GLP1_A1c=="Negative" & Direction_A1c=="Positive" ~ "Reversed_Up",
-                           Direction_GLP1_A1c=="Positive" & Direction_A1c=="Positive" ~ "Maintained",
-                           Direction_GLP1_A1c=="Negative" & Direction_A1c=="Negative" ~ "Maintained"))
+# Function to extract genes by direction
+extract_genes <- function(data, direction) {
+  data %>%
+    filter(Direction == direction) %>%
+    pull(Gene)
+}
 
-results_full$Gene[which(results_full$reverse=="Reversed_Down")]
-results_full$Gene[which(results_full$reverse=="Reversed_Up")]
+# Extract positive and negative genes for each dataset
+acr_pos <- extract_genes(acr_data, "Positive")
+acr_neg <- extract_genes(acr_data, "Negative")
 
-data_long <- results_full %>%
-  pivot_longer(
-    cols = c(Direction_ALT, Direction_GLP1),
-    names_to = "Condition",
-    values_to = "Direction"
-  )
+glp1_pos <- extract_genes(glp1_data, "Positive")
+glp1_neg <- extract_genes(glp1_data, "Negative")
+
+sglt2_pos <- extract_genes(sglt2_data, "Positive")
+sglt2_neg <- extract_genes(sglt2_data, "Negative")
+
+type2_pos <- extract_genes(type2_data, "Positive")
+type2_neg <- extract_genes(type2_data, "Negative")
+
+# Venn diagram for positive genes
+pdf(fs::path(dir.dat,"Liver Project","positive_genes_venn.pdf"), width=10, height=10)
+venn.diagram(
+  x = list(
+    "ACR" = acr_pos,
+    "GLP1" = glp1_pos,
+    "SGLT2" = sglt2_pos,
+    "Type2" = type2_pos
+  ),
+  category.names = c("ACR", "GLP1", "SGLT2", "Type2"),
+  filename = NULL,
+  output = TRUE,
+  
+  # Circles
+  lwd = 2,
+  lty = 'blank',
+  fill = c("#440154", "#21908C", "#FDE725", "#F0F921"),
+  
+  # Numbers
+  cex = .6,
+  fontface = "bold",
+  fontfamily = "sans",
+  
+  # Titles
+  main = "Overlap of Positive Genes Across Datasets",
+  main.cex = 1.5,
+  main.fontfamily = "sans"
+)
+dev.off()
+
+# Venn diagram for negative genes
+pdf(fs::path(dir.dat,"Liver Project","negative_genes_venn.pdf"), width=10, height=10)
+venn.diagram(
+  x = list(
+    "ACR" = acr_neg,
+    "GLP1" = glp1_neg,
+    "SGLT2" = sglt2_neg,
+    "Type2" = type2_neg
+  ),
+  category.names = c("ACR", "GLP1", "SGLT2", "Type2"),
+  filename = NULL,
+  output = TRUE,
+  
+  # Circles
+  lwd = 2,
+  lty = 'blank',
+  fill = c("#440154", "#21908C", "#FDE725", "#F0F921"),
+  
+  # Numbers
+  cex = .6,
+  fontface = "bold",
+  fontfamily = "sans",
+  
+  # Titles
+  main = "Overlap of Negative Genes Across Datasets",
+  main.cex = 1.5,
+  main.fontfamily = "sans"
+)
+dev.off()
 
 
+# Detailed overlap analysis
+print_overlap <- function(gene_lists, type) {
+  cat(paste("Overlap Analysis for", type, "Genes:\n"))
+  
+  # Find intersections
+  all_intersections <- Reduce(intersect, gene_lists)
+  cat("Genes present in ALL datasets:", all_intersections, "\n\n")
+  
+  # Pairwise intersections
+  dataset_names <- c("ACR", "GLP1", "SGLT2", "Type2")
+  for (i in 1:(length(gene_lists)-1)) {
+    for (j in (i+1):length(gene_lists)) {
+      intersect_genes <- intersect(gene_lists[[i]], gene_lists[[j]])
+      cat(paste(dataset_names[i], "and", dataset_names[j], "overlap:"), 
+          intersect_genes, "\n")
+    }
+  }
+  cat("\n")
+}
+
+# Print overlaps for positive and negative genes
+print_overlap(list(acr_pos, glp1_pos, sglt2_pos, type2_pos), "Positive")
+print_overlap(list(acr_neg, glp1_neg, sglt2_neg, type2_neg), "Negative")
 ```
 
 ##c. Tutorial 
@@ -2355,15 +2646,230 @@ bubble_plot_D <- ggplot(summary_dt_D, aes(x = coef, y = log_pvalue)) +
 
 ```
 
+#10. IDEAS DEGs 
+##a. Liver 
+###i. Full Gene Set
+```{r, Full Gene Set}
 
-#10. TODAY Proteomics & ALT/AST
-```{r}
+#Remove bottom 10% genes (lowly expresed)
+exposure <- "diagnosis_of_diabetes"
+var_type <- "binary"
+# so <- so_liver_sn
+rm(so_liver_sn)
+id <- "Kit_Lot"
+method <- "zinb"
+
+ideas_fxn <- function(so, exposure, covariates, var_type, id, method) {
+  
+  # Create individual variable dynamically based on the input 'id'
+  so$individual <- so[[id]]  # Assign the column specified by 'id' as the individual variable
+  
+  # Split genes into batches
+  batch_size <- 1000  # Number of genes per batch
+  count_matrix <- GetAssayData(so, assay = "RNA", slot = "counts")
+  gene_batches <- split(rownames(count_matrix), ceiling(seq_along(rownames(count_matrix)) / batch_size))
+  
+  # Loop through each gene batch
+  all_results <- list()  # To store results from all batches
+  
+  for (i in seq_along(gene_batches)) {
+    cat("Processing batch", i, "of", length(gene_batches), "\n")
+    
+    # Get the list of genes for the current batch
+    batch_genes <- gene_batches[[i]]
+    
+    # Extract the count matrix for this batch of genes
+    batch_matrix <- count_matrix[batch_genes, , drop = FALSE]  # Drop = FALSE ensures it stays a matrix
+    batch_matrix <- as.matrix(batch_matrix)
+    # Round the count matrix to ensure integer values
+    batch_matrix <- round(batch_matrix)  # Round values to ensure integer counts
+    
+    # Check if the matrix contains non-integer values
+    if (any(batch_matrix != floor(batch_matrix))) {
+      stop("Batch matrix contains non-integer values!")
+    }
+    
+    # Extract the metadata for the cells corresponding to the batch
+    meta_cell <- so@meta.data
+    meta_cell$cell_id <- rownames(meta_cell)  # Add cell IDs if not already present
+    
+    # Ensure the metadata includes the required column (e.g., 'Kit_Lot' for individuals)
+    meta_cell$cell_rd <- colSums(batch_matrix)  # Total counts per cell (read depth)
+    
+    # Add a small constant to ensure no zero or negative values
+    meta_cell$cell_rd <- meta_cell$cell_rd + 1  # Adding 1 to avoid log(0) errors
+    
+    #    # Ensure the metadata includes the required column (e.g., 'Kit_Lot' for individuals)
+    # meta_cell$cell_rd[meta_cell$cell_rd == 0] <- 1  # Ensure no zero read depth
+    
+    # Create individual-level metadata (e.g., group information, exposure)
+    meta_ind <- unique(meta_cell[, c("individual", exposure)])  # Use dynamic 'id' for individual variable
+    
+    # Set variables for differential expression analysis
+    var2test <- exposure  # Group variable to test
+    var2adjust <- NULL     # Adjusting variable (e.g., RIN, if applicable)
+    var2test_type <- var_type  # "binary" or "continuous"
+    var_per_cell <- "cell_rd"  # Cell-level adjustment variable (read depth)
+    test_method <- paste0(method)
+    
+    # Perform IDEAS distance calculation for this batch
+    dist_batch <- ideas_dist(
+      count_input = batch_matrix,
+      meta_cell = meta_cell,
+      meta_ind = meta_ind,
+      var_per_cell = var_per_cell,
+      var2test = var2test,
+      var2test_type = var2test_type,
+      d_metric = "Was",  # Wasserstein distance
+      fit_method = test_method  # Negative binomial fit
+    )
+    
+    # Perform PERMANOVA for this batch
+    pval_batch <- permanova(
+      dist_array = dist_batch,
+      meta_ind = meta_ind,
+      var2test = var2test,
+      var2adjust = NULL,
+      var2test_type = var2test_type,
+      n_perm = 999,
+      r.seed = 903
+    )
+    
+    # Combine results for this batch
+    batch_results <- data.frame(
+      gene = batch_genes,
+      pvalue = pval_batch
+    )
+    
+    # Store results
+    all_results[[i]] <- batch_results
+  }
+  
+  # Combine all batches into one final result
+  final_results <- do.call(rbind, all_results)
+  
+  # Save or further analyze the results
+  write.csv(final_results, "DEA_results_ideas.csv", row.names = FALSE)
+}
+
 
 
 ```
-
-#11. Teen-LABS Proteomics & ALT/AST
+##b. Kidney
 ```{r}
+exposure="group3"
+exp_group <- "exclusive_glp1"
+ref_group <- "neither"
+var_type <- "binary"
+so <- so_diab
+# rm(so_kidney_sc)
+id <- "kit_id"
+method <- "zinb"
+# unique(so$kit_id[which(is.na(so$group))])
+# so_diab <- subset(so,group=="Type 2 Diabetes")
+# so <- so_diab
+# rm(so_diab)
 
+ideas_fxn <- function(so, exp_group, ref_group, covariates, var_type, id, method, exposure) {
+  
+  #Filter so to groups of interest
+  so$filt_condition <- ifelse(so$group2==paste0(exp_group) | so$group2==paste0(ref_group),"Yes","No")
+  so <- subset(so,filt_condition=="Yes")
+  so$group3 <- ifelse(so$group2==paste0(exp_group),paste0(exp_group),paste0(ref_group))
+  so$group3 <- factor(so$group3)
+  
+  # Create individual variable dynamically based on the input 'id'
+  so$individual <- so[[id]]  # Assign the column specified by 'id' as the individual variable
+  
+  # Split genes into batches
+  batch_size <- 100  # Number of genes per batch
+  count_matrix <- GetAssayData(so, assay = "RNA", layer = "counts")
+  gene_batches <- split(rownames(count_matrix), ceiling(seq_along(rownames(count_matrix)) / batch_size))
+  
+  # Loop through each gene batch
+  all_results <- list()  # To store results from all batches
+  
+  for (i in seq_along(gene_batches)) 
+    {
+    cat("Processing batch", i, "of", length(gene_batches), "\n")
+    
+    # Get the list of genes for the current batch
+    batch_genes <- gene_batches[[i]]
+    
+    # Extract the count matrix for this batch of genes
+    batch_matrix <- count_matrix[batch_genes,]  # Drop = FALSE ensures it stays a matrix
+    batch_matrix <- as.matrix(batch_matrix)
+    # Round the count matrix to ensure integer values
+    batch_matrix <- round(batch_matrix)  # Round values to ensure integer counts
+    
+    # Check if the matrix contains non-integer values
+    if (any(batch_matrix != floor(batch_matrix))) {
+      stop("Batch matrix contains non-integer values!")
+    }
+    
+    # Extract the metadata for the cells corresponding to the batch
+    # Subset meta_cell based on the cells in batch_matrix
+    cell_ids <- colnames(batch_matrix)  # Extract cell IDs from the batch matrix
+    meta_cell <- so@meta.data[cell_ids, ]  # Subset metadata to match the batch cells
+    meta_cell$cell_id <- rownames(meta_cell)  # Add cell IDs if not already present
+    
+    # Ensure the metadata includes the required column (e.g., 'Kit_Lot' for individuals)
+    meta_cell$cell_rd <- colSums(batch_matrix)  # Total counts per cell (read depth)
+    
+    # Add a small constant to ensure no zero or negative values
+    meta_cell$cell_rd <- meta_cell$cell_rd + 1  # Adding 1 to avoid log(0) errors
+    
+    # Create individual-level metadata (e.g., group information, exposure)
+    meta_ind <- unique(meta_cell[, c("individual", "group3")]) 
+    
+    # Set variables for differential expression analysis
+    var2test <- "group3"  # Group variable to test
+    var2adjust <- NULL     # Adjusting variable (e.g., RIN, if applicable)
+    var2test_type <- var_type  # "binary" or "continuous"
+    var_per_cell <- "cell_rd"  # Cell-level adjustment variable (read depth)
+    test_method <- paste0(method)
+    
+    # Perform IDEAS distance calculation for this batch
+    dist_batch <- ideas_dist(
+      count_input = batch_matrix,
+      meta_cell = meta_cell,
+      meta_ind = meta_ind,
+      var_per_cell = var_per_cell,
+      var2test = var2test,
+      var2test_type = var2test_type,
+      d_metric = "Was",  # Wasserstein distance
+      fit_method = test_method  # Negative binomial fit
+    )
+    
+    # Perform PERMANOVA for this batch
+    pval_batch <- permanova(
+      dist_array = dist_batch,
+      meta_ind = meta_ind,
+      var2test = var2test,
+      var2adjust = NULL,
+      var2test_type = var2test_type,
+      n_perm = 999,
+      r.seed = 903
+    )
+    
+    # Combine results for this batch
+    batch_results <- data.frame(
+      gene = batch_genes,
+      pvalue = pval_batch
+    )
+    
+    # Store results
+    all_results[[i]] <- batch_results
+  }
+  
+  # Combine all batches into one final result
+  final_results <- do.call(rbind, all_results)
+  
+  # Save or further analyze the results
+  write.csv(final_results, "DEA_results_ideas.csv", row.names = FALSE)
+}
 
 ```
+
+
+

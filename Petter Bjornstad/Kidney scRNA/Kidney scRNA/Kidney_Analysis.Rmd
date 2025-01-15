@@ -1,0 +1,1088 @@
+---
+title: "Liver Analysis"
+author: "Hailey Hampson"
+date: "2024-09-24"
+output: html_document
+--- 
+
+#1. Set up Libraries & Directores
+```{r libraries, echo=F, include = F}
+library(reprex)
+library(tidyverse)
+library(BiocManager)        
+library(arsenal)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(Seurat)
+library(future)
+library(colorspace)
+library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggpubr)
+library(venn)
+library(rstatix)
+library(table1)
+library(Biobase)
+library(ReactomeGSA)
+library(GSEABase)
+library(msigdbr)
+library(kableExtra)
+library(knitr)
+library(SingleCellExperiment)
+library(fgsea)
+library(EnhancedVolcano)
+library(openxlsx)
+library(BiocManager)
+library(MAST)
+library(ggrepel)
+# library(qpcR)
+library(ggpubr)
+library(openxlsx)
+library(ggplot2)
+library(GGally)
+library(GSEABase)
+library(limma)
+library(reshape2)
+library(data.table)
+library(knitr)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(stringr)
+library(NMF)
+library(rsvd)
+library(RColorBrewer)
+library(MAST)
+library(devtools)
+# install_github("Sun-lab/ideas",force=T)
+#library(ideas)
+library(foreach)
+library(doRNG)
+library(doParallel)
+library(fs)
+registerDoParallel(cores = 6)
+library(VennDiagram)
+
+
+#Local file path
+dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
+dir.dat2 <- c("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean")
+dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+dir.results <- c("/Volumes/Peds Endo/Petter Bjornstad/Kidney Project/Results")
+
+#Lambda file path
+# dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
+# dir.code <- c("/home/Github_Repo/CHCO-Code/Petter Bjornstad/Kidney scRNA/Kidney scRNA")
+# dir.results <- c(fs::path(dir.dat,"Kidney Project/Results"))
+
+#Load functions
+source("Kidney_functions_sc.R")
+
+```
+
+#2. Load Full Data & Clean: scRNA & MetaData
+```{r}
+#Increase Memory
+mem.maxVSize(64000000000)
+#Local
+# dir.dat <- c("/Users/hhampson/Dropbox/Bjornstad data")
+# so_kidney_sc <- readRDS(fs::path(dir.dat,"Kidney scRNA","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
+# load("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/PB90_clinical_metadata.RData")
+# so_kidney_sc <- AddMetaData(so_kidney_sc, so_meta_combined)
+# rm(so_meta_combined)
+# gc()
+
+#Lambda
+so_kidney_sc <- readRDS(fs::path(dir.dat,"scRNA","data_raw","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
+load(fs::path(dir.dat,"Data Harmonization","Data Exports","PB90_clinical_metadata_12_10.RData"))
+so_kidney_sc <- AddMetaData(so_kidney_sc, so_meta_combined)
+rm(so_meta_combined)
+gc()
+
+#Define 4 exposure groups: 
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
+so_kidney_sc@meta.data <- so_kidney_sc@meta.data %>% 
+  mutate(both=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
+  mutate(exclusive_sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
+  mutate(exclusive_glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
+  mutate(neither=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+
+
+so_kidney_sc@meta.data <- so_kidney_sc@meta.data %>% 
+  mutate(group2 = case_when(both == "Yes" ~ "both",
+                            exclusive_sglt2 == "Yes" ~ "exclusive_sglt2",
+                            exclusive_glp1 == "Yes" ~ "exclusive_glp1",
+                            neither == "Yes" ~ "neither"))
+
+so_kidney_sc@meta.data$group2 <- factor(so_kidney_sc@meta.data$group2, levels = c("neither", "both", "exclusive_sglt2", "exclusive_glp1"))
+
+#so_diab <- subset(so_kidney_sc,group=="Type 2 Diabetes")
+#rm(so_kidney_sc)
+gc()
+
+#Create senesence so in all cell types
+#sens_genes <- c(sens_genes,"CDKN1A")
+#sens_gene_in_data <- intersect(sens_genes, rownames(so_kidney_sc))
+# Subset the Seurat object to include only genes in sens_gene_in_data
+#so_sens_all <- subset(so_kidney_sc, features = sens_gene_in_data)
+#rm(so_kidney_sc)
+# # saveRDS(so_sens_all,fs::path(dir.dat,"so_sens_genes_all_cells_KIDNEY.RDS"))
+# # rm(so_sens_all)
+# # 
+# # #Load sens all cells
+# # so_sens <- readRDS(fs::path(dir.dat,"so_sens_genes_all_cells_KIDNEY.RDS"))
+# # dat <- so_sens@meta.data
+# # so_diab <- subset(so_sens, diagnosis_of_diabetes == "Yes")
+# # 
+# #PT Cells
+# so_sens_all@meta.data$PT <- ifelse(grepl("PT-",so_sens_all@meta.data$celltype_rpca),"PT","Non-PT")
+# Idents(so_sens_all) <- so_sens_all$PT
+# so_sens <- subset(so_sens_all, PT=="PT")
+# # saveRDS(so_sens,fs::path(dir.dat,"so_sens_genes_PT_Cells_KIDNEY.RDS"))
+# rm(so_sens_all,so_sens)
+# so_sens_PT <- readRDS(fs::path(dir.dat,"Liver Project","so_sens_genes_PT_Cells_KIDNEY.RDS"))
+# so_sens_PT@meta.data$group1 <- ifelse(so_sens_PT@meta.data$group=="Type 2 Diabetes" | so_sens_PT@meta.data$group=="Lean Control" ,"Yes","No")
+# so_sens_PT1 <- subset(so_sens_PT, group1=="Yes")
+# so_sens_PT@meta.data$group2 <- ifelse(so_sens_PT@meta.data$group=="Type 2 Diabetes","Yes","No")
+# so_sens_PT2 <- subset(so_sens_PT, group2=="Yes")
+# so_sens_PT3 <- subset(so_sens_PT, group=="Type 2 Diabetes")
+# 
+# 
+# 
+# #TAL Cells
+# so_sens_all@meta.data$TAL <- ifelse(grepl("TAL",so_sens_all@meta.data$celltype_rpca),"TAL","Non-TAL")
+# Idents(so_sens_all) <- so_sens_all$TAL
+# so_sens <- subset(so_sens_all, TAL=="TAL")
+# # saveRDS(so_sens,fs::path(dir.dat,"so_sens_genes_TAL_Cells_KIDNEY.RDS"))
+# rm(so_sens_all,so_sens,so_sens_TAL,so_sens_TAL1)
+# so_sens_TAL <- readRDS(fs::path(dir.dat,"Liver Project","so_sens_genes_TAL_Cells_KIDNEY.RDS"))
+# so_sens_TAL@meta.data$group1 <- ifelse(so_sens_TAL@meta.data$group=="Type 2 Diabetes"| so_sens_TAL@meta.data$group=="Lean Control","Yes","No")
+# so_sens_TAL1 <- subset(so_sens_TAL, group1=="Yes")
+# so_sens_TAL@meta.data$group2 <- ifelse(so_sens_TAL@meta.data$group=="Type 2 Diabetes","Yes","No")
+# so_sens_TAL2 <- subset(so_sens_TAL, group2=="Yes")
+# so_sens_TAL3 <- subset(so_sens_TAL, group=="Type 2 Diabetes")
+```
+#3. Descriptive Statistics
+```{r echo = F}
+dat <- readRDS("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/PB90_clinical_metadata_only_12_10.rds")
+unique(so_kidney_sc$kit_id)
+dat <- dat %>% 
+  filter(kit_id %in% unique(so_kidney_sc$kit_id)) %>%
+  mutate(both=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
+  mutate(exclusive_sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
+  mutate(exclusive_glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
+  mutate(neither=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+dat <- dat %>% 
+  filter(group=="Type 2 Diabetes")
+
+dat$record_id %in% unique(so_kidney_sc$record_id)
+unique(so_kidney_sc$record_id)
+table(dat$exclusive_sglt2) #-/+ #27 no, 10 yes
+table(dat$exclusive_glp1) #+/- #29 no, 8 yes
+table(dat$both) #+/+ #33 no, 4 yes
+table(dat$neither) #-/- #22 no, 15 yes
+
+
+
+
+# dat <- dat %>% 
+#   filter(diagnosis_of_diabetes=="Yes")
+# cor(dat$ast,dat$alt,method="pearson")
+# cor(dat$ast,dat$alt,method="spearman")
+# cor(dat$alt,dat$tg,method="spearman")
+
+# dat$diagnosis_of_diabetes <- factor(dat$diagnosis_of_diabetes, levels=c("Yes","No"), labels=c("Type 2 Diabetes", "Obese Controls"))
+# dat$nih_sex     <- factor(dat$nih_sex, levels=c("Male", "Female"), labels=c("Male", "Female"))
+# dat$nih_ethnicity   <- factor(dat$nih_ethnicity, levels=c("Hispanic_Or_Latino","NonHispanic"), labels=c("Hispanic or Latino","Non-Hispanic/Non-Latino"))
+# dat$nih_race   <- factor(dat$nih_race, levels=c("White","BlackAfAm","Multiracial","Other"),
+#                          labels=c("White","Black","Multirace","Other"))
+# dat$steatosis_grade <- as.factor(dat$steatosis_grade)
+# dat$fibrosis_stage <- as.factor(dat$fibrosis_stage)
+# dat$lobular_inflammation_percent <- as.factor(dat$lobular_inflammation_percent)
+# 
+# label(dat$age)      <- "Age (y)"
+# label(dat$nih_sex)      <- "Sex"
+# label(dat$nih_race)    <- "Race"
+# label(dat$nih_ethnicity)    <- "Ethnicity"
+# label(dat$diagnosis_of_diabetes)  <- "Diabetes Status"
+# label(dat$bmi)   <- "Body Mass Index (kg/m2)"
+# label(dat$diagnosis_of_MASLD)  <- "MASLD Status"
+# label(dat$sbp)     <- "Systolic Blood Pressure (mmHg)"
+# label(dat$dbp) <- "Diastolic Blood Pressure (mmHg)"
+# label(dat$tg) <-  "Triglycerides (mg/dL)"
+# label(dat$creatinine) <-  "Creatinine (mg/dL)"
+# label(dat$steatosis_percent) <- "Steatosis Percent (%)"
+# label(dat$fibrosis_stage) <- "Fibrosis Stage"
+# label(dat$lobular_inflammation_percent) <- "Lobular Inflammation Percent (%)"
+dat2 <- dat %>% 
+  filter(group=="Type 2 Diabetes" | group=="Obese Control" | group=="Lean Control")
+dat3 <- dat %>% 
+  filter(group=="Type 2 Diabetes")
+table1(~ age + sex + race + exclusive_glp1 + exclusive_sglt2 + both + acr_u + albuminuria_cat| group, data=dat2)
+table1(~ age + sex + race + epic_sglti2_1 + acr_u + albuminuria_cat| epic_glp1ra_1 , data=dat2)
+
+table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage | diagnosis_of_diabetes, data = dat)
+
+table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + diagnosis_of_diabetes + a1c  + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage | glp1agonist, data = dat)
+
+
+pvalue <- function(x,...) {
+  # Construct vectors of data y, and groups (strata) g
+  y <- unlist(x)
+  g <- factor(rep(1:length(x), times=sapply(x, length)))
+  if (is.numeric(y)) {
+    # For numeric variables, perform a standard 2-sample t-test
+    p <- t.test(y ~ g)$p.value
+  } else {
+    # For categorical variables, perform a chi-squared test of independence
+    p <- chisq.test(table(y, g))$p.value
+  }
+  # Format the p-value, using an HTML entity for the less-than sign.
+  # The initial empty string places the output on the line below the variable label.
+  c("", sub("<", "&lt;", format.pval(p, digits=3, eps=0.001)))
+}
+
+mean_sd <- function(x) {
+  # Handle missing values explicitly
+  s <- stats::sd(x, na.rm=TRUE)
+  m <- mean(x, na.rm=TRUE)
+  sprintf("%.2f (%.2f)", m, s)
+}
+
+table1(~ age + nih_sex + nih_race + bmi + diagnosis_of_MASLD + sbp + dbp + tg | diagnosis_of_diabetes, data=dat,overall=F, extra.col=list(`P-value`=pvalue), render.continuous = mean_sd)
+
+table1(~ age + nih_sex + nih_race + bmi + diagnosis_of_MASLD + sbp + dbp + tg + diagnosis_of_diabetes | glp1agonist, data=dat,overall=F, extra.col=list(`P-value`=pvalue), render.continuous = mean_sd)
+
+table1(~ age + nih_sex + nih_race + bmi + diagnosis_of_MASLD + sbp + dbp + tg | diagnosis_of_diabetes, data=dat,render.continuous = render.continuous.custom)
+
+table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage | diagnosis_of_diabetes, data = dat,render.continuous = render.continuous.custom)
+
+# Generate the table
+table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage | diagnosis_of_diabetes, 
+       data = dat, 
+       overall = , 
+       extra.col = list(`P-value` = pvalue), 
+       render.continuous = render.continuous.custom)
+#bmi,masld,TGs,AST/ALT (Liver enzymes),ggt, steatosis grade and or percentages,lobular inflam grade, fibrosis stage
+
+# Descriptive stats
+liver_meta_raw_sc <- meta_liver_raw %>%
+  filter(Cryostor_ID!="")
+form <- paste("diagnosis_of_diabetes", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
+
+summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
+
+## MASLD Y/N
+liver_meta_raw_sc <- meta_liver_raw %>%
+  filter(Cryostor_ID!="")
+form <- paste("diagnosis_of_MASLD", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
+
+summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
+
+## GLP-1RA Y/N
+liver_meta_raw_sc <- liver_meta_raw %>%
+  filter(Cryostor_ID!="")
+form <- paste("glp1agonist", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
+
+summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
+
+```
+
+#4. DEGS & GSEA
+##a. All Cell Types
+```{r}
+#Among Type 2: No meds vs. GLP-1 Exclusive
+##SGLT2i only -/+ #5 No, 0 yes
+#GLP-1 only +/- # 2 Yes, 3 No
+#Both +/+ #1 Both, 4 not both
+#Neither-/- #3 neither, 2 on someting
+
+all_genes <- rownames(so_kidney_sc)
+#Diabetes Groups
+#Type 2 vs. Lean Control
+so_subgroup <- subset(so_kidney_sc,group=="Type 2 Diabetes" | group=="Lean Control")
+so_subgroup$group <- factor(so_subgroup$group)
+so_subgroup$Type_2_Diabetes <- so_subgroup$group 
+degs_fxn(so=so_subgroup,cell=NULL,gene_set=all_genes,exposure="Type_2_Diabetes",exp_group="Type 2 Diabetes",ref_group="Lean Control",enrichment="Yes",top_gsea = 30)
+
+#Create diab so
+so_diab <- subset(so_kidney_sc,group=="Type 2 Diabetes")
+#GLP-1 vs. None
+so_sub <- subset(so_diab,group2=="exclusive_glp1" | group2=="neither")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+#Rename variable
+so_sub$Medication <- so_sub$group2
+degs_fxn(so=so_sub,cell=NULL,gene_set=all_genes,exposure="Medication",exp_group="exclusive_glp1",ref_group="neither",enrichment="Yes",top_gsea = 30)
+#GLP-1 vs. SGLT2
+so_sub <- subset(so_diab,group2=="exclusive_glp1" | group2=="exclusive_sglt2")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+#Rename variable
+so_sub$Medication <- so_sub$group2
+degs_fxn(so=so_sub,cell=NULL,gene_set=all_genes,exposure="Medication",exp_group="exclusive_glp1",ref_group="exclusive_sglt2",enrichment="Yes",top_gsea = 30)
+
+#GLP-1 vs. Both
+so_sub <- subset(so_diab,group2=="exclusive_glp1" | group2=="both")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+#Rename variable
+so_sub$Medication <- so_sub$group2
+degs_fxn(so=so_sub,cell=NULL,gene_set=all_genes,exposure="Medication",exp_group="both",ref_group="exclusive_glp1",enrichment="Yes",top_gsea = 30)
+
+#SGLT2 vs. None 
+so_sub <- subset(so_diab,group2=="exclusive_sglt2" | group2=="neither")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+#Rename variable
+so_sub$Medication <- so_sub$group2
+degs_fxn(so=so_sub,cell=NULL,gene_set=all_genes,exposure="Medication",exp_group="exclusive_sglt2",ref_group="neither",enrichment="Yes",top_gsea = 30)
+
+#SGLT2 vs. Both
+so_sub <- subset(so_diab,group2=="exclusive_sglt2" | group2=="both")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+#Rename variable
+so_sub$Medication <- so_sub$group2
+degs_fxn(so=so_sub,cell=NULL,gene_set=all_genes,exposure="Medication",exp_group="both",ref_group="exclusive_sglt2",enrichment="Yes",top_gsea = 30)
+
+#Both vs. None
+so_sub <- subset(so_diab,group2=="neither" | group2=="both")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+#Rename variable
+so_sub$Medication <- so_sub$group2
+degs_fxn(so=so_sub,cell=NULL,gene_set=all_genes,exposure="Medication",exp_group="both",ref_group="neither",enrichment="Yes",top_gsea = 30)
+
+```
+
+##b. Specific Cell Types
+```{r}
+#Major Cell Types
+#unique(so_kidney_sc$celltype_rpca)
+so_kidney_sc$celltype_rpca <- as.character(so_kidney_sc$celltype_rpca)
+so_kidney_sc$celltype2 <- ifelse(grepl("PT-",so_kidney_sc$celltype_rpca),"PT",
+                                 ifelse(grepl("TAL-",so_kidney_sc$celltype_rpca),"TAL",
+                                        ifelse(grepl("PC-",so_kidney_sc$celltype_rpca),"PC",
+                                               ifelse(grepl("IC-",so_kidney_sc$celltype_rpca) & !grepl("lowQuality",so_kidney_sc$celltype_rpca),"IC",
+                                                      ifelse(grepl("DTL-",so_kidney_sc$celltype_rpca),"DTL",so_kidney_sc$celltype_rpca)))))
+unique(so_kidney_sc$celltype2)
+all_cell_types <- unique(so_kidney_sc$celltype2)
+all_genes <- rownames(so_kidney_sc)
+
+#Create diab so 
+so_diab <- subset(so_kidney_sc,group=="Type 2 Diabetes")
+
+#GLP-1 vs. None
+so_sub <- subset(so_diab,group2=="exclusive_glp1" | group2 =="neither")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+so_sub$Medication <- so_sub$group2
+all_cell_types <- unique(so_sub$celltype2)
+for (cell_type in all_cell_types) {
+  degs_fxn(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="Medication",exp_group="exclusive_glp1",ref_group="neither",enrichment="Yes",top_gsea = 30)
+}
+#GLP-1 vs. Both
+so_sub <- subset(so_diab,group2=="exclusive_glp1" | group2 =="both")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+so_sub$Medication <- so_sub$group2
+all_cell_types <- unique(so_sub$celltype2)[-21]
+for (cell_type in all_cell_types) {
+  degs_fxn(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="Medication",exp_group="both",ref_group="exclusive_glp1",enrichment="Yes",top_gsea = 30)
+}
+
+#GLP-1 vs. SGLT2
+so_sub <- subset(so_diab,group2=="exclusive_glp1" | group2 =="exclusive_sglt2")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+so_sub$Medication <- so_sub$group2
+all_cell_types <- unique(so_sub$celltype2)[-23]
+for (cell_type in all_cell_types) {
+  degs_fxn(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="Medication",exp_group="exclusive_glp1",ref_group="exclusive_sglt2",enrichment="Yes",top_gsea = 30)
+}
+
+#SGLT2 vs. None
+so_sub <- subset(so_diab,group2=="exclusive_sglt2" | group2 =="neither")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+so_sub$Medication <- so_sub$group2
+all_cell_types <- unique(so_sub$celltype2)
+for (cell_type in all_cell_types) {
+  degs_fxn(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="Medication",exp_group="exclusive_sglt2",ref_group="neither",enrichment="Yes",top_gsea = 30)
+}
+
+#Both vs. SGLT2
+so_sub <- subset(so_diab,group2=="both" | group2 =="exclusive_sglt2")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+so_sub$Medication <- so_sub$group2
+all_cell_types <- unique(so_sub$celltype2)
+for (cell_type in all_cell_types) {
+  degs_fxn(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="Medication",exp_group="both",ref_group="exclusive_sglt2",enrichment="Yes",top_gsea = 30)
+}
+
+#Both vs. None
+so_sub <- subset(so_diab,group2=="both" | group2 =="neither")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+so_sub$Medication <- so_sub$group2
+all_cell_types <- unique(so_sub$celltype2)
+for (cell_type in all_cell_types) {
+  degs_fxn(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="Medication",exp_group="both",ref_group="neither",enrichment="Yes",top_gsea = 30)
+}
+```
+##c. Senescence Marker Genes 
+###i. All Cells
+```{r}
+#Among Type 2: No meds vs. GLP-1 Exclusive
+##SGLT2i only -/+ #5 No, 0 yes
+#GLP-1 only +/- # 2 Yes, 3 No
+#Both +/+ #1 Both, 4 not both
+#Neither-/- #3 neither, 2 on someting
+
+all_genes <- rownames(so_sens_all)
+#Diabetes Groups
+#Type 2 vs. Lean Control
+so_subgroup <- subset(so_sens_all,group=="Type 2 Diabetes" | group=="Lean Control")
+so_subgroup$group <- factor(so_subgroup$group)
+so_subgroup$Type_2_Diabetes <- so_subgroup$group 
+degs_fxn_sens(so=so_subgroup,cell=NULL,gene_set=all_genes,exposure="Type_2_Diabetes",exp_group="Type 2 Diabetes",ref_group="Lean Control",enrichment="Yes",top_gsea = 30)
+
+#Create diab so
+so_diab <- subset(so_sens_all,group=="Type 2 Diabetes")
+#GLP-1 vs. None
+so_sub <- subset(so_diab,group2=="exclusive_glp1" | group2=="neither")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+#Rename variable
+so_sub$Medication <- so_sub$group2
+degs_fxn_sens(so=so_sub,cell=NULL,gene_set=all_genes,exposure="Medication",exp_group="exclusive_glp1",ref_group="neither",enrichment="Yes",top_gsea = 30)
+#GLP-1 vs. SGLT2
+so_sub <- subset(so_diab,group2=="exclusive_glp1" | group2=="exclusive_sglt2")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+#Rename variable
+so_sub$Medication <- so_sub$group2
+degs_fxn_sens(so=so_sub,cell=NULL,gene_set=all_genes,exposure="Medication",exp_group="exclusive_glp1",ref_group="exclusive_sglt2",enrichment="Yes",top_gsea = 30)
+
+#GLP-1 vs. Both
+so_sub <- subset(so_diab,group2=="exclusive_glp1" | group2=="both")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+#Rename variable
+so_sub$Medication <- so_sub$group2
+degs_fxn_sens(so=so_sub,cell=NULL,gene_set=all_genes,exposure="Medication",exp_group="both",ref_group="exclusive_glp1",enrichment="Yes",top_gsea = 30)
+
+#SGLT2 vs. None 
+so_sub <- subset(so_diab,group2=="exclusive_sglt2" | group2=="neither")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+#Rename variable
+so_sub$Medication <- so_sub$group2
+degs_fxn_sens(so=so_sub,cell=NULL,gene_set=all_genes,exposure="Medication",exp_group="exclusive_sglt2",ref_group="neither",enrichment="Yes",top_gsea = 30)
+
+#SGLT2 vs. Both
+so_sub <- subset(so_diab,group2=="exclusive_sglt2" | group2=="both")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+#Rename variable
+so_sub$Medication <- so_sub$group2
+degs_fxn_sens(so=so_sub,cell=NULL,gene_set=all_genes,exposure="Medication",exp_group="both",ref_group="exclusive_sglt2",enrichment="Yes",top_gsea = 30)
+
+#Both vs. None
+so_sub <- subset(so_diab,group2=="neither" | group2=="both")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+#Rename variable
+so_sub$Medication <- so_sub$group2
+degs_fxn_sens(so=so_sub,cell=NULL,gene_set=all_genes,exposure="Medication",exp_group="both",ref_group="neither",enrichment="Yes",top_gsea = 30)
+
+```
+###ii. Specific Cells
+```{r}
+#Major Cell Types
+#unique(so_sens_all$celltype_rpca)
+so_sens_all$celltype_rpca <- as.character(so_sens_all$celltype_rpca)
+so_sens_all$celltype2 <- ifelse(grepl("PT-",so_sens_all$celltype_rpca),"PT",
+                                ifelse(grepl("TAL-",so_sens_all$celltype_rpca),"TAL",
+                                       ifelse(grepl("PC-",so_sens_all$celltype_rpca),"PC",
+                                              ifelse(grepl("IC-",so_sens_all$celltype_rpca) & !grepl("lowQuality",so_sens_all$celltype_rpca),"IC",
+                                                     ifelse(grepl("DTL-",so_sens_all$celltype_rpca),"DTL",so_sens_all$celltype_rpca)))))
+unique(so_sens_all$celltype2)
+all_cell_types <- unique(so_sens_all$celltype2)
+all_genes <- rownames(so_sens_all)
+
+#Create diab so 
+so_diab <- subset(so_sens_all,group=="Type 2 Diabetes")
+
+#GLP-1 vs. None
+so_sub <- subset(so_diab,group2=="exclusive_glp1" | group2 =="neither")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+so_sub$Medication <- so_sub$group2
+all_cell_types <- unique(so_sub$celltype2)[-20]
+for (cell_type in all_cell_types) {
+degs_fxn_sens(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="Medication",exp_group="exclusive_glp1",ref_group="neither",enrichment="Yes",top_gsea = 30)
+}
+#GLP-1 vs. Both
+so_sub <- subset(so_diab,group2=="exclusive_glp1" | group2 =="both")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+so_sub$Medication <- so_sub$group2
+all_cell_types <- unique(so_sub$celltype2)[-21]
+for (cell_type in all_cell_types) {
+degs_fxn_sens(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="Medication",exp_group="both",ref_group="exclusive_glp1",enrichment="Yes",top_gsea = 30)
+}
+
+#GLP-1 vs. SGLT2
+so_sub <- subset(so_diab,group2=="exclusive_glp1" | group2 =="exclusive_sglt2")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+so_sub$Medication <- so_sub$group2
+all_cell_types <- unique(so_sub$celltype2)[-23]
+for (cell_type in all_cell_types) {
+degs_fxn_sens(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="Medication",exp_group="exclusive_glp1",ref_group="exclusive_sglt2",enrichment="Yes",top_gsea = 30)
+}
+
+#SGLT2 vs. None
+so_sub <- subset(so_diab,group2=="exclusive_sglt2" | group2 =="neither")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+so_sub$Medication <- so_sub$group2
+all_cell_types <- unique(so_sub$celltype2)
+for (cell_type in all_cell_types) {
+degs_fxn_sens(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="Medication",exp_group="exclusive_sglt2",ref_group="neither",enrichment="Yes",top_gsea = 30)
+}
+
+#Both vs. SGLT2
+so_sub <- subset(so_diab,group2=="both" | group2 =="exclusive_sglt2")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+so_sub$Medication <- so_sub$group2
+all_cell_types <- unique(so_sub$celltype2)
+for (cell_type in all_cell_types) {
+degs_fxn_sens(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="Medication",exp_group="both",ref_group="exclusive_sglt2",enrichment="Yes",top_gsea = 30)
+}
+
+#Both vs. None
+so_sub <- subset(so_diab,group2=="both" | group2 =="neither")
+so_sub$group2 <- factor(so_sub$group2)
+#Define genes
+all_genes <- rownames(so_sub)
+so_sub$Medication <- so_sub$group2
+all_cell_types <- unique(so_sub$celltype2)
+for (cell_type in all_cell_types) {
+degs_fxn_sens(so=so_sub,cell=cell_type,gene_set=all_genes,exposure="Medication",exp_group="both",ref_group="neither",enrichment="Yes",top_gsea = 30)
+}
+```
+
+#5. MAST Associations
+##a. All Cell Types
+```{r}
+<<<<<<< Updated upstream
+exposure_vars <- c("ast","alt")
+for (exp in exposure_vars){
+  mast_fxn(so=so_liver_sn,cell=NULL,exposure=exp,covariate="diagnosis_of_diabetes",gene_set=rownames(so_liver_sn),batch_size=100,exp_group=NULL,ref_group=NULL)
+}
+=======
+#Type 2 vs. LC
+so_subset <- subset(so_kidney_sc,group=="Type 2 Diabetes" | group=="Lean Control")
+so_subset$Diabetes <- so_subset$group
+so_subset$Diabetes <- factor(so_subset$Diabetes)
+mast_fxn(so=so_subset,cell=NULL,exposure="Diabetes",gene_set=rownames(so_subset),batch_size=1000,exp_group="Type 2 Diabetes",ref_group="Lean Control")
+
+#T2 + OC vs. LC
+so_subset <- subset(so_kidney_sc,group=="Type 2 Diabetes" | group=="Lean Control" | group=="Obese Control")
+so_subset$Diabetes <- ifelse(so_subset$group=="Type 2 Diabetes" | so_subset$group=="Obese Control","T2D + OC",so_subset$group)
+so_subset$Diabetes <- factor(so_subset$Diabetes)
+mast_fxn(so=so_subset,cell=NULL,exposure=exp,covariate="Diabetes",gene_set=rownames(so_subset),batch_size=1000,exp_group="T2D + OC",ref_group="Lean Control")
+
+#Medication Groups in Type 2
+so_diab <- subset(so_kidney_sc,group=="Type 2 Diabetes")
+
+#GLP-1 vs. None
+so_subset <- subset(so_diab, group2=="exclusive_glp1" | group2=="neither")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+mast_fxn(so=so_subset,cell=NULL,exposure="Medication",gene_set=rownames(so_subset),batch_size=1000,exp_group="exclusive_glp1",ref_group="neither")
+
+#GLP-1 vs. SLGT2
+so_subset <- subset(so_diab, group2=="exclusive_glp1" | group2=="exclusive_sglt2")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+mast_fxn(so=so_subset,cell=NULL,exposure="Medication",gene_set=rownames(so_subset),batch_size=1000,exp_group="exclusive_glp1",ref_group="exclusive_sglt2")
+
+#GLP-1 vs. Both
+so_subset <- subset(so_diab, group2=="exclusive_glp1" | group2=="both")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+mast_fxn(so=so_subset,cell=NULL,exposure="Medication",gene_set=rownames(so_subset),batch_size=1000,exp_group="exclusive_glp1",ref_group="both")
+
+#SLGT2 vs. None
+so_subset <- subset(so_diab, group2=="exclusive_sglt2" | group2=="neither")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+mast_fxn(so=so_subset,cell=NULL,exposure="Medication",gene_set=rownames(so_subset),batch_size=1000,exp_group="exclusive_sglt2",ref_group="neither")
+
+#SGLT2 vs. Both
+so_subset <- subset(so_diab, group2=="exclusive_sglt2" | group2=="both")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+mast_fxn(so=so_subset,cell=NULL,exposure="Medication",gene_set=rownames(so_subset),batch_size=1000,exp_group="exclusive_sglt2",ref_group="both")
+
+#Both vs. None
+so_subset <- subset(so_diab, group2=="exclusive_glp1" | group2=="both")
+so_subset$Medication <- so_subset$group2
+so_subset$Medication <- factor(so_subset$Medication)
+mast_fxn(so=so_subset,cell=NULL,exposure="Medication",gene_set=rownames(so_subset),batch_size=1000,exp_group="exclusive_glp1",ref_group="both")
+
+>>>>>>> Stashed changes
+```
+
+##b. Specific Cell Types
+```{r}
+Idents(so_liver_sn) <- so_liver_sn$celltype
+de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", NULL, "_top")
+
+#Gene set enrichment analysis
+sce_sn_hep <- as.SingleCellExperiment(so_liver_sn_hep)
+rm(so_liver_sn_hep)
+## C2 category is according to canonical pathways: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
+geneSets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG")
+### filter background to only include genes that we assessed
+geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
+geneSets <- geneSets[geneSets$gene_symbol %in% names(sce_sn_hep),]
+m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
+stats <- m$p_val_adj
+names(stats) <- rownames(m)
+eaRes <- fgsea(pathways = m_list, stats = na.omit(stats))
+#ooEA <- order(eaRes$pval, decreasing = FALSE)
+#kable(head(eaRes[ooEA, 1:7], n = 20))
+# Convert the leadingEdge column to comma-separated strings
+eaRes$leadingEdge <- sapply(eaRes$leadingEdge, function(x) paste(x, collapse = ", "))
+gc()
+# Save to CSV
+write.csv(eaRes, fs::path(dir.results,"GSEA_Diabetes_Hepatocytes.csv"))
+gc()
+
+#IPA Pathways 
+test_ipa <- readxl::read_xls("/Users/choiyej/Dropbox/PANTHER/IPA results/tanner_stage_12_345_rh_de_table_export.xls", skip = 1)
+colnames(test_ipa) <- c("pathway", "neglog_p", "ratio", "zscore", "molecules")
+
+# Volcano plot
+sig_cutoff = -log(0.05, base = 10)
+
+test_ipa <- test_ipa %>%
+  dplyr::mutate(direction = case_when(zscore < 0 & neglog_p > sig_cutoff ~ "Negative", 
+                                      zscore > 0 & neglog_p > sig_cutoff ~ "Positive",
+                                      zscore == 0 & neglog_p > sig_cutoff ~ "Unknown",
+                                      T ~ "NS")) %>%
+  group_by(direction) %>%
+  dplyr::mutate(count = row_number(),
+                label = case_when(direction != "NS" ~ paste0(str_sub(direction, 1,1), count))) %>%
+  ungroup()
+
+test_ipa$direction <- factor(test_ipa$direction, levels = c("Negative", "Positive", "Unknown", "NS"))
+
+ipa.plot <- test_ipa %>% filter(neglog_p > 0) %>%
+  ggplot(aes(x = zscore, y = neglog_p)) + 
+  geom_point(aes(color = direction), alpha = 0.5, size = 2) +
+  geom_hline(aes(yintercept = sig_cutoff), color = "red", linetype = "dashed") +
+  labs(x = "Z-Score",
+       y = "-log(p-value)",
+       color = "Direction") + 
+  scale_color_manual(values = c("#bf0603", "#457b9d",
+                                "#f6bd60", "#dad7cd")) +
+  ggrepel::geom_label_repel(aes(label = label, color = direction),
+                            label.size = 0.15,
+                            max.overlaps = 100, 
+                            min.segment.length = 0.01) +
+  theme_bw()
+
+# Table
+ipa.table.neg <- test_ipa %>%
+  dplyr::filter(direction == "Negative") %>%
+  dplyr::select(label, pathway) 
+ipa.table.pos <- test_ipa %>%
+  dplyr::filter(direction == "Positive") %>%
+  dplyr::select(label, pathway) 
+ipa.table.unk <- test_ipa %>%
+  dplyr::filter(direction == "Unknown") %>%
+  dplyr::select(label, pathway) 
+
+cbind.fill <- function(...) {
+  nm <- list(...) 
+  nm <- lapply(nm, as.matrix)
+  n <- max(sapply(nm, nrow)) 
+  do.call(cbind, lapply(nm, function(x) {
+    filled_matrix <- ifelse(is.na(x), "", x)
+    rbind(filled_matrix, matrix("", n - nrow(filled_matrix), ncol(filled_matrix)))
+  }))
+}
+
+ipa.table.comb <- cbind.fill(ipa.table.neg,ipa.table.pos,ipa.table.unk)
+gg.ipa.table <- ggtexttable(ipa.table.comb, rows = NULL,
+                            cols = c("Label", "Pathway", "Label", "Pathway","Label", "Pathway"),
+                            theme = ttheme("blank",
+                                           tbody.style = tbody_style(fill = "white", 
+                                                                     size = 8.5, 
+                                                                     hjust = 0,
+                                                                     x = 0.1))) %>%
+  tab_add_hline(at.row = 1:2, row.side = "top", linewidth = 0.8)
+
+
+
+ggarrange(ipa.plot, gg.ipa.table,
+          ncol = 2, heights = c(1,1), widths = c(0.5,1),
+          legend = "top")
+
+
+```
+
+
+#6. Visualize Results
+##a. Specific Cell Types
+```{r}
+so_kidney_sc$celltype_rpca <- as.character(so_kidney_sc$celltype_rpca)
+so_kidney_sc$celltype2 <- ifelse(grepl("PT-",so_kidney_sc$celltype_rpca),"PT",
+                                 ifelse(grepl("TAL-",so_kidney_sc$celltype_rpca),"TAL",
+                                        ifelse(grepl("PC-",so_kidney_sc$celltype_rpca),"PC",
+                                               ifelse(grepl("IC-",so_kidney_sc$celltype_rpca) & !grepl("lowQuality",so_kidney_sc$celltype_rpca),"IC",
+                                                      ifelse(grepl("DTL-",so_kidney_sc$celltype_rpca),"DTL",so_kidney_sc$celltype_rpca)))))
+unique(so_kidney_sc$celltype2)
+cell_type <- c("IC","TAL","PC","MON","VSMC/MC/FIB","MAC","T","DTL","PT","IC-A_lowQuality","PEC","DCT","EC-GC","CNT","EC-PTC","TAL_highUMI","NKT/NKC","ATL","B" ,"POD","EC-AEA" ,"EC-LYM")
+#"PT_lowQuality"
+cell_type <- str_replace_all(cell_type,"/","_")
+exposure <- "Medication"
+for (cell in cell_type){
+  pdf(fs::path(dir.results,paste0("venn_results_",cell,"_",exposure,".pdf")),width=20,height=15)
+  visualize_function(exposure,cell)
+  dev.off()
+}
+```
+
+##b. All Cell Types
+```{r}
+exposure = "Medication"
+exp_group = "exclusive_glp1"
+ref_group = "neither"
+
+cell_types <- c("TAL","PT","PC","DTL","IC","ALT","B","CNT","DCT","EC-GC","EC-PTC","MAC",
+                "MON","NKT_NKC","PEC","TAL_highUMI","T","VSMC_MC_FIB","POD")
+
+# Function to extract cell type from file name using a list of cell types
+extract_cell_type <- function(filename, cell_types) {
+  for (cell_type in cell_types) {
+    if (str_detect(filename, cell_type)) {
+      return(cell_type)
+    }
+  }
+  return(NA)  # Return NA if no cell type is found
+}
+
+visualize_cell <- function(exposure,exp_group,ref_group) {
+  
+  # List all files in the results directory
+  all_files <- dir_ls(path = dir.results, glob = "*.xlsx")  # List only .xlsx files
+  
+  # Filter the files that contain both the exposure and the word "Bulk" in the file name
+  matching_files <- all_files[str_detect(all_files, exposure) & str_detect(all_files, exp_group) & str_detect(all_files, ref_group) & !str_detect(all_files,"Bulk") & !str_detect(all_files,"Senescence")]
+  
+  # Check if matching files exist for the current cell type and exposure
+  if (length(matching_files) > 0) {
+    # Loop through each matching file
+    for (file in matching_files) {
+      # Extract cell type from the filename
+      cell_type <- extract_cell_type(basename(file), cell_types)
+      
+      # Dynamically assign the data to a variable named after the cell type
+      if (!is.na(cell_type)) {
+        assign(make.names(cell_type), read.xlsx(file), envir = .GlobalEnv)
+      }
+    }
+  }
+  
+  # Initialize a list to store data
+  all_data <- list()
+  # Loop through each file and process
+  for (file in matching_files) {
+    # Read the file (assuming CSV format, modify if needed)
+    data <- read.xlsx(file)
+    
+    # Extract cell type from the filename
+    cell_type <- extract_cell_type(basename(file), cell_types)
+    
+    # Add the cell type as a column
+    data$Cell_Type <- cell_type
+    
+    # Append to the list
+    all_data[[length(all_data) + 1]] <- data
+  }
+  
+  # Combine all data into a single dataframe
+  combined_data <- bind_rows(all_data)
+  combined_data$sig <- ifelse(combined_data$p_val_adj<0.05,"Significant","Non-Significant")
+  combined_data$sig <- factor(combined_data$sig)
+  
+# Filter significant data
+significant_data <- combined_data %>%
+  filter(sig == "Significant")
+
+# Get top 3 positive and negative genes for each Cell_Type
+top_positive_per_cell_type <- significant_data %>%
+  filter(avg_log2FC > 0) %>%  # Only positive values
+  group_by(Cell_Type) %>%
+  arrange(desc(avg_log2FC)) %>%
+  slice_head(n = 3) %>%
+  mutate(pos_or_neg = "Positive")
+
+top_negative_per_cell_type <- significant_data %>%
+  filter(avg_log2FC < 0) %>%  # Only negative values
+  group_by(Cell_Type) %>%
+  arrange(avg_log2FC) %>%  # Sort in ascending order for negative values
+  slice_head(n = 3) %>%
+  mutate(pos_or_neg = "Negative")
+
+# Combine both positive and negative data
+top_genes_per_cell_type <- bind_rows(top_positive_per_cell_type, top_negative_per_cell_type)
+
+# Create the plot
+p <- ggplot(combined_data, aes(x = Cell_Type, y = avg_log2FC)) +
+  
+  # Dot plot with jittered dots for individual data points, colored by significance
+  geom_jitter(aes(color = sig), width = 0.3, alpha = 1, size = 0.5) +
+  
+  # Set custom colors for the dots based on significance
+  scale_color_manual(values = c("Significant" = "red", "Non-Significant" = "lightblue1")) +
+  
+  # Add labels for the top positive and negative genes for each Cell_Type
+  geom_text(data = top_genes_per_cell_type, aes(label = Gene), 
+            color = "black", size = 3, 
+            vjust = -0.5, hjust = 0.5, angle = 45) +  # Adjust positioning of labels
+  
+  # Adjust theme and labels
+  theme_minimal() +
+  labs(
+    title = paste0("Top Genes. by ",exposure," Group (",exp_group," vs. ",ref_group,") by Cell Type"),
+    x = "Cell Type",
+    y = "Log2 Fold Change"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+pdf(fs::path(dir.results,paste0(exposure,"_",exp_group,"_",ref_group,".pdf")),width=20,height=20)
+plot(p)
+dev.off()
+}
+
+# Filter significant data
+significant_data <- combined_data %>%
+  filter(sig == "Significant")
+
+# Get top 3 positive and negative genes for each Cell_Type
+top_positive_per_cell_type <- significant_data %>%
+  filter(avg_log2FC > 0) %>%  # Only positive values
+  group_by(Cell_Type) %>%
+  arrange(desc(avg_log2FC)) %>%
+  slice_head(n = 3) %>%
+  mutate(pos_or_neg = "Positive")
+
+top_negative_per_cell_type <- significant_data %>%
+  filter(avg_log2FC < 0) %>%  # Only negative values
+  group_by(Cell_Type) %>%
+  arrange(avg_log2FC) %>%  # Sort in ascending order for negative values
+  slice_head(n = 3) %>%
+  mutate(pos_or_neg = "Negative")
+
+# Combine both positive and negative data
+top_genes_per_cell_type <- bind_rows(top_positive_per_cell_type, top_negative_per_cell_type)
+
+# Create the plot
+ggplot(combined_data, aes(x = Cell_Type, y = avg_log2FC)) +
+  
+  # Dot plot with jittered dots for individual data points, colored by significance
+  geom_jitter(aes(color = sig), width = 0.3, alpha = 1, size = 0.5) +
+  
+  # Set custom colors for the dots based on significance
+  scale_color_manual(values = c("Significant" = "red", "Non-Significant" = "lightblue1")) +
+  
+  # Add labels for the top positive and negative genes for each Cell_Type
+  geom_text(data = top_genes_per_cell_type, aes(label = Gene), 
+            color = "black", size = 3, 
+            vjust = -0.5, hjust = 0.5, angle = 45) +  # Adjust positioning of labels
+  
+  # Adjust theme and labels
+  theme_minimal() +
+  labs(
+    title = "Top 3 Positive and Negative Log2 Fold Change by Cell Type",
+    x = "Cell Type",
+    y = "Log2 Fold Change"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+# Create the plot
+ggplot(combined_data, aes(x = Cell_Type, y = avg_log2FC)) +
+  
+  # Dot plot with jittered dots for individual data points, colored by significance
+  geom_jitter(aes(color = sig), width = 0.3, alpha = 1, size = 0.5) +
+  
+  # Set custom colors for the dots based on significance
+  scale_color_manual(values = c("Significant" = "red", "Non-Significant" = "gray")) +
+  
+  # Add lines connecting the labels to the points
+  geom_segment(data = top_genes_per_cell_type, 
+               aes(x = Cell_Type, xend = Cell_Type, 
+                   y = avg_log2FC, yend = avg_log2FC), 
+               color = "black", size = 0.5, alpha = 0.7) +
+  
+  # Add labels with smaller text and adjust their positions
+  geom_text(data = top_genes_per_cell_type, 
+            aes(label = Gene), 
+            color = "black", size = 2.5, 
+            vjust = -0.5, hjust = 0.5, angle = 45) +  # Adjust positioning and size of text
+  
+  # Adjust theme and labels
+  theme_minimal() +
+  labs(
+    title = paste0("Top","by Cell Type"),
+    x = "Cell Type",
+    y = "Log2 Fold Change"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+
+
+#7. TODAY 
+```{r}
+#Load in AST and ALT in today 
+today <- read.csv(fs::path(dir.dat,"TODAY subaward","Clinical data","TODAY","CBL.csv")) # length(unique(today$releaseid)) - 699 ids
+today_M0 <- today %>%
+  filter(mvisit=="M00")
+#dplyr::select(c("releaseid","ALT","AST"))
+#Load in Proteomics in Today
+prot <- readRDS(fs::path(dir.dat,"Liver project","TODAY_proteomics.rds"))
+prot <- prot[c(7326,which(grepl("seq.",colnames(prot))))] #length(unique(prot$releaseid)) - 376 unique ids
+proteins <- colnames(prot)[which(grepl("seq.",colnames(prot)))]
+
+#rm(today,today_M0,prot)
+
+#Determine which proteins correlate with genes associated with alt and ast
+#AST
+ast_genes <- read.xlsx(fs::path(dir.dat,"Liver project","Results","Bulk_Results_for_Ast Di (High vs. Low).xlsx"))
+ast_genes_pos <- ast_genes %>%
+  filter(p_val_adj<0.05) %>%
+  filter(avg_log2FC>0) %>%
+  arrange(desc(avg_log2FC)) %>%
+  dplyr::slice(1:200) 
+ast_genes_pos <- ast_genes_pos$Gene
+ast_genes_neg <- ast_genes %>%
+  filter(p_val_adj<0.05) %>%
+  filter(avg_log2FC<0) %>%
+  arrange(avg_log2FC) %>%
+  dplyr::slice(1:200) 
+ast_genes_neg <- ast_genes_neg$Gene
+ast_genes <- c(ast_genes_pos,ast_genes_neg)
+
+#Key Protein Gene
+key <- readRDS(fs::path(dir.dat,"Liver project","gene_prot.RDS"))
+sig_proteins_ast <- key$AptName[which(ast_genes %in% key$EntrezGeneSymbol)]
+prot_ast <- prot[c("releaseid",sig_proteins_ast)]
+dat_ast <- tidylog::right_join(today_M0,prot_ast,by="releaseid")
+
+#Create loop for linear regression between proteins & liver enzymes
+results <- data.frame()
+for (x in sig_proteins_ast) {
+  M0 <- as.formula(paste0("AST ~ ",x))
+  M1 <- lm(M0,data=dat_ast)
+  beta <- summary(M1)$coef[2,1]
+  pval <- summary(M1)$coef[2,4]
+  results_full <- data.frame(Protein=x,Estimate=beta,Pvalue=pval)
+  results <- rbind(results,results_full)
+}
+results_fdr <- results %>%
+  mutate(fdr = p.adjust(Pvalue,method="fdr"))
+results_sig <- results_fdr %>%
+  filter(fdr<0.05)
+
+#ALT
+alt_genes <- read.xlsx(fs::path(dir.dat,"Liver project","Results","Bulk_Results_for_Alt Di (High vs. Low).xlsx"))
+alt_genes_pos <- alt_genes %>%
+  filter(p_val_adj<0.05) %>%
+  filter(avg_log2FC>0) %>%
+  arrange(desc(avg_log2FC)) %>%
+  dplyr::slice(1:200) 
+alt_genes_pos <- alt_genes_pos$Gene
+alt_genes_neg <- alt_genes %>%
+  filter(p_val_adj<0.05) %>%
+  filter(avg_log2FC<0) %>%
+  arrange(avg_log2FC) %>%
+  dplyr::slice(1:200) 
+alt_genes_neg <- alt_genes_neg$Gene
+alt_genes <- c(alt_genes_pos,alt_genes_neg)
+sig_proteins_alt <- key$AptName[which(alt_genes %in% key$EntrezGeneSymbol)]
+prot_alt <- prot[c("releaseid",sig_proteins_ast)]
+dat_alt <- tidylog::right_join(today_M0,prot_alt,by="releaseid")
+
+#Create loop for linear regression between proteins & liver enzymes
+results2 <- data.frame()
+for (x in sig_proteins_alt) {
+  M0 <- as.formula(paste0("ALT ~ ",x))
+  M1 <- lm(M0,data=dat_alt)
+  beta <- summary(M1)$coef[2,1]
+  pval <- summary(M1)$coef[2,4]
+  results_full2 <- data.frame(Protein=x,Estimate=beta,Pvalue=pval)
+  results2 <- rbind(results2,results_full2)
+}
+results_fdr2 <- results2 %>%
+  mutate(fdr = p.adjust(Pvalue,method="fdr"))
+results_sig2 <- results_fdr2 %>%
+  filter(fdr<0.05)
+
+results_sig2$Gene <- key$EntrezGeneSymbol[which(results_sig2$Protein %in% key$AptName)]
+results_sig2$Gene %in% alt_genes
+
+```
+
+#8. TEEN-LABs
+```{r}
+#Proteomics teen labs 
+load(fs::path(dir.dat,"Teen Labs","Data_Cleaned","analysis_dataset.RData"))
+
+```
+
+#9. Pseudotime Analysis - Hepatocytes
+```{r}
+
+
+```
+
+#10. Targeted DEGs 
+```{r}
+
+
+```
+
+

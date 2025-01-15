@@ -50,7 +50,7 @@ library(pushoverr)
 library(future)
 
 #Increase Memory
-# mem.maxVSize(64000000000)
+mem.maxVSize(64000000000)
 
 # Parallel processing
 # plan(multicore, workers = 16)
@@ -110,25 +110,18 @@ so_kidney_sc@meta.data$study= ifelse(grepl("RH",so_kidney_sc@meta.data$record_id
 # Add new meta data to so 
 so_kidney_sc <- AddMetaData(so_kidney_sc, meta_kidney_sc)
 
+gc()
 #Filter to baseline visits only
 so_kidney_sc <- subset(so_kidney_sc, visit != "12_months_post_surgery")
 
+gc()
 #Filter to RH/RH2, CROCODILE, and IMPROVE
 so_kidney_sc <- subset(so_kidney_sc, study == "subset")
 
-#Normalize & Scale Data
-so_kidney_sc <- NormalizeData(so_kidney_sc)
-so_kidney_sc <- ScaleData(so_kidney_sc)
 
-
-#Aggregate 
-agg_expression <- AggregateExpression(
-  object = data,                  
-  features = NULL,                     
-  group.by = c("michigan_id","LR_clusters"),  # Aggregate by cell_type
-  fun = "mean",                        
-  return.seurat = FALSE               
-)
+# #Normalize & Scale Data
+# so_kidney_sc <- NormalizeData(so_kidney_sc)
+# so_kidney_sc <- ScaleData(so_kidney_sc)
 
 ```
 
@@ -148,7 +141,101 @@ DimPlot(so_kidney_sc, reduction = "umap", group.by = "diabetes")
 DimPlot(so_kidney_sc, reduction = "umap", group.by = "group")
 ```
 
-#4. Differential Expression Analysis
+#4. Linear Regression 
+```{r}
+agg_expression <- AggregateExpression(
+  object = so_kidney_sc,
+  features = NULL,
+  group.by = c("kit_id", "celltype_rpca"),  # Aggregate by cell_type
+  fun = "mean",
+  return.seurat = FALSE
+)
+
+# Check the structure of the result
+agg_expression_matrix <- agg_expression$RNA  # Assuming RNA is the name of your assay
+
+# Ensure 'pah' values are aligned with the conditions in agg_expression_matrix
+# Assuming that the 'kit_id' and 'celltype_rpca' are the columns that the data was aggregated by.
+
+# Extract metadata for 'pah' and align it with the columns of aggregated expression matrix
+agg_metadata <- so_kidney_sc@meta.data[, c("kit_id", "celltype_rpca", "pah_clear_bsa")]
+
+# Create a combined factor for 'kit_id' and 'celltype_rpca' to match columns in agg_expression_matrix
+agg_metadata$condition <- interaction(agg_metadata$kit_id, agg_metadata$celltype_rpca, sep = "_")
+
+# Check if the names match the column names of the aggregated expression matrix
+colnames(agg_expression_matrix) <- as.character(agg_metadata$condition)
+
+# Now align the pah values to the column names (conditions) of agg_expression_matrix
+pah_values <- agg_metadata$pah
+
+# Make sure pah_values is of the correct length to match the columns of the aggregated expression matrix
+if(length(pah_values) != ncol(agg_expression_matrix)) {
+  stop("The number of pah values does not match the number of columns in the aggregated expression matrix.")
+}
+
+# Now you can run linear regression for each gene with pah as the predictor
+regression_results <- data.frame(Gene = character(),
+                                 Coefficient = numeric(),
+                                 PValue = numeric(),
+                                 stringsAsFactors = FALSE)
+
+# Loop over each gene and perform linear regression
+for (gene in rownames(agg_expression_matrix)) {
+  gene_expression <- agg_expression_matrix[gene, ]
+  
+  # Perform linear regression with pah as the predictor
+  lm_model <- lm(gene_expression ~ pah_values)
+  
+  # Extract the coefficient and p-value from the model
+  model_summary <- summary(lm_model)
+  coef <- model_summary$coefficients[2, 1]  # Coefficient for pah
+  p_value <- model_summary$coefficients[2, 4]  # P-value for pah
+  
+  # Store the results
+  regression_results <- rbind(regression_results, data.frame(Gene = gene, 
+                                                           Coefficient = coef, 
+                                                           PValue = p_value))
+}
+
+# View the results
+head(regression_results)
+
+
+# Extract 'pah' variable from Seurat metadata
+pah_values <- so_kidney_sc@meta.data$pah_clear_bsa
+length(pah_values)
+# Create an empty data frame to store results
+regression_results <- data.frame(Gene = character(), 
+                                 Coefficient = numeric(), 
+                                 PValue = numeric(), 
+                                 stringsAsFactors = FALSE)
+
+# Loop over each gene and perform linear regression
+for (gene in rownames(agg_expression_matrix)) {
+  gene_expression <- agg_expression_matrix[gene, ]
+  
+  # Perform linear regression with pah as the predictor
+  lm_model <- lm(gene_expression ~ pah_values)
+  
+  # Extract the coefficient and p-value from the model
+  model_summary <- summary(lm_model)
+  coef <- model_summary$coefficients[2, 1]  # Coefficient for pah
+  p_value <- model_summary$coefficients[2, 4]  # P-value for pah
+  
+  # Store the results
+  regression_results <- rbind(regression_results, data.frame(Gene = gene, 
+                                                           Coefficient = coef, 
+                                                           PValue = p_value))
+}
+
+# View the results
+head(regression_results)
+
+
+```
+
+#5. Differential Expression Analysis
 ```{r}
 #Define Gene Sets
 all.genes = rownames(so_kidney_sc)
@@ -196,7 +283,7 @@ m_top <- m_top %>% head(2000)
 
 ```
 
-#5. Model-based Analysis of Single-cell Transcriptomics 
+#6. Model-based Analysis of Single-cell Transcriptomics 
 ```{r}
 # Get expression matrix (counts)
 expr_matrix <- as.matrix(GetAssayData(so_kidney_sc, layer = "counts"))
@@ -238,7 +325,7 @@ zlm_model <- zlm(~ pah_clearance + batch + condition, sca)
 
 ```
 
-#6. Pseudotime Analysis
+#7. Pseudotime Analysis
 ```{r pseudotime analysis}
 ## Make SO into SCE object for pseudotime analysis
 sce_PT <- as.SingleCellExperiment(subset(so_kidney_sc, PT == "PT"), assay = "RNA")
