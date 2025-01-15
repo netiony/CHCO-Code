@@ -902,14 +902,14 @@ plot(p)
 dev.off()
 }
 
-so=so_sens_all
-cell=NULL
-exposure=exp
-covariate=NULL
-gene_set=rownames(so_sens_all)
-batch_size=length(gene_set)
-exp_group="Yes"
-ref_group="No"
+#so=so_sens_all
+#cell=NULL
+#exposure=exp
+#covariate=NULL
+#gene_set=rownames(so_sens_all)
+#batch_size=length(gene_set)
+#exp_group="Yes"
+#ref_group="No"
 
 #Mast Function----
 mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,ref_group) {
