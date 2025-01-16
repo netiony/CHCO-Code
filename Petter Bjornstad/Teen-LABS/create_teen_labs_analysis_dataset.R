@@ -184,6 +184,29 @@ diabetes <- diabetes %>%
 diabetes <- diabetes %>% select("ID", "visit", "DBTOTAL", "diabetes_duration")
 df <- left_join(df, diabetes, by = c("ID", "visit"))
 
+# read in ALT/AST data - "-5" means not done
+alt_ast <- read.csv('/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Teen Labs/Data_Cleaned/Teen-LABS_AST_ALT.csv', na.strings = c("-5"))
+# "-7" means below lower limit of detection. Waiting to hear from Hailey what that is....for now, I will just put in a 1
+alt_ast$AST <- ifelse(alt_ast$AST == "-7", 1, alt_ast$AST)
+alt_ast$ALT <- ifelse(alt_ast$ALT == "-7", 1, alt_ast$ALT)
+alt_ast$AST <- as.numeric(alt_ast$AST)
+alt_ast$ALT <- as.numeric(alt_ast$ALT)
+alt_ast$visit <- alt_ast$Visit
+alt_ast$Visit <- NULL
+alt_ast <- alt_ast %>%
+  mutate(visit = case_when(
+    visit == 1 ~ "Month 1",
+    visit == 6 ~ "Month 6",
+    visit == 12 ~ "Year 1",
+    visit == 24 ~ "Year 2",
+    visit == 36 ~ "Year 3",
+    visit == 48 ~ "Year 4",
+    visit == 60 ~ "Year 5",
+    visit == 72 ~ "Year 6",
+    visit == 96 ~ "Year 8"
+  )) 
+# getting warning about NAs introduced by coercion but I don't see where that is an issue
+df <- left_join(df, alt_ast, by = c("ID", "visit"))
 
 # read in Olink data
 olink <- read.csv("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Teen Labs/Olink data/TL_baseline_proteomics_processed_wide.csv")
