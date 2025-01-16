@@ -912,6 +912,7 @@ dev.off()
 #ref_group="No"
 
 #Mast Function----
+##a. All Genes ----
 mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,ref_group) {
   DefaultAssay(so) <- "RNA"
 
@@ -1054,6 +1055,151 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
   dev.off()
   }
 }
+
+##b. Senescence Genes ---
+mast_sens_fxn <- function(so,cell,exposure,covariate,gene_set,exp_group,ref_group) {
+  DefaultAssay(so) <- "RNA"
+  
+  #Conidtion names
+  if (!is.null(exp_group)) {
+    condition <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group," vs. ",ref_group,")")
+  } else {
+    condition <- paste0(str_to_title(exposure))
+  }
+  
+  #Filter so to specified cell type
+  if (!is.null(cell)){
+    so <- subset(so,celltype2==cell)
+    DefaultAssay(so) <- "RNA"
+  } 
+  
+  #Association by Group
+  #combined_results <- data.frame()
+  #num_genes <- length(gene_set)
+  #for (start_batch in seq(1,num_genes,by=batch_size)) {
+    
+    #end_batch <- min(start_batch + batch_size - 1, num_genes)
+    #batch <- gene_set[start_batch:end_batch]
+    
+    # Subset the Seurat object to include only genes in the gene set
+    #subset <- intersect(batch, rownames(so))
+    so_sub <- subset(so_sub, features = subset)
+    
+    # Extract the expression data matrix from so (e.g., normalized counts)
+    expression_matrix <- as.matrix(GetAssayData(so_sub, layer = "data"))
+    
+    # Extract metadata
+    cell_metadata <- so_sub@meta.data
+    #cell_metadata[[exposure]] <- factor(cell_metadata[[exposure]])
+    
+    # Create SingleCellAssay object
+    sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+    
+    # Assuming gene_set is a vector of gene names
+    sca_gene_set <- sca[rownames(sca) %in% gene_set, ]
+    
+    #Define the formula
+    model_formula <- as.formula(paste0("~", exposure))
+    model_formula <- ~ast
+    exp <- paste0(exposure,exp_group)
+    
+    # Run the linear model with zlm
+    zlm_results <- zlm(formula = model_formula, sca = sca_gene_set)
+    
+    # Summarize results and perform likelihood ratio test (LRT) for outcome
+    summary_zlm <- summary(zlm_results, doLRT = "ast")
+    
+    # Convert the summary to a data table for easy manipulation
+    summary_dt <- summary_zlm$datatable
+    
+    #Overall with Hurdle and logFC
+    fcHurdle1 <- merge(summary_dt[contrast==exp & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                       summary_dt[contrast==exp & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+    fcHurdle1[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+    fcHurdle1$component <- "FC_H"
+    fcHurdle2 <- merge(summary_dt[contrast==exp & component=='C',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                       summary_dt[contrast==exp & component=='C', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+    fcHurdle2[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+    fcHurdle2$component <- "C"
+    fcHurdle3 <- merge(summary_dt[contrast==exp & component=='D',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                       summary_dt[contrast==exp & component=='D', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+    fcHurdle3[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+    fcHurdle3$component <- "D"
+    
+    fcHurdle <- rbind(fcHurdle1,fcHurdle2)
+    fcHurdle <- rbind(fcHurdle,fcHurdle3)
+    
+    result1 <- fcHurdle
+    result1 <- result1 %>%
+      filter(fdr<0.05) %>% 
+      dplyr::rename(LogFoldChange=coef) %>% 
+      dplyr::rename(Gene=primerid)
+    
+    # Append the batch results to the combined results using rbindlist
+    # combined_results <- rbind(combined_results, batch_results)
+    combined_results <- rbindlist(list(combined_results, result1), use.names = TRUE, fill = TRUE)
+    
+  }
+  
+  # Specify the file name and data
+  if (!is.null(cell)){
+    output_file <- paste0("Results_",cell_name,"_cells_for_",condition,".xlsx")
+  } else {
+    output_file <- paste0("Results_for_",condition,".xlsx")
+  }
+  
+  write.csv(combined_results,fs::path(output_file))
+  
+  # Filter top 10 positive and negative log2FoldChange
+  top_pos <- as.data.frame(combined_results) %>%
+    filter(component=="FC_H") %>% 
+    filter(fdr<0.05) %>%
+    filter(LogFoldChange>0) %>% 
+    arrange(desc(LogFoldChange)) %>%
+    dplyr::slice(1:30) 
+  # dplyr::rename(Gene=primerid,
+  #               LogFC=coef)
+  
+  top_neg <- as.data.frame(combined_results) %>%
+    filter(component=="FC_H") %>% 
+    filter(fdr<0.05) %>%
+    filter(LogFoldChange<0)  %>% 
+    arrange(LogFoldChange) %>%
+    dplyr::slice(1:30) 
+  # dplyr::rename(Gene=primerid,
+  #               LogFC=coef)
+  if(dim(top_pos)[[1]] > 0 | dim(top_neg)[[1]] > 0) {
+    top_pos$Direction <- "Positive"
+    top_neg$Direction <- "Negative"
+    
+    # Combine and prepare for plotting
+    top_genes <- bind_rows(top_pos, top_neg)
+    
+    # Set sorting order: all negative genes first, then all positive genes
+    top_genes <- top_genes %>%
+      mutate(Gene = factor(Gene, levels = Gene[order(Direction, LogFoldChange)]))  # Order by Direction and log2FC
+    
+    # # Bar chart with flipped x and y axes
+    p <- ggplot(top_genes, aes(x = LogFoldChange, y = Gene, fill = Direction)) +
+      geom_bar(stat = "identity") +
+      labs(x = "logFC", y = "Gene",title=paste0(condition,"vs. ",reference," among", cell," cells in youth with Type 2 Diabetes")) +
+      scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+      theme_minimal()+
+      theme(element_text(family="Times"))+
+      theme(legend.position="none")
+    
+    if (!is.null(cell)){
+      figure_file<- paste0("MAST_Barchart_",cell_name,"_cells_for_",condition,".pdf")
+    } else {
+      figure_file <- paste0("MAST_Barchart_for_",condition,".pdf")
+    }
+    
+    pdf(fs::path(dir.results,figure_file),width=20,height=20)
+    plot(p)
+    dev.off()
+  }
+}
+
 
 
 #Ideas Function ----
