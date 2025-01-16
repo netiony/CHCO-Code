@@ -2052,6 +2052,176 @@ plot(volcano_plot_ast)
 ```
 
 #9. TEEN-LABs
+##a. New
+```{r}
+#Proteomics teen labs 
+load(fs::path(dir.dat,"Teen Labs","Data_Cleaned","analysis_dataset.RData"))
+dat_baseline <- df %>% 
+  filter(visit=="Month 1")
+dat_followup <- df %>% 
+  filter(visit=="Month 6") 
+dat <- df %>% 
+  filter(visit=="Month 1" | visit=="Month 6")
+
+#Protein key
+key <- analyte_info %>% 
+  dplyr::select(all_of(c("AptName","SeqId","EntrezGeneSymbol")))
+
+#Senescence Proteins
+sens_proteins <- key$AptName[which(key$EntrezGeneSymbol %in% sens_genes)]
+prot <- df[c("ID","visit",sens_proteins)]
+protein <- colnames(prot)[-c(1,2)]
+prot_baseline <- prot %>% 
+  filter(visit=="Month 1")
+prot_followup <- prot %>% 
+  filter(visit=="Month 6")
+#Name proteins baseline or followup 
+colnames(prot_baseline)[-c(1,2)] <- paste0(colnames(prot_baseline)[-c(1,2)],"_baseline")
+colnames(prot_followup)[-c(1,2)] <- paste0(colnames(prot_followup)[-c(1,2)],"_followup")
+prot_baseline <- prot_baseline %>% 
+  dplyr::select(-visit)
+prot_baseline_dat <- prot_baseline
+prot_followup <- prot_followup %>% 
+  dplyr::select(-visit)
+
+prot <- tidylog::left_join(prot_baseline,prot_followup,by="ID")
+# Find columns with "baseline" and "followup"
+baseline_cols <- grep("_baseline$", colnames(prot), value = TRUE)
+followup_cols <- grep("_followup$", colnames(prot), value = TRUE)
+
+# Sort to ensure matching order
+baseline_cols <- sort(baseline_cols)
+followup_cols <- sort(followup_cols)
+
+# Create new columns for differences
+for (i in seq_along(baseline_cols)) {
+  protein_name <- sub("_baseline$", "", baseline_cols[i])  # Get protein name (e.g., "protein1")
+  diff_col <- paste0(protein_name, "_diff")               # Create a difference column name
+  prot[[diff_col]] <- prot[[followup_cols[i]]] - prot[[baseline_cols[i]]]
+}
+
+#Covariates at baseline
+dat_cov <- dat %>% 
+  filter(visit=="Month 1") %>% 
+  dplyr::select(all_of(c("ID","SEX","HBA1C","age"))) 
+
+rm(df,analyte_info)
+
+#ALT/AST
+liv <- read.csv(fs::path(dir.dat,"Liver Project","Teen-LABS_AST_ALT.csv"))
+liv <- liv %>% 
+  dplyr::rename(visit=Visit) %>% 
+  filter(visit==1 | visit==6) %>% 
+  mutate(visit=case_when(visit==1~"Month 1",
+                         visit==6~"Month 6")) %>% 
+  mutate(across(everything(),~ifelse(.==-5,NA,.))) %>% 
+  mutate(across(everything(),~ifelse(.==-7,1,.)))
+liv_baseline <- liv %>% 
+  filter(visit=="Month 1") %>% 
+  dplyr::select(-visit) %>% 
+  dplyr::rename(ALT_baseline=ALT,
+                AST_baseline=AST)
+liv_followup <- liv %>% 
+  filter(visit=="Month 6") %>% 
+  dplyr::select(-visit) %>% 
+  dplyr::rename(ALT_followup=ALT,
+                AST_followup=AST)
+liv <- tidylog::left_join(liv_baseline,liv_followup,by="ID")
+liv <- liv %>% 
+  mutate(ALT_diff = ALT_followup-ALT_baseline,
+         AST_diff = AST_followup-AST_baseline) 
+
+
+dat_cov$ID <- as.character(dat_cov$ID)
+prot$ID<- as.character(prot$ID)
+
+#Baseline proteins & baseline covariates and baseline and followup alt/ast
+dat_all <- tidylog::right_join(dat_cov,liv,by=c("ID"))
+dat_all <- tidylog::left_join(dat_all,prot,by=c("ID"))
+
+#Run linear mixed effect model & difference model 
+protein_diff <- paste0(protein,"_diff")
+results <- data.frame()
+covs <- c("age","SEX","HBA1C")
+for (x in protein_diff) {
+  for (y in c("AST_diff","ALT_diff")) {
+    M0_crude <- as.formula(paste0(y,"~",x))
+    M0_adj <- as.formula(paste0(y,"~",x,"+",paste(covs, collapse = "+")))
+    M1_crude <- lm(M0_crude,data=dat_all)
+    M1_adj <- lm(M0_adj,data=dat_all)
+    coef_crude <- summary(M1_crude)$coef[2,1]
+    coef_adj <- summary(M1_adj)$coef[2,1]
+    p_crude <- summary(M1_crude)$coef[2,4]
+    p_adj <- summary(M1_adj)$coef[2,4]
+    diff_results <- data.frame(Protein=x,Enzyme=y,Coef=coef_adj,PValue=p_adj)
+    results <- rbind(results,diff_results)
+  }
+}
+r_alt <- results %>% 
+  filter(Enzyme=="ALT_diff") %>% 
+  mutate(fdr=p.adjust(PValue,method="fdr"))
+r_ast <- results %>% 
+  filter(Enzyme=="AST_diff") %>% 
+  mutate(fdr=p.adjust(PValue,method="fdr"))
+results <- rbind(r_alt,r_ast)
+results <- results %>% 
+  mutate(sig=ifelse(fdr<0.05,"*",""))
+write.csv(results,fs::path(dir.results,"Diff_Results_Liver_Teenlabs_Imputed.csv"))
+
+#Baseline protein with change in ALT/AST pre and post surgery
+liv <- read.csv(fs::path(dir.dat,"Liver Project","Teen-LABS_AST_ALT.csv"))
+liv <- liv %>% 
+  dplyr::rename(visit=Visit) %>% 
+  filter(visit==1 | visit==6) %>% 
+  mutate(visit=case_when(visit==1~"Month 1",
+                         visit==6~"Month 6")) %>% 
+  mutate(across(everything(),~ifelse(.==-5,NA,.))) %>% 
+  mutate(across(everything(),~ifelse(.==-7,NA,.)))
+prot_baseline_dat$ID <- as.character(prot_baseline_dat$ID)
+dat_baseline <- tidylog::left_join(liv,prot_baseline_dat,by=c("ID"))
+dat_baseline <- tidylog::left_join(dat_cov,dat_baseline,by="ID")
+dat_baseline <- dat_baseline %>% 
+  mutate(time=case_when(visit=="Month 1"~1,
+                        visit=="Month 6"~6))
+
+#Linear Mixed Effects Model
+protein_baseline <- paste0(protein,"_baseline")
+covs <- c("age","SEX","HBA1C")
+
+results <- data.frame()
+for (x in protein_baseline) {
+  for (y in c("AST","ALT")) {
+    M0_crude <- as.formula(paste0(y,"~",x,"*time+(1|ID)"))
+    M0_adj <- as.formula(paste0(y,"~",x,"*time+",paste(covs, collapse = "+"),"+(1|ID)"))
+    M1_crude <- lmer(M0_crude,data=dat_baseline)
+    M1_adj <- lmer(M0_adj,data=dat_baseline)
+    Main <- summary(M1_adj)$coef[2,1]
+    Main_p <- summary(M1_adj)$coef[2,5]
+    Time <- summary(M1_adj)$coef[3,1]
+    Time_p <- summary(M1_adj)$coef[3,5]
+    Int <- summary(M1_adj)$coef[7,1]
+    Int_p <- summary(M1_adj)$coef[7,5]
+    results_int <- data.frame(Protein=x,Enzyme=y,Main,Main_p,Time,Time_p,Int,Int_p)
+    results <- rbind(results,results_int)
+  }
+}
+r_alt <- results %>% 
+  filter(Enzyme=="ALT") %>% 
+  mutate(Main_fdr=p.adjust(Main_p,method="fdr")) %>% 
+  mutate(Int_fdr=p.adjust(Int_p,method="fdr"))
+r_ast <- results %>% 
+  filter(Enzyme=="AST") %>% 
+  mutate(Main_fdr=p.adjust(Main_p,method="fdr")) %>% 
+  mutate(Int_fdr=p.adjust(Int_p,method="fdr"))
+results <- rbind(r_alt,r_ast)
+results <- results %>% 
+  mutate(Main_sig=ifelse(Main_fdr<0.05,"*","")) %>% 
+  mutate(Int_sig=ifelse(Int_fdr<0.05,"*",""))
+results$AptName <- str_remove(results$Protein,"_baseline")
+results <- tidylog::left_join(results,key,by="AptName")
+write.csv(results,fs::path(dir.results,"LMEM_TeenLabs_Liver_Results_Imputed.csv"))
+```
+##b. Old
 ```{r}
 #Proteomics teen labs 
 load(fs::path(dir.dat,"Teen Labs","Data_Cleaned","analysis_dataset.RData"))
@@ -2225,23 +2395,95 @@ so_liver_sn <- AddModuleScore(
   replace = TRUE
 )
 
-# Extract normalized expression data
-expr_data <- as.data.frame(t(so_liver_sn@assays$RNA@data))
+# Aggregate senescence scores at the individual level (mean or median per individual)
+individual_data <- so_liver_sn@meta.data %>%
+  group_by(Kit_Lot) %>%
+  summarise(
+    avg_senescence = mean(SenescenceScore1, na.rm = TRUE),  # mean score per individual
+    median_senescence = median(SenescenceScore1, na.rm = TRUE),  # or median score if preferred
+    alt=first(alt),
+    ast=first(ast),
+    diagnosis_of_diabetes=first(diagnosis_of_diabetes),
+    group2=first(group2),
+    across(all_of(oro_vars), ~first(.), .names = "first_{.col}")
+  )
 
-# Add participant IDs
-expr_data$kit_id <- so_liver_sn@meta.data$kit_id
 
-# Add group information if available
-expr_data$group <- seurat_obj@meta.data$group
+# Boxplot or violin plot
+#Type 2 Diabetes
+ggplot(so_liver_sn@meta.data, aes(x = diagnosis_of_diabetes, y = SenescenceScore1, fill = diagnosis_of_diabetes)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.2, outlier.shape = NA) +
+  theme_minimal() +
+  labs(title = "Senescence Score by Diabetes Status", x = "Diabetes (Yes vs. No)", y = "Senescence Score")
 
-# Aggregate data by participant
-agg_data <- expr_data %>%
-  group_by(participant_id, group) %>%
-  summarise(across(where(is.numeric), mean, .names = "mean_{col}"))
+#Aggregated
+ggplot(individual_data, aes(x = diagnosis_of_diabetes, y = avg_senescence, fill = diagnosis_of_diabetes)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.2, outlier.shape = NA) +
+  theme_minimal() +
+  labs(title = "Senescence Score by Diabetes Status", x = "Diabetes (Yes vs. No)", y = "Average Senescence Score")
 
+#Difference in Senescence Score for Type 2 vs. No Type 2
+t.test(SenescenceScore1 ~ diagnosis_of_diabetes, data = so_liver_sn@meta.data)
+
+#Medication
+#Difference in Senescence Score for Medicaiton Type
+ggplot(so_liver_sn@meta.data, aes(x = group2, y = SenescenceScore1, fill = group2)) +
+  #geom_jitter(width = 0.2, alpha = 0.5, size = 0.8) +  # Add jitter for individual data points
+  geom_boxplot(outlier.shape = NA, width = 0.6) +  # Boxplot without outliers
+  #geom_jitter(width = 0.2, alpha = 0.5, size = 0.8) +  # Add jitter for individual data points
+  theme_minimal() +
+  labs(title = "Senescence Score by Medication Status", x = "Medication", y = "Senescence Score")
+
+#Aggregated
+ggplot(individual_data, aes(x = group2, y = avg_senescence, fill = group2)) +
+  #geom_jitter(width = 0.2, alpha = 0.5, size = 0.8) +  # Add jitter for individual data points
+  geom_boxplot(outlier.shape = NA, width = 0.6) +  # Boxplot without outliers
+  geom_jitter(width = 0.2, alpha = 0.5, size = 0.8) +  # Add jitter for individual data points
+  theme_minimal() +
+  labs(title = "Average Senescence Score by Medication Status", x = "Medication", y = "Average Senescence Score")
+
+
+#Anova
+#singel cell
+mod <- aov(SenescenceScore1 ~ group2, data = so_liver_sn@meta.data)
+summary(mod)
+# Post-hoc test: Tukey's Honest Significant Difference (HSD)
+TukeyHSD(mod)
+
+#Bulk
+mod <- aov(avg_senescence ~ group2, data = individual_data)
+summary(mod)
+# Post-hoc test: Tukey's Honest Significant Difference (HSD)
+TukeyHSD(mod)
+
+#Correlate with oroborus data
+oro_vars <- colnames(so_liver_sn@meta.data)[85:114]
+for (oro in oro_vars){
+  p <- ggplot(so_liver_sn@meta.data, aes(x = !!sym(oro), y = SenescenceScore1)) +
+  geom_point(alpha = 0.6) +  # Scatter points
+  geom_smooth(method = "lm", color = "blue", se = FALSE) +  # Linear regression line
+  theme_minimal() +
+  labs(title = paste0("Senescence Score vs. ",str_to_title(oro)),
+       x = paste0(str_to_title(oro)),
+       y = "Senescence Score") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+  print(p)
+}
 
 #Correlate with alt/ast
 #AST
+# Scatter plot with regression line
+ggplot(so_liver_sn@meta.data, aes(x = ast, y = SenescenceScore1)) +
+  geom_point(alpha = 0.6) +  # Scatter points
+  geom_smooth(method = "lm", color = "blue", se = FALSE) +  # Linear regression line
+  theme_minimal() +
+  labs(title = "Senescence Score vs. AST (U/L)",
+       x = "Continuous Exposure Variable",
+       y = "Senescence Score") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels if necessary
+
 cor.test(so_liver_sn@meta.data$SenescenceScore1, so_liver_sn@meta.data$ast)
 lm_model <- lm(SenescenceScore1 ~ ast, data = so_liver_sn@meta.data)
 summary(lm_model)
@@ -2279,7 +2521,7 @@ oro_vars <- colnames(so_liver_sn@meta.data)[85:114]
 #MAST between oro vars and senescence genes
 genes <- rownames(so_sens_all)
 for (oro in oro_vars){
-mast_fxn(so=so_sens_all,cell=NULL,exposure=oro,gene_set=genes,exp_group=NULL,ref_group=NULL)
+mast_sens_fxn(so=so_sens_all,cell=NULL,exposure=oro,gene_set=genes,exp_group=NULL,ref_group=NULL)
 }
 
 #Association between oro vars and senescence score
