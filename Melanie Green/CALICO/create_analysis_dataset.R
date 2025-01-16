@@ -468,6 +468,8 @@ label(df$overweight_raw) <- "Overweight Status (by raw value)"
 label(df$cv_a1c) <- "HbA1C"
 label(df$larc) <- "On LARC?"
 label(df$larc_ever) <- "LARC Ever Used?"
+label(df$ec) <- "On EC?"
+label(df$ec_ever) <- "EC Ever Used?"
 label(df$pcosdx_age) <- "Age at time of PCOS diagnosis"
 label(df[, paste0("pcosdx_any_famhx___", hist_vars)]) <- as.list(hist_labels)
 label(df$mental_health_screening) <-
