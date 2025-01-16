@@ -1850,6 +1850,118 @@ for (cell in cell_type){
 ```
 
 #8. TODAY 
+##a. New
+```{r}
+#Load in AST and ALT in today 
+today <- read.csv(fs::path(dir.dat,"TODAY subaward","Clinical data","TODAY","CBL.csv")) # length(unique(today$releaseid)) - 699 ids
+today <- today %>%
+  filter(mvisit!="R")
+#dplyr::select(c("releaseid","ALT","AST"))
+#Load in Proteomics in Today
+prot <- readRDS(fs::path(dir.dat,"Liver project","TODAY_proteomics.rds"))
+prot <- prot[c(7326,7397,7404,which(grepl("seq.",colnames(prot))))] #length(unique(prot$releaseid)) - 376 unique ids
+proteins <- colnames(prot)[which(grepl("seq.",colnames(prot)))]
+
+#rm(today,today_M0,prot)
+
+# #Determine which proteins correlate with genes associated with alt and ast
+# #AST
+# ast_genes <- read.xlsx(fs::path(dir.dat,"Liver project","Results","Bulk_Results_for_Ast Di (High vs. Low).xlsx"))
+# ast_genes_pos <- ast_genes %>%
+#   filter(p_val_adj<0.05) %>%
+#   filter(avg_log2FC>0) %>%
+#   arrange(desc(avg_log2FC)) %>%
+#   dplyr::slice(1:200) 
+# ast_genes_pos <- ast_genes_pos$Gene
+# ast_genes_neg <- ast_genes %>%
+#   filter(p_val_adj<0.05) %>%
+#   filter(avg_log2FC<0) %>%
+#   arrange(avg_log2FC) %>%
+#   dplyr::slice(1:200) 
+# ast_genes_neg <- ast_genes_neg$Gene
+# ast_genes <- c(ast_genes_pos,ast_genes_neg)
+
+#Key Protein Gene
+key <- readRDS(fs::path(dir.dat,"Liver project","gene_prot.RDS"))
+sens_proteins <- key$AptName[which(key$EntrezGeneSymbol %in% sens_genes)]
+prot <- prot[c("releaseid","AGEBASE","sex",sens_proteins)]
+
+#Calculate sensoring and time to event
+baseline <- today %>% 
+  filter(mvisit=="M00") %>% 
+  mutate(baseline_alt=ALT,
+         baseline_ast=AST) %>% 
+  dplyr::select(all_of(c("releaseid","baseline_alt","baseline_ast"))) 
+dat <- tidylog::left_join(today,baseline,by="releaseid")
+dat <- dat %>% 
+  mutate(event_alt=ifelse(ALT>=2*(baseline_alt),1,0)) %>% 
+  mutate(event_ast=ifelse(AST>=2*(baseline_ast),1,0)) 
+#Calculate time to event & censoring
+dat_alt <- dat %>% 
+  group_by(releaseid) %>%
+  summarize(
+    event_status_alt = ifelse(any(event_alt == 1, na.rm = TRUE), 1, 0), # 1 if event occurred, 0 if censored
+    time_to_event_alt = ifelse(
+      any(event_alt == 1, na.rm = TRUE), 
+      min(days[event_alt == 1], na.rm = TRUE), # Time of first event
+      max(days, na.rm = TRUE)                 # Time of last observation (censoring)
+    )) %>% 
+  ungroup()
+dat_ast <- dat %>% 
+  group_by(releaseid) %>%
+  summarize(
+    event_status_ast = ifelse(any(event_ast == 1, na.rm = TRUE), 1, 0), # 1 if event occurred, 0 if censored
+    time_to_event_ast = ifelse(
+      any(event_ast == 1, na.rm = TRUE), 
+      min(days[event_ast == 1], na.rm = TRUE), # Time of first event
+      max(days, na.rm = TRUE)                 # Time of last observation (censoring)
+    )) %>% 
+  ungroup()
+
+dat_covs <- today %>% 
+  filter(mvisit=="M00") %>% 
+  dplyr::select(all_of(c("releaseid","HbA1c")))
+#Merge proteins in 
+dat <- tidylog::right_join(dat_covs,prot,by="releaseid")
+dat <- tidylog::right_join(dat_alt,dat,by="releaseid")
+dat <- tidylog::right_join(dat_ast,dat,by="releaseid")
+rm(baseline,dat_alt,dat_ast,dat_covs,prot,today)
+
+#Create loop for linear regression between proteins & liver enzymes
+results <- data.frame()
+for(y in c("alt","ast")) {
+  for (x in sens_proteins) {
+    M0 <- as.formula(paste0("Surv(time_to_event_alt,event_status_alt) ~ ",x,"+HbA1c+sex+AGEBASE"))
+    M0 <- as.formula(paste0("Surv(time_to_event_",y,",event_status_",y,") ~ ",x))
+    M1 <- coxph(M0,data=dat)
+    logHR <- summary(M1)$coef[1,1]
+    pval <- summary(M1)$coef[1,5]
+    results_full <- data.frame(Protein=x,Outcome=paste0("Time to doubling of ",str_to_upper(y)),LogHR=logHR,Pvalue=pval)
+    results <- rbind(results,results_full)
+  }
+}
+#ALT
+results_alt <- results %>%
+  filter(Outcome=="Time to doubling of ALT") %>% 
+  mutate(fdr = p.adjust(Pvalue,method="fdr"))
+results_alt <- results_alt %>%
+  mutate(sig=ifelse(fdr<0.05,"*",""))
+#AST
+results_ast <- results %>%
+  filter(Outcome=="Time to doubling of AST") %>% 
+  mutate(fdr = p.adjust(Pvalue,method="fdr"))
+results_ast <- results_ast %>%
+  mutate(sig=ifelse(fdr<0.05,"*",""))
+results_total <- rbind(results_ast,results_alt)
+
+#Match to gene name
+key$Protein <- key$AptName
+results_total <- tidylog::left_join(results_total,key,by="Protein")
+
+sig_results <- results_total %>% 
+  filter(sig=="*")
+```
+##b. Old
 ```{r}
 #Load in AST and ALT in today 
 today <- read.csv(fs::path(dir.dat,"TODAY subaward","Clinical data","TODAY","CBL.csv"))
