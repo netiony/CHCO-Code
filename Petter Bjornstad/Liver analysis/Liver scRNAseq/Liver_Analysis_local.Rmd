@@ -65,13 +65,15 @@ library(VennDiagram)
 # install.packages(c("survival", "survminer"))
 library("survival")
 library("survminer")
+# install.packages("lmerTest")
+library(lmerTest)
 
 
 #Local file path
 dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
 dir.dat2 <- c("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean")
 dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
-dir.results <- c("/Users/hhampson/Documents/UW/1_Ongoing Projects/Liver scRNAseq/2_Results")
+dir.results <- c("/Volumes/Peds Endo/Petter Bjornstad/Liver project/Results")
 
 #Lambda file path
 # dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
@@ -701,15 +703,15 @@ rm(baseline,dat_alt,dat_ast,dat_covs,prot,today)
 #Create loop for linear regression between proteins & liver enzymes
 results <- data.frame()
 for(y in c("alt","ast")) {
-for (x in sens_proteins) {
-  M0 <- as.formula(paste0("Surv(time_to_event_alt,event_status_alt) ~ ",x,"+HbA1c+sex+AGEBASE"))
-  M0 <- as.formula(paste0("Surv(time_to_event_",y,",event_status_",y,") ~ ",x))
-  M1 <- coxph(M0,data=dat)
-  logHR <- summary(M1)$coef[1,1]
-  pval <- summary(M1)$coef[1,5]
-  results_full <- data.frame(Protein=x,Outcome=paste0("Time to doubling of ",str_to_upper(y)),LogHR=logHR,Pvalue=pval)
-  results <- rbind(results,results_full)
-}
+  for (x in sens_proteins) {
+    M0 <- as.formula(paste0("Surv(time_to_event_alt,event_status_alt) ~ ",x,"+HbA1c+sex+AGEBASE"))
+    M0 <- as.formula(paste0("Surv(time_to_event_",y,",event_status_",y,") ~ ",x))
+    M1 <- coxph(M0,data=dat)
+    logHR <- summary(M1)$coef[1,1]
+    pval <- summary(M1)$coef[1,5]
+    results_full <- data.frame(Protein=x,Outcome=paste0("Time to doubling of ",str_to_upper(y)),LogHR=logHR,Pvalue=pval)
+    results <- rbind(results,results_full)
+  }
 }
 #ALT
 results_alt <- results %>%
@@ -719,7 +721,7 @@ results_alt <- results_alt %>%
   mutate(sig=ifelse(fdr<0.05,"*",""))
 #AST
 results_ast <- results %>%
-    filter(Outcome=="Time to doubling of AST") %>% 
+  filter(Outcome=="Time to doubling of AST") %>% 
   mutate(fdr = p.adjust(Pvalue,method="fdr"))
 results_ast <- results_ast %>%
   mutate(sig=ifelse(fdr<0.05,"*",""))
@@ -737,16 +739,200 @@ sig_results <- results_total %>%
 ```{r}
 #Proteomics teen labs 
 load(fs::path(dir.dat,"Teen Labs","Data_Cleaned","analysis_dataset.RData"))
+dat_baseline <- df %>% 
+  filter(visit=="Month 1")
+dat_followup <- df %>% 
+  filter(visit=="Month 6") 
+dat <- df %>% 
+  filter(visit=="Month 1" | visit=="Month 6")
+
+#Protein key
+key <- analyte_info %>% 
+  dplyr::select(all_of(c("AptName","SeqId","EntrezGeneSymbol")))
+
+#Senescence Proteins
+sens_proteins <- key$AptName[which(key$EntrezGeneSymbol %in% sens_genes)]
+prot <- df[c("ID","visit",sens_proteins)]
+protein <- colnames(prot)[-c(1,2)]
+prot_baseline <- prot %>% 
+  filter(visit=="Month 1")
+prot_followup <- prot %>% 
+  filter(visit=="Month 6")
+#Name proteins baseline or followup 
+colnames(prot_baseline)[-c(1,2)] <- paste0(colnames(prot_baseline)[-c(1,2)],"_baseline")
+colnames(prot_followup)[-c(1,2)] <- paste0(colnames(prot_followup)[-c(1,2)],"_followup")
+prot_baseline <- prot_baseline %>% 
+  dplyr::select(-visit)
+prot_baseline_dat <- prot_baseline
+prot_followup <- prot_followup %>% 
+  dplyr::select(-visit)
+
+prot <- tidylog::left_join(prot_baseline,prot_followup,by="ID")
+# Find columns with "baseline" and "followup"
+baseline_cols <- grep("_baseline$", colnames(prot), value = TRUE)
+followup_cols <- grep("_followup$", colnames(prot), value = TRUE)
+
+# Sort to ensure matching order
+baseline_cols <- sort(baseline_cols)
+followup_cols <- sort(followup_cols)
+
+# Create new columns for differences
+for (i in seq_along(baseline_cols)) {
+  protein_name <- sub("_baseline$", "", baseline_cols[i])  # Get protein name (e.g., "protein1")
+  diff_col <- paste0(protein_name, "_diff")               # Create a difference column name
+  prot[[diff_col]] <- prot[[followup_cols[i]]] - prot[[baseline_cols[i]]]
+}
+
+#Covariates at baseline
+dat_cov <- dat %>% 
+  filter(visit=="Month 1") %>% 
+  dplyr::select(all_of(c("ID","SEX","HBA1C","age"))) 
+
+rm(df,analyte_info)
+
+#ALT/AST
+liv <- read.csv(fs::path(dir.dat,"Liver Project","Teen-LABS_AST_ALT.csv"))
+liv <- liv %>% 
+  dplyr::rename(visit=Visit) %>% 
+  filter(visit==1 | visit==6) %>% 
+  mutate(visit=case_when(visit==1~"Month 1",
+                         visit==6~"Month 6")) %>% 
+  mutate(across(everything(),~ifelse(.==-5,NA,.))) %>% 
+  mutate(across(everything(),~ifelse(.==-7,NA,.)))
+liv_baseline <- liv %>% 
+  filter(visit=="Month 1") %>% 
+  dplyr::select(-visit) %>% 
+  dplyr::rename(ALT_baseline=ALT,
+                AST_baseline=AST)
+liv_followup <- liv %>% 
+  filter(visit=="Month 6") %>% 
+  dplyr::select(-visit) %>% 
+  dplyr::rename(ALT_followup=ALT,
+                AST_followup=AST)
+liv <- tidylog::left_join(liv_baseline,liv_followup,by="ID")
+liv <- liv %>% 
+  mutate(ALT_diff = ALT_followup-ALT_baseline,
+         AST_diff = AST_followup-AST_baseline) 
+
+
+dat_cov$ID <- as.character(dat_cov$ID)
+prot$ID<- as.character(prot$ID)
+
+#Baseline proteins & baseline covariates and baseline and followup alt/ast
+dat_all <- tidylog::right_join(dat_cov,liv,by=c("ID"))
+dat_all <- tidylog::left_join(dat_all,prot,by=c("ID"))
+
+#Run linear mixed effect model & difference model 
+protein_diff <- paste0(protein,"_diff")
+results <- data.frame()
+covs <- c("age","SEX","HBA1C")
+for (x in protein_diff) {
+  for (y in c("AST_diff","ALT_diff")) {
+    M0_crude <- as.formula(paste0(y,"~",x))
+    M0_adj <- as.formula(paste0(y,"~",x,"+",paste(covs, collapse = "+")))
+    M1_crude <- lm(M0_crude,data=dat_all)
+    M1_adj <- lm(M0_adj,data=dat_all)
+    coef_crude <- summary(M1_crude)$coef[2,1]
+    coef_adj <- summary(M1_adj)$coef[2,1]
+    p_crude <- summary(M1_crude)$coef[2,4]
+    p_adj <- summary(M1_adj)$coef[2,4]
+    diff_results <- data.frame(Protein=x,Enzyme=y,Coef=coef_adj,PValue=p_adj)
+    results <- rbind(results,diff_results)
+  }
+}
+r_alt <- results %>% 
+  filter(Enzyme=="ALT_diff") %>% 
+  mutate(fdr=p.adjust(PValue,method="fdr"))
+r_ast <- results %>% 
+  filter(Enzyme=="AST_diff") %>% 
+  mutate(fdr=p.adjust(PValue,method="fdr"))
+results <- rbind(r_alt,r_ast)
+results <- results %>% 
+  mutate(sig=ifelse(fdr<0.05,"*",""))
+write.csv(results,fs::path(dir.results,"Diff_Results_Liver_Teenlabs.csv"))
+
+#Baseline protein with change in ALT/AST pre and post surgery
+liv <- read.csv(fs::path(dir.dat,"Liver Project","Teen-LABS_AST_ALT.csv"))
+liv <- liv %>% 
+  dplyr::rename(visit=Visit) %>% 
+  filter(visit==1 | visit==6) %>% 
+  mutate(visit=case_when(visit==1~"Month 1",
+                         visit==6~"Month 6")) %>% 
+  mutate(across(everything(),~ifelse(.==-5,NA,.))) %>% 
+  mutate(across(everything(),~ifelse(.==-7,NA,.)))
+prot_baseline_dat$ID <- as.character(prot_baseline_dat$ID)
+dat_baseline <- tidylog::left_join(liv,prot_baseline_dat,by=c("ID"))
+dat_baseline <- tidylog::left_join(dat_cov,dat_baseline,by="ID")
+dat_baseline <- dat_baseline %>% 
+  mutate(time=case_when(visit=="Month 1"~1,
+                        visit=="Month 6"~6))
+
+#Linear Mixed Effects Model
+protein_baseline <- paste0(protein,"_baseline")
+covs <- c("age","SEX","HBA1C")
+
+results <- data.frame()
+for (x in protein_baseline) {
+  for (y in c("AST","ALT")) {
+    M0_crude <- as.formula(paste0(y,"~",x,"*time+(1|ID)"))
+    M0_adj <- as.formula(paste0(y,"~",x,"*time+",paste(covs, collapse = "+"),"+(1|ID)"))
+    M1_crude <- lmer(M0_crude,data=dat_baseline)
+    M1_adj <- lmer(M0_adj,data=dat_baseline)
+    Main <- summary(M1_adj)$coef[2,1]
+    Main_p <- summary(M1_adj)$coef[2,5]
+    Time <- summary(M1_adj)$coef[3,1]
+    Time_p <- summary(M1_adj)$coef[3,5]
+    Int <- summary(M1_adj)$coef[7,1]
+    Int_p <- summary(M1_adj)$coef[7,5]
+    results_int <- data.frame(Protein=x,Enzyme=y,Main,Main_p,Time,Time_p,Int,Int_p)
+    results <- rbind(results,results_int)
+  }
+}
+r_alt <- results %>% 
+  filter(Enzyme=="ALT") %>% 
+  mutate(Main_fdr=p.adjust(Main_p,method="fdr")) %>% 
+  mutate(Int_fdr=p.adjust(Int_p,method="fdr"))
+r_ast <- results %>% 
+  filter(Enzyme=="AST") %>% 
+  mutate(Main_fdr=p.adjust(Main_p,method="fdr")) %>% 
+  mutate(Int_fdr=p.adjust(Int_p,method="fdr"))
+results <- rbind(r_alt,r_ast)
+results <- results %>% 
+  mutate(Main_sig=ifelse(Main_fdr<0.05,"*","")) %>% 
+  mutate(Int_sig=ifelse(Int_fdr<0.05,"*",""))
+results$AptName <- str_remove(results$Protein,"_baseline")
+results <- tidylog::left_join(results,key,by="AptName")
+write.csv(results,fs::path(dir.results,"LMEM_TeenLabs_Liver_Results.csv"))
+```
+
+#9. Oroborous + Senescence Score  
+```{r}
+
+
 
 ```
 
-#9. Pseudotime Analysis - Hepatocytes
+#10. Senescence Score + Diabetes & Medication Groups
+```{r}
+
+
+
+```
+
+#11. Senescence Genes with Oroborous 
 ```{r}
 
 
 ```
 
-#10. Targeted DEGs 
+
+#12. Pseudotime Analysis - Hepatocytes
+```{r}
+
+
+```
+
+#13. Targeted DEGs 
 ```{r}
 
 
