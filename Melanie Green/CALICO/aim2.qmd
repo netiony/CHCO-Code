@@ -34,6 +34,7 @@ library(performance)
 library(emmeans)
 library(gt)
 library(plotly)
+library(modelsummary)
 knitr::opts_knit$set(root.dir = "/Users/timvigers/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/Vigers/BDC/Janet Snell-Bergeon/CALICO")
 ```
 
@@ -45,12 +46,12 @@ load("./Data_Clean/analysis_data.RData")
 levels(df$insur_type) <- c(
   "Public", "Private", "Military", "Other/None", "Other/None"
 )
+df$insur_type <- relevel(df$insur_type, ref = "Private")
 levels(df$combined_race) <- c(
   "African American", "Other", "Asian", "Caucasian", "More than one", "Other",
   "Other"
 )
-# Exclude visits where people were on weight loss medication
-
+df$combined_race <- relevel(df$combined_race, ref = "Caucasian")
 # Set table options
 mycontrols <-
   tableby.control(numeric.stats = c("Nmiss2", "meansd", "medianq1q3", "range"))
@@ -70,6 +71,18 @@ df$cv_bmi[which.max(df$cv_bmi)] <- NA
 df$cv_bmi[which.max(df$cv_bmi)] <- NA
 df$cv_bmi[which.max(df$cv_bmi)] <- NA
 df$cv_dbp[which.max(df$cv_dbp)] <- NA
+df$cv_age[which.max(df$cv_age)] <- 17.2
+# Exclude visits where people were on weight loss medication
+weight_loss <- df %>% filter(
+  cv_medications___25 == "Checked" | cv_medications___26 == "Checked" |
+    cv_medications___27 == "Checked" | cv_medications___28 == "Checked" |
+    cv_medications___29 == "Checked"
+)
+df <- df %>% filter(
+  cv_medications___25 != "Checked", cv_medications___26 != "Checked",
+  cv_medications___27 != "Checked", cv_medications___28 != "Checked",
+  cv_medications___29 != "Checked", cv_medications___17 != "Checked"
+)
 ```
 
 # Data cleaning
@@ -88,11 +101,19 @@ df$cv_dbp[which.max(df$cv_dbp)] <- NA
 
 - KC_54 has a BMI of 237.3, which is excluded for now.
 
+- KC_16 has a follow up age of 1017.2, which was changed to 17.2.
+
+- Visits where the participant was actively on a weight loss medication were excluded from these analyses. So, if any of `cv_medications___25` ("Topiramate for weight loss"), `cv_medications___26` ("Phentermine for weight"), `cv_medications___27` ("Topirimate/phentermine for weight loss"), `cv_medications___28` ("Liraglutiade (saxcenda) for weight loss"), or `cv_medications___29` ("Semaglutide (Wygovy/Ozempic) for weight loss") were equal to "Checked," that row was excluded. There were a total of `r length(unique(weight_loss$record_number))` participants with a visit excluded this way, and a total of `r as.numeric(table(weight_loss$cv_medications___25)["Checked"])` visits with `cv_medications___25` checked, `r as.numeric(table(weight_loss$cv_medications___26)["Checked"])` visits with `cv_medications___26` checked, `r as.numeric(table(weight_loss$cv_medications___27)["Checked"])` visits with `cv_medications___27` checked, `r as.numeric(table(weight_loss$cv_medications___28)["Checked"])` visits with `cv_medications___28` checked, and `r as.numeric(table(weight_loss$cv_medications___29)["Checked"])` visits with `cv_medications___29` checked.
+
+- Visits where the participant was on atypical antipsychotics were excluded (`cv_medications___17` == "Checked"). 
+
 # Methods
 
 For each continuous outcome, we fit a linear mixed effects model with random effects for participant and time (months from PCOS diagnosis), and an interaction effect between time and medication status. 
 
 To evaluate the effect of starting a new medication on each outcome, we also fit a linear spline model with years from medication start as the time variable and a single knot at 0 (medication start). If models did not converge or produced serious warnings/errors, only the random effect for participant was included.
+
+All models were adjusted for age, race, and insurance status. EC models were adjusted for Metformin use, and vice versa. Population averaged model results are for a hypothetical participant assuming a mean baseline weight, mean age, caucasian race, and on private insurance.
 
 All mixed models were fit using the `lme4` R package in version `r paste0(R.version$major,".",R.version$minor)`. @rcoreteamLanguageEnvironmentStatistical2024
 
@@ -117,21 +138,12 @@ ec_only <- df %>%
   mutate(
     time_from_first_ec = cv_age - age_first_ec,
     x = (time_from_first_ec > 0) * time_from_first_ec
-  ) %>%
-  dplyr::select(
-    record_number, redcap_repeat_instance, cv_weight, cv_bmi, cv_hirsutism_num,
-    cv_a1c, cv_tg, cv_hdl, cv_alt, cv_sbp, ec, cv_age,
-    cv_monthssincepcosdx, age_first_ec, time_from_first_ec, x, baseline_weight,
-    baseline_bmi
   )
 label(ec_only$time_from_first_ec) <- "Time From First EC"
 label(ec_only$x) <- "Slope Change After EC"
 ```
 
 ## Weight (kg)
-
-- Weight models were adjusted for baseline weight, which was defined as a participant's first weight measurement not on EC.
-- Model results are plotted for the mean baseline weight (`r round(mean(unique(df$baseline_weight), na.rm = T), 1)`).
 
 ### Spaghetti plot
 
@@ -156,13 +168,17 @@ ggplotly(p)
 ```{r}
 # Fit mixed model
 mod <- lmer(
-  cv_weight ~ cv_monthssincepcosdx * ec + baseline_weight +
-    (1 | record_number),
+  cv_weight ~ cv_monthssincepcosdx * ec + baseline_weight + cv_age +
+    combined_race + insur_type + metformin + (1 | record_number),
   data = df
 )
 # Model plot
 mod_df <- mod@frame
-mod_df$baseline_weight <- mean(unique(df$baseline_weight), na.rm = T)
+mod_df$baseline_weight <- mean(mod_df$baseline_weight, na.rm = T)
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$metformin <- "No"
 mod_df$ind_pred <- predict(mod)
 mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
 p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
@@ -185,16 +201,23 @@ gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
 gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
 ```
 
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$ec)["No"])` "No" and `r as.numeric(table(mod_df$ec)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on EC and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on EC compared to not on EC. The second table shows the slopes for those not on EC and on EC, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
 #### Change pre- vs. post-EC (EC users only)
 
 ```{r}
 # Fit mixed model with change point
 change_mod <- lmer(cv_weight ~ time_from_first_ec + x + baseline_weight +
+  cv_age + combined_race + insur_type + metformin +
   (1 + time_from_first_ec | record_number), data = ec_only)
 # Model plot
 mod_df <- change_mod@frame
-mod_df$baseline_weight <- mean(unique(df$baseline_weight), na.rm = T)
-mod_df$ind_pred <- predict(change_mod, newdata = mod_df)
+mod_df$baseline_weight <- mean(mod_df$baseline_weight, na.rm = T)
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$metformin <- "No"
+mod_df$ind_pred <- predict(change_mod)
 mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
 p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
   geom_point(aes(y = cv_weight, group = record_number),
@@ -211,10 +234,9 @@ ggplotly(p)
 change_mod %>% gtsummary::tbl_regression()
 ```
 
-## BMI
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First EC" is the slope prior to starting medication, and the "Slope Change After EC" row shows the average change in slope after starting the medication.
 
-- BMI models were adjusted for baseline BMI, which was defined as a participant's first BMI measurement not on EC.
-- Model results are plotted for the mean baseline BMI (`r round(mean(unique(df$baseline_bmi), na.rm = T), 1)`).
+## BMI
 
 ### Spaghetti plot
 
@@ -239,13 +261,17 @@ ggplotly(p)
 ```{r}
 # Fit mixed model
 mod <- lmer(
-  cv_bmi ~ cv_monthssincepcosdx * ec + baseline_bmi +
-    (1 | record_number),
+  cv_bmi ~ cv_monthssincepcosdx * ec + baseline_bmi + cv_age +
+    combined_race + insur_type + metformin + (1 | record_number),
   data = df
 )
 # Model plot
 mod_df <- mod@frame
-mod_df$baseline_bmi <- mean(unique(df$baseline_bmi), na.rm = T)
+mod_df$baseline_bmi <- mean(mod_df$baseline_bmi, na.rm = T)
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$metformin <- "No"
 mod_df$ind_pred <- predict(mod)
 mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
 p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
@@ -268,16 +294,23 @@ gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
 gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
 ```
 
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$ec)["No"])` "No" and `r as.numeric(table(mod_df$ec)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on EC and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on EC compared to not on EC. The second table shows the slopes for those not on EC and on EC, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
 #### Change pre- vs. post-EC (EC users only)
 
 ```{r}
 # Fit mixed model with change point
 change_mod <- lmer(cv_bmi ~ time_from_first_ec + x + baseline_bmi +
+  cv_age + combined_race + insur_type + metformin +
   (1 + time_from_first_ec | record_number), data = ec_only)
 # Model plot
 mod_df <- change_mod@frame
-mod_df$baseline_bmi <- mean(unique(df$baseline_bmi), na.rm = T)
-mod_df$ind_pred <- predict(change_mod, newdata = mod_df)
+mod_df$baseline_bmi <- mean(mod_df$baseline_bmi, na.rm = T)
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$metformin <- "No"
+mod_df$ind_pred <- predict(change_mod)
 mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
 p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
   geom_point(aes(y = cv_bmi, group = record_number),
@@ -293,6 +326,8 @@ ggplotly(p)
 # Model summary
 change_mod %>% gtsummary::tbl_regression()
 ```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First EC" is the slope prior to starting medication, and the "Slope Change After EC" row shows the average change in slope after starting the medication.
 
 ## HbA1c (%)
 
@@ -318,13 +353,19 @@ ggplotly(p)
 
 ```{r}
 # Fit mixed model
-mod <- lmer(cv_a1c ~ cv_monthssincepcosdx * ec + (1 | record_number),
+mod <- lmer(
+  cv_a1c ~ cv_monthssincepcosdx * ec + cv_age +
+    combined_race + insur_type + metformin + (1 | record_number),
   data = df
 )
 # Model plot
 mod_df <- mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$metformin <- "No"
 mod_df$ind_pred <- predict(mod)
-mod_df$pop_pred <- predict(mod, re.form = NA)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
 p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_point(aes(y = cv_a1c, group = record_number),
     alpha = 0.05, show.legend = F
@@ -345,17 +386,23 @@ gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
 gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
 ```
 
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$ec)["No"])` "No" and `r as.numeric(table(mod_df$ec)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on EC and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on EC compared to not on EC. The second table shows the slopes for those not on EC and on EC, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
 #### Change pre- vs. post-EC (EC users only)
 
 ```{r}
-# Fit mixed model
-change_mod <- lmer(cv_a1c ~ time_from_first_ec + x + (1 | record_number),
-  data = ec_only
-)
+# Fit mixed model with change point
+change_mod <- lmer(cv_a1c ~ time_from_first_ec + x +
+  cv_age + combined_race + insur_type + metformin +
+  (1 | record_number), data = ec_only)
 # Model plot
 mod_df <- change_mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$metformin <- "No"
 mod_df$ind_pred <- predict(change_mod)
-mod_df$pop_pred <- predict(change_mod, re.form = NA)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
 p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
   geom_point(aes(y = cv_a1c, group = record_number),
     alpha = 0.05, show.legend = F
@@ -370,6 +417,8 @@ ggplotly(p)
 # Model summary
 change_mod %>% gtsummary::tbl_regression()
 ```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First EC" is the slope prior to starting medication, and the "Slope Change After EC" row shows the average change in slope after starting the medication.
 
 ## TG (mg/dL)
 
@@ -395,13 +444,19 @@ ggplotly(p)
 
 ```{r}
 # Fit mixed model
-mod <- lmer(cv_tg ~ cv_monthssincepcosdx * ec + (1 | record_number),
+mod <- lmer(
+  cv_tg ~ cv_monthssincepcosdx * ec + cv_age +
+    combined_race + insur_type + metformin + (1 | record_number),
   data = df
 )
 # Model plot
 mod_df <- mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$metformin <- "No"
 mod_df$ind_pred <- predict(mod)
-mod_df$pop_pred <- predict(mod, re.form = NA)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
 p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_point(aes(y = cv_tg, group = record_number),
     alpha = 0.05, show.legend = F
@@ -422,17 +477,23 @@ gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
 gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
 ```
 
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$ec)["No"])` "No" and `r as.numeric(table(mod_df$ec)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on EC and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on EC compared to not on EC. The second table shows the slopes for those not on EC and on EC, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
 #### Change pre- vs. post-EC (EC users only)
 
 ```{r}
-# Fit mixed model
-change_mod <- lmer(cv_tg ~ time_from_first_ec + x + (1 | record_number),
-  data = ec_only
-)
+# Fit mixed model with change point
+change_mod <- lmer(cv_tg ~ time_from_first_ec + x +
+  cv_age + combined_race + insur_type + metformin +
+  (1 | record_number), data = ec_only)
 # Model plot
 mod_df <- change_mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$metformin <- "No"
 mod_df$ind_pred <- predict(change_mod)
-mod_df$pop_pred <- predict(change_mod, re.form = NA)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
 p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
   geom_point(aes(y = cv_tg, group = record_number),
     alpha = 0.05, show.legend = F
@@ -447,6 +508,8 @@ ggplotly(p)
 # Model summary
 change_mod %>% gtsummary::tbl_regression()
 ```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First EC" is the slope prior to starting medication, and the "Slope Change After EC" row shows the average change in slope after starting the medication.
 
 ## HDL (mg/dL)
 
@@ -472,13 +535,19 @@ ggplotly(p)
 
 ```{r}
 # Fit mixed model
-mod <- lmer(cv_hdl ~ cv_monthssincepcosdx * ec + (1 | record_number),
+mod <- lmer(
+  cv_hdl ~ cv_monthssincepcosdx * ec + cv_age +
+    combined_race + insur_type + metformin + (1 | record_number),
   data = df
 )
 # Model plot
 mod_df <- mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$metformin <- "No"
 mod_df$ind_pred <- predict(mod)
-mod_df$pop_pred <- predict(mod, re.form = NA)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
 p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_point(aes(y = cv_hdl, group = record_number),
     alpha = 0.05, show.legend = F
@@ -499,17 +568,23 @@ gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
 gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
 ```
 
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$ec)["No"])` "No" and `r as.numeric(table(mod_df$ec)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on EC and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on EC compared to not on EC. The second table shows the slopes for those not on EC and on EC, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
 #### Change pre- vs. post-EC (EC users only)
 
 ```{r}
-# Fit mixed model
-change_mod <- lmer(cv_hdl ~ time_from_first_ec + x + (1 | record_number),
-  data = ec_only
-)
+# Fit mixed model with change point
+change_mod <- lmer(cv_hdl ~ time_from_first_ec + x +
+  cv_age + combined_race + insur_type + metformin +
+  (1 | record_number), data = ec_only)
 # Model plot
 mod_df <- change_mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$metformin <- "No"
 mod_df$ind_pred <- predict(change_mod)
-mod_df$pop_pred <- predict(change_mod, re.form = NA)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
 p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
   geom_point(aes(y = cv_hdl, group = record_number),
     alpha = 0.05, show.legend = F
@@ -524,6 +599,8 @@ ggplotly(p)
 # Model summary
 change_mod %>% gtsummary::tbl_regression()
 ```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First EC" is the slope prior to starting medication, and the "Slope Change After EC" row shows the average change in slope after starting the medication.
 
 ## ALT (IU/L) 
 
@@ -549,13 +626,19 @@ ggplotly(p)
 
 ```{r}
 # Fit mixed model
-mod <- lmer(cv_alt ~ cv_monthssincepcosdx * ec + (1 | record_number),
+mod <- lmer(
+  cv_alt ~ cv_monthssincepcosdx * ec + cv_age +
+    combined_race + insur_type + metformin + (1 | record_number),
   data = df
 )
 # Model plot
 mod_df <- mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$metformin <- "No"
 mod_df$ind_pred <- predict(mod)
-mod_df$pop_pred <- predict(mod, re.form = NA)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
 p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_point(aes(y = cv_alt, group = record_number),
     alpha = 0.05, show.legend = F
@@ -576,17 +659,23 @@ gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
 gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
 ```
 
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$ec)["No"])` "No" and `r as.numeric(table(mod_df$ec)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on EC and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on EC compared to not on EC. The second table shows the slopes for those not on EC and on EC, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
 #### Change pre- vs. post-EC (EC users only)
 
 ```{r}
-# Fit mixed model
-change_mod <- lmer(cv_alt ~ time_from_first_ec + x + (1 | record_number),
-  data = ec_only
-)
+# Fit mixed model with change point
+change_mod <- lmer(cv_alt ~ time_from_first_ec + x +
+  cv_age + combined_race + insur_type + metformin +
+  (1 + time_from_first_ec | record_number), data = ec_only)
 # Model plot
 mod_df <- change_mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$metformin <- "No"
 mod_df$ind_pred <- predict(change_mod)
-mod_df$pop_pred <- predict(change_mod, re.form = NA)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
 p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
   geom_point(aes(y = cv_alt, group = record_number),
     alpha = 0.05, show.legend = F
@@ -601,6 +690,8 @@ ggplotly(p)
 # Model summary
 change_mod %>% gtsummary::tbl_regression()
 ```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First EC" is the slope prior to starting medication, and the "Slope Change After EC" row shows the average change in slope after starting the medication.
 
 ## SBP (mmHg)
 
@@ -626,13 +717,19 @@ ggplotly(p)
 
 ```{r}
 # Fit mixed model
-mod <- lmer(cv_sbp ~ cv_monthssincepcosdx * ec + (1 | record_number),
+mod <- lmer(
+  cv_sbp ~ cv_monthssincepcosdx * ec + cv_age +
+    combined_race + insur_type + metformin + (1 | record_number),
   data = df
 )
 # Model plot
 mod_df <- mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$metformin <- "No"
 mod_df$ind_pred <- predict(mod)
-mod_df$pop_pred <- predict(mod, re.form = NA)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
 p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_point(aes(y = cv_sbp, group = record_number),
     alpha = 0.05, show.legend = F
@@ -653,17 +750,23 @@ gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
 gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
 ```
 
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$ec)["No"])` "No" and `r as.numeric(table(mod_df$ec)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on EC and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on EC compared to not on EC. The second table shows the slopes for those not on EC and on EC, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
 #### Change pre- vs. post-EC (EC users only)
 
 ```{r}
-# Fit mixed model
-change_mod <- lmer(cv_sbp ~ time_from_first_ec + x + (1 | record_number),
-  data = ec_only
-)
+# Fit mixed model with change point
+change_mod <- lmer(cv_sbp ~ time_from_first_ec + x +
+  cv_age + combined_race + insur_type + metformin +
+  (1 + time_from_first_ec | record_number), data = ec_only)
 # Model plot
 mod_df <- change_mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$metformin <- "No"
 mod_df$ind_pred <- predict(change_mod)
-mod_df$pop_pred <- predict(change_mod, re.form = NA)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
 p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
   geom_point(aes(y = cv_sbp, group = record_number),
     alpha = 0.05, show.legend = F
@@ -678,3 +781,1305 @@ ggplotly(p)
 # Model summary
 change_mod %>% gtsummary::tbl_regression()
 ```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First EC" is the slope prior to starting medication, and the "Slope Change After EC" row shows the average change in slope after starting the medication.
+
+# Metformin
+
+Participants were considered to be on Metformin when `cv_medications___1` was checked in REDCap.
+
+```{r}
+# Make a dataset for spline models
+metformin_only <- df %>%
+  filter(metformin_ever == "Yes") %>%
+  mutate(
+    time_from_first_metformin = cv_age - age_first_metformin,
+    x = (time_from_first_metformin > 0) * time_from_first_metformin
+  )
+label(metformin_only$time_from_first_metformin) <- "Time From First Metformin"
+label(metformin_only$x) <- "Slope Change After Metformin"
+```
+
+## Weight (kg)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(metformin)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_weight, group = record_number,
+    color = metformin
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On Metformin?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### Metformin users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_weight ~ cv_monthssincepcosdx * metformin + baseline_weight + cv_age +
+    combined_race + insur_type + ec + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$baseline_weight <- mean(mod_df$baseline_weight, na.rm = T)
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ec <- "No"
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_weight, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = metformin, color = metformin)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On Metformin?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "metformin", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$metformin)["No"])` "No" and `r as.numeric(table(mod_df$metformin)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on Metformin and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on Metformin compared to not on Metformin. The second table shows the slopes for those not on Metformin and on Metformin, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
+#### Change pre- vs. post-Metformin (Metformin users only)
+
+```{r}
+# Fit mixed model with change point
+change_mod <- lmer(cv_weight ~ time_from_first_metformin + x + baseline_weight +
+  cv_age + combined_race + insur_type + ec +
+  (1 + time_from_first_metformin | record_number), data = metformin_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$baseline_weight <- mean(mod_df$baseline_weight, na.rm = T)
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ec <- "No"
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = time_from_first_metformin)) +
+  geom_point(aes(y = cv_weight, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From Metformin Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First Metformin" is the slope prior to starting medication, and the "Slope Change After Metformin" row shows the average change in slope after starting the medication.
+
+## BMI
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(metformin)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_bmi, group = record_number,
+    color = metformin
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On Metformin?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### Metformin users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_bmi ~ cv_monthssincepcosdx * metformin + baseline_bmi + cv_age +
+    combined_race + insur_type + ec + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$baseline_bmi <- mean(mod_df$baseline_bmi, na.rm = T)
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ec <- "No"
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_bmi, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = metformin, color = metformin)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On Metformin?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "metformin", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$metformin)["No"])` "No" and `r as.numeric(table(mod_df$metformin)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on Metformin and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on Metformin compared to not on Metformin. The second table shows the slopes for those not on Metformin and on Metformin, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
+#### Change pre- vs. post-Metformin (Metformin users only)
+
+```{r}
+# Fit mixed model with change point
+change_mod <- lmer(cv_bmi ~ time_from_first_metformin + x + baseline_bmi +
+  cv_age + combined_race + insur_type + ec +
+  (1 + time_from_first_metformin | record_number), data = metformin_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$baseline_bmi <- mean(mod_df$baseline_bmi, na.rm = T)
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ec <- "No"
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = time_from_first_metformin)) +
+  geom_point(aes(y = cv_bmi, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From Metformin Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First Metformin" is the slope prior to starting medication, and the "Slope Change After Metformin" row shows the average change in slope after starting the medication.
+
+## HbA1c (%)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(metformin)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_a1c, group = record_number,
+    color = metformin
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On Metformin?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### Metformin users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_a1c ~ cv_monthssincepcosdx * metformin + cv_age +
+    combined_race + insur_type + ec + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ec <- "No"
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_a1c, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = metformin, color = metformin)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On Metformin?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "metformin", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$metformin)["No"])` "No" and `r as.numeric(table(mod_df$metformin)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on Metformin and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on Metformin compared to not on Metformin. The second table shows the slopes for those not on Metformin and on Metformin, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
+#### Change pre- vs. post-Metformin (Metformin users only)
+
+```{r}
+# Fit mixed model with change point
+change_mod <- lmer(cv_a1c ~ time_from_first_metformin + x +
+  cv_age + combined_race + insur_type + ec +
+  (1 + time_from_first_metformin | record_number), data = metformin_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ec <- "No"
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = time_from_first_metformin)) +
+  geom_point(aes(y = cv_a1c, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From Metformin Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First Metformin" is the slope prior to starting medication, and the "Slope Change After Metformin" row shows the average change in slope after starting the medication.
+
+## TG (mg/dL)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(metformin)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_tg, group = record_number,
+    color = metformin
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On Metformin?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### Metformin users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_tg ~ cv_monthssincepcosdx * metformin + cv_age +
+    combined_race + insur_type + ec + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ec <- "No"
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_tg, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = metformin, color = metformin)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On Metformin?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "metformin", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$metformin)["No"])` "No" and `r as.numeric(table(mod_df$metformin)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on Metformin and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on Metformin compared to not on Metformin. The second table shows the slopes for those not on Metformin and on Metformin, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
+#### Change pre- vs. post-Metformin (Metformin users only)
+
+```{r}
+# Fit mixed model with change point
+change_mod <- lmer(cv_tg ~ time_from_first_metformin + x +
+  cv_age + combined_race + insur_type + ec +
+  (1 | record_number), data = metformin_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ec <- "No"
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = time_from_first_metformin)) +
+  geom_point(aes(y = cv_tg, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From Metformin Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First Metformin" is the slope prior to starting medication, and the "Slope Change After Metformin" row shows the average change in slope after starting the medication.
+
+## HDL (mg/dL)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(metformin)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_hdl, group = record_number,
+    color = metformin
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On Metformin?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### Metformin users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_hdl ~ cv_monthssincepcosdx * metformin + cv_age +
+    combined_race + insur_type + ec + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ec <- "No"
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_hdl, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = metformin, color = metformin)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On Metformin?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "metformin", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$metformin)["No"])` "No" and `r as.numeric(table(mod_df$metformin)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on Metformin and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on Metformin compared to not on Metformin. The second table shows the slopes for those not on Metformin and on Metformin, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
+#### Change pre- vs. post-Metformin (Metformin users only)
+
+```{r}
+# Fit mixed model with change point
+change_mod <- lmer(cv_hdl ~ time_from_first_metformin + x +
+  cv_age + combined_race + insur_type + ec +
+  (1 | record_number), data = metformin_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ec <- "No"
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = time_from_first_metformin)) +
+  geom_point(aes(y = cv_hdl, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From Metformin Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First Metformin" is the slope prior to starting medication, and the "Slope Change After Metformin" row shows the average change in slope after starting the medication.
+
+## ALT (IU/L) 
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(metformin)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_alt, group = record_number,
+    color = metformin
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On Metformin?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### Metformin users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_alt ~ cv_monthssincepcosdx * metformin + cv_age +
+    combined_race + insur_type + ec + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ec <- "No"
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_alt, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = metformin, color = metformin)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On Metformin?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "metformin", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$metformin)["No"])` "No" and `r as.numeric(table(mod_df$metformin)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on Metformin and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on Metformin compared to not on Metformin. The second table shows the slopes for those not on Metformin and on Metformin, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
+#### Change pre- vs. post-Metformin (Metformin users only)
+
+```{r}
+# Fit mixed model with change point
+change_mod <- lmer(cv_alt ~ time_from_first_metformin + x +
+  cv_age + combined_race + insur_type + ec +
+  (1 + time_from_first_metformin | record_number), data = metformin_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ec <- "No"
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = time_from_first_metformin)) +
+  geom_point(aes(y = cv_alt, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From Metformin Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First Metformin" is the slope prior to starting medication, and the "Slope Change After Metformin" row shows the average change in slope after starting the medication.
+
+## SBP (mmHg)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(metformin)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_sbp, group = record_number,
+    color = metformin
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On Metformin?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### Metformin users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_sbp ~ cv_monthssincepcosdx * metformin + cv_age +
+    combined_race + insur_type + ec + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ec <- "No"
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_sbp, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = metformin, color = metformin)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On Metformin?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "metformin", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$metformin)["No"])` "No" and `r as.numeric(table(mod_df$metformin)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on Metformin and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on Metformin compared to not on Metformin. The second table shows the slopes for those not on Metformin and on Metformin, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
+#### Change pre- vs. post-Metformin (Metformin users only)
+
+```{r}
+# Fit mixed model with change point
+change_mod <- lmer(cv_sbp ~ time_from_first_metformin + x +
+  cv_age + combined_race + insur_type + ec +
+  (1 + time_from_first_metformin | record_number), data = metformin_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ec <- "No"
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = time_from_first_metformin)) +
+  geom_point(aes(y = cv_sbp, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From Metformin Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First Metformin" is the slope prior to starting medication, and the "Slope Change After Metformin" row shows the average change in slope after starting the medication.
+
+# Lifestyle Medicine
+
+Participants were considered to be "on lifestyle medicine" when not on Metformin or EC as described above.
+
+```{r}
+# Make a dataset for spline models
+lifestyle_only <- df %>%
+  filter(lifestyle_ever == "Yes") %>%
+  mutate(
+    time_from_first_lifestyle = cv_age - age_first_lifestyle,
+    x = (time_from_first_lifestyle > 0) * time_from_first_lifestyle
+  )
+label(lifestyle_only$time_from_first_lifestyle) <- "Time From First Lifestyle Medicine"
+label(lifestyle_only$x) <- "Slope Change After Lifestyle Medicine"
+```
+
+## Weight (kg)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(lifestyle)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_weight, group = record_number,
+    color = lifestyle
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On Lifestyle Medicine?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### Lifestyle Medicine users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_weight ~ cv_monthssincepcosdx * lifestyle + baseline_weight + cv_age +
+    combined_race + insur_type + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$baseline_weight <- mean(mod_df$baseline_weight, na.rm = T)
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_weight, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = lifestyle, color = lifestyle)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On Lifestyle Medicine?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "lifestyle", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$lifestyle)["No"])` "No" and `r as.numeric(table(mod_df$lifestyle)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on lifestyle medicine and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on lifestyle medicine compared to not on lifestyle medicine. The second table shows the slopes for those not on lifestyle medicine and on lifestyle medicine, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
+#### Change pre- vs. post-lifestyle medicine (lifestyle medicine users only)
+
+```{r}
+# Fit mixed model with change point
+change_mod <- lmer(cv_weight ~ time_from_first_lifestyle + x + baseline_weight +
+  cv_age + combined_race + insur_type +
+  (1 + time_from_first_lifestyle | record_number), data = lifestyle_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$baseline_weight <- mean(mod_df$baseline_weight, na.rm = T)
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = time_from_first_lifestyle)) +
+  geom_point(aes(y = cv_weight, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From Lifestyle Medicine Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First Lifestyle Medicine" is the slope prior to starting medication, and the "Slope Change After Lifestyle Medicine" row shows the average change in slope after starting the medication.
+
+## BMI
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(lifestyle)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_bmi, group = record_number,
+    color = lifestyle
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On Lifestyle Medicine?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### Lifestyle Medicine users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_bmi ~ cv_monthssincepcosdx * lifestyle + baseline_bmi + cv_age +
+    combined_race + insur_type + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$baseline_bmi <- mean(mod_df$baseline_bmi, na.rm = T)
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_bmi, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = lifestyle, color = lifestyle)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On Lifestyle Medicine?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "lifestyle", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$lifestyle)["No"])` "No" and `r as.numeric(table(mod_df$lifestyle)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on lifestyle medicine and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on lifestyle medicine compared to not on lifestyle medicine. The second table shows the slopes for those not on lifestyle medicine and on lifestyle medicine, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
+#### Change pre- vs. post-lifestyle medicine (lifestyle medicine users only)
+
+```{r}
+# Fit mixed model with change point
+change_mod <- lmer(cv_bmi ~ time_from_first_lifestyle + x + baseline_bmi +
+  cv_age + combined_race + insur_type +
+  (1 + time_from_first_lifestyle | record_number), data = lifestyle_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$baseline_bmi <- mean(mod_df$baseline_bmi, na.rm = T)
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = time_from_first_lifestyle)) +
+  geom_point(aes(y = cv_bmi, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From Lifestyle Medicine Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First Lifestyle Medicine" is the slope prior to starting medication, and the "Slope Change After Lifestyle Medicine" row shows the average change in slope after starting the medication.
+
+## HbA1c (%)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(lifestyle)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_a1c, group = record_number,
+    color = lifestyle
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On Lifestyle Medicine?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### Lifestyle Medicine users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_a1c ~ cv_monthssincepcosdx * lifestyle + cv_age +
+    combined_race + insur_type + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_a1c, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = lifestyle, color = lifestyle)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On Lifestyle Medicine?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "lifestyle", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$lifestyle)["No"])` "No" and `r as.numeric(table(mod_df$lifestyle)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on lifestyle medicine and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on lifestyle medicine compared to not on lifestyle medicine. The second table shows the slopes for those not on lifestyle medicine and on lifestyle medicine, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
+#### Change pre- vs. post-lifestyle medicine (lifestyle medicine users only)
+
+```{r}
+# Fit mixed model with change point
+change_mod <- lmer(cv_a1c ~ time_from_first_lifestyle + x +
+  cv_age + combined_race + insur_type +
+  (1 + time_from_first_lifestyle | record_number), data = lifestyle_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = time_from_first_lifestyle)) +
+  geom_point(aes(y = cv_a1c, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From Lifestyle Medicine Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First Lifestyle Medicine" is the slope prior to starting medication, and the "Slope Change After Lifestyle Medicine" row shows the average change in slope after starting the medication.
+
+## TG (mg/dL)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(lifestyle)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_tg, group = record_number,
+    color = lifestyle
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On Lifestyle Medicine?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### Lifestyle Medicine users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_tg ~ cv_monthssincepcosdx * lifestyle + cv_age +
+    combined_race + insur_type + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_tg, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = lifestyle, color = lifestyle)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On Lifestyle Medicine?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "lifestyle", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$lifestyle)["No"])` "No" and `r as.numeric(table(mod_df$lifestyle)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on lifestyle medicine and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on lifestyle medicine compared to not on lifestyle medicine. The second table shows the slopes for those not on lifestyle medicine and on lifestyle medicine, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
+#### Change pre- vs. post-lifestyle medicine (lifestyle medicine users only)
+
+```{r}
+# Fit mixed model with change point
+change_mod <- lmer(cv_tg ~ time_from_first_lifestyle + x +
+  cv_age + combined_race + insur_type +
+  (1 | record_number), data = lifestyle_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = time_from_first_lifestyle)) +
+  geom_point(aes(y = cv_tg, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From Lifestyle Medicine Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First Lifestyle Medicine" is the slope prior to starting medication, and the "Slope Change After Lifestyle Medicine" row shows the average change in slope after starting the medication.
+
+## HDL (mg/dL)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(lifestyle)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_hdl, group = record_number,
+    color = lifestyle
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On Lifestyle Medicine?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### Lifestyle Medicine users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_hdl ~ cv_monthssincepcosdx * lifestyle + cv_age +
+    combined_race + insur_type + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_hdl, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = lifestyle, color = lifestyle)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On Lifestyle Medicine?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "lifestyle", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$lifestyle)["No"])` "No" and `r as.numeric(table(mod_df$lifestyle)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on lifestyle medicine and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on lifestyle medicine compared to not on lifestyle medicine. The second table shows the slopes for those not on lifestyle medicine and on lifestyle medicine, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
+#### Change pre- vs. post-lifestyle medicine (lifestyle medicine users only)
+
+```{r}
+# Fit mixed model with change point
+change_mod <- lmer(cv_hdl ~ time_from_first_lifestyle + x +
+  cv_age + combined_race + insur_type +
+  (1 | record_number), data = lifestyle_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = time_from_first_lifestyle)) +
+  geom_point(aes(y = cv_hdl, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From Lifestyle Medicine Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First Lifestyle Medicine" is the slope prior to starting medication, and the "Slope Change After Lifestyle Medicine" row shows the average change in slope after starting the medication.
+
+## ALT (IU/L) 
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(lifestyle)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_alt, group = record_number,
+    color = lifestyle
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On Lifestyle Medicine?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### Lifestyle Medicine users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_alt ~ cv_monthssincepcosdx * lifestyle + cv_age +
+    combined_race + insur_type + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_alt, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = lifestyle, color = lifestyle)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On Lifestyle Medicine?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "lifestyle", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$lifestyle)["No"])` "No" and `r as.numeric(table(mod_df$lifestyle)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on lifestyle medicine and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on lifestyle medicine compared to not on lifestyle medicine. The second table shows the slopes for those not on lifestyle medicine and on lifestyle medicine, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
+#### Change pre- vs. post-lifestyle medicine (lifestyle medicine users only)
+
+```{r}
+# Fit mixed model with change point
+change_mod <- lmer(cv_alt ~ time_from_first_lifestyle + x +
+  cv_age + combined_race + insur_type +
+  (1 | record_number), data = lifestyle_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = time_from_first_lifestyle)) +
+  geom_point(aes(y = cv_alt, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From Lifestyle Medicine Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First Lifestyle Medicine" is the slope prior to starting medication, and the "Slope Change After Lifestyle Medicine" row shows the average change in slope after starting the medication.
+
+## SBP (mmHg)
+
+### Spaghetti plot
+
+```{r}
+#| warning: false
+p <- df %>%
+  filter(!is.na(lifestyle)) %>%
+  ggplot(aes(
+    x = cv_monthssincepcosdx, y = cv_sbp, group = record_number,
+    color = lifestyle
+  )) +
+  geom_line(alpha = 0.3) +
+  labs(color = "On Lifestyle Medicine?") +
+  theme_bw()
+ggplotly(p)
+```
+
+### Model results
+
+#### Lifestyle Medicine users vs. non-users
+
+```{r}
+# Fit mixed model
+mod <- lmer(
+  cv_sbp ~ cv_monthssincepcosdx * lifestyle + cv_age +
+    combined_race + insur_type + (1 | record_number),
+  data = df
+)
+# Model plot
+mod_df <- mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ind_pred <- predict(mod)
+mod_df$pop_pred <- predict(mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
+  geom_point(aes(y = cv_sbp, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred, group = lifestyle, color = lifestyle)) +
+  xlab("Months from PCOS Dx") +
+  labs(color = "On Lifestyle Medicine?") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+mod %>% gtsummary::tbl_regression()
+# EMMs
+emt <- emtrends(mod, "lifestyle", var = "cv_monthssincepcosdx")
+gt(as.data.frame(emt)) %>% fmt_number(decimals = 3)
+gt(as.data.frame(pairs(emt))) %>% fmt_number(decimals = 3)
+```
+
+The model above was fit using `r nrow(mod_df)` observations (`r as.numeric(table(mod_df$lifestyle)["No"])` "No" and `r as.numeric(table(mod_df$lifestyle)["Yes"])` "Yes"). In the first table, the row labelled "Months since PCOS diagnosis" indicates the slope for a participant not on lifestyle medicine and in the reference group for categorical variables. The interaction term labelled "Months since PCOS diagnosis * Yes" indicates the difference in slope between someone on lifestyle medicine compared to not on lifestyle medicine. The second table shows the slopes for those not on lifestyle medicine and on lifestyle medicine, and the third table shows the difference in slopes (both table estimates are averaged over the other variables in the model).
+
+#### Change pre- vs. post-lifestyle medicine (lifestyle medicine users only)
+
+```{r}
+# Fit mixed model with change point
+change_mod <- lmer(cv_sbp ~ time_from_first_lifestyle + x +
+  cv_age + combined_race + insur_type +
+  (1 + time_from_first_lifestyle | record_number), data = lifestyle_only)
+# Model plot
+mod_df <- change_mod@frame
+mod_df$cv_age <- mean(mod_df$cv_age, na.rm = T)
+mod_df$combined_race <- "Caucasian"
+mod_df$insur_type <- "Private"
+mod_df$ind_pred <- predict(change_mod)
+mod_df$pop_pred <- predict(change_mod, re.form = NA, newdata = mod_df)
+p <- ggplot(mod_df, aes(x = time_from_first_lifestyle)) +
+  geom_point(aes(y = cv_sbp, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = ind_pred, group = record_number),
+    alpha = 0.05, show.legend = F
+  ) +
+  geom_line(aes(y = pop_pred)) +
+  xlab("Years From Lifestyle Medicine Start") +
+  theme_classic()
+ggplotly(p)
+# Model summary
+change_mod %>% gtsummary::tbl_regression()
+```
+
+The model above was fit using `r nrow(mod_df)` observations. In the table, the row labeled "Time From First Lifestyle Medicine" is the slope prior to starting medication, and the "Slope Change After Lifestyle Medicine" row shows the average change in slope after starting the medication.

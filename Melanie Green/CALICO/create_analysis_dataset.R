@@ -446,6 +446,46 @@ ec_users <- unique(df$record_number[df$ec == "Yes"])
 df$ec_ever <- "No"
 df$ec_ever[df$record_number %in% ec_users] <- "Yes"
 df$ec_ever <- factor(df$ec_ever, levels = c("No", "Yes"))
+# Same as LARC and EC, but for Metformin
+df$metformin <- df$cv_newmeds___1 == "Checked"
+df$metformin <- factor(df$metformin, levels = c(F, T), labels = c("No", "Yes"))
+df <- df %>%
+  group_by(record_number) %>%
+  mutate(age_first_metformin = first(na.omit(cv_age[metformin == "Yes"]))) %>%
+  ungroup() %>%
+  mutate(
+    time_pcos_to_first_metformin = age_first_metformin - pcosdx_age,
+    time_menarche_to_first_metformin = age_first_metformin - pcosdx_menarche
+  )
+label(df$age_first_metformin) <- "Age at First Metformin"
+label(df$time_pcos_to_first_metformin) <-
+  "Years From PCOS Dx to First Metformin"
+label(df$time_menarche_to_first_metformin) <-
+  "Years From Menarche to First Metformin"
+metformin_users <- unique(df$record_number[df$metformin == "Yes"])
+df$metformin_ever <- "No"
+df$metformin_ever[df$record_number %in% metformin_users] <- "Yes"
+df$metformin_ever <- factor(df$metformin_ever, levels = c("No", "Yes"))
+# Lifestyle medicine means not on Metformin or EC
+df$lifestyle <- df$metformin == "No" & df$ec == "No"
+df$lifestyle <- factor(df$lifestyle, levels = c(F, T), labels = c("No", "Yes"))
+df <- df %>%
+  group_by(record_number) %>%
+  mutate(age_first_lifestyle = first(na.omit(cv_age[lifestyle == "Yes"]))) %>%
+  ungroup() %>%
+  mutate(
+    time_pcos_to_first_lifestyle = age_first_lifestyle - pcosdx_age,
+    time_menarche_to_first_lifestyle = age_first_lifestyle - pcosdx_menarche
+  )
+label(df$age_first_lifestyle) <- "Age at First Lifestyle Medicine"
+label(df$time_pcos_to_first_lifestyle) <-
+  "Years From PCOS Dx to First Lifestyle Medicine"
+label(df$time_menarche_to_first_lifestyle) <-
+  "Years From Menarche to First Lifestyle Medicine"
+lifestyle_users <- unique(df$record_number[df$lifestyle == "Yes"])
+df$lifestyle_ever <- "No"
+df$lifestyle_ever[df$record_number %in% lifestyle_users] <- "Yes"
+df$lifestyle_ever <- factor(df$lifestyle_ever, levels = c("No", "Yes"))
 # Age group at diagnosis
 df$age_group <- cut(df$pcosdx_age, c(-Inf, 15, Inf),
   right = F, labels = c("< 15 years", ">= 15 years")
@@ -470,6 +510,10 @@ label(df$larc) <- "On LARC?"
 label(df$larc_ever) <- "LARC Ever Used?"
 label(df$ec) <- "On EC?"
 label(df$ec_ever) <- "EC Ever Used?"
+label(df$metformin) <- "On Metformin?"
+label(df$metformin_ever) <- "Metformin Ever Used?"
+label(df$lifestyle) <- "On Lifestyle Medicine?"
+label(df$lifestyle_ever) <- "Lifestyle Medicine Ever Used?"
 label(df$pcosdx_age) <- "Age at time of PCOS diagnosis"
 label(df[, paste0("pcosdx_any_famhx___", hist_vars)]) <- as.list(hist_labels)
 label(df$mental_health_screening) <-
