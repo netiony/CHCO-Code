@@ -1131,12 +1131,12 @@ mast_sens_fxn <- function(so,cell,exposure,covariate,gene_set,exp_group,ref_grou
   
   # Specify the file name and data
   if (!is.null(cell)){
-    output_file <- paste0("Results_",cell_name,"_cells_for_",condition,".xlsx")
+    output_file <- paste0("Results_",cell_name,"_cells_for_",condition,".csv")
   } else {
-    output_file <- paste0("Results_for_",condition,".xlsx")
+    output_file <- paste0("Results_for_",condition,".csv")
   }
   
-  write.csv(result1,fs::path(output_file))
+  write.csv(result1,fs::path(dir.results,output_file))
   
   # Filter top 10 positive and negative log2FoldChange
   top_pos <- as.data.frame(result1) %>%
