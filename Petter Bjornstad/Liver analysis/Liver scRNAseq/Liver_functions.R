@@ -1,4 +1,4 @@
-#Define genes
+#Define gene sets -----
 sens_genes <- c("ACVR1B","ANG","ANGPT1","ANGPTL4","AREG","AXL","BEX3","BMP2","BMP6","C3","CCL1","CCL13",
                 "CCL16","CCL2","CCL20","CCL24","CCL26","CCL3","CCL4","CCL5","CCL7","CCL8","CD55",
                 "CD9","CSF1","CSF2","CSF2RB","CST4","CTNNB1","CTSB","CXCL1","CXCL10","CXCL12",
@@ -20,6 +20,32 @@ sens_genes <- c("ACVR1B","ANG","ANGPT1","ANGPTL4","AREG","AXL","BEX3","BMP2","BM
 # Find the intersection
 #full_sens_genes <- union(sens_genes, sens_genes2)
 #sens_genes <- full_sens_genes
+
+#Metabolism Pathway Gene Sets
+tca <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","tca_cycle_pathway.csv")) %>%
+  pull(genesymbol)
+gluco <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","gluconeogenesis_pathway.csv"))%>%
+  pull(genesymbol)
+glyc <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","glycolysis_pathway.csv"))%>%
+  pull(genesymbol)
+beta_ox <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","beta_oxidation_pathway.csv"))%>%
+  pull(genesymbol)
+ox_phos <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","ox_phos_pathway.csv"))%>%
+  pull(genesymbol)
+lipid_met <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","lipid_metabolism.csv"))%>%
+  pull(genesymbol)
+energy_met <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","energy_metabolism_pathway.csv"))%>%
+  pull(genesymbol)
+met <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","metabolism_pathway.csv"))%>%
+  pull(genesymbol)
+
+#Inflammation Pathway Gene Sets
+cytokines <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","cytokines_inflammatory_response_pathway.csv"))%>%
+  pull(genesymbol)
+inflamatory <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","inflamatory_response_pathway.csv"))%>%
+  pull(genesymbol)
+chemokines <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","infl_chemokine_cytokine_pathway.csv"))%>%
+  pull(genesymbol)
 
 #DEGS ----
 # de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", NULL, "_top")
@@ -258,8 +284,158 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
   # Call the function
   write_multiple_sheets(output_file, sheet_data)
 }
+##b. Specific Pathways----
+degs_fxn_pathway <- function(so,cell,exposure,gene_set,exp_group,ref_group,pathway) {
+  DefaultAssay(so) <- "RNA"
+  
+  #Conidtion names
+  condition <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group," vs. ",ref_group,")")
+  
+  #Differential Expression by Group
+  if (!is.null(cell)) {
+    Idents(so) <- so$celltype2
+    cell_name <- str_replace_all(cell,"/","_")
+  }
+  # sens_genes <- c(sens_genes,"CDKN1A")
+  # de.markers(so, gene_set, "group", id2 = "neither", id1 = "both", "PT", "")
+  de.markers(so, gene_set, exposure, id2 = ref_group, id1 = exp_group, cell, "")
+  colnames(m)[2] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group,")")
+  colnames(m)[3] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",ref_group,")")
+  
+  # Filter for significant genes
+  m_top <- m
+  significant_genes <- m_top %>% filter(p_val_adj < 0.05)
+  
+  # Select the top 10 positive and 10 negative log2FC genes based on the largest magnitude of fold change
+  top_positive_by_fc <- significant_genes %>% 
+    filter(avg_log2FC > 0) %>% 
+    arrange(desc(abs(avg_log2FC))) %>%  # Sort by absolute fold change (largest first)
+    head(10)  # Top 10 positive fold changes
+  
+  top_negative_by_fc <- significant_genes %>% 
+    filter(avg_log2FC < 0) %>% 
+    arrange(desc(abs(avg_log2FC))) %>%  # Sort by absolute fold change (largest first)
+    head(10)  # Top 10 negative fold changes
+  
+  # Select the top 10 positive and 10 negative log2FC genes based on significance (p_val_adj)
+  top_positive_by_significance <- significant_genes %>% 
+    filter(avg_log2FC > 0) %>% 
+    arrange(p_val_adj) %>%  # Sort by smallest p-value (most significant)
+    head(10)  # Top 10 most significant positive fold changes
+  
+  top_negative_by_significance <- significant_genes %>% 
+    filter(avg_log2FC < 0) %>% 
+    arrange(p_val_adj) %>%  # Sort by smallest p-value (most significant)
+    head(10)  # Top 10 most significant negative fold changes
+  
+  # Combine top fold-change based and significance-based genes into a final list
+  top_genes <- rbind(
+    top_positive_by_fc %>% mutate(Selection = "Top 10 by Fold Change"),
+    top_negative_by_fc %>% mutate(Selection = "Top 10 by Fold Change"),
+    top_positive_by_significance %>% mutate(Selection = "Top 10 by Significance"),
+    top_negative_by_significance %>% mutate(Selection = "Top 10 by Significance")
+  )
+  if (!is.null(cell)){
+    title <- paste0(str_to_title(pathway)," DEGs in ",cell_name," cells for ",condition)
+  } else {
+    title <- paste0(str_to_title(pathway)," Bulk DEGs for ",condition)
+  }
 
-##b. Senescence Genes ----
+  # Add a column to classify points based on significance and direction
+  m_top$Significance <- ifelse(
+    m_top$p_val_adj < 0.05 & m_top$avg_log2FC > 0, "Significant Positive",
+    ifelse(m_top$p_val_adj < 0.05 & m_top$avg_log2FC < 0, "Significant Negative", "Non-Significant")
+  )
+  
+  # Add labels only for significant points
+  m_top$label <- ifelse(m_top$Significance != "Non-Significant", rownames(m_top), NA)
+  
+  # Define custom colors
+  colors <- c("Significant Positive" = "red", 
+              "Significant Negative" = "blue", 
+              "Non-Significant" = "gray")
+  
+  # Create the ggplot volcano plot
+  p <- ggplot(m_top, aes(x = avg_log2FC, y = -log10(p_val_adj), color = Significance)) +
+    geom_point(size = 4, alpha = 0.8) +  # Points with size and transparency
+    scale_color_manual(values = colors) +  # Set custom colors
+    labs(
+      title = title,
+      subtitle = paste0("Positive Log2 FC = Greater Expression in ", condition, "\n",
+                        "(Significant at FDR-P < 0.05)"),
+      x = "Log2 Fold Change (avg_log2FC)",
+      y = "-Log10 Adjusted P-Value (p_val_adj)"
+    ) +
+    theme_minimal() +  # Clean plot theme
+    theme(
+      text = element_text(size = 14, face = "bold"),
+      plot.title = element_text(hjust = 0.5, size = 16),
+      plot.subtitle = element_text(hjust = 0.5, size = 12),
+      legend.position = "top"
+    ) +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +  # Significance threshold line
+    geom_vline(xintercept = 0, linetype = "dashed", color = "black") +  # Center line for FC
+    geom_text_repel(
+      aes(label = label),  # Label significant points
+      color = "black",     # Ensure labels are in black
+      size = 4, 
+      max.overlaps = 10,  # Adjust this value to control label density
+      box.padding = 0.5,
+      point.padding = 0.3
+    )
+  
+  if (!is.null(cell)){
+    filename <- paste0(str_to_title(pathway),"_DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
+  } else {
+    filename <- paste0(str_to_title(pathway),"_Bulk_DEGs_for_",condition,".pdf") 
+  }
+  pdf(fs::path(dir.results,filename),width=10,height=7)
+  plot(p)
+  dev.off()
+
+  #Make sure gene nemaes are in printed file
+  deg_results <- m 
+  deg_results$Gene <- rownames(deg_results)
+  
+  #save results to excel file
+  write_multiple_sheets <- function(output_file, sheet_data) {
+    # Create a new workbook
+    wb <- createWorkbook()
+    
+    # Loop over the list of data frames
+    for (sheet_name in names(sheet_data)) {
+      # Add a new sheet to the workbook
+      addWorksheet(wb, sheet_name)
+      
+      # Write the data frame to the sheet
+      writeData(wb, sheet_name, sheet_data[[sheet_name]])
+    }
+    # Save the workbook to the specified file
+    saveWorkbook(wb, file = output_file, overwrite = TRUE)
+    
+    # Print a message
+    message("Excel file with multiple sheets created: ", output_file)
+  } 
+  # Example usage
+  df1 <- deg_results
+  
+  # Specify the file name and data
+  if (!is.null(cell)){
+    output_file <- fs::path(dir.results,paste0(str_to_title(pathway),"_Results_",cell_name,"_cells_for_",condition,".xlsx"))  
+  } else {
+    output_file <- fs::path(dir.results,paste0(str_to_title(pathway),"_Bulk_Results_for_",condition,".xlsx"))
+  }
+  
+  sheet_data <- list(
+    "DEG" = df1
+  )
+  # Call the function
+  write_multiple_sheets(output_file, sheet_data)
+}
+
+
+
+##c. Senescence Genes ----
 degs_fxn_sens <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,top_gsea) {
   DefaultAssay(so) <- "RNA"
   
