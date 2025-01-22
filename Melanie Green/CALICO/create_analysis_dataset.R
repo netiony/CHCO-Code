@@ -273,6 +273,8 @@ df$weight_perc <- factor(df$weight_perc,
 df$weight_raw <- factor(df$weight_raw,
   levels = c("Normal weight", "Overweight", "Obese")
 )
+# Combined weight category
+df$weight_cat <- coalesce(df$weight_perc, df$weight_raw)
 # Overweight yes no categories
 df <- df %>%
   mutate(
@@ -503,6 +505,7 @@ label(df$age_group) <- "Age Group at Diagnosis"
 label(df$combined_race) <- "Race"
 label(df$weight_perc) <- "Weight Category (by percentile and raw value)"
 label(df$weight_raw) <- "Weight Category (by raw value)"
+label(df$weight_cat) <- "Weight Category (by percentile then raw value)"
 label(df$overweight_perc) <- "Overweight Status (by percentile and raw value)"
 label(df$overweight_raw) <- "Overweight Status (by raw value)"
 label(df$cv_a1c) <- "HbA1C"
