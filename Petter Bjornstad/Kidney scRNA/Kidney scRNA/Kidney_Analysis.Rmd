@@ -62,6 +62,7 @@ library(doParallel)
 library(fs)
 registerDoParallel(cores = 6)
 library(VennDiagram)
+library(janitor)
 
 
 #Local file path
@@ -94,39 +95,68 @@ mem.maxVSize(64000000000)
 
 #Lambda
 so_kidney_sc <- readRDS(fs::path(dir.dat,"scRNA","data_raw","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
-load(fs::path(dir.dat,"Data Harmonization","Data Exports","PB90_clinical_metadata_12_10.RData"))
-so_kidney_sc <- AddMetaData(so_kidney_sc, so_meta_combined)
-rm(so_meta_combined)
-gc()
-
-#Define 4 exposure groups: 
-#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
-so_kidney_sc@meta.data <- so_kidney_sc@meta.data %>% 
+so_kidney_sc$kit_id[which(so_kidney_sc$kit_id=="KI-0014643")] <- "KL-0014643"
+so_kidney_sc$kit_id[which(so_kidney_sc$kit_id=="kl-0023998")] <- "KL-0023998"
+meta_data_raw <- so_kidney_sc@meta.data
+harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc.csv"))
+#"KL-0014634" "KL-0014629" "KL-0014628" coenrolled IDs
+  #Partipant 30051 (kit id KL-0027474 at 4m has sc, but at baseline no sc has kit id KL-0027474 metadata)
+#FIlter out attempt participants
+harm_meta_data <- harm_meta_data %>% 
+  dplyr::select(-X) %>%
+  mutate(study=case_when(grepl("CRC",record_id)~"CROCODILE",
+                         grepl("IT",record_id)~"IMPROVE",
+                         grepl("RH",record_id)~"RH/RH2",
+                         grepl("PNDA",record_id)~"PANDA"))
+harm_summary <- harm_meta_data %>%
+  group_by(study) %>%
+  summarize(n=n())
+harm_summary <- harm_meta_data %>%
+  group_by(group) %>%
+  summarize(n=n())
+harm_meta_data <- harm_meta_data %>%
+  filter(group=="Type 2 Diabetes" | group=="Lean Control")
+  
+#83 participants have sc and metadata
+#47 remain 
+#Create medication groups
+harm_meta_data <- harm_meta_data %>%
   mutate(both=ifelse(group=="Type 2 Diabetes" & epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
   mutate(exclusive_sglt2=ifelse(group=="Type 2 Diabetes" & epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
   mutate(exclusive_glp1=ifelse(group=="Type 2 Diabetes" & epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
   mutate(neither=ifelse(group=="Type 2 Diabetes" & epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No")) %>%
-  mutate(hc=ifelse(group=="Lean Control", "Yes","No"))
+  mutate(hc=ifelse(group!="Type 2 Diabetes" &  epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
 
-
-so_kidney_sc@meta.data <- so_kidney_sc@meta.data %>% 
-  mutate(group2 = case_when(both == "Yes" ~ "both",
+#Define 4 exposure groups: 
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
+gc()
+harm_meta_data <- harm_meta_data %>% 
+  mutate(medication = case_when(both == "Yes" ~ "sglt2_glp1",
                             exclusive_sglt2 == "Yes" ~ "exclusive_sglt2",
                             exclusive_glp1 == "Yes" ~ "exclusive_glp1",
-                            neither == "Yes" ~ "neither",
-                            hc=="Yes" ~ "healthy_control"))
+                            neither == "Yes" ~ "no_med",
+                            hc=="Yes" ~ "hc"))
+harm_meta_data$medication <- factor(harm_meta_data$medication, levels = c("hc","no_med", "exclusive_sglt2", "exclusive_glp1","sglt2_glp1"))
 
-so_kidney_sc@meta.data$group2 <- factor(so_kidney_sc@meta.data$group2, levels = c("healthy_control","neither", "both", "exclusive_sglt2", "exclusive_glp1"))
-
-#so_diab <- subset(so_kidney_sc,group=="Type 2 Diabetes")
 #rm(so_kidney_sc)
+gc()
+meta_kidney_sc <-  so_kidney_sc@meta.data %>%
+  #dplyr::mutate(RNAlater_ID = SampleID) %>%
+  left_join(harm_meta_data)
+rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+
+so_kidney_sc <- AddMetaData(so_kidney_sc, meta_kidney_sc)
+rm(meta_kidney_sc,harm_meta_data,harm_summary,meta_data_raw)
+
+#Switch default assay in seurat object to RNA
+DefaultAssay(so_kidney_sc) <- "RNA"
 gc()
 
 #Create senesence so in all cell types
 #sens_genes <- c(sens_genes,"CDKN1A")
-#sens_gene_in_data <- intersect(sens_genes, rownames(so_kidney_sc))
+sens_gene_in_data <- intersect(sens_genes, rownames(so_kidney_sc))
 # Subset the Seurat object to include only genes in sens_gene_in_data
-#so_sens_all <- subset(so_kidney_sc, features = sens_gene_in_data)
+so_sens_all <- subset(so_kidney_sc, features = sens_gene_in_data)
 #rm(so_kidney_sc)
 # # saveRDS(so_sens_all,fs::path(dir.dat,"so_sens_genes_all_cells_KIDNEY.RDS"))
 # # rm(so_sens_all)
@@ -164,28 +194,140 @@ gc()
 # so_sens_TAL2 <- subset(so_sens_TAL, group2=="Yes")
 # so_sens_TAL3 <- subset(so_sens_TAL, group=="Type 2 Diabetes")
 ```
+
+##a. ID Check 
+```{r}
+
+harm_data <- read.csv(fs::path(dir.dat,"Data Harmonization","Data Clean","harmonized_dataset.csv"))
+master_biopsy <- read.xlsx(fs::path(dir.dat,"Data Harmonization","Biopsies","Biopsy master tracker.xlsx"))
+colnames(master_biopsy) <- master_biopsy[2,]
+master_biopsy <- master_biopsy[-c(1:2),]
+rownames(master_biopsy) <- NULL
+master_biopsy <- master_biopsy %>%
+  janitor::clean_names()
+attempt_ids <- master_biopsy$kit_id[which(master_biopsy$study=="ATTEMPT")]
+followup_ids <- unique(c(unique(master_biopsy$kit_id[which(master_biopsy$visit_id=="4M")]),unique(master_biopsy$kit_id[which(master_biopsy$visit_id=="12M")])))
+remove_ids <- c(attempt_ids,followup_ids)
+length(which(unique(meta_data_raw$kit_id %in% remove_ids )))
+
+ harm_data2 <- harm_data %>%
+  filter(visit=="baseline" | visit=="")%>%
+   dplyr::select(record_id,kit_id,group,epic_glp1ra_1,epic_sglti2_1,age,sex,hba1c,visit)
+   
+   harm_data2[harm_data2==""] <- NA
+   harm_data2 <- harm_data2 %>%
+     group_by(record_id) %>%
+     fill(everything(),.direction="up") %>%
+     ungroup() 
+   
+   harm_data3 <- harm_data2 %>%
+     dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_,  first(na.omit(.x)))),
+    across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, first(.x, na.rm = TRUE))),
+   .by = c(kit_id)) %>%
+     filter(kit_id %in% unique(so_kidney_sc$kit_id))
+meta.data <- so_kidney_sc@meta.data
+#master_biopsy <- read.xlsx(fs::path(dir.dat,"Data Harmonization","Biopsies","Biopsy master tracker.xlsx"))
+harm_data <- read.csv(fs::path(dir.dat,"Data Harmonization","Data Clean","harmonized_dataset.csv"))
+#load(fs::path(dir.dat,"Data Harmonization","Data Exports","PB90_clinical_metadata_12_10.RData"))
+
+#Identify ids that are at two time points in pb 90 and remove all non-baseline visits
+colnames(master_biopsy) <- master_biopsy[2,]
+master_biopsy <- master_biopsy[-c(1:2),]
+rownames(master_biopsy) <- NULL
+master_biopsy <- master_biopsy %>%
+  janitor::clean_names()
+
+pb90_ids <- unique(meta.data$kit_id)
+pb90_ids[which(pb90_ids %in% master_biopsy$kit_id)] #88 pb90 kit ids in master biopsy tracker
+pb90_ids[which(!pb90_ids %in% master_biopsy$kit_id)] #"KI-0014643" "kl-0023998"
+#Typeos in pb90 for these two ids: "KI-0014643" "kl-0023998"
+#Fix: KI to KL and kl to KL 
+so_kidney_sc$kit_id[which(so_kidney_sc$kit_id=="KI-0014643")] <- "KL-0014643"
+so_kidney_sc$kit_id[which(so_kidney_sc$kit_id=="kl-0023998")] <- "KL-0023998"
+#Check it worked
+meta.data <- so_kidney_sc@meta.data
+pb90_ids <- unique(meta.data$kit_id)
+pb90_ids[which(pb90_ids %in% master_biopsy$kit_id)] #90 pb90 kit ids in master biopsy tracker
+pb90_ids[which(!pb90_ids %in% master_biopsy$kit_id)] #No IDs missing
+
+#Now check harmonized dataset & metadata
+pb90_ids[which(pb90_ids %in% harm_data$kit_id)] #89 kit ids in harmdataset from pb90
+pb90_ids[which(!pb90_ids %in% harm_data$kit_id)]#"KL-0027470" participant from attempt 30051, coenrolled, baseline PNDA-108 kit_id = KL-0027474, followup KL-0027470
+
+#Find kit ids for non-baseline visits to filter aout 
+length(which(unique(master_biopsy$kit_id[which(master_biopsy$visit_id=="BL" | is.na(master_biopsy$visit_id))]) %in% pb90_ids)) #83
+
+
+#RH-87-T, RH-88-T & PNDA-201 missing kit ids or biopsies
+
+
+
+```
+
 #3. Descriptive Statistics
 ```{r echo = F}
-dat <- readRDS("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/PB90_clinical_metadata_only_12_10.rds")
-unique(so_kidney_sc$kit_id)
-dat <- dat %>% 
-  filter(kit_id %in% unique(so_kidney_sc$kit_id)) %>%
-  mutate(both=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
-  mutate(exclusive_sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
-  mutate(exclusive_glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
-  mutate(neither=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
-dat <- dat %>% 
-  filter(group=="Type 2 Diabetes")
+#dat <- readRDS("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter #Bjornstad/Data Harmonization/Data Exports/PB90_clinical_metadata_only_12_10.rds")
+#unique(meta.data$kit_id)
+#unique(so_kidney_sc$kit_id) #90 
+#length(unique(so_kidney_sc$kit_id)) 
+#length(which(unique(so_kidney_sc$kit_id) %in% unique(meta.data$kit_id)))
 
-dat$record_id %in% unique(so_kidney_sc$record_id)
-unique(so_kidney_sc$record_id)
-table(dat$exclusive_sglt2) #-/+ #27 no, 10 yes
-table(dat$exclusive_glp1) #+/- #29 no, 8 yes
-table(dat$both) #+/+ #33 no, 4 yes
-table(dat$neither) #-/- #22 no, 15 yes
+#meta.data.filt <-meta.data %>%
+#  dplyr::select(colnames(dat))
 
+#length(unique(so_kidney_sc$kit_id) %in% dat$kit_id)
+#meta.data90 <- meta.data %>%
+#  filter(kit_id %in% unique(so_kidney_sc$kit_id))
+#dat_90 <- dat %>% 
+#  filter(kit_id %in% unique(so_kidney_sc$kit_id)) %>%
+#  mutate(both=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
+#  mutate(exclusive_sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
+#  mutate(exclusive_glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
+#  mutate(neither=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+#dat <- dat %>% 
+#  filter(group=="Type 2 Diabetes")
 
+#length(dat$kit_id %in% unique(so_kidney_sc$kit_id))
+#unique(so_kidney_sc$record_id)
+#table(dat$exclusive_sglt2) #-/+ #27 no, 10 yes
+#table(dat$exclusive_glp1) #+/- #29 no, 8 yes
+#table(dat$both) #+/+ #33 no, 4 yes
+#table(dat$neither) #-/- #22 no, 15 yes
 
+harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc.csv"))
+#"KL-0014634" "KL-0014629" "KL-0014628" coenrolled IDs
+  #Partipant 30051 (kit id KL-0027474 at 4m has sc, but at baseline no sc has kit id KL-0027474 metadata)
+#FIlter out attempt participants
+harm_meta_data <- harm_meta_data %>% 
+  dplyr::select(-X) %>%
+  mutate(study=case_when(grepl("CRC",record_id)~"CROCODILE",
+                         grepl("IT",record_id)~"IMPROVE",
+                         grepl("RH",record_id)~"RH/RH2",
+                         grepl("PNDA",record_id)~"PANDA"))
+
+harm_meta_data <- harm_meta_data %>%
+  filter(group=="Type 2 Diabetes" | group=="Lean Control")
+  
+#83 participants have sc and metadata
+#47 remain 
+#Create medication groups
+harm_meta_data <- harm_meta_data %>%
+  mutate(both=ifelse(group=="Type 2 Diabetes" & epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
+  mutate(exclusive_sglt2=ifelse(group=="Type 2 Diabetes" & epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
+  mutate(exclusive_glp1=ifelse(group=="Type 2 Diabetes" & epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
+  mutate(neither=ifelse(group=="Type 2 Diabetes" & epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No")) %>%
+  mutate(hc=ifelse(group!="Type 2 Diabetes" &  epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+
+#Define 4 exposure groups: 
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
+gc()
+harm_meta_data <- harm_meta_data %>% 
+  mutate(medication = case_when(both == "Yes" ~ "sglt2_glp1",
+                            exclusive_sglt2 == "Yes" ~ "exclusive_sglt2",
+                            exclusive_glp1 == "Yes" ~ "exclusive_glp1",
+                            neither == "Yes" ~ "no_med",
+                            hc=="Yes" ~ "hc"))
+harm_meta_data$medication <- factor(harm_meta_data$medication, levels = c("hc","no_med", "exclusive_sglt2", "exclusive_glp1","sglt2_glp1"))
 
 # dat <- dat %>% 
 #   filter(diagnosis_of_diabetes=="Yes")
@@ -202,8 +344,18 @@ table(dat$neither) #-/- #22 no, 15 yes
 # dat$fibrosis_stage <- as.factor(dat$fibrosis_stage)
 # dat$lobular_inflammation_percent <- as.factor(dat$lobular_inflammation_percent)
 # 
-# label(dat$age)      <- "Age (y)"
-# label(dat$nih_sex)      <- "Sex"
+
+dat <- harm_meta_data
+label(dat$age)      <- "Age (y)"
+label(dat$sex)      <- "Sex"
+label(dat$hba1c) <- "HbA1c (%)"
+dat$medication <- case_when(dat$medication=="hc"~"Lean Control",
+                            dat$medication=="no_med"~"T2D No Medication",
+                            dat$medication=="exclusive_sglt2"~"Exclusive SLGT2i",
+                            dat$medication=="exclusive_glp1"~"Exclusive GLP-1ra",
+                            dat$medication=="sglt2_glp1"~"SGLT2i + GLP-1ra")
+#dat$medication <- factor(dat$medication)
+label(dat$medication) <- "Medication Status"
 # label(dat$nih_race)    <- "Race"
 # label(dat$nih_ethnicity)    <- "Ethnicity"
 # label(dat$diagnosis_of_diabetes)  <- "Diabetes Status"
@@ -216,11 +368,11 @@ table(dat$neither) #-/- #22 no, 15 yes
 # label(dat$steatosis_percent) <- "Steatosis Percent (%)"
 # label(dat$fibrosis_stage) <- "Fibrosis Stage"
 # label(dat$lobular_inflammation_percent) <- "Lobular Inflammation Percent (%)"
-dat2 <- dat %>% 
-  filter(group=="Type 2 Diabetes" | group=="Obese Control" | group=="Lean Control")
-dat3 <- dat %>% 
+
+dat1 <- dat %>% 
   filter(group=="Type 2 Diabetes")
-table1(~ age + sex + race + exclusive_glp1 + exclusive_sglt2 + both + acr_u + albuminuria_cat| group, data=dat2)
+table1(~ age + sex + hba1c + medication | group, data=dat)
+table1(~ age + sex + hba1c + group | medication, data=dat)
 table1(~ age + sex + race + epic_sglti2_1 + acr_u + albuminuria_cat| epic_glp1ra_1 , data=dat2)
 
 table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage | diagnosis_of_diabetes, data = dat)
