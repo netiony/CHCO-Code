@@ -1,0 +1,388 @@
+---
+title: "Kidney scRNAseq"
+author: Hailey Hampson
+output: html_document
+date: "2025-01-25"
+---
+# 1. Set up Libraries & Directores
+```{r, include=F}
+library(reprex)
+library(tidyverse)
+library(BiocManager)        
+library(arsenal)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(Seurat)
+library(future)
+library(colorspace)
+library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggpubr)
+library(venn)
+library(rstatix)
+library(table1)
+library(Biobase)
+library(ReactomeGSA)
+library(GSEABase)
+library(msigdbr)
+library(kableExtra)
+library(knitr)
+library(SingleCellExperiment)
+library(fgsea)
+library(EnhancedVolcano)
+library(openxlsx)
+library(BiocManager)
+library(MAST)
+library(ggrepel)
+# library(qpcR)
+library(ggpubr)
+library(openxlsx)
+library(ggplot2)
+library(GGally)
+library(GSEABase)
+library(limma)
+library(reshape2)
+library(data.table)
+library(knitr)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(stringr)
+library(NMF)
+library(rsvd)
+library(RColorBrewer)
+library(MAST)
+library(devtools)
+# install_github("Sun-lab/ideas",force=T)
+#library(ideas)
+library(foreach)
+library(doRNG)
+library(doParallel)
+library(fs)
+registerDoParallel(cores = 6)
+library(VennDiagram)
+library(janitor)
+
+
+#Local file path
+#dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
+#dir.dat2 <- c("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean")
+#dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+#dir.results <- c("/Volumes/Peds Endo/Petter Bjornstad/Kidney Project/Results")
+
+#Lambda file path
+dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
+dir.code <- c("/home/Github_Repo/CHCO-Code/Petter Bjornstad/Kidney scRNA/Kidney scRNA")
+dir.results <- c(fs::path(dir.dat,"Kidney Project/Results"))
+
+#Load functions
+source("Kidney_functions_sc.R")
+
+```
+
+# 2. Load Full Data & Clean: scRNA & MetaData
+```{r, include=F}
+#Local
+# dir.dat <- c("/Users/hhampson/Dropbox/Bjornstad data")
+# so_kidney_sc <- readRDS(fs::path(dir.dat,"Kidney scRNA","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
+# load("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/PB90_clinical_metadata.RData")
+# so_kidney_sc <- AddMetaData(so_kidney_sc, so_meta_combined)
+# rm(so_meta_combined)
+# gc()
+
+#Lambda
+so_kidney_sc <- readRDS(fs::path(dir.dat,"scRNA","data_raw","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
+so_kidney_sc$kit_id[which(so_kidney_sc$kit_id=="KI-0014643")] <- "KL-0014643"
+so_kidney_sc$kit_id[which(so_kidney_sc$kit_id=="kl-0023998")] <- "KL-0023998"
+#harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc.csv")) #small meta set
+harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc_all_metadata.csv")) #all metadata vars
+#"KL-0014634" "KL-0014629" "KL-0014628" coenrolled IDs
+  #Partipant 30051 (kit id KL-0027474 at 4m has sc, but at baseline no sc has kit id KL-0027474 metadata)
+#FIlter out attempt participants
+harm_meta_data <- harm_meta_data %>% 
+  dplyr::select(-X)
+gc()
+meta_kidney_sc <-  so_kidney_sc@meta.data %>%
+  #dplyr::mutate(RNAlater_ID = SampleID) %>%
+  left_join(harm_meta_data)
+rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+
+so_kidney_sc <- AddMetaData(so_kidney_sc, meta_kidney_sc)
+rm(meta_kidney_sc,harm_meta_data)
+
+#Switch default assay in seurat object to RNA
+DefaultAssay(so_kidney_sc) <- "RNA"
+gc()
+
+#Create senesence so in all cell types
+#sens_genes <- c(sens_genes,"CDKN1A")
+#sens_gene_in_data <- intersect(sens_genes, rownames(so_kidney_sc))
+# Subset the Seurat object to include only genes in sens_gene_in_data
+#so_sens_all <- subset(so_kidney_sc, features = sens_gene_in_data)
+#rm(so_kidney_sc)
+# # saveRDS(so_sens_all,fs::path(dir.dat,"so_sens_genes_all_cells_KIDNEY.RDS"))
+# # rm(so_sens_all)
+# # 
+# # #Load sens all cells
+# # so_sens <- readRDS(fs::path(dir.dat,"so_sens_genes_all_cells_KIDNEY.RDS"))
+# # dat <- so_sens@meta.data
+# # so_diab <- subset(so_sens, diagnosis_of_diabetes == "Yes")
+# # 
+# #PT Cells
+# so_sens_all@meta.data$PT <- ifelse(grepl("PT-",so_sens_all@meta.data$celltype_rpca),"PT","Non-PT")
+# Idents(so_sens_all) <- so_sens_all$PT
+# so_sens <- subset(so_sens_all, PT=="PT")
+# # saveRDS(so_sens,fs::path(dir.dat,"so_sens_genes_PT_Cells_KIDNEY.RDS"))
+# rm(so_sens_all,so_sens)
+# so_sens_PT <- readRDS(fs::path(dir.dat,"Liver Project","so_sens_genes_PT_Cells_KIDNEY.RDS"))
+# so_sens_PT@meta.data$group1 <- ifelse(so_sens_PT@meta.data$group=="Type 2 Diabetes" | so_sens_PT@meta.data$group=="Lean Control" ,"Yes","No")
+# so_sens_PT1 <- subset(so_sens_PT, group1=="Yes")
+# so_sens_PT@meta.data$group2 <- ifelse(so_sens_PT@meta.data$group=="Type 2 Diabetes","Yes","No")
+# so_sens_PT2 <- subset(so_sens_PT, group2=="Yes")
+# so_sens_PT3 <- subset(so_sens_PT, group=="Type 2 Diabetes")
+# 
+# 
+# 
+# #TAL Cells
+# so_sens_all@meta.data$TAL <- ifelse(grepl("TAL",so_sens_all@meta.data$celltype_rpca),"TAL","Non-TAL")
+# Idents(so_sens_all) <- so_sens_all$TAL
+# so_sens <- subset(so_sens_all, TAL=="TAL")
+# # saveRDS(so_sens,fs::path(dir.dat,"so_sens_genes_TAL_Cells_KIDNEY.RDS"))
+# rm(so_sens_all,so_sens,so_sens_TAL,so_sens_TAL1)
+# so_sens_TAL <- readRDS(fs::path(dir.dat,"Liver Project","so_sens_genes_TAL_Cells_KIDNEY.RDS"))
+# so_sens_TAL@meta.data$group1 <- ifelse(so_sens_TAL@meta.data$group=="Type 2 Diabetes"| so_sens_TAL@meta.data$group=="Lean Control","Yes","No")
+# so_sens_TAL1 <- subset(so_sens_TAL, group1=="Yes")
+# so_sens_TAL@meta.data$group2 <- ifelse(so_sens_TAL@meta.data$group=="Type 2 Diabetes","Yes","No")
+# so_sens_TAL2 <- subset(so_sens_TAL, group2=="Yes")
+# so_sens_TAL3 <- subset(so_sens_TAL, group=="Type 2 Diabetes")
+```
+
+# 3. Outline 
+### a. Comparison Groups of Interest
+1. T2D vs. OB
+2. T2D vs. T1D
+3. T2D vs. LC
+4. T2D/OB vs. LC
+5. T2D/OB vs. T1D
+
+### b. Disease Categories of Interest
+1. Albuminuria (Y/N) - UACR >= 30 mg/g
+  a. T2D
+  b. T2D/OB
+2. UACR >= 100mg/g
+3. UACR >= 300mg/g
+
+### c. Medication Groups of Interest 
+1. SLGT2i+/GLP-1ra+
+2. SGLT2i-/GLP-1ra+
+3. SGLT2i+/GLP-1ra-
+4. SGLT2i-/GLP-1ra-
+
+### d. Additional Medications of Interest  
+Metformin, Insulin, ACEi/ARB
+
+### e. Characteristics of Interest
+UACR, SBP/DBP (MAP), GFR, RPF, BMI, Fat Mass, Lean Mass, HbA1C, TKV/htTKV
+
+### f. Gene Sets of Interest
+1. All Genes 
+2. Senescence 
+3. Metabolism
+4. Inflammation
+
+### g. Analysis Plan
+1. All Genes
+  a. DEGS + GSEA + IPA
+  b. MAST + GSEA + IPA
+  c. Pseuodbulk all cell types
+  d. Cell Specific (PT, TAL, EC, etc.)
+2. Pathway Gene Sets
+  a. DEGS
+  b. MAST
+  c. Pseudobulk all cell types
+  d. Cell Specific (PT, TAL, EC, etc. )
+
+# 3. Descriptive Statistics
+```{r, echo = F,warning=F}
+#Load metadata for descriptive stats
+#harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc.csv"))
+harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc_all_metadata.csv")) #all metadata vars
+harm_meta_data <- harm_meta_data %>% 
+  dplyr::select(-X)
+
+#Create Medication Groups
+harm_meta_data <- harm_meta_data %>%
+  mutate(glp1_sglt2=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
+  mutate(sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
+  mutate(glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
+  mutate(no_med=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+  #mutate(=ifelse(group!="Type 2 Diabetes" &  epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+
+#Define 4 exposure groups: 
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
+gc()
+harm_meta_data <- harm_meta_data %>% 
+  mutate(medication = case_when(glp1_sglt2 == "Yes" ~ "glp1_sglt2",
+                            sglt2 == "Yes" ~ "sglt2",
+                            glp1 == "Yes" ~ "glp1",
+                            no_med == "Yes" ~ "no_med"))
+harm_meta_data$medication <- factor(harm_meta_data$medication, levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
+
+#Number of Individuals Per Study 
+harm_summary1 <- harm_meta_data %>%
+  group_by(study) %>%
+  summarize(n=n())
+
+#Number of Individuals Per Disease Group
+harm_summary2 <- harm_meta_data %>%
+  group_by(group) %>%
+  summarize(n=n())
+
+#Number of Individuals Per Medication Group
+harm_summary3 <- harm_meta_data %>%
+  group_by(medication) %>%
+  summarize(n=n())
+
+#Number of Individuals per med group & disease group
+harm_summary4 <- harm_meta_data %>%
+  group_by(group,medication) %>%
+  summarize(n=n())
+
+#Note: 83 participants have sc and metadata
+#Covars of interest: 
+#UACR, SBP/DBP (MAP), GFR, RPF, BMI, Fat Mass, Lean Mass, HbA1C, TKV/htTKV
+dat <- harm_meta_data
+label(dat$age)      <- "Age (y)"
+label(dat$sex)      <- "Sex"
+label(dat$hba1c) <- "HbA1c (%)"
+dat$medication <- case_when(dat$medication=="no_med"~"No Medication",
+                            dat$medication=="sglt2"~"Exclusive SLGT2i",
+                            dat$medication=="glp1"~"Exclusive GLP-1ra",
+                            dat$medication=="glp1_sglt2"~"GLP-1ra + SGLT2i")
+#dat$medication <- factor(dat$medication)
+label(dat$medication) <- "Medication Status"
+label(dat$ace_inhibitor) <- "ACE Inhibitor (Yes vs. No)"
+label(dat$angiotensin_receptor_blocker) <- "Angiotensin Receptor Blocker (Yes vs. No)"
+label(dat$sbp) <- "Systolic Blood Pressure (mmHg)"
+label(dat$dbp) <- "Diastolic Blood Pressure (mmHg)"
+label(dat$map) <- "Mean Arterial Pressure (mmHg)"
+label(dat$erpf_raw_plasma) <- "Estimated Renal Plasma Flow (mL/min)"
+label(dat$bmi) <- "Body Mass Index (kg/m²)"
+label(dat$dexa_fat_kg) <- "DEXA Fat Mass (kg)" 
+label(dat$dexa_lean_kg) <- "DEXA Lean Mass (kg)"
+label(dat$total_kidney_volume_ml) <- "Total Kidney Volume (mL)"
+label(dat$ht_adj_tkv) <- "Height-Adjusted Total Kidney Volume (mL/m)"
+label(dat$gfr_raw_plasma) <- "Glomerular Filtration Rate (mL/min)"
+label(dat$eGFR_CKD_epi) <- "Estimated Glomerular Filtration Rate (mL/min/1.73 m²)"
+label(dat$race_ethnicity)    <- "Race/Ethnicity"
+label(dat$triglycerides) <-  "Triglycerides (mg/dL)"
+#race_ethnicity
+table1(~ age + sex + bmi + dexa_fat_kg + dexa_lean_kg + hba1c +
+         sbp + dbp + map + 
+         triglycerides + gfr_raw_plasma + eGFR_CKD_epi + 
+         erpf_raw_plasma+ total_kidney_volume_ml + ht_adj_tkv+
+         ace_inhibitor + angiotensin_receptor_blocker+
+         + medication | group, data=dat)
+
+# Initialize an empty results table
+table1_results <- tibble(
+  Variable = c("age", "sex", "bmi", "dexa_fat_kg", "dexa_lean_kg", "hba1c",
+               "sbp", "dbp", "map", "triglycerides", "gfr_raw_plasma",
+               "eGFR_CKD_epi", "erpf_raw_plasma", "total_kidney_volume_ml",
+               "ht_adj_tkv", "ace_inhibitor", "angiotensin_receptor_blocker",
+               "medication"),
+  Test = c(rep("ANOVA", 14), rep("Chi-Square", 4)),
+  P_Value = NA  # Placeholder for p-values
+)
+
+# Continuous variables (ANOVA)
+continuous_vars <- c("age", "bmi", "dexa_fat_kg", "dexa_lean_kg", "hba1c", 
+                     "sbp", "dbp", "map", "triglycerides", "gfr_raw_plasma", 
+                     "eGFR_CKD_epi", "erpf_raw_plasma", 
+                     "total_kidney_volume_ml", "ht_adj_tkv")
+
+for (var in continuous_vars) {
+  formula <- as.formula(paste(var, "~ group"))
+  fit <- aov(formula, data = dat)
+  p_value <- summary(fit)[[1]][["Pr(>F)"]][1]  # Extract p-value
+  table1_results <- table1_results %>% 
+    mutate(P_Value = if_else(Variable == var, p_value, P_Value))
+}
+
+# Categorical variables (Chi-Square)
+categorical_vars <- c("sex", "ace_inhibitor", "angiotensin_receptor_blocker", "medication")
+
+for (var in categorical_vars) {
+  contingency_table <- table(dat[[var]], dat$group)
+  test_result <- chisq.test(contingency_table)
+  p_value <- test_result$p.value  # Extract p-value
+  table1_results <- table1_results %>% 
+    mutate(P_Value = if_else(Variable == var, p_value, P_Value))
+}
+
+# Format p-values for readability
+table1_results <- table1_results %>% 
+  mutate(P_Value = formatC(P_Value, format = "e", digits = 3))
+
+# Print or export the final table
+#print(table1_results)
+
+```
+
+# 4. Analysis
+## a. All Genes
+### i. DEGS + GSEA + IPA
+```{r,echo=F,warning=F}
+#Select full gene set
+all_genes <- rownames(so_kidney_sc)
+
+#1. T2D vs. OB
+so_subgroup <- subset(so_kidney_sc,group=="Type 2 Diabetes" | group=="Obese Control")
+so_subgroup$DiseaseGroup <- so_subgroup$group 
+so_subgroup$DiseaseGroup <- factor(so_subgroup$DiseaseGroup)
+degs_fxn(so=so_subgroup,cell=NULL,gene_set=all_genes,exposure="DiseaseGroup",exp_group="Type 2 Diabetes",ref_group="Obese Control",enrichment="Yes",top_gsea = 30)
+
+#2. T2D vs. T1D
+so_subgroup <- subset(so_kidney_sc,group=="Type 2 Diabetes" | group=="Obese Control")
+so_subgroup$DiseaseGroup <- so_subgroup$group 
+so_subgroup$DiseaseGroup <- factor(so_subgroup$DiseaseGroup)
+degs_fxn(so=so_subgroup,cell=NULL,gene_set=all_genes,exposure="DiseaseGroup",exp_group="Type 2 Diabetes",ref_group="Obese Control",enrichment="Yes",top_gsea = 30)
+
+#3. T2D vs. LC
+so_subgroup <- subset(so_kidney_sc,group=="Type 2 Diabetes" | group=="Obese Control")
+so_subgroup$DiseaseGroup <- so_subgroup$group 
+so_subgroup$DiseaseGroup <- factor(so_subgroup$DiseaseGroup)
+degs_fxn(so=so_subgroup,cell=NULL,gene_set=all_genes,exposure="DiseaseGroup",exp_group="Type 2 Diabetes",ref_group="Obese Control",enrichment="Yes",top_gsea = 30)
+
+#4. T2D/OB vs. LC
+so_subgroup <- subset(so_kidney_sc,group=="Type 2 Diabetes" | group=="Obese Control")
+so_subgroup$DiseaseGroup <- so_subgroup$group 
+so_subgroup$DiseaseGroup <- factor(so_subgroup$DiseaseGroup)
+degs_fxn(so=so_subgroup,cell=NULL,gene_set=all_genes,exposure="DiseaseGroup",exp_group="Type 2 Diabetes",ref_group="Obese Control",enrichment="Yes",top_gsea = 30)
+
+#5. T2D/OB vs. T1D
+so_subgroup <- subset(so_kidney_sc,group=="Type 2 Diabetes" | group=="Obese Control")
+so_subgroup$DiseaseGroup <- so_subgroup$group 
+so_subgroup$DiseaseGroup <- factor(so_subgroup$DiseaseGroup)
+degs_fxn(so=so_subgroup,cell=NULL,gene_set=all_genes,exposure="DiseaseGroup",exp_group="Type 2 Diabetes",ref_group="Obese Control",enrichment="Yes",top_gsea = 30)
+```
+### ii. MAST + GSEA + IPA
+### iii. Pseuodbulk all cell types
+### iv. Cell Specific (PT, TAL, EC, etc.)
+2. Pathway Gene Sets
+  a. DEGS
+  b. MAST
+  c. Pseudobulk all cell types
+  d. Cell Specific (PT, TAL, EC, etc. )
+
+
+
+
+
+
+
+
+
+
+
+
