@@ -81,6 +81,7 @@ source("Kidney_functions_sc.R")
 ```
 
 # 2. Load Full Data & Clean: scRNA & MetaData
+## a. Format Data
 ```{r, include=F}
 #Local
 # dir.dat <- c("/Users/hhampson/Dropbox/Bjornstad data")
@@ -94,26 +95,88 @@ source("Kidney_functions_sc.R")
 so_kidney_sc <- readRDS(fs::path(dir.dat,"scRNA","data_raw","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
 so_kidney_sc$kit_id[which(so_kidney_sc$kit_id=="KI-0014643")] <- "KL-0014643"
 so_kidney_sc$kit_id[which(so_kidney_sc$kit_id=="kl-0023998")] <- "KL-0023998"
+check2 <- so_kidney_sc@meta.data
+
 #harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc.csv")) #small meta set
 harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc_all_metadata.csv")) #all metadata vars
 #"KL-0014634" "KL-0014629" "KL-0014628" coenrolled IDs
-  #Partipant 30051 (kit id KL-0027474 at 4m has sc, but at baseline no sc has kit id KL-0027474 metadata)
-#FIlter out attempt participants
+#"KL-0014634" "KL-0014629" "KL-0014628" having missing meta data 
+
+#KL-0014628: IT_10/RH-66-T KL-0014628 KL-0019101
+#KL-0014629: IT_09/RH-65-T
+#KL-0014634: IT_07/RH-59-T
+check <- harm_meta_data %>%
+  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group")))
+
+#Partipant 30051 (kit id KL-0027474 at 4m has sc, but at baseline no sc has kit id KL-0027474 metadata)
+#missing <- c("KL-0014628", "KL-0014629", "KL-0014634", "KL-0019059", "KL-0019092", "KL-0019101", "KL-0022159", "KL-0024005", "KL-0027470", #"KL-0027478")
+#Check these ids in metadat
+#check <- harm_meta_data %>%
+  #filter(kit_id %in% missing)
+
+#IDs missing group information  
+#Filter out attempt participants
 harm_meta_data <- harm_meta_data %>% 
   dplyr::select(-X)
-gc()
-meta_kidney_sc <-  so_kidney_sc@meta.data %>%
-  #dplyr::mutate(RNAlater_ID = SampleID) %>%
-  left_join(harm_meta_data)
-rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+#Create Medication Groups
+harm_meta_data <- harm_meta_data %>%
+  mutate(glp1_sglt2=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
+  mutate(sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
+  mutate(glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
+  mutate(no_med=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+  #mutate(=ifelse(group!="Type 2 Diabetes" &  epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
 
+#Define 4 exposure groups: 
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
+gc()
+harm_meta_data <- harm_meta_data %>% 
+  mutate(medication = case_when(glp1_sglt2 == "Yes" ~ "glp1_sglt2",
+                            sglt2 == "Yes" ~ "sglt2",
+                            glp1 == "Yes" ~ "glp1",
+                            no_med == "Yes" ~ "no_med"))
+harm_meta_data$medication <- factor(harm_meta_data$medication, levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
+
+#Define a T2D+OB group
+harm_meta_data <- harm_meta_data %>%
+  mutate(group2 = ifelse((group=="Type 2 Diabetes" | group=="Obese Control"),"T2D + OB",group))
+gc()
+meta_kidney_sc <-  so_kidney_sc@meta.data 
+rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+meta_kidney_sc <- meta_kidney_sc %>%
+  #dplyr::mutate(RNAlater_ID = SampleID) %>%
+  left_join(harm_meta_data,by="kit_id")
+rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+#Check to see if all ids still have metadata
+check4 <- meta_kidney_sc %>%
+  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+check4 <- check4 %>%
+  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","group2")))
+
+#rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+ids <- harm_meta_data$kit_id
+#Filter seurat object to only IDs that have the metadata (83 individuals of interest)
 so_kidney_sc <- AddMetaData(so_kidney_sc, meta_kidney_sc)
+check5 <- so_kidney_sc@meta.data %>%
+  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+check5 <- check5 %>%
+  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","group2")))
+so_kidney_sc <- subset(so_kidney_sc, kit_id %in% ids)
+check6 <- so_kidney_sc@meta.data %>%
+  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+check6 <- check6 %>%
+  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","group2")))
+unique(so_kidney_sc$group)
+unique(so_kidney_sc$group2)
 rm(meta_kidney_sc,harm_meta_data)
 
 #Switch default assay in seurat object to RNA
 DefaultAssay(so_kidney_sc) <- "RNA"
 gc()
 
+check3 <- so_kidney_sc@meta.data
+check3 <- check3 %>%
+  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group","group2","medication")))
+saveRDS(so_kidney_sc,fs::path(dir.dat,"scRNA","data_clean","Formatted_so_kidney_sc_01_26_25.rds"))
 #Create senesence so in all cell types
 #sens_genes <- c(sens_genes,"CDKN1A")
 #sens_gene_in_data <- intersect(sens_genes, rownames(so_kidney_sc))
@@ -155,6 +218,15 @@ gc()
 # so_sens_TAL@meta.data$group2 <- ifelse(so_sens_TAL@meta.data$group=="Type 2 Diabetes","Yes","No")
 # so_sens_TAL2 <- subset(so_sens_TAL, group2=="Yes")
 # so_sens_TAL3 <- subset(so_sens_TAL, group=="Type 2 Diabetes")
+```
+## b. Load Formatted Data
+```{r}
+#Load formatted So
+so_kidney_sc <- readRDS(fs::path(dir.dat,"scRNA","data_clean","Formatted_so_kidney_sc_01_26_25.rds"))
+
+#Ensure default assay in seurat object is RNA
+DefaultAssay(so_kidney_sc) <- "RNA"
+gc()
 ```
 
 # 3. Outline 
@@ -228,6 +300,12 @@ harm_meta_data <- harm_meta_data %>%
                             no_med == "Yes" ~ "no_med"))
 harm_meta_data$medication <- factor(harm_meta_data$medication, levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
 
+#Define a T2D+OB group
+harm_meta_data <- harm_meta_data %>%
+  mutate(group2 = ifelse((group=="Type 2 Diabetes" | group=="Obese Control"),"T2D + OB",group))
+#check <- harm_meta_data %>%
+#  dplyr::select(all_of(c("kit_id","group","group2")))
+
 #Number of Individuals Per Study 
 harm_summary1 <- harm_meta_data %>%
   group_by(study) %>%
@@ -276,56 +354,24 @@ label(dat$gfr_raw_plasma) <- "Glomerular Filtration Rate (mL/min)"
 label(dat$eGFR_CKD_epi) <- "Estimated Glomerular Filtration Rate (mL/min/1.73 m²)"
 label(dat$race_ethnicity)    <- "Race/Ethnicity"
 label(dat$triglycerides) <-  "Triglycerides (mg/dL)"
+label(dat$group) <- "Disease Status"
+label(dat$group2) <- "Disease Status"
 #race_ethnicity
+#Table 1. Descriptive Statistics by Disease Status ----
 table1(~ age + sex + bmi + dexa_fat_kg + dexa_lean_kg + hba1c +
          sbp + dbp + map + 
          triglycerides + gfr_raw_plasma + eGFR_CKD_epi + 
          erpf_raw_plasma+ total_kidney_volume_ml + ht_adj_tkv+
          ace_inhibitor + angiotensin_receptor_blocker+
          + medication | group, data=dat)
+#Table 1. Descriptive Statistics by Disease Status with T2D and OB Combined ----
+table1(~ age + sex + bmi + dexa_fat_kg + dexa_lean_kg + hba1c +
+         sbp + dbp + map + 
+         triglycerides + gfr_raw_plasma + eGFR_CKD_epi + 
+         erpf_raw_plasma+ total_kidney_volume_ml + ht_adj_tkv+
+         ace_inhibitor + angiotensin_receptor_blocker+
+         + medication | group2, data=dat)
 
-# Initialize an empty results table
-table1_results <- tibble(
-  Variable = c("age", "sex", "bmi", "dexa_fat_kg", "dexa_lean_kg", "hba1c",
-               "sbp", "dbp", "map", "triglycerides", "gfr_raw_plasma",
-               "eGFR_CKD_epi", "erpf_raw_plasma", "total_kidney_volume_ml",
-               "ht_adj_tkv", "ace_inhibitor", "angiotensin_receptor_blocker",
-               "medication"),
-  Test = c(rep("ANOVA", 14), rep("Chi-Square", 4)),
-  P_Value = NA  # Placeholder for p-values
-)
-
-# Continuous variables (ANOVA)
-continuous_vars <- c("age", "bmi", "dexa_fat_kg", "dexa_lean_kg", "hba1c", 
-                     "sbp", "dbp", "map", "triglycerides", "gfr_raw_plasma", 
-                     "eGFR_CKD_epi", "erpf_raw_plasma", 
-                     "total_kidney_volume_ml", "ht_adj_tkv")
-
-for (var in continuous_vars) {
-  formula <- as.formula(paste(var, "~ group"))
-  fit <- aov(formula, data = dat)
-  p_value <- summary(fit)[[1]][["Pr(>F)"]][1]  # Extract p-value
-  table1_results <- table1_results %>% 
-    mutate(P_Value = if_else(Variable == var, p_value, P_Value))
-}
-
-# Categorical variables (Chi-Square)
-categorical_vars <- c("sex", "ace_inhibitor", "angiotensin_receptor_blocker", "medication")
-
-for (var in categorical_vars) {
-  contingency_table <- table(dat[[var]], dat$group)
-  test_result <- chisq.test(contingency_table)
-  p_value <- test_result$p.value  # Extract p-value
-  table1_results <- table1_results %>% 
-    mutate(P_Value = if_else(Variable == var, p_value, P_Value))
-}
-
-# Format p-values for readability
-table1_results <- table1_results %>% 
-  mutate(P_Value = formatC(P_Value, format = "e", digits = 3))
-
-# Print or export the final table
-#print(table1_results)
 
 ```
 
@@ -343,30 +389,36 @@ so_subgroup$DiseaseGroup <- factor(so_subgroup$DiseaseGroup)
 degs_fxn(so=so_subgroup,cell=NULL,gene_set=all_genes,exposure="DiseaseGroup",exp_group="Type 2 Diabetes",ref_group="Obese Control",enrichment="Yes",top_gsea = 30)
 
 #2. T2D vs. T1D
-so_subgroup <- subset(so_kidney_sc,group=="Type 2 Diabetes" | group=="Obese Control")
+so_subgroup <- subset(so_kidney_sc,group=="Type 2 Diabetes" | group=="Type 1 Diabetes")
 so_subgroup$DiseaseGroup <- so_subgroup$group 
 so_subgroup$DiseaseGroup <- factor(so_subgroup$DiseaseGroup)
-degs_fxn(so=so_subgroup,cell=NULL,gene_set=all_genes,exposure="DiseaseGroup",exp_group="Type 2 Diabetes",ref_group="Obese Control",enrichment="Yes",top_gsea = 30)
+degs_fxn(so=so_subgroup,cell=NULL,gene_set=all_genes,exposure="DiseaseGroup",exp_group="Type 2 Diabetes",ref_group="Type 1 Diabetes",enrichment="Yes",top_gsea = 30)
 
 #3. T2D vs. LC
-so_subgroup <- subset(so_kidney_sc,group=="Type 2 Diabetes" | group=="Obese Control")
+so_subgroup <- subset(so_kidney_sc,group=="Type 2 Diabetes" | group=="Lean Control")
 so_subgroup$DiseaseGroup <- so_subgroup$group 
 so_subgroup$DiseaseGroup <- factor(so_subgroup$DiseaseGroup)
-degs_fxn(so=so_subgroup,cell=NULL,gene_set=all_genes,exposure="DiseaseGroup",exp_group="Type 2 Diabetes",ref_group="Obese Control",enrichment="Yes",top_gsea = 30)
+degs_fxn(so=so_subgroup,cell=NULL,gene_set=all_genes,exposure="DiseaseGroup",exp_group="Type 2 Diabetes",ref_group="Lean Control",enrichment="Yes",top_gsea = 30)
 
 #4. T2D/OB vs. LC
-so_subgroup <- subset(so_kidney_sc,group=="Type 2 Diabetes" | group=="Obese Control")
+so_subgroup <- subset(so_kidney_sc,group2=="T2D + OB" | group=="Lean Control")
 so_subgroup$DiseaseGroup <- so_subgroup$group 
 so_subgroup$DiseaseGroup <- factor(so_subgroup$DiseaseGroup)
-degs_fxn(so=so_subgroup,cell=NULL,gene_set=all_genes,exposure="DiseaseGroup",exp_group="Type 2 Diabetes",ref_group="Obese Control",enrichment="Yes",top_gsea = 30)
+degs_fxn(so=so_subgroup,cell=NULL,gene_set=all_genes,exposure="DiseaseGroup",exp_group="T2D + OB",ref_group="Lean Control",enrichment="Yes",top_gsea = 30)
 
 #5. T2D/OB vs. T1D
-so_subgroup <- subset(so_kidney_sc,group=="Type 2 Diabetes" | group=="Obese Control")
+so_subgroup <- subset(so_kidney_sc,group=="T2D + OB" | group=="Type 1 Diabetes")
 so_subgroup$DiseaseGroup <- so_subgroup$group 
 so_subgroup$DiseaseGroup <- factor(so_subgroup$DiseaseGroup)
-degs_fxn(so=so_subgroup,cell=NULL,gene_set=all_genes,exposure="DiseaseGroup",exp_group="Type 2 Diabetes",ref_group="Obese Control",enrichment="Yes",top_gsea = 30)
+degs_fxn(so=so_subgroup,cell=NULL,gene_set=all_genes,exposure="DiseaseGroup",exp_group="T2D + OB",ref_group="Type 1 Diabetes",enrichment="Yes",top_gsea = 30)
 ```
+
 ### ii. MAST + GSEA + IPA
+```{r}
+
+
+```
+
 ### iii. Pseuodbulk all cell types
 ### iv. Cell Specific (PT, TAL, EC, etc.)
 2. Pathway Gene Sets
