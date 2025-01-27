@@ -1315,6 +1315,7 @@ mast_sens_fxn <- function(so,cell,exposure,covariate,gene_set,exp_group,ref_grou
   
   # Specify the file name and data
   if (!is.null(cell)){
+    cell_name <- str_replace_all(cell,"/","_")
     output_file <- paste0("Results_",cell_name,"_cells_for_",condition,".csv")
   } else {
     output_file <- paste0("Results_for_",condition,".csv")
@@ -1372,9 +1373,10 @@ mast_sens_fxn <- function(so,cell,exposure,covariate,gene_set,exp_group,ref_grou
       figure_file <- paste0("MAST_Barchart_for_",condition,".pdf")
     }
     
-    pdf(fs::path(dir.results,figure_file),width=20,height=20)
+    pdf(fs::path(dir.results,figure_file),width=7,height=7)
     plot(p)
     dev.off()
+    
   }
 }
 
