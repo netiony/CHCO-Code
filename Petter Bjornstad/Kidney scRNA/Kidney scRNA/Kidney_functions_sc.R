@@ -51,8 +51,8 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
   DefaultAssay(so) <- "RNA"
   
   #Conidtion names
-  condition <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group," vs. ",ref_group,")")
-  
+  condition <- paste0(str_to_title(str_replace_all(exposure,"_"," ")),"_",exp_group,"_vs_",ref_group,"_")
+  condition <- str_replace_all(condition," ","_")
   #Differential Expression by Group
   if (!is.null(cell)) {
   Idents(so) <- so$celltype2
