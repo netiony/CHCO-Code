@@ -11,3 +11,199 @@ output:
     toc_float: yes
 ---
 
+```{r setup, include=FALSE}
+library(SomaDataIO)
+library(limma)
+library(dplyr)
+library(caret)
+library(purrr)
+library(multtest)
+library(openxlsx)
+library(tableone)
+library(knitr)
+library(survival)
+library(broom)
+library(emmeans)
+library(tidylog)
+
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+
+knitr::opts_chunk$set(echo = FALSE)
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "E:/Petter Bjornstad/TODAY subaward"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/"
+} else if (Sys.info()["sysname"] == "Darwin"){
+  home_dir = "/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward"
+}
+knitr::opts_knit$set(root.dir = home_dir)
+```
+
+
+```{r include=FALSE}
+setwd(home_dir)
+# load somalogic data, with QC samples already excluded
+load("./Somalogic data raw/soma.Rdata")
+
+# load analyte info
+load("./Somalogic data raw/analytes.Rdata")
+
+# load comorbidity data
+load("./Clinical data/comorb.Rdata")
+
+# load baseline risk factors
+load("./Clinical data/TODAY/baserisk.Rdata")
+
+# take only the baseline soma samples
+# can we just take the earliest or is it possible someone would have a follow-up sample but not baseline?
+# probably can take the first and then check the years to make sure compatible with TODAY
+base <- soma %>% arrange(releaseid,Date.Drawn) %>% dplyr::group_by(releaseid) %>% dplyr::filter(row_number()==1)
+# these 3 release IDs have first sample after end of recruitment, so they must be missing the baseline visit
+base <- base %>% filter(!releaseid %in% c("65-85903","65-47984","65-25901"))
+
+# the above section of code used to work but seems to have broken....this should accomplish the same thing?
+#base <- soma %>% filter(visit==1)
+
+# merge in complication data
+base <- left_join(base, comorb, by="releaseid")
+# this was previously:
+# base <- merge(base, comorb, by="releaseid",all.x=T, all.y=F)
+
+# merge in baseline risk factors
+base <- left_join(base, baserisk, by="releaseid")
+# this was previously:
+#base <- merge(base, baserisk, by="releaseid",all.x=T, all.y=F)
+
+# log transform UAlbCreat
+base$log_UAlbCreat <- log(base$UAlbCreat + 0.0000001)
+
+# identify columns corresponding to proteins
+#is_seq <- function(.x) grepl("^seq\\.[0-9]{4}", .x) # regex for analytes
+is_seq <- function(.x) grepl("seq", .x)
+seq <- is_seq(names(base))
+
+# convert to numeric
+base[,seq] <- apply(base[,seq],2,as.numeric)
+
+# are there proteins with low variability?
+no_var = caret::nearZeroVar(base[,seq])
+# none
+
+# log transform
+base_log <- base %>% modify_if(is_seq(names(.)), log)
+
+# scale by SD
+base_log_scale <- base_log
+predictors <- colnames(base_log[seq])
+for (i in 1:length(predictors)) {
+  base_log_scale[,paste0(predictors[i])] <- base_log_scale[,paste0(predictors[i])]/sd(unlist(base_log[,paste0(predictors[i])]))
+}
+
+dir.dat <- c('/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Melissa Leroux - Tommerdahl Bjornstad Files')
+dir.results <- c(fs::path(dir.dat,"Liver project/Results"))
+```
+
+```{r include=FALSE}
+sens_genes <- c("ACVR1B","ANG","ANGPT1","ANGPTL4","AREG","AXL","BEX3","BMP2","BMP6","C3","CCL1","CCL13",
+                "CCL16","CCL2","CCL20","CCL24","CCL26","CCL3","CCL4","CCL5","CCL7","CCL8","CD55",
+                "CD9","CSF1","CSF2","CSF2RB","CST4","CTNNB1","CTSB","CXCL1","CXCL10","CXCL12",
+                "CXCL16","CXCL2","CXCL3","CXCL8","CXCR2","DKK1","EDN1","EGF","EGFR","EREG","ESM1",
+                "ETS2","FAS","FGF1","FGF2","FGF7","GDF15","GEM","GMFG","HGF","HMGB1","ICAM1","ICAM3",
+                "IGF1","IGFBP1","IGFBP2","IGFBP3","IGFBP4","IGFBP5","IGFBP6","IGFBP7","IL10","IL13",
+                "IL15","IL18","IL1A","IL1B","IL2","IL32","IL6","IL6ST","IL7","INHA","IQGAP2","ITGA2",
+                "ITPKA","JUN","KITLG","LCP1","MIF","MMP1","MMP10","MMP12","MMP13","MMP14","MMP2",
+                "MMP3","MMP9","NAP1L4","NRG1","PAPPA","PECAM1","PGF","PIGF","PLAT","PLAU","PLAUR",
+                "PTBP1","PTGER2","PTGES","RPS6KA5","SCAMP4","SELPLG","SEMA3F","SERPINB4","SERPINE1",
+                "SERPINE2","SPP1","SPX","TIMP2","TNF","TNFRSF10C","TNFRSF11B","TNFRSF1A","TNFRSF1B",
+                "TUBGCP2","VEGFA","VEGFC","VGF","WNT16","WNT2","CDKN1A")
+
+proteins <- colnames(base_log_scale)[which(grepl("seq.",colnames(base_log_scale)))]
+key <- readRDS(fs::path(dir.dat,"Liver project","gene_prot.RDS"))
+sens_proteins <- key$AptName[which(key$EntrezGeneSymbol %in% sens_genes)]
+prot <- readRDS(fs::path(dir.dat,"Liver project","TODAY_proteomics.rds"))
+prot <- prot[c(7326,7397,7404,which(grepl("seq.",colnames(prot))))] 
+prot <- prot[c("releaseid","AGEBASE","sex",sens_proteins)]
+
+today <- read.csv('/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Clinical data/TODAY/CBL.csv') # length(unique(today$releaseid)) - 699 ids
+today <- today %>%
+  filter(mvisit!="R")
+#Calculate censoring and time to event
+baseline <- today %>% 
+  filter(mvisit=="M00") %>% 
+  mutate(baseline_alt=ALT,
+         baseline_ast=AST) %>% 
+  dplyr::select(all_of(c("releaseid","baseline_alt","baseline_ast"))) 
+dat <- tidylog::left_join(today,baseline,by="releaseid")
+dat <- dat %>% 
+  mutate(event_alt=ifelse(ALT>=2*(baseline_alt),1,0)) %>% 
+  mutate(event_ast=ifelse(AST>=2*(baseline_ast),1,0)) 
+#Calculate time to event & censoring
+# Stopped here. Need to check logic 
+dat_alt <- dat %>% 
+  group_by(releaseid) %>%
+  summarize(
+    event_status_alt = ifelse(any(event_alt == 1, na.rm = TRUE), 1, 0), # 1 if event occurred, 0 if censored
+    time_to_event_alt = ifelse(
+      any(event_alt == 1, na.rm = TRUE), 
+      min(days[event_alt == 1], na.rm = TRUE), # Time of first event
+      max(days, na.rm = TRUE)                 # Time of last observation (censoring)
+    )) %>% 
+  ungroup()
+dat_ast <- dat %>% 
+  group_by(releaseid) %>%
+  summarize(
+    event_status_ast = ifelse(any(event_ast == 1, na.rm = TRUE), 1, 0), # 1 if event occurred, 0 if censored
+    time_to_event_ast = ifelse(
+      any(event_ast == 1, na.rm = TRUE), 
+      min(days[event_ast == 1], na.rm = TRUE), # Time of first event
+      max(days, na.rm = TRUE)                 # Time of last observation (censoring)
+    )) %>% 
+  ungroup()
+
+dat_covs <- today %>% 
+  filter(mvisit=="M00") %>% 
+  dplyr::select(all_of(c("releaseid","HbA1c")))
+#Merge proteins in 
+dat <- tidylog::right_join(dat_covs,prot,by="releaseid")
+dat <- tidylog::right_join(dat_alt,dat,by="releaseid")
+dat <- tidylog::right_join(dat_ast,dat,by="releaseid")
+rm(baseline,dat_alt,dat_ast,dat_covs,prot,today)
+
+#Create loop for linear regression between proteins & liver enzymes
+results <- data.frame()
+for(y in c("alt","ast")) {
+  for (x in sens_proteins) {
+    M0 <- as.formula(paste0("Surv(time_to_event_alt,event_status_alt) ~ ",x,"+HbA1c+sex+AGEBASE"))
+    M0 <- as.formula(paste0("Surv(time_to_event_",y,",event_status_",y,") ~ ",x))
+    M1 <- coxph(M0,data=dat)
+    HR <- summary(M1)$coef[1,2]
+    pval <- summary(M1)$coef[1,5]
+    results_full <- data.frame(Protein=x,Outcome=paste0("Time to doubling of ",str_to_upper(y)),HR=HR,Pvalue=pval)
+    results <- rbind(results,results_full)
+  }
+}
+#ALT
+results_alt <- results %>%
+  filter(Outcome=="Time to doubling of ALT") %>% 
+  mutate(fdr = p.adjust(Pvalue,method="fdr"))
+results_alt <- results_alt %>%
+  mutate(fdr_sig=ifelse(fdr<0.05,"*","")) %>%
+  mutate(nom_sig=ifelse(Pvalue<0.05,"*","")) 
+#AST
+results_ast <- results %>%
+  filter(Outcome=="Time to doubling of AST") %>% 
+  mutate(fdr = p.adjust(Pvalue,method="fdr"))
+results_ast <- results_ast %>%
+  mutate(fdr_sig=ifelse(fdr<0.05,"*","")) %>%
+  mutate(nom_sig=ifelse(Pvalue<0.05,"*","")) 
+results_total <- rbind(results_ast,results_alt)
+
+#Match to gene name
+key$Protein <- key$AptName
+results_total <- tidylog::left_join(results_total,key,by="Protein")
+
+sig_results <- results_total %>% 
+  filter(nom_sig=="*")
+
+write.csv(results_total,fs::path(dir.results,"TODAY_proteomics_alt_ast_unadjusted.csv"))
+```
