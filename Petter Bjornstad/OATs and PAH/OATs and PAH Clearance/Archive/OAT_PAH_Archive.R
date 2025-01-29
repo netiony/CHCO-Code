@@ -1,0 +1,62 @@
+# ```{r libraries, echo=F, include = F}
+# library(tidyverse)
+# library(BiocManager)
+# library(arsenal)
+# library(dplyr)
+# library(ggplot2)
+# library(ggrepel)
+# library(Seurat)
+# library(future)
+# library(colorspace)
+# library(patchwork)
+# library(ggdendro)
+# library(cowplot)
+# library(ggpubr)
+# library(rstatix)
+# library(table1)
+# library(Biobase)
+# library(ReactomeGSA)
+# library(GSEABase)
+# library(msigdbr)
+# library(kableExtra)
+# library(knitr)
+# library(EnhancedVolcano)
+# library(MAST)
+# library(future)
+# #library(slingshot)
+# library(SingleCellExperiment)
+# library(RColorBrewer)
+# library(scales)
+# library(viridis)
+# #library(UpSetR)
+# #library(pheatmap)
+# #library(fgsea)
+# #library(tradeSeq)
+# #library(DescTools)
+# # remotes::install_github("dynverse/dynfeature")
+# # remotes::install_github("dynverse/dynplot")
+# # remotes::install_github("elolab/Totem",force=T)
+# #library(Totem)
+# #library(dyndimred)
+# #library(pushoverr)
+# library(future)
+# 
+# #Increase Memory
+# mem.maxVSize(64000000000)
+# 
+# # Parallel processing
+# # plan(multicore, workers = 16)
+# # options(future.globals.maxSize=2e9)
+# # options(future.globals.maxSize = NULL)   # 24 GB in bytes
+# plan()
+# future::plan("sequential")
+# options(future.globals.maxSize = 3e9)
+# 
+# #Set up directories
+# dir.dat <- c("/Users/hhampson/Dropbox/Bjornstad data")
+# dir.home <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/OATs and PAH/OATs and PAH Clearance")
+# dir.dat2 <- c("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean")
+# 
+# #Load functions
+# # source(fs::path(dir.home,"OAT_PAH_Functions.R"))
+# ```
