@@ -6,7 +6,6 @@ output: html_document
 --- 
 
 #1. Load Libraries & Directories
-# 1. Set up Libraries & Directores
 ```{r, include=F}
 library(reprex)
 library(tidyverse)
@@ -178,6 +177,15 @@ gc()
 check3 <- so_kidney_sc@meta.data
 check3 <- check3 %>%
   dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group","group2","medication","pah_clear_bsa","pah_clear_abs")))
+unique(check3$kit_id[which(is.na(check3$pah_clear_abs))])
+unique(check3$kit_id[which(is.na(check3$pah_clear_bsa))])
+#Remove kidney ids without pah clearance
+ids2 <- ids[which(!ids %in% unique(check3$kit_id[which(is.na(check3$pah_clear_abs))]))] #69 individuals have pah data
+#Filter to only those 69 ids
+so_kidney_sc <- subset(so_kidney_sc, kit_id %in% ids2)
+rm(check3)
+#FIlter to oat genes only
+
 #saveRDS(so_kidney_sc,fs::path(dir.dat,"scRNA","data_clean","Formatted_so_kidney_sc_01_26_25.rds"))
 #Create senesence so in all cell types
 #sens_genes <- c(sens_genes,"CDKN1A")
@@ -221,80 +229,174 @@ check3 <- check3 %>%
 # so_sens_TAL2 <- subset(so_sens_TAL, group2=="Yes")
 # so_sens_TAL3 <- subset(so_sens_TAL, group=="Type 2 Diabetes")
 ```
-```{r echo = F}
-##a. Kidney scRNA----
-so_kidney_sc <- readRDS(fs::path(dir.dat,"Kidney scRNA","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
 
-##b. Metadata ----
-meta_raw <- read.csv(fs::path(dir.dat,"Clinical Data","renal_clearance_biopsy.csv"))
-harm_data <- read.csv("/Users/hhampson/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Biostatistics Core Shared Drive/Data Harmonization/Data Clean/harmonized_dataset.csv") %>% 
-  dplyr::select(record_id,cryostor_id,visit,pah_clear_bsa,pah_clear_abs,group)
+# 3. Descriptive Statistics
+```{r, echo = F,warning=F}
+#Load metadata for descriptive stats
+#harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc.csv"))
+harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc_all_metadata.csv")) #all metadata vars
+harm_meta_data <- harm_meta_data %>% 
+  dplyr::select(-X)
 
-##c. Process Data----
-#Filter out meta data participants without sc 
-ids <- unique(so_kidney_sc@meta.data$cryostor_id)
-meta_raw <- meta_raw %>% 
-  filter(cryostor_id %in% ids) 
-ids2 <- unique(so_kidney_sc@meta.data$record_id)
-harm_data <- harm_data %>% 
-  filter(record_id %in% ids2) %>% 
-  filter(!is.na(pah_clear_bsa)) %>% 
-  # filter(visit=="baseline") %>% 
-  mutate(diabetes=ifelse(group=="Type 1 Diabetes"|group=="Type 2 Diabetes","Yes","No")) %>% 
-  dplyr::select(record_id,visit,pah_clear_bsa,diabetes,pah_clear_abs,pah_bsa,
-                pah_bsa_plasma_urine)
-meta_raw <- tidylog::left_join(meta_raw,harm_data,by=c("record_id","visit"))
+#Filter to individuals with pah clerance data 
+harm_meta_data <- harm_meta_data %>%
+  filter(kit_id %in% unique(so_kidney_sc$kit_id))
 
-#Merge new metadata with 
-meta_kidney_sc <-  tidylog::left_join(so_kidney_sc@meta.data, meta_raw,by="cryostor_id")
+#Create Medication Groups
+harm_meta_data <- harm_meta_data %>%
+  mutate(glp1_sglt2=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
+  mutate(sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
+  mutate(glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
+  mutate(no_med=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+  #mutate(=ifelse(group!="Type 2 Diabetes" &  epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
 
-#Check there are no duplicates
-length(which(duplicated(meta_kidney_sc$barcode)))
-
-#Add rownames back to metadata to merge back into saurat object 
-rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
-
-#Create study visit variale to filter to RH, CROCCODILE and IMPROVE
-so_kidney_sc@meta.data$study= ifelse(grepl("RH",so_kidney_sc@meta.data$record_id) | grepl("CRC",so_kidney_sc@meta.data$record_id) | grepl("IT",so_kidney_sc@meta.data$record_id),"subset","non-subset")
-
-# Add new meta data to so 
-so_kidney_sc <- AddMetaData(so_kidney_sc, meta_kidney_sc)
-
+#Define 4 exposure groups: 
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
 gc()
-#Filter to baseline visits only
-so_kidney_sc <- subset(so_kidney_sc, visit != "12_months_post_surgery")
+harm_meta_data <- harm_meta_data %>% 
+  mutate(medication = case_when(glp1_sglt2 == "Yes" ~ "glp1_sglt2",
+                            sglt2 == "Yes" ~ "sglt2",
+                            glp1 == "Yes" ~ "glp1",
+                            no_med == "Yes" ~ "no_med"))
+harm_meta_data$medication <- factor(harm_meta_data$medication, levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
 
-gc()
-#Filter to RH/RH2, CROCODILE, and IMPROVE
-so_kidney_sc <- subset(so_kidney_sc, study == "subset")
+#Define a T2D+OB group
+harm_meta_data <- harm_meta_data %>%
+  mutate(group2 = ifelse((group=="Type 2 Diabetes" | group=="Obese Control"),"T2D + OB",group))
+#check <- harm_meta_data %>%
+#  dplyr::select(all_of(c("kit_id","group","group2")))
+
+#Number of Individuals Per Study 
+harm_summary1 <- harm_meta_data %>%
+  group_by(study) %>%
+  summarize(n=n())
+
+#Number of Individuals Per Disease Group
+harm_summary2 <- harm_meta_data %>%
+  group_by(group) %>%
+  summarize(n=n())
+
+#Number of Individuals Per Medication Group
+harm_summary3 <- harm_meta_data %>%
+  group_by(medication) %>%
+  summarize(n=n())
+
+#Number of Individuals per med group & disease group
+harm_summary4 <- harm_meta_data %>%
+  group_by(group,medication) %>%
+  summarize(n=n())
+
+harm_summary5 <- harm_meta_data %>%
+  group_by(study,group,medication) %>%
+  summarize(n=n())
+
+#Note: 83 participants have sc and metadata
+#Covars of interest: 
+#UACR, SBP/DBP (MAP), GFR, RPF, BMI, Fat Mass, Lean Mass, HbA1C, TKV/htTKV
+dat <- harm_meta_data
+label(dat$age)      <- "Age (y)"
+label(dat$sex)      <- "Sex"
+label(dat$hba1c) <- "HbA1c (%)"
+dat$medication <- case_when(dat$medication=="no_med"~"No Medication",
+                            dat$medication=="sglt2"~"Exclusive SLGT2i",
+                            dat$medication=="glp1"~"Exclusive GLP-1ra",
+                            dat$medication=="glp1_sglt2"~"GLP-1ra + SGLT2i")
+#dat$medication <- factor(dat$medication)
+label(dat$medication) <- "Medication Status"
+label(dat$ace_inhibitor) <- "ACE Inhibitor (Yes vs. No)"
+label(dat$angiotensin_receptor_blocker) <- "Angiotensin Receptor Blocker (Yes vs. No)"
+label(dat$sbp) <- "Systolic Blood Pressure (mmHg)"
+label(dat$dbp) <- "Diastolic Blood Pressure (mmHg)"
+label(dat$map) <- "Mean Arterial Pressure (mmHg)"
+label(dat$erpf_raw_plasma) <- "Estimated Renal Plasma Flow (mL/min)"
+label(dat$bmi) <- "Body Mass Index (kg/m²)"
+label(dat$dexa_fat_kg) <- "DEXA Fat Mass (kg)" 
+label(dat$dexa_lean_kg) <- "DEXA Lean Mass (kg)"
+label(dat$total_kidney_volume_ml) <- "Total Kidney Volume (mL)"
+label(dat$ht_adj_tkv) <- "Height-Adjusted Total Kidney Volume (mL/m)"
+label(dat$gfr_raw_plasma) <- "Glomerular Filtration Rate (mL/min)"
+label(dat$eGFR_CKD_epi) <- "Estimated Glomerular Filtration Rate (mL/min/1.73 m²)"
+label(dat$race_ethnicity)    <- "Race/Ethnicity"
+label(dat$triglycerides) <-  "Triglycerides (mg/dL)"
+label(dat$pah_clear_abs) <- "Absolute PAH Clearance (Plasma) (mL/min)"
+label(dat$pah_clear_bsa) <- "BSA Normalized PAH Clearance (Plasma) (ml/min/1.73m2)"
+label(dat$group) <- "Disease Status"
+label(dat$group2) <- "Disease Status"
+#race_ethnicity
+#Table 1. Descriptive Statistics by Disease Status ----
+table1(~ age + sex + bmi + race_ethnicity + map + 
+         triglycerides + pah_clear_abs + group +
+         medication | study, data=dat,overall=F)
+table1(~ pah_clear_abs+dexa_fat_kg + dexa_lean_kg + hba1c +
+         sbp + dbp + map + 
+         triglycerides  | group, data=dat)
+table1(~  gfr_raw_plasma +  
+         erpf_raw_plasma+ total_kidney_volume_ml + ht_adj_tkv+
+         ace_inhibitor + angiotensin_receptor_blocker+ 
+         + medication | group, data=dat)
+table1(~ age + sex + bmi + dexa_fat_kg + dexa_lean_kg + hba1c +
+         sbp + dbp + map + 
+         triglycerides + gfr_raw_plasma + eGFR_CKD_epi + 
+         erpf_raw_plasma+ total_kidney_volume_ml + ht_adj_tkv+
+         ace_inhibitor + angiotensin_receptor_blocker+ 
+         + medication | group, data=dat)
+#Table 1. Descriptive Statistics by Disease Status with T2D and OB Combined ----
+table1(~ age + sex + bmi + dexa_fat_kg + dexa_lean_kg + hba1c +
+         sbp + dbp + map + 
+         triglycerides + gfr_raw_plasma + eGFR_CKD_epi + 
+         erpf_raw_plasma+ total_kidney_volume_ml + ht_adj_tkv+
+         ace_inhibitor + angiotensin_receptor_blocker+
+         + medication | group2, data=dat)
 
 
-# #Normalize & Scale Data
-# so_kidney_sc <- NormalizeData(so_kidney_sc)
-# so_kidney_sc <- ScaleData(so_kidney_sc)
+#Visualize pah clearance on plots
+p <- ggplot(dat, aes(x = group, y = pah_clear_abs, fill=group)) +
+  geom_bar(stat="identity",position="dodge")+
+  labs(x = "Disease Status", y = "PAH Clearance",fill="Disease Status") +
+  theme_minimal() 
+print(p)
+
+p <- ggplot(dat, aes(x = group, y = pah_clear_abs, fill = group)) +
+  geom_violin(trim = FALSE, alpha = 0.6) +  # Violin plot with full density
+  geom_jitter(width = 0.2, alpha = 0.5) +  # Adds individual points for better visibility
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3, color = "black", fill = "white") +  # Add means
+  labs(x = "Disease Status", y = "PAH Clearance", fill = "Disease Status") +
+  theme_minimal()
+
+print(p)
+
+
+p <- ggplot(dat, aes(x = group, y = pah_clear_abs, fill=medication)) +
+  geom_bar(stat="identity",position="dodge")+
+  labs(x = "Disease Status", y = "PAH Clearance",fill="Medication") +
+  theme_minimal() 
+print(p)
+
+type2 <- dat%>%
+  filter(group=="Type 2 Diabetes")
+p <- ggplot(type2, aes(x = medication, y = pah_clear_abs, fill=medication)) +
+  geom_bar(stat="identity",position="dodge")+
+  labs(x = "Medication", y = "PAH Clearance",fill="Medication") +
+  theme_minimal() 
+print(p)
 
 ```
 
-#3. Visualize Data 
-```{r Visualize Data}
-#Perform PCA
-so_kidney_sc <- RunPCA(so_kidney_sc, features = VariableFeatures(object = so_kidney_sc))
-ElbowPlot(so_kidney_sc)
-# Cluster cells
-so_kidney_sc <- FindNeighbors(so_kidney_sc)
-so_kidney_sc <- FindClusters(so_kidney_sc)
-# Perform UMAP and tSNE
-so_kidney_sc <- RunUMAP(so_kidney_sc, dims = 1:15)
-DimPlot(so_kidney_sc, reduction = "umap")
-DimPlot(so_kidney_sc, reduction = "umap", group.by = "sglt2i_ever")
-DimPlot(so_kidney_sc, reduction = "umap", group.by = "diabetes")
-DimPlot(so_kidney_sc, reduction = "umap", group.by = "group")
-```
 
 #4. Linear Regression 
+##a. All KPMP Cell Types
 ```{r}
+#Subset seurat object to OAT genes only
+all.genes <- rownames(so_kidney_sc)
+oat.genes <- all.genes[which(grepl("SLC22",all.genes))] #23 genes
+oat_genes_in_data <- intersect(oat.genes, rownames(so_kidney_sc))
+# Subset the Seurat object to include only genes in sens_gene_in_data
+#so_sens_all <- subset(so_kidney_sc, features = sens_gene_in_data)
+so_oat <- subset(so_kidney_sc, features=oat_genes_in_data)
+
+#Aggregate expression data by each individuals cell type
 agg_expression <- AggregateExpression(
-  object = so_kidney_sc,
+  object = so_oat,
   features = NULL,
   group.by = c("kit_id", "celltype_rpca"),  # Aggregate by cell_type
   fun = "mean",
@@ -303,12 +405,14 @@ agg_expression <- AggregateExpression(
 
 # Check the structure of the result
 agg_expression_matrix <- agg_expression$RNA  # Assuming RNA is the name of your assay
+#agg_expression_matrix <- as.matrix(agg_expression$RNA)
 
 # Ensure 'pah' values are aligned with the conditions in agg_expression_matrix
 # Assuming that the 'kit_id' and 'celltype_rpca' are the columns that the data was aggregated by.
 
 # Extract metadata for 'pah' and align it with the columns of aggregated expression matrix
-agg_metadata <- so_kidney_sc@meta.data[, c("kit_id", "celltype_rpca", "pah_clear_bsa")]
+#agg_metadata <- so_kidney_sc@meta.data[, c("kit_id", "celltype_rpca", "pah_clear_abs" ,"pah_clear_bsa")]
+agg_metadata <- unique(so_oat@meta.data[, c("kit_id", "celltype_rpca", "pah_clear_abs" ,"pah_clear_bsa")])
 
 # Create a combined factor for 'kit_id' and 'celltype_rpca' to match columns in agg_expression_matrix
 agg_metadata$condition <- interaction(agg_metadata$kit_id, agg_metadata$celltype_rpca, sep = "_")
@@ -317,70 +421,452 @@ agg_metadata$condition <- interaction(agg_metadata$kit_id, agg_metadata$celltype
 colnames(agg_expression_matrix) <- as.character(agg_metadata$condition)
 
 # Now align the pah values to the column names (conditions) of agg_expression_matrix
-pah_values <- agg_metadata$pah
+pah_values <- agg_metadata$pah_clear_abs
 
 # Make sure pah_values is of the correct length to match the columns of the aggregated expression matrix
 if(length(pah_values) != ncol(agg_expression_matrix)) {
   stop("The number of pah values does not match the number of columns in the aggregated expression matrix.")
 }
 
-# Now you can run linear regression for each gene with pah as the predictor
-regression_results <- data.frame(Gene = character(),
-                                 Coefficient = numeric(),
-                                 PValue = numeric(),
-                                 stringsAsFactors = FALSE)
+agg_expression_df <- as.data.frame(t(agg_expression$RNA))  # Transpose so rows are (kit_id, celltype)
+agg_expression_df$condition <- rownames(agg_expression_df)  # Extract condition names
+agg_metadata <- unique(so_oat@meta.data[, c("kit_id", "celltype_rpca", "pah_clear_abs", "pah_clear_bsa","age","sex","bmi","hba1c","group","group2","medication")])
+agg_metadata$condition <- interaction(agg_metadata$kit_id, agg_metadata$celltype_rpca, sep = "_")
 
-# Loop over each gene and perform linear regression
-for (gene in rownames(agg_expression_matrix)) {
-  gene_expression <- agg_expression_matrix[gene, ]
-  
-  # Perform linear regression with pah as the predictor
-  lm_model <- lm(gene_expression ~ pah_values)
-  
-  # Extract the coefficient and p-value from the model
-  model_summary <- summary(lm_model)
-  coef <- model_summary$coefficients[2, 1]  # Coefficient for pah
-  p_value <- model_summary$coefficients[2, 4]  # P-value for pah
-  
-  # Store the results
-  regression_results <- rbind(regression_results, data.frame(Gene = gene, 
-                                                           Coefficient = coef, 
-                                                           PValue = p_value))
+final_dataset <- merge(agg_metadata, agg_expression_df, by = "condition")
+
+
+#Filter to PT cells only
+#pt_data <- final_dataset %>%
+#  filter(grepl("PT-",celltype_rpca))
+#PT_cells <- unique(pt_data$celltype_rpca)
+
+#Calculate binary yes no expression variable for each gene
+# Loop through each gene in oat.genes and create a binary column
+for (gene in oat.genes) {
+  # Create a new column with binary values for each gene
+  #pt_data[[paste0(gene, "_bin")]] <- ifelse(pt_data[[gene]] > 0, 1, 0)
+  final_dataset[[paste0(gene, "_bin")]] <- ifelse(final_dataset[[gene]] > 0, 1, 0)
 }
 
-# View the results
-head(regression_results)
 
+#Create a linear regression loop 
+ reg_results <- data.frame()
+ reg_results_adj <- data.frame()
+ #covars <- c("age","sex","hba1c","medication")
+ covars <- c("age","sex","group","medication")
+ #covars <- c("age","sex")
+#For each group type, stratif by disease status
+# Iterate over each cell type (assuming cell_type is a vector of the unique cell types)
+for (cell in unique(final_dataset$celltype_rpca)) {
+  
+  # Filter the data for the current cell type
+  filtered_data <- final_dataset[final_dataset$celltype_rpca == cell, ]
+  
+  #Filter the data for the current disease group
+  #filtered_data <- filtered_data[filtered_data$group == disease, ]
+  
+  # Iterate over each gene in the oat.genes list
+  for (gene in oat.genes) {
+    
+    # Define the formula for the crude model (without covariates)
+    M0 <- as.formula(paste0("pah_clear_abs ~", gene, "_bin + ", gene))
+    
+    # Define the formula for the adjusted model (with covariates)
+    M0_adj <- as.formula(paste0("pah_clear_abs ~", gene, "_bin + ", gene, " + ", paste(covars, collapse = " + ")))
+    
+    # Fit the crude model
+    M1 <- lm(M0, data = filtered_data)
+    
+    # Fit the adjusted model
+    M1_adj <- lm(M0_adj, data = filtered_data)
+    
+    # Initialize variables for regression coefficients and p-values
+    Beta_Crude <- NA
+    Beta_Adj <- NA
+    Beta_Zero_Crude <- NA
+    Beta_Zero_Adj <- NA
+    Pval_Crude <- NA
+    Pval_Adj <- NA
+    Pval_Zero_Crude <- NA
+    Pval_Zero_Adj <- NA
+    
+    # Check for the presence of coefficients in the models and assign appropriate values
+    if (!is.na(M1$coefficients[2]) & !is.na(M1$coefficients[3])) {
+      Beta_Crude <- summary(M1)$coef[3,1]
+      Beta_Adj <- summary(M1_adj)$coef[3,1]
+      Beta_Zero_Crude <- summary(M1)$coef[2,1]
+      Beta_Zero_Adj <- summary(M1_adj)$coef[2,1]
+      Pval_Crude <- summary(M1)$coef[3,4]
+      Pval_Adj <- summary(M1_adj)$coef[3,4]
+      Pval_Zero_Crude <- summary(M1)$coef[2,4]
+      Pval_Zero_Adj <- summary(M1_adj)$coef[2,4]
+    } else if (!is.na(M1$coefficients[2]) & is.na(M1$coefficients[3])) {
+      Beta_Crude <- summary(M1)$coef[2,1]
+      Beta_Adj <- summary(M1_adj)$coef[2,1]
+      Beta_Zero_Crude <- NA
+      Beta_Zero_Adj <- NA
+      Pval_Crude <- summary(M1)$coef[2,4]
+      Pval_Adj <- summary(M1_adj)$coef[2,4]
+      Pval_Zero_Crude <- NA
+      Pval_Zero_Adj <- NA
+    } else if (is.na(M1$coefficients[2]) & !is.na(M1$coefficients[3])) {
+      Beta_Crude <- NA
+      Beta_Adj <- NA
+      Beta_Zero_Crude <- summary(M1)$coef[2,1]
+      Beta_Zero_Adj <- summary(M1_adj)$coef[2,1]
+      Pval_Crude <- NA
+      Pval_Adj <- NA
+      Pval_Zero_Crude <- summary(M1)$coef[2,4]
+      Pval_Zero_Adj <- summary(M1_adj)$coef[2,4]
+    }
+    
+    # Create the results data frame for both crude and adjusted models
+    results <- data.frame(Gene = gene, Cell = cell, 
+                          Beta_Crude = Beta_Crude, Pval_Crude = Pval_Crude, 
+                          Beta_Zero_Crude = Beta_Zero_Crude, Pval_Zero_Crude = Pval_Zero_Crude)
+    results_adj <- data.frame(Gene = gene, Cell = cell, 
+                              Beta_Adj = Beta_Adj, Pval_Adj = Pval_Adj, 
+                              Beta_Zero_Adj = Beta_Zero_Adj, Pval_Zero_Adj = Pval_Zero_Adj)
+    
+    # Bind the results to the main results data frames
+    reg_results <- rbind(reg_results, results)
+    reg_results_adj <- rbind(reg_results_adj, results_adj)
+  }
+}
+ 
 
-# Extract 'pah' variable from Seurat metadata
-pah_values <- so_kidney_sc@meta.data$pah_clear_bsa
-length(pah_values)
-# Create an empty data frame to store results
-regression_results <- data.frame(Gene = character(), 
-                                 Coefficient = numeric(), 
-                                 PValue = numeric(), 
-                                 stringsAsFactors = FALSE)
-
-# Loop over each gene and perform linear regression
-for (gene in rownames(agg_expression_matrix)) {
-  gene_expression <- agg_expression_matrix[gene, ]
+reg_results_fdr <- data.frame()
+for(disease in unique(reg_results$Disease)) {
+for (cell in unique(reg_results$Cell)) {
   
-  # Perform linear regression with pah as the predictor
-  lm_model <- lm(gene_expression ~ pah_values)
+  # Filter the data for the current cell type
+  filtered_results <- reg_results[reg_results$Cell == cell, ]
   
-  # Extract the coefficient and p-value from the model
-  model_summary <- summary(lm_model)
-  coef <- model_summary$coefficients[2, 1]  # Coefficient for pah
-  p_value <- model_summary$coefficients[2, 4]  # P-value for pah
+  # Calculate the adjusted p-values using the FDR method
+  filtered_results$Pval_Crude_FDR <- p.adjust(filtered_results$Pval_Crude, method = "fdr")
+  filtered_results$Pval_Crude_FDR_Sig <- ifelse(filtered_results$Pval_Crude_FDR<0.1,"*","")
+  filtered_results$Pval_Zero_Crude_FDR <- p.adjust(filtered_results$Pval_Zero_Crude, method = "fdr")
+  filtered_results$Pval_Zero_Crude_FDR_Sig <- ifelse(filtered_results$Pval_Zero_Crude_FDR<0.1,"*","")
   
-  # Store the results
-  regression_results <- rbind(regression_results, data.frame(Gene = gene, 
-                                                           Coefficient = coef, 
-                                                           PValue = p_value))
+  # Bind the results with the FDR adjusted p-values back to the main results data frame
+  reg_results_fdr <- rbind(reg_results_fdr, filtered_results)
+}
 }
 
-# View the results
-head(regression_results)
+reg_results_adj_fdr <- data.frame()
+for(disease in unique(reg_results$Disease)) {
+# Loop through unique cell types in the reg_results_adj data frame
+for (cell in unique(reg_results_adj$Cell)) {
+  
+  # Filter the data for the current cell type
+  filtered_results <- reg_results_adj[reg_results_adj$Cell == cell, ]
+  
+  # Calculate the adjusted p-values using the FDR method
+  filtered_results$Pval_Adj_FDR <- p.adjust(filtered_results$Pval_Adj, method = "fdr")
+  filtered_results$Pval_Adj_FDR_Sig <- ifelse(filtered_results$Pval_Adj_FDR<0.1,"*","")
+  filtered_results$Pval_Zero_Adj_FDR <- p.adjust(filtered_results$Pval_Zero_Adj, method = "fdr")
+  filtered_results$Pval_Zero_Adj_FDR_Sig <- ifelse(filtered_results$Pval_Zero_Adj_FDR<0.1,"*","")
+  
+  # Bind the results with the FDR adjusted p-values back to the main results data frame
+  reg_results_adj_fdr <- rbind(reg_results_adj_fdr, filtered_results)
+}
+}
+
+# Define a significance threshold (adjust as needed)
+sig_threshold <- 0.05  
+
+p <- ggplot(reg_results_adj, aes(x = Beta_Adj, y = -log10(Pval_Adj), color = Pval_Adj < sig_threshold)) +
+  geom_point(alpha = 0.7) +  # Scatter points
+  geom_text_repel(aes(label = ifelse(Pval_Adj < sig_threshold, Gene, "")), 
+                  size = 3, max.overlaps = 15) +  # Label significant genes
+  scale_color_manual(values = c("black", "red")) +  # Red for significant genes
+  labs(x = "Beta Estimate", y = "-log10(Adjusted P-value)", color = "Significance") +
+  theme_minimal() +
+  facet_wrap(~ Cell)  # Create separate volcano plots per cell type
+pdf(fs::path(dir.results,"Volcano_OAT_PAH_Results.pdf"),width=20,height=10)
+print(p) 
+dev.off()
+  
+#write.csv(reg_results,fs::path(dir.results,"PAH_Clearance_vs_OAT_Exp_All_Cells_crude_fdr.csv"))
+#write.csv(reg_results_adj,fs::path(dir.results,"PAH_Clearance_vs_OAT_Exp_All_Cells_adj_fdr.csv"))
+
+
+#Visulaize results 
+
+#Scatter plots
+final_dataset$celltype <- final_dataset$celltype_rpca
+
+for (gene in unique(reg_results_adj_fdr$Gene)) {
+  pdf(fs::path(dir.results,paste0(gene,"_vs_PAH_Clearance_by_Cell_Type.pdf")),width=10,height=10)
+p <- ggplot(final_dataset , aes(x = .data[[gene]], y = pah_clear_abs)) +
+  geom_point() +  # Add points to the scatterplot
+  geom_smooth(method="lm",se=F)+
+  theme_bw() +
+  labs(title=paste0(gene," vs. PAH Clearance"),
+       x=paste0("Expression of ",gene),
+       y="PAH Clearance")+
+  facet_wrap(~celltype)
+print(p)
+dev.off()
+}
+
+#significant scatterplots
+for (gene in unique(reg_results_adj_fdr$Gene)) {
+  pdf(fs::path(dir.results,paste0(gene,"_vs_PAH_Clearance_by_Cell_Type.pdf")),width=10,height=10)
+p <- ggplot(final_dataset , aes(x = .data[[gene]], y = pah_clear_abs)) +
+  geom_point() +  # Add points to the scatterplot
+  geom_smooth(method="lm",se=F)+
+  theme_bw() +
+  labs(title=paste0(gene," vs. PAH Clearance"),
+       x=paste0("Expression of ",gene),
+       y="PAH Clearance")+
+  facet_wrap(~celltype)
+print(p)
+dev.off()
+}
+#Barcharts
+#visualize pah clearance by group
+
+
+
+
+
+
+```
+
+##b. Pseudobulk PT & Tal
+```{r}
+#Subset seurat object to OAT genes only
+all.genes <- rownames(so_kidney_sc)
+oat.genes <- all.genes[which(grepl("SLC22",all.genes))] #23 genes
+oat_genes_in_data <- intersect(oat.genes, rownames(so_kidney_sc))
+# Subset the Seurat object to include only genes in sens_gene_in_data
+#so_sens_all <- subset(so_kidney_sc, features = sens_gene_in_data)
+so_oat <- subset(so_kidney_sc, features=oat_genes_in_data)
+
+#Aggregate expression data by each individuals cell type
+agg_expression <- AggregateExpression(
+  object = so_oat,
+  features = NULL,
+  group.by = c("kit_id", "celltype_rpca"),  # Aggregate by cell_type
+  fun = "mean",
+  return.seurat = FALSE
+)
+
+# Check the structure of the result
+agg_expression_matrix <- agg_expression$RNA  # Assuming RNA is the name of your assay
+#agg_expression_matrix <- as.matrix(agg_expression$RNA)
+
+# Ensure 'pah' values are aligned with the conditions in agg_expression_matrix
+# Assuming that the 'kit_id' and 'celltype_rpca' are the columns that the data was aggregated by.
+
+# Extract metadata for 'pah' and align it with the columns of aggregated expression matrix
+#agg_metadata <- so_kidney_sc@meta.data[, c("kit_id", "celltype_rpca", "pah_clear_abs" ,"pah_clear_bsa")]
+agg_metadata <- unique(so_oat@meta.data[, c("kit_id", "celltype_rpca", "pah_clear_abs" ,"pah_clear_bsa")])
+
+# Create a combined factor for 'kit_id' and 'celltype_rpca' to match columns in agg_expression_matrix
+agg_metadata$condition <- interaction(agg_metadata$kit_id, agg_metadata$celltype_rpca, sep = "_")
+
+# Check if the names match the column names of the aggregated expression matrix
+colnames(agg_expression_matrix) <- as.character(agg_metadata$condition)
+
+# Now align the pah values to the column names (conditions) of agg_expression_matrix
+pah_values <- agg_metadata$pah_clear_abs
+
+# Make sure pah_values is of the correct length to match the columns of the aggregated expression matrix
+if(length(pah_values) != ncol(agg_expression_matrix)) {
+  stop("The number of pah values does not match the number of columns in the aggregated expression matrix.")
+}
+
+agg_expression_df <- as.data.frame(t(agg_expression$RNA))  # Transpose so rows are (kit_id, celltype)
+agg_expression_df$condition <- rownames(agg_expression_df)  # Extract condition names
+agg_metadata <- unique(so_oat@meta.data[, c("kit_id", "celltype_rpca", "pah_clear_abs", "pah_clear_bsa","age","sex","bmi","hba1c","group","group2","medication")])
+agg_metadata$condition <- interaction(agg_metadata$kit_id, agg_metadata$celltype_rpca, sep = "_")
+
+final_dataset <- merge(agg_metadata, agg_expression_df, by = "condition")
+
+#Filter to PT cells only
+#pt_data <- final_dataset %>%
+#  filter(grepl("PT-",celltype_rpca))
+#PT_cells <- unique(pt_data$celltype_rpca)
+
+#Calculate binary yes no expression variable for each gene
+# Loop through each gene in oat.genes and create a binary column
+for (gene in oat.genes) {
+  # Create a new column with binary values for each gene
+  #pt_data[[paste0(gene, "_bin")]] <- ifelse(pt_data[[gene]] > 0, 1, 0)
+  final_dataset[[paste0(gene, "_bin")]] <- ifelse(final_dataset[[gene]] > 0, 1, 0)
+}
+
+
+#Create a linear regression loop 
+ reg_results <- data.frame()
+ reg_results_adj <- data.frame()
+ #covars <- c("age","sex","hba1c","medication")
+ covars <- c("age","sex","group","medication")
+ #covars <- c("age","sex")
+#For each group type, stratif by disease status
+# Iterate over each cell type (assuming cell_type is a vector of the unique cell types)
+for (cell in unique(final_dataset$celltype_rpca)) {
+  
+  # Filter the data for the current cell type
+  filtered_data <- final_dataset[final_dataset$celltype_rpca == cell, ]
+  
+  #Filter the data for the current disease group
+  #filtered_data <- filtered_data[filtered_data$group == disease, ]
+  
+  # Iterate over each gene in the oat.genes list
+  for (gene in oat.genes) {
+    
+    # Define the formula for the crude model (without covariates)
+    M0 <- as.formula(paste0("pah_clear_abs ~", gene, "_bin + ", gene))
+    
+    # Define the formula for the adjusted model (with covariates)
+    M0_adj <- as.formula(paste0("pah_clear_abs ~", gene, "_bin + ", gene, " + ", paste(covars, collapse = " + ")))
+    
+    # Fit the crude model
+    M1 <- lm(M0, data = filtered_data)
+    
+    # Fit the adjusted model
+    M1_adj <- lm(M0_adj, data = filtered_data)
+    
+    # Initialize variables for regression coefficients and p-values
+    Beta_Crude <- NA
+    Beta_Adj <- NA
+    Beta_Zero_Crude <- NA
+    Beta_Zero_Adj <- NA
+    Pval_Crude <- NA
+    Pval_Adj <- NA
+    Pval_Zero_Crude <- NA
+    Pval_Zero_Adj <- NA
+    
+    # Check for the presence of coefficients in the models and assign appropriate values
+    if (!is.na(M1$coefficients[2]) & !is.na(M1$coefficients[3])) {
+      Beta_Crude <- summary(M1)$coef[3,1]
+      Beta_Adj <- summary(M1_adj)$coef[3,1]
+      Beta_Zero_Crude <- summary(M1)$coef[2,1]
+      Beta_Zero_Adj <- summary(M1_adj)$coef[2,1]
+      Pval_Crude <- summary(M1)$coef[3,4]
+      Pval_Adj <- summary(M1_adj)$coef[3,4]
+      Pval_Zero_Crude <- summary(M1)$coef[2,4]
+      Pval_Zero_Adj <- summary(M1_adj)$coef[2,4]
+    } else if (!is.na(M1$coefficients[2]) & is.na(M1$coefficients[3])) {
+      Beta_Crude <- summary(M1)$coef[2,1]
+      Beta_Adj <- summary(M1_adj)$coef[2,1]
+      Beta_Zero_Crude <- NA
+      Beta_Zero_Adj <- NA
+      Pval_Crude <- summary(M1)$coef[2,4]
+      Pval_Adj <- summary(M1_adj)$coef[2,4]
+      Pval_Zero_Crude <- NA
+      Pval_Zero_Adj <- NA
+    } else if (is.na(M1$coefficients[2]) & !is.na(M1$coefficients[3])) {
+      Beta_Crude <- NA
+      Beta_Adj <- NA
+      Beta_Zero_Crude <- summary(M1)$coef[2,1]
+      Beta_Zero_Adj <- summary(M1_adj)$coef[2,1]
+      Pval_Crude <- NA
+      Pval_Adj <- NA
+      Pval_Zero_Crude <- summary(M1)$coef[2,4]
+      Pval_Zero_Adj <- summary(M1_adj)$coef[2,4]
+    }
+    
+    # Create the results data frame for both crude and adjusted models
+    results <- data.frame(Gene = gene, Cell = cell, 
+                          Beta_Crude = Beta_Crude, Pval_Crude = Pval_Crude, 
+                          Beta_Zero_Crude = Beta_Zero_Crude, Pval_Zero_Crude = Pval_Zero_Crude)
+    results_adj <- data.frame(Gene = gene, Cell = cell, 
+                              Beta_Adj = Beta_Adj, Pval_Adj = Pval_Adj, 
+                              Beta_Zero_Adj = Beta_Zero_Adj, Pval_Zero_Adj = Pval_Zero_Adj)
+    
+    # Bind the results to the main results data frames
+    reg_results <- rbind(reg_results, results)
+    reg_results_adj <- rbind(reg_results_adj, results_adj)
+  }
+}
+ 
+
+reg_results_fdr <- data.frame()
+for(disease in unique(reg_results$Disease)) {
+for (cell in unique(reg_results$Cell)) {
+  
+  # Filter the data for the current cell type
+  filtered_results <- reg_results[reg_results$Cell == cell, ]
+  
+  # Calculate the adjusted p-values using the FDR method
+  filtered_results$Pval_Crude_FDR <- p.adjust(filtered_results$Pval_Crude, method = "fdr")
+  filtered_results$Pval_Crude_FDR_Sig <- ifelse(filtered_results$Pval_Crude_FDR<0.1,"*","")
+  filtered_results$Pval_Zero_Crude_FDR <- p.adjust(filtered_results$Pval_Zero_Crude, method = "fdr")
+  filtered_results$Pval_Zero_Crude_FDR_Sig <- ifelse(filtered_results$Pval_Zero_Crude_FDR<0.1,"*","")
+  
+  # Bind the results with the FDR adjusted p-values back to the main results data frame
+  reg_results_fdr <- rbind(reg_results_fdr, filtered_results)
+}
+}
+
+reg_results_adj_fdr <- data.frame()
+for(disease in unique(reg_results$Disease)) {
+# Loop through unique cell types in the reg_results_adj data frame
+for (cell in unique(reg_results_adj$Cell)) {
+  
+  # Filter the data for the current cell type
+  filtered_results <- reg_results_adj[reg_results_adj$Cell == cell, ]
+  
+  # Calculate the adjusted p-values using the FDR method
+  filtered_results$Pval_Adj_FDR <- p.adjust(filtered_results$Pval_Adj, method = "fdr")
+  filtered_results$Pval_Adj_FDR_Sig <- ifelse(filtered_results$Pval_Adj_FDR<0.1,"*","")
+  filtered_results$Pval_Zero_Adj_FDR <- p.adjust(filtered_results$Pval_Zero_Adj, method = "fdr")
+  filtered_results$Pval_Zero_Adj_FDR_Sig <- ifelse(filtered_results$Pval_Zero_Adj_FDR<0.1,"*","")
+  
+  # Bind the results with the FDR adjusted p-values back to the main results data frame
+  reg_results_adj_fdr <- rbind(reg_results_adj_fdr, filtered_results)
+}
+}
+  
+  
+#write.csv(reg_results,fs::path(dir.results,"PAH_Clearance_vs_OAT_Exp_All_Cells_crude_fdr.csv"))
+#write.csv(reg_results_adj,fs::path(dir.results,"PAH_Clearance_vs_OAT_Exp_All_Cells_adj_fdr.csv"))
+
+
+#Visulaize results 
+
+#Scatter plots
+final_dataset$celltype <- final_dataset$celltype_rpca
+
+for (gene in unique(reg_results_adj_fdr$Gene)) {
+  pdf(fs::path(dir.results,paste0(gene,"_vs_PAH_Clearance_by_Cell_Type.pdf")),width=10,height=10)
+p <- ggplot(final_dataset , aes(x = .data[[gene]], y = pah_clear_abs)) +
+  geom_point() +  # Add points to the scatterplot
+  geom_smooth(method="lm",se=F)+
+  theme_bw() +
+  labs(title=paste0(gene," vs. PAH Clearance"),
+       x=paste0("Expression of ",gene),
+       y="PAH Clearance")+
+  facet_wrap(~celltype)
+print(p)
+dev.off()
+}
+
+#significant scatterplots
+for (gene in unique(reg_results_adj_fdr$Gene)) {
+  pdf(fs::path(dir.results,paste0(gene,"_vs_PAH_Clearance_by_Cell_Type.pdf")),width=10,height=10)
+p <- ggplot(final_dataset , aes(x = .data[[gene]], y = pah_clear_abs)) +
+  geom_point() +  # Add points to the scatterplot
+  geom_smooth(method="lm",se=F)+
+  theme_bw() +
+  labs(title=paste0(gene," vs. PAH Clearance"),
+       x=paste0("Expression of ",gene),
+       y="PAH Clearance")+
+  facet_wrap(~celltype)
+print(p)
+dev.off()
+}
+#Barcharts
+#visualize pah clearance by group
+
+
+
+
 
 
 ```
