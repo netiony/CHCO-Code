@@ -47,15 +47,20 @@ de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, exten
 
 #DEG & GSEA Function ----
 #a. All Genes ----
-degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,top_gsea) {
+degs_fxn <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_group,enrichment,top_gsea) {
   DefaultAssay(so) <- "RNA"
   
   #Conidtion names
-  condition <- paste0(str_to_title(str_replace_all(exposure,"_"," ")),"_",exp_group,"_vs_",ref_group,"_")
+  if(is.null(additional_group)) {
+  condition <- paste0(str_to_title(str_replace_all(exposure,"_"," ")),"_",exp_group,"_vs_",ref_group)
   condition <- str_replace_all(condition," ","_")
+  } 
+  if(!is.null(additional_group)) {
+    condition <- paste0(additional_group,"_",str_to_title(str_replace_all(exposure,"_"," ")),"_",exp_group,"_vs_",ref_group)
+    condition <- str_replace_all(condition," ","_")
+  }
   #Differential Expression by Group
   if (!is.null(cell)) {
-  Idents(so) <- so$celltype2
   cell_name <- str_replace_all(cell,"/","_")
   }
   # sens_genes <- c(sens_genes,"CDKN1A")
@@ -98,19 +103,31 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
     top_negative_by_significance %>% mutate(Selection = "Top 10 by Significance")
   )
   
-  
+  if(is.null(additional_group)) {
+  condition2 <- paste0(str_to_title(exposure)," (",exp_group," vs. ",ref_group,")")
   if (!is.null(cell)){
-    title <- paste0("DEGs in ",cell_name," cells for ",condition)
+    title <- paste0("DEGs in ",cell_name," cells for ",condition2)
   } else {
-    title <- paste0("Bulk DEGs for ",condition)
+    title <- paste0("Bulk DEGs for ",condition2)
   }
+  }
+  if(!is.null(additional_group)) {
+    condition2 <- paste0(additional_group," ",str_to_title(exposure)," (",exp_group," vs. ",ref_group,")")
+    if (!is.null(cell)){
+      title <- paste0("DEGs in ",cell_name," cells for ",condition2)
+    } else {
+      title <- paste0("Bulk DEGs for ",condition2)
+    }
+  } 
+
+  
   labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
   p <- EnhancedVolcano(m_top,
                        lab = labels,
                        x = 'avg_log2FC',
                        y = 'p_val_adj',
                        title = title,
-                       subtitle = paste0("Positive Log2 FC = Greater Expression in ", condition,"\n",
+                       subtitle = paste0("Positive Log2 FC = Greater Expression in ", condition2,"\n",
                                          "(Significant at FDR-P<0.05, FC Threshold = 0.5)"),
                        pCutoff = 0.05,
                        FCcutoff = 0.5,
@@ -123,10 +140,19 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
                        legendPosition=NULL,
                        boxedLabels = TRUE,
                        max.overlaps=60)
+  if(!is.null(additional_group)) {
   if (!is.null(cell)){
-  filename <- paste0("DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
+  filename <- paste0(additional_group,"_DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
   } else {
-    filename <- paste0("Bulk_DEGs_for_",condition,".pdf") 
+    filename <- paste0(additional_group,"_Bulk_DEGs_for_",condition,".pdf") 
+  }
+  }
+  if(!is.null(additional_group)) {
+    if (!is.null(cell)){
+      filename <- paste0("DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
+    } else {
+      filename <- paste0("Bulk_DEGs_for_",condition,".pdf") 
+    }
   }
   pdf(fs::path(dir.results,filename),width=20,height=10)
   plot(p)
@@ -169,9 +195,9 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
     )
     
     if (!is.null(cell)) {
-      title <- paste0("Top Enriched Pathways by NES (GSEA) in ",cell_name," cells among ",condition)
+      title <- paste0(additional_group,"_Top Enriched Pathways by NES (GSEA) in ",cell_name," cells among ",condition2)
     } else {
-      title <- paste0("Top Enriched Pathways by NES (GSEA) for ",condition," (Bulk)")
+      title <- paste0(additional_group,"_Top Enriched Pathways by NES (GSEA) for ",condition2," (Bulk)")
     }
     # Create a bar plot
     gsea_plot <- ggplot(top_pathways, aes(x = reorder(pathway, NES), y = NES, fill = significance)) +
@@ -199,9 +225,9 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
     
   
     if (!is.null(cell)){
-      filename <- paste0("GSEA_top_",top_gsea,"_pathways_",cell_name,"_cells_for",condition,".pdf")
+      filename <- paste0(additional_group,"_GSEA_top_",top_gsea,"_pathways_",cell_name,"_cells_for",condition,".pdf")
     } else {
-      filename <- paste0("Bulk_GSEA_for_",condition,".pdf") 
+      filename <- paste0(additional_group,"_Bulk_GSEA_for_",condition,".pdf") 
     }
     pdf(fs::path(dir.results,filename),width=20,height=20)
     plot(gsea_plot)
