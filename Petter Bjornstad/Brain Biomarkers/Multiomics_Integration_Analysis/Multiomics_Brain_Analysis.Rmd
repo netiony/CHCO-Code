@@ -10,38 +10,48 @@ output: html_document
 #Load Libraries 
 source("Libraries.R")
 
-#Load Functions
-source("Functions.R")
+# #Load Functions
+# source("Functions.R")
 
 #Directories
 dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
-dir.results <- c("/Users/hhampson/Documents/UW/1_Ongoing Projects/Brain_Biomarkers/Results")
+dir.results <- c("/Users/hhampson/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Biostatistics Core Shared Drive/Brain Biomarkers and Proteomics/Results")
 ```
 
 #2. Load & Clean Data
 ```{r load clean data, include=FALSE, echo=FALSE}
 #Load Data
 dat_harm <- read.csv(fs::path(dir.dat,"Data Harmonization","Data Clean","soma_harmonized_dataset.csv"))
-# dat_harm2 <- read.csv(fs::path(dir.dat,"Data Harmonization","Data Clean","harmonized_dataset.csv"))
+#dat_harm2 <- read.csv(fs::path(dir.dat,"Data Harmonization","Data Clean","harmonized_dataset.csv"))
+
+#- **Quanterix Note:**
+# - 2022 shipment was plasma (CROCODILE)
+# - 2023 shipment was serum (RH2)
+# - 2022 shipment was plasma (PENGUIN)
 
 #Filter to CROCODILE & Diabetes - heatmap for beta 
-dat_harm <- dat_harm %>% 
+CROC <- dat_harm %>% 
   filter(study=="CROCODILE")  
-#& penguine plasma, and 
-#renal heritage = serum
+PENG <- dat_harm %>% 
+  filter(study=="PENGUIN")
+RH <- dat_harm %>% 
+  filter(study=="RENAL-HEIR" | study=="RENAL-HEIRitage")
+```
 
+##a. CROCODILE
+```{r}
 #Metabolomics & proteomics
 #Select metabolomics data
-met.names <- c("record_id",colnames(dat_harm)[which(startsWith(colnames(dat_harm),"c0") | startsWith(colnames(dat_harm),"c1"))])
-met <- dat_harm %>% 
+met.names <- c("record_id",colnames(CROC)[which(startsWith(colnames(CROC),"c0") | startsWith(colnames(CROC),"c1"))])
+met <- CROC %>%
   filter(procedure == "metabolomics_blood") %>% #Filter to metabolomics measurement
   dplyr::select(all_of(met.names)) #Select only metabolite features
 met <- met %>% #Remove metabolites with missing data
   dplyr::select(where(~ !all(is.na(.))))
 metabolites <- colnames(met)[-1]
 #Select proteomics data
-prot.names <- c("record_id",colnames(dat_harm)[which(grepl("seq.",colnames(dat_harm)))])
-prot <- dat_harm %>% 
+prot.names <- c("record_id",colnames(CROC)[which(grepl("seq.",colnames(CROC)))])
+prot <- CROC %>% 
   filter(procedure == "metabolomics_blood") %>% #Proteomics available for all measurements, select one arbitrarily)
   dplyr::select(all_of(prot.names)) #Select only protein features
 #CRC-53 & CRC-60 missing proteomics data
@@ -50,7 +60,7 @@ rm(prot.names)
 rm(met.names)
 
 #Brain biomarkers
-brain <- dat_harm %>% 
+brain <- CROC %>% 
   filter(procedure=="neuro_markers") %>% 
   dplyr::select(record_id,ab40_avg_conc,ab42_avg_conc,
                 tau_avg_conc,nfl_avg_conc,gfap_avg_conc,
@@ -58,505 +68,328 @@ brain <- dat_harm %>%
   filter(!is.na(ab40_avg_conc))
 
 #Select covariates
-cov <- dat_harm %>% 
+# What covariates to adjust for? Age, sex, disease status (lean controls, obese, type 1 and pkd, type 2), maybe ACEi/ARB & RAASi (if controls on these medications, otherwide no)
+#     1. Adjusting 
+#     2. Interaction/stratifying
+cov1 <- CROC %>% 
   filter(procedure=="physical_exam") %>%
   dplyr::select(record_id,procedure,diabetes_duration,group,age,sex,bmi,race_ethnicity) %>% 
-  filter(record_id %in% brain$record_id) %>%  #filter to individuals with proteomics & metabolomics & brain biomarkers
-  mutate(diabetes_duration=ifelse(group=="Lean Control",0,diabetes_duration)) %>% 
+  filter(record_id %in% brain$record_id) %>% 
   dplyr::select(-procedure)
-  
+cov2 <- CROC %>% 
+  filter(procedure=="medications") %>%
+  dplyr::select(record_id,procedure,ace_inhibitor,angiotensin_receptor_blocker,insulin_injections_timepoint,insulin_med_timepoint) %>% 
+  filter(record_id %in% brain$record_id) %>% 
+  dplyr::select(-procedure)
+cov3 <- CROC %>% 
+  filter(procedure=="epic_medications") %>% 
+  dplyr::select(record_id,procedure,epic_glp1ra_1,epic_sglti2_1) %>% 
+  filter(record_id %in% brain$record_id)%>% 
+  dplyr::select(-procedure)
+
+
 #Combine datasets
-dat <- tidylog::left_join(cov,brain,by="record_id")
+dat <- tidylog::left_join(cov1,cov2,by="record_id")
+dat <- tidylog::left_join(dat,cov3,by="record_id")
+dat <- tidylog::left_join(dat,brain,by="record_id")
 dat <- tidylog::left_join(dat,prot,by="record_id")
 dat <- tidylog::left_join(dat,met,by="record_id")
-  
-rm(brain,cov,dat_harm,met,prot)
 
-#Make Covariates factors
-dat <- dat %>% 
-  mutate(diabetes_status=as.factor(ifelse(group=="Lean Control",0,1))) %>% #0 = Lean Control, 1 = Type 1
-  mutate(sex=as.factor(sex),
-         race_ethnicity=as.factor(race_ethnicity))
+#ALl croc not on glp 1s or sglt2s
+dat_CROC <- dat
+rm(brain,cov1,cov2,cov3,met,prot,dat)
+table1(~age+sex+bmi+ace_inhibitor+angiotensin_receptor_blocker+insulin_injections_timepoint+
+         insulin_med_timepoint+diabetes_duration |group,data=dat_CROC,overall=F)
+
+# #Make Covariates factors
+# dat <- dat %>% 
+#   mutate(diabetes_status=as.factor(ifelse(group=="Lean Control",0,1))) %>% #0 = Lean Control, 1 = Type 1
+#   mutate(sex=as.factor(sex),
+#          race_ethnicity=as.factor(race_ethnicity))
 ```
 
-# 3. Annotate Feature Tables 
-```{r annotation, include=FALSE,echo=FALSE}
-#Match Confirmed Features to feature tables: match on mz and rt (mz rounded to 5 digits, rt to 1 digit)
-## C18 Negative Features - 117 confirmed features ----
-c18neg_annotated <- tidylog::left_join(c18neg_conf_ftrs,c18neg_ftrs,by=c("mz","rt"))
+##b. PENGUIN
+```{r}
+#Metabolomics & proteomics
+# #Select metabolomics data
+# met.names <- c("record_id",colnames(PENG)[which(startsWith(colnames(PENG),"c0") | startsWith(colnames(PENG),"c1"))])
+# met <- PENG %>%
+#   filter(procedure == "metabolomics_blood") %>% #Filter to metabolomics measurement
+#   dplyr::select(all_of(met.names)) #Select only metabolite features
+# met <- met %>% #Remove metabolites with missing data
+#   dplyr::select(where(~ !all(is.na(.))))
+# metabolites <- colnames(met)[-1]
+#Select proteomics data
+prot.names <- c("record_id",colnames(PENG)[which(grepl("seq.",colnames(PENG)))])
+prot <- PENG %>%
+  filter(procedure == "metabolomics_blood") %>% #Proteomics available for all measurements, select one arbitrarily)
+  dplyr::select(all_of(prot.names)) #Select only protein features
+#CRC-53 & CRC-60 missing proteomics data
+proteins <- prot.names[-1]
+rm(prot.names)
+# rm(met.names)
 
-## C18 Positive Features - 115 confirmed features ----
-c18pos_annotated <- tidylog::left_join(c18pos_conf_ftrs,c18pos_ftrs,by=c("mz","rt"))
+#Brain biomarkers
+brain <- PENG %>% 
+  filter(procedure=="neuro_markers") %>% 
+  dplyr::select(record_id,ab40_avg_conc,ab42_avg_conc,
+                tau_avg_conc,nfl_avg_conc,gfap_avg_conc,
+                ptau_181_avg_conc,ptau_217_avg_conc) %>% 
+  filter(!is.na(ab40_avg_conc))
 
-## Hilic Negative Features - 125 confirmed features ----
-hilicneg_annotated <- tidylog::left_join(hilicneg_conf_ftrs,hilicneg_ftrs,by=c("mz","rt"))
+#Select covariates
+# What covariates to adjust for? Age, sex, disease status (controls, type 1 and pkd), maybe ACEi/ARB & RAASi (if controls on these medications, otherwide no)
+#     1. Adjusting 
+#     2. Interaction/stratifying
+cov1 <- PENG %>% 
+  filter(procedure=="physical_exam") %>%
+  dplyr::select(record_id,procedure,diabetes_duration,group,age,sex,bmi,race_ethnicity) %>% 
+  filter(record_id %in% brain$record_id) %>% 
+  dplyr::select(-procedure)
+cov2 <- PENG %>% 
+  filter(procedure=="medications") %>%
+  dplyr::select(record_id,procedure,ace_inhibitor,angiotensin_receptor_blocker,insulin_injections_timepoint,insulin_med_timepoint) %>% 
+  filter(record_id %in% brain$record_id) %>% 
+  dplyr::select(-procedure)
+cov3 <- PENG %>% 
+  filter(procedure=="epic_medications") %>% 
+  dplyr::select(record_id,procedure,epic_glp1ra_1,epic_sglti2_1) %>% 
+  filter(record_id %in% brain$record_id)%>% 
+  dplyr::select(-procedure)
 
-## Hilic Positive Features - 97 confirmed features ----
-hilicpos_annotated <- tidylog::left_join(hilicpos_conf_ftrs,hilicpos_ftrs,by=c("mz","rt"))
 
-#Combine Annoted Features 
-annotated_ftrs <- rbind(c18neg_annotated,c18pos_annotated)
-annotated_ftrs <- rbind(annotated_ftrs,hilicneg_annotated)
-annotated_ftrs <- rbind(annotated_ftrs,hilicpos_annotated)
+#Combine datasets
+dat <- tidylog::left_join(cov1,cov2,by="record_id")
+dat <- tidylog::left_join(dat,cov3,by="record_id")
+dat <- tidylog::left_join(dat,brain,by="record_id")
+dat <- tidylog::left_join(dat,prot,by="record_id")
+# dat <- tidylog::left_join(dat,met,by="record_id")
 
-#Duplicate metabolites - select based on smaller delta mz and rt
-dups <- annotated_ftrs$name[which(duplicated(annotated_ftrs$name))]
-dup_metab <- annotated_ftrs %>% 
-  filter(name %in% dups)
+#ALl croc not on glp 1s or sglt2s
+dat_PENG <- dat
+rm(brain,cov1,cov2,cov3,met,prot,dat)
+table1(~age+sex+bmi+ace_inhibitor+angiotensin_receptor_blocker+insulin_injections_timepoint+
+         insulin_med_timepoint+diabetes_duration |group,data=dat_PENG,overall=F)
 
-#Select smaller delta mz of duplicates
-# dup_metab_test2 <- dup_metab %>%
-#   filter((name=="5-Hydroxy-L-Tryptophan" & delta_ppm==0.35) |
-#            (name=="D-Sedoheptulose" & delta_ppm==0.61) |
-#            (name=="Hypoxanthine" & delta_ppm==0.13) |
-#            (name=="Inosine" & delta_ppm==0.32) |
-#            (name=="Kynurenine" & delta_ppm==0.03) |
-#            (name=="Mevalolactone" & delta_ppm==0.35) |
-#            (name=="N-Acetyltryptophan" & delta_ppm==0.21) |
-#            (name=="NNN-Trimethyllysine" & delta_ppm==0.6) |
-#            (name=="Palmitoylcarnitine" & delta_ppm==0.11) |
-#            (name=="Tryptophan" & delta_ppm==0.12))
-dup_metab <- dup_metab %>% 
-  group_by(name) %>% 
-  slice_min(delta_ppm) %>% 
-  ungroup()
 
-#Remove duplicates from annotated features
-annotated_ftrs_filt <- annotated_ftrs %>% 
-  filter(!name %in% dups)
-
-#Merge back in duplicates 
-annotated_ftrs_filt <- rbind(annotated_ftrs_filt,dup_metab)
-
-metabolites <- annotated_ftrs_filt %>%
-  dplyr::select(mz_rt,name,mz,rt)
-
-# #Merge confirmed features with feature tables
-c18neg_ftrs <- data.frame(ftrs$c18neg)
-c18pos_ftrs <- data.frame(ftrs$c18pos)
-hilicneg_ftrs <- data.frame(ftrs$hilicneg)
-hilicpos_ftrs <- data.frame(ftrs$hilicpos)
-colnames(c18pos_ftrs) <- str_remove(colnames(c18pos_ftrs),"X")
-colnames(c18neg_ftrs) <- str_remove(colnames(c18neg_ftrs),"X")
-colnames(hilicpos_ftrs) <- str_remove(colnames(hilicpos_ftrs),"X")
-colnames(hilicneg_ftrs) <- str_remove(colnames(hilicneg_ftrs),"X")
-
-#Combine
-metab.data <- tidylog::full_join(c18neg_ftrs,c18pos_ftrs,by="id")
-metab.data <- tidylog::full_join(metab.data,hilicneg_ftrs,by="id")
-metab.data <- tidylog::full_join(metab.data,hilicpos_ftrs,by="id")
-
-#Filter to the 454 annotated metabolites
-confirmed.metabolites <- metabolites$mz_rt
-metab.data <- metab.data %>% 
-  dplyr::select(id,all_of(confirmed.metabolites))
-
-#Create easier metabolomics names for analysis
-metab.data <- metab.data %>% 
-  mutate(across(everything(),~as.vector(.)))
-metabolites$key <- paste0("metabolite",seq(1:length(metabolites$mz_rt)))        
-
-colnames(metab.data) <- c("id",metabolites$key)
+# #Make Covariates factors
+# dat <- dat %>% 
+#   mutate(diabetes_status=as.factor(ifelse(group=="Lean Control",0,1))) %>% #0 = Lean Control, 1 = Type 1
+#   mutate(sex=as.factor(sex),
+#          race_ethnicity=as.factor(race_ethnicity))
 ```
 
-#4. Load & Clean Meta data
-##a. Meta Data
-```{r Metadata, include=FALSE, echo=FALSE}
-#Load PFAS & covariates data metaair 
-PFAS <- readRDS(fs::path(dir.dat %>% dirname(),"CHS MetaAir MetaChem Cleaned Redcap and Exposures Outcome Data long V3.rds")) 
-PFAS <- PFAS %>%   
-  filter(study=="MetaAir") %>% 
-  dplyr::select(id,ma_pfda:ma_pfpes,ma_age,ma_sex,ma_bmi,ma_race_eth,ma_parental_edu) %>% 
-  mutate(id=as.numeric(id))
 
-#Load eGFR metachem 
-eGFR <- read.csv(fs::path(dir.dat %>% dirname(),"archive_versions","chs_complete_data.csv"))
-eGFR <- eGFR %>% 
-  dplyr::select(id,mc_creatinine) 
-# filter(!is.na(mc_creatinine))
+##c. RH/RH2
+```{r}
+#Metabolomics & proteomics
+#Select metabolomics data
+# met.names <- c("record_id",colnames(RH)[which(startsWith(colnames(RH),"c0") | startsWith(colnames(RH),"c1"))])
+# met <- RH %>%
+#   filter(procedure == "metabolomics_blood") %>% #Filter to metabolomics measurement
+#   dplyr::select(all_of(met.names)) #Select only metabolite features
+# met <- met %>% #Remove metabolites with missing data
+#   dplyr::select(where(~ !all(is.na(.))))
+# metabolites <- colnames(met)[-1]
+#Select proteomics data
+prot.names <- c("record_id",colnames(RH)[which(grepl("seq.",colnames(RH)))])
+prot <- RH %>%
+  filter(procedure == "metabolomics_blood") %>% #Proteomics available for all measurements, select one arbitrarily)
+  dplyr::select(all_of(prot.names)) #Select only protein features
+#CRC-53 & CRC-60 missing proteomics data
+proteins <- prot.names[-1]
+rm(prot.names)
+# rm(met.names)
 
-#Load baseline creatinine-like protein metaair
-cst3 <- read.csv(fs::path(dir.dat %>% dirname(),"archive_versions","chs_complete_data.csv")) %>%  
-  dplyr::select(id,ma_CST3,mc_CST3)
+#Brain biomarkers
+brain <- RH %>% 
+  filter(procedure=="neuro_markers") %>% 
+  dplyr::select(record_id,ab40_avg_conc,ab42_avg_conc,
+                tau_avg_conc,nfl_avg_conc,gfap_avg_conc,
+                ptau_181_avg_conc,ptau_217_avg_conc) %>% 
+  filter(!is.na(ab40_avg_conc))
 
-#Load cystatin-C 
-cystatin_c <- readRDS("/Users/hhampson/USC Lab Dropbox/Chatzi Active Projects/MOVED Chatzi Projects (Active)/Env Chem SOL-CHS/Analysis/1_analysis_ready_data/CHS MetaAir MetaChem Cleaned Redcap and Exposures Outcome Data long V3.rds") %>%
-  filter(study=="MetaChem") %>%
-  dplyr::select(id,cystatin_c) %>%
-  mutate(id=as.numeric(id))
-
-#Load baseline fiber & energy
-nutrients <- readRDS("/Users/hhampson/USC Lab Dropbox/Chatzi Active Projects/MOVED Chatzi Projects (Active)/Env Chem SOL-CHS/Analysis/0_data_processing/SOL CHS Diet Data Processing/CHS/2_cleaned_data/temp/Nutrients_Data_Formatted.rds") %>%
-  dplyr::select(id,m_energy_kcal,m_total_dietary_fiber_g)
-
-#Load microbiome data
-#Reduced Microbiome Features
-# micro <- readRDS(fs::path(dir.dat %>% dirname() %>% dirname(),"2_ongoing/CHS PFAS Microbiome (Hailey)/BHRM_microbiome/Formatted Data/SignificantGenusPFASData.rds")) %>%
-#   mutate(id = as.numeric(id))
-# Full Mirobiome Features
-micro <- readRDS(fs::path(dir.dat %>% dirname() %>% dirname(),"2_ongoing/CHS PFAS Microbiome (Hailey)/BHRM_microbiome/Formatted Data/GenusPFASData.rds")) %>%
-  mutate(id = as.numeric(id))
-
-colnames(micro) <- str_replace(colnames(micro),".*g__","")
-colnames(micro) <- str_replace(colnames(micro), "UCG_002","Oscillospiraceae_g__UCG_002")
-colnames(micro) <- str_replace(colnames(micro), "UCG_005","Oscillospiraceae_g__UCG_005")
-colnames(micro) <- str_replace(colnames(micro), "unclassified887","Lachnospiraceae_g__unclassified887")
-colnames(micro) <- str_replace(colnames(micro), "unclassified498","Lachnospiraceae_g__unclassified498")
-colnames(micro) <- str_replace(colnames(micro), "GCA_900066575","Lachnospiraceae_g__GCA_900066575")
-
-#Calculate Relative Abundance Data
-rownames(micro) <- micro$id
-micro <- micro %>%
-  dplyr::select(-id) 
-
-micro_rel <- micro %>% 
-  mutate(across(everything(),~./sum(.)))
-
-micro_rel$id <- as.numeric(rownames(micro_rel))
-rownames(micro_rel) <- NULL
+#Select covariates
+# What covariates to adjust for? Age, sex, disease status (controls, type 1 and pkd), maybe ACEi/ARB & RAASi (if controls on these medications, otherwide no)
+#     1. Adjusting 
+#     2. Interaction/stratifying
+#Select covariates
+# What covariates to adjust for? Age, sex, disease status (controls, type 1 and pkd), maybe ACEi/ARB & RAASi (if controls on these medications, otherwide no)
+#     1. Adjusting 
+#     2. Interaction/stratifying
+cov1 <- RH %>% 
+  filter(procedure=="physical_exam") %>%
+  dplyr::select(record_id,procedure,diabetes_duration,group,age,sex,bmi,race_ethnicity) %>% 
+  filter(record_id %in% brain$record_id) %>% 
+  dplyr::select(-procedure)
+cov2 <- RH %>% 
+  filter(procedure=="medications") %>%
+  dplyr::select(record_id,procedure,ace_inhibitor,angiotensin_receptor_blocker,insulin_injections_timepoint,insulin_med_timepoint) %>% 
+  filter(record_id %in% brain$record_id) %>% 
+  dplyr::select(-procedure)
+cov3 <- RH %>% 
+  filter(procedure=="epic_medications") %>% 
+  dplyr::select(record_id,procedure,epic_glp1ra_1,epic_sglti2_1) %>% 
+  filter(record_id %in% brain$record_id)%>% 
+  dplyr::select(-procedure)
 
 
-#Load Proteomics Outcomes 
-prot <- read.csv(fs::path(dir.dat %>% dirname(),"proteomics","MetaChem_screened_proteomics.csv")) %>% 
-  dplyr::select(id,TINAGL1, LCN2)
+#Combine datasets
+dat <- tidylog::left_join(cov1,cov2,by="record_id")
+dat <- tidylog::left_join(dat,cov3,by="record_id")
+# dat <- tidylog::left_join(dat,brain,by="record_id")
+# dat <- tidylog::left_join(dat,prot,by="record_id")
+# dat <- tidylog::left_join(dat,met,by="record_id")
 
-#Baseline creatinine
-ftrs <- readRDS(fs::path(dir.dat, "sol_chs_batch_cor_scaled_untargeted_fts.rds"))
-ftrs <- ftrs$chs
-c18neg_ftrs_table <- data.frame(ftrs$c18neg)
-colnames(c18neg_ftrs_table) <- str_remove(colnames(c18neg_ftrs_table),"X")
-c18neg_ftrs_table <- c18neg_ftrs_table %>% 
-  dplyr::select(id,`112.051649_23.21579379`) %>% 
-  dplyr::rename(ma_creatinine=`112.051649_23.21579379`)
-c18neg_ftrs_table$id <- as.numeric(c18neg_ftrs_table$id)
+#ALl croc not on glp 1s or sglt2s
+dat_RH <- dat
+# rm(brain,cov1,cov2,cov3,met,prot,dat)
+table1(~age+sex+bmi+ace_inhibitor+angiotensin_receptor_blocker+insulin_injections_timepoint+
+         insulin_med_timepoint+diabetes_duration |group,data=dat_RH,overall=F)
 
-#Merge together
-meta <- tidylog::full_join(PFAS,eGFR,by="id")
-meta <- tidylog::full_join(meta,cst3,by="id")
-# meta <- tidylog::full_join(meta,nutrients,by="id")
-meta <- tidylog::full_join(meta,micro_rel,by="id")
-meta <- tidylog::full_join(meta,prot,by="id")
-meta <- tidylog::full_join(meta,c18neg_ftrs_table,by="id")
-meta <- tidylog::left_join(meta,cystatin_c,by="id") #ng/mL
-meta <- tidylog::left_join(meta,nutrients,by="id") 
-meta$cystatin_c2 <- meta$cystatin_c/1000 #Convert from ng/mL to mg/L for eGFR calculation
+# #Make Covariates factors
+# dat <- dat %>% 
+#   mutate(diabetes_status=as.factor(ifelse(group=="Lean Control",0,1))) %>% #0 = Lean Control, 1 = Type 1
+#   mutate(sex=as.factor(sex),
+#          race_ethnicity=as.factor(race_ethnicity))
+```
+#5. Analysis
+##a. CROCODILE 
+```{r}
+exposure <- c(proteins,metabolites)
+outcome  <- c("ab40_avg_conc","ab42_avg_conc","tau_avg_conc",
+              "nfl_avg_conc","gfap_avg_conc","ptau_181_avg_conc","ptau_217_avg_conc")
+covars <- c("age","sex","group")
+#Log transform all exposure variables: 
+dat_CROC <- dat_CROC %>% 
+  mutate(across(all_of(exposure),~log(.),.names = "{.col}_log"))
+dat_CROC <- dat_CROC %>% 
+  mutate(across(all_of(exposure),~((.-mean(.,na.rm=T))/sd(.,na.rm=T)),.names = "{.col}_scale"))
+exposure_scale <- paste0(exposure,"_scale")
+dat_CROC <- dat_CROC %>% 
+  mutate(across(all_of(exposure_scale),~((.-mean(.,na.rm=T))/sd(.,na.rm=T)),.names = "{.col}_log"))
 
-meta <- meta %>% 
-  rename(mc_CST3_log=mc_CST3,
-         ma_CST3_log=ma_CST3,
-         ma_creatinine_scaled=ma_creatinine,
-         LCN2_log=LCN2,
-         TINAGL1_log=TINAGL1)
+exposure_log <- paste0(exposure,"_log")
+exposure_log_scale <- paste0(exposure_scale,"_log")
+dat_CROC <- dat_CROC %>% 
+  mutate(across(all_of(outcome),~((.-mean(.,na.rm=T))/sd(.,na.rm=T)),.names = "{.col}_scale"))
+outcome_scale <- paste0(outcome,"_scale")
 
-#Filter to complete pfas & eGFR data 
-meta <- meta %>%
-  filter(!is.na(mc_creatinine)) %>%
-  filter(!is.na(ma_pfda)) #78 remain
+#No Interaction Term with group
+results <- data.frame()
+for (feature in exposure_log_scale) {
+  for (biomarker in outcome_scale) {
+    M0 <- as.formula(paste0(biomarker,"~",feature,"+",paste(covars,collapse="+")))
+    M1 <- lm(M0,data=dat_CROC)
+    Beta <- summary(M1)$coef[2,1]
+    Pval <- summary(M1)$coef[2,4]
+    lm_results <- data.frame(Feature=feature,Biomarker=biomarker,Beta=Beta,Pval=Pval)
+    results <- rbind(results,lm_results)
+  }
+}
+results <- results %>% 
+  mutate(fdr=p.adjust(Pval,method="fdr")) %>% 
+  mutate(sig=ifelse(fdr<0.05,"*",""))
+write.csv(results,fs::path(dir.results,"Brain_Biomarkers_Log_Proteomics_Log_Metabolomics_Adj_Results.csv"))
+sig <- results %>% 
+  filter(fdr<0.05)
+write.csv(results,fs::path(dir.results,"Brain_Biomarkers_Log_Proteomics_Log_Metabolomics_Adj_Sig_Results.csv"))
 
-#Imput energy and fiber for missing individual 
-meta$ma_sex <- as.factor(meta$ma_sex)
-meta$ma_race_eth <- as.factor(meta$ma_race_eth)
-meta$ma_parental_edu <- as.factor(meta$ma_parental_edu)
-meta$id <- as.numeric(meta$id)
-# meta$ma_sex <- ifelse(meta$ma_sex=="female",2,1)
 
-#Standardize creatinine
-# meta <- meta %>% 
-#   mutate(mc_creatinine_scaled=((mc_creatinine-mean(mc_creatinine))/sd(mc_creatinine)))
-
-#Calculate eGFR ----
-#Calculate egfr based on creatinine, age and gender
-calculate_eGFR <- function(creatinine, age, gender) {
-  kappa <- ifelse(gender == "female", 0.7, 0.9)
-  alpha <- ifelse(gender == "female", -0.329, -0.411)
-  min_creatinine_kappa <- pmin(creatinine / kappa, 1)
-  max_creatinine_kappa <- pmax(creatinine / kappa, 1)
-  gfr <- 141 * min_creatinine_kappa^alpha * max_creatinine_kappa^(-1.209) * 0.993^age
-  return(gfr)
+#Make figures
+for (i in 1:length(sig$Feature)) {
+  feature <- sig$Feature[i]
+  biomarker <- sig$Biomarker[i]
+  beta <- round(sig$Beta[i],6)
+  pval <- round(sig$fdr[i],6)
+  p <- ggplot(dat_CROC,aes(x=.data[[feature]],y=.data[[biomarker]])) +
+    geom_point()+
+    geom_smooth(method="lm",se=F)+
+    theme_bw()+
+    labs(title=paste0(biomarker," vs. ",feature),
+         subtitle=paste0("Log Beta = ",beta,", Adj. P-Val =",pval))
+  pdf(fs::path(dir.results,paste0("Log_Scatterplot_",biomarker,"_vs_",feature,".pdf")))
+  print(p)
+  dev.off()
 }
 
-eGFR <- calculate_eGFR(creatinine=meta$mc_creatinine,age=meta$ma_age,gender=meta$ma_sex)
-meta$eGFR <- eGFR
-meta$kidney_binary1<-ifelse(meta$eGFR<116,1,0) #average eGFR number
-meta$kidney_binary2<-ifelse(meta$eGFR<90,1,0) #early stage kidney disease
+#Interaction Term with group
+results_int <- data.frame()
+covars <- c("age","sex")
+dat_CROC$group <- factor(dat_CROC$group)
+for (feature in exposure) {
+  for (biomarker in outcome) {
+    M0 <- as.formula(paste0(biomarker,"~",feature,"*group +",paste(covars,collapse="+")))
+    M1 <- lm(M0,data=dat_CROC)
+    Beta <- summary(M1)$coef[2,1]
+    Pval <- summary(M1)$coef[2,4]
+    Int <- summary(M1)$coef[6,1]
+    Int_Pval <- summary(M1)$coef[6,4]
+    lm_results <- data.frame(Feature=feature,Biomarker=biomarker,Beta=Beta,Pval=Pval,Int=Int,Int_Pval=Int_Pval)
+    results_int <- rbind(results_int,lm_results)
+  }
+}
+results_int <- results_int %>% 
+  mutate(fdr=p.adjust(Pval,method="fdr")) %>% 
+  mutate(sig=ifelse(fdr<0.1,"*","")) %>% 
+  mutate(fdr_int=p.adjust(Int_Pval,method="fdr")) %>% 
+  mutate(sig_fdr=ifelse(fdr_int<0.1,"*",""))
+write.csv(results_int,fs::path(dir.results,"Brain_Biomarkers_Log_Proteomics_Log_Metabolomics_Interaction_Adj_Results.csv"))
+sig_int <- results_int %>%
+  filter(sig=="*" | sig_fdr=="*")
+write.csv(results,fs::path(dir.results,"Brain_Biomarkers_Log_Proteomics_Log_Metabolomics_Interaction_Adj_Sig_Results.csv"))
 
 
-#Calculate egfr based on cystatin c and creatinine, age and gender
-calculate_eGFR2 <- function(creatinine, cystatin_c, age, gender) {
-  kappa <- ifelse(gender == "female", 0.7, 0.9)
-  alpha <- ifelse(gender == "female", -0.219, -0.144)
-  min_creatinine_kappa <- pmin(creatinine / kappa, 1)
-  max_creatinine_kappa <- pmax(creatinine / kappa, 1)
-  min_cys <- pmin(cystatin_c/0.8, 1)
-  max_cys <- pmax(cystatin_c/0.8, 1)
-  female <- ifelse(gender=="female",0.963,1)
-  gfr2 <- 135 * min_creatinine_kappa^alpha * max_creatinine_kappa^(-0.544) * min_cys^(-0.323) * max_cys^(-0.778) * 0.9961^age * female
-  return(gfr2)
+#Make figures
+for (i in 1:length(sig_int$Feature)) {
+  feature <- sig_int$Feature[i]
+  biomarker <- sig_int$Biomarker[i]
+  beta <- round(sig_int$Beta[i],6)
+  pval <- round(sig_int$fdr[i],6)
+  p <- ggplot(dat_CROC,aes(x=.data[[feature]],y=.data[[biomarker]])) +
+    geom_point()+
+    geom_smooth(method="lm",se=F)+
+    theme_bw()+
+    labs(title=paste0(biomarker," vs. ",feature),
+         subtitle=paste0("Beta = ",beta,", Adj. P-Val =",pval))
+  pdf(fs::path(dir.results,paste0("Log_Scatterplot_",biomarker,"_vs_",feature,"Main_Term.pdf")))
+  print(p_int)
+  dev.off()
+  feature <- sig_int$Feature[i]
+  biomarker <- sig_int$Biomarker[i]
+  beta <- round(sig_int$Int[i],6)
+  pval <- round(sig_int$fdr_int[i],6)
+  p_int <- ggplot(dat_CROC,aes(x=.data[[feature]],y=.data[[biomarker]])) +
+    geom_point()+
+    geom_smooth(method="lm",se=F)+
+    theme_bw()+
+    labs(title=paste0(biomarker," vs. ",feature),
+         subtitle=paste0("Log Interaction Term Beta = ",beta,", Adj. P-Val =",pval))
+  pdf(fs::path(dir.results,paste0("Log_Scatterplot_",biomarker,"_vs_",feature,"Interaction_Term.pdf")))
+  print(p_int)
+  dev.off()
 }
 
-eGFR2 <- calculate_eGFR2(creatinine=meta$mc_creatinine,cystatin_c=meta$cystatin_c2,age=meta$ma_age,gender=meta$ma_sex)
-meta$eGFR2 <- eGFR2
+# Ensure Feature and Biomarker are factors to maintain order
+df <- df %>%
+  mutate(Feature = factor(Feature, levels = unique(Feature)),
+         Biomarker = factor(Biomarker, levels = unique(Biomarker)))
 
-#Calculate egfr based on creatinine, age and gender with kidney.org equation
-calculate_eGFR3 <- function(creatinine, age, gender) {
-  kappa <- ifelse(gender == "female", 0.7, 0.9)
-  alpha <- ifelse(gender == "female", -0.241, -0.302)
-  min_creatinine_kappa <- pmin(creatinine / kappa, 1)
-  max_creatinine_kappa <- pmax(creatinine / kappa, 1)
-  female <- ifelse(gender=="female",1.012,1)
-  gfr3 <- 142 * min_creatinine_kappa^alpha * max_creatinine_kappa^(-1.200) * 0.9938^age
-  return(gfr3)
-}
-
-eGFR3 <- calculate_eGFR3(creatinine=meta$mc_creatinine,age=meta$ma_age,gender=meta$ma_sex)
-meta$eGFR3 <- eGFR3
-# meta$kidney_binary1<-ifelse(meta$eGFR3<116,1,0) #average eGFR number
-# meta$kidney_binary2<-ifelse(meta$eGFR3<90,1,0) #early stage kidney disease
-
-# meta$ma_sex <- ifelse(meta$ma_sex==2,"female","male")
-# 
-# ggplot(data=meta,aes(x=eGFR1,y=eGFR2))+
-#   geom_point()+
-#   geom_smooth(method="lm")
-# 
-# ggplot(data=meta,aes(x=eGFR1,y=eGFR3))+
-#   geom_point()+
-#   geom_smooth(method="lm")
-
-#Scale exposure and outcome
-exposure <- c("ma_pfos","ma_pfoa","ma_pfda","ma_pfna","ma_pfhxs","ma_pfhps","ma_pfpes")
-outcome <- c("eGFR","eGFR2","eGFR3","mc_creatinine","cystatin_c")
-# outcome  <- c("eGFR","mc_creatinine")
-
-#Log transform
-meta <- meta %>%
-  mutate(across(all_of(exposure), ~log(.),.names = "{col}_log")) %>% 
-  mutate(across(all_of(outcome), ~log(.),.names = "{col}_log"))
-#Scale
-meta <- meta %>%
-  mutate(across(all_of(exposure),~((. - mean(.)) / sd(.)),.names = "{col}_scaled")) %>%
-  mutate(across(all_of(outcome),~((. - mean(.)) / sd(.)),.names = "{col}_scaled"))
-exposure_scaled <- c("ma_pfos_scaled","ma_pfoa_scaled","ma_pfda_scaled","ma_pfna_scaled","ma_pfhxs_scaled","ma_pfhps_scaled","ma_pfpes_scaled")
-
-#Scale the log transformed
-exposure <- c("ma_pfos_log","ma_pfoa_log","ma_pfda_log","ma_pfna_log","ma_pfhxs_log","ma_pfhps_log","ma_pfpes_log")
-# outcome  <- c("eGFR1_log","eGFR2_log","eGFR3_log","mc_creatinine_log","LCN2_log","mc_CST3_log")
-outcome  <- c("eGFR_log","eGFR2_log","eGFR3_log","mc_creatinine_log","LCN2_log","mc_CST3_log","cystatin_c_log")
-microbiome <- colnames(micro_rel)[-93]
-meta <- meta %>%
-  mutate(across(all_of(exposure),~((. - mean(.)) / sd(.)),.names = "{col}_scaled")) %>%
-  mutate(across(all_of(outcome),~((. - mean(.)) / sd(.)),.names = "{col}_scaled")) %>% 
-  mutate(across(all_of(microbiome),~((. - mean(.,na.rm=T)) / sd(.,na.rm=T)),.names = "{col}_scaled")) 
-exposure_log_scaled <- c("ma_pfos_log_scaled","ma_pfoa_log_scaled","ma_pfda_log_scaled",
-                         "ma_pfna_log_scaled","ma_pfhxs_log_scaled","ma_pfhps_log_scaled",
-                         "ma_pfpes_log_scaled")
-# outcome_log_scaled  <- c("eGFR1_log_scaled","eGFR2_log_scaled","eGFR3_log_scaled","mc_creatinine_log_scaled","LCN2_log_scaled","mc_CST3_log_scaled")
-outcome_log_scaled  <- c("eGFR_log_scaled","eGFR2_log_scaled","eGFR3_log_scaled","mc_creatinine_log_scaled","LCN2_log_scaled","mc_CST3_log_scaled","cystatin_c_log_scaled")
-microbiome_scaled <- paste0(microbiome,"_scaled")
-quantile(meta$ma_pfna, probs = seq(0, 1, 1/4))
-meta$ma_pfna_tert <- cut(meta$ma_pfna,
-                         breaks=c(0,0.4116666667,0.4903333333,0.9),
-                         labels=c("Low","Medium","High"))
-meta$ma_pfhxs_tert <- cut(meta$ma_pfhxs,
-                          breaks=c(0,0.6651666667,1.3080000000,11),
-                          labels=c("Low","Medium","High"))
-
-meta$ma_pfhxs_quartile <- cut(meta$ma_pfhxs,
-                              breaks=c(0,0.59575,0.94200,1.66100,11),
-                              labels=c("Q1","Q2","Q3","Q4"))
-meta$ma_pfna_quartile <- cut(meta$ma_pfna,
-                             breaks=c(0,0.4025,0.4515,0.5265,0.9),
-                             labels=c("Q1","Q2","Q3","Q4"))
-
-#Merge metabolites into metadata
-metab.data$id <- as.numeric(metab.data$id)
-meta <- tidylog::full_join(meta,metab.data,by="id") #137 total, 78 matched
-
-#Filter to 78 with pfas data
-meta_filt <- meta %>% 
-  filter(!is.na(ma_pfda))
-
-meta_filt$ma_sex
-meta_filt$ma_parental_edu
-meta_filt$ma_race_eth
-
-meta_filt$m_total_dietary_fiber_g
-
-# impute_dat <- data.frame(meta_filt[c("id",exposure_log_scaled,outcome_log_scaled,omics,omics2)])
-# # impute_dat <- data.frame(meta_filt[c("id",exposure_log_scaled[4],outcome_log_scaled[1],omics2)])
-# rownames(impute_dat) <- impute_dat$id
-# impute_dat <- impute_dat %>%
-#   dplyr::select(-id)
-covars <- c("ma_age","ma_sex","ma_parental_edu","ma_race_eth","ma_creatinine_scaled")
-meta_filt$ma_creatinine_scaled2 <- as.numeric(meta_filt$ma_creatinine_scaled)
-impute_dat <- meta_filt[c(covars[-5],"ma_creatinine_scaled2","m_total_dietary_fiber_g")]
-impute_dat_temp <- mice(impute_dat,m=3,seed=500,method="sample") #rf, sample
-# summary(impute_dat_temp)
-covs_complete <- complete(impute_dat_temp,1)
-covs_complete$m_total_dietary_fiber_g
-# completedData$id <- rownames(completedData)
-# saveRDS(completedData,fs::path(here::here() %>% dirname() %>% dirname(),"0_Data","Imputed_Data_rel_abundance_reduced_v1.rds"))
-
-# meta_filt <- meta %>%
-#   filter(!is.na(m_energy_kcal)) #77
-
-# ggplot(data=meta_filt,aes(x=eGFR1,y=eGFR2))+
-#   geom_point()+
-#   geom_smooth(method="lm")
-# 
-# ggplot(data=meta_filt,aes(x=eGFR1,y=eGFR3))+
-#   geom_point()+
-#   geom_smooth(method="lm")
-# 
-# ggplot(data=meta_filt,aes(x=eGFR2,y=eGFR3))+
-#   geom_point()+
-#   geom_smooth(method="lm")
-
-
-# meta_filt$ma_sex <- as.factor(meta_filt$ma_sex)
-
-
-# mean(meta_filt$ma_age)
-# sd(meta_filt$ma_age)
-# 
-# table(meta_filt$ma_sex)
-# (41/78)*100
-# (37/78)*100
-# mean(meta_filt$ma_creatinine_scaled)
-# original_values <- c((meta_filt$ma_creatinine_scaled * 268.2032636) + 1078.121404)
-# mean(original_values)
-# sd(original_values)
-# 
-# mean(meta_filt$eGFR)
-# sd(meta_filt$eGFR)
-# 
-# mean(meta_filt$mc_creatinine)*1000
-# sd(meta_filt$mc_creatinine)*1000
-# 
-# table(meta_filt$ma_race_eth)
-# 6/78
-# 44/78
-# 28/78
-# 
-# table(meta_filt$ma_parental_edu)
-# (2/78)*100
-# (13/78)*100
-# (10/78)*100
-# (53/78)*100
-# 
-# mean(meta_filt$ma_bmi)
-# sd(meta_filt$ma_bmi)
-# 
-# geometric.mean(meta_filt$ma_pfpes)
-# geometric_mean <- prod(meta_filt$ma_pfpes)^(1/length(meta_filt$ma_pfpes))
-# n <- length(meta_filt$ma_pfpes)
-# 
-# # Calculate the sum of squared differences
-# sum_sq_diff <- sum((meta_filt$ma_pfpes - geometric_mean)^2)
-# 
-# 
-# # Calculate the standard error
-# SE <- sqrt(sum_sq_diff /(n * (n - 1)))
-# 
-# # Z-value for 95% confidence level
-# z <- qnorm(1 - 0.05/2)
-# 
-# ci_lower <- geometric_mean * exp(-z * SE)
-# ci_upper <- geometric_mean * exp(z * SE)
-# geometric_mean
-# ci_lower
-# ci_upper
-# 
-# 
-# (meta_filt$ma_pfos<0.43)
-# (meta_filt$ma_pfoa<0.01)
-# (meta_filt$ma_pfhxs<0.01)
-# (meta_filt$ma_pfna<0.01)
-# (meta_filt$ma_pfhps<0.05)
-# (meta_filt$ma_pfda<0.01)
-# length(which((meta_filt$ma_pfpes<0.01)))
-# # (14/78)*100
-# sd(meta_filt$ma_pfos)
-# sd(meta_filt$ma_pfoa)
-# sd(meta_filt$ma_pfhxs)
-# sd(meta_filt$ma_pfna)
-# sd(meta_filt$ma_pfda)
-# sd(meta_filt$ma_pfhps)
-# sd(meta_filt$ma_pfpes)
-# mean(meta_filt$eap.pfas)
-# sd(meta_filt$eap.pfas)
-# se <- sd(meta_filt$eap.pfas)/sqrt(78)
-# mean(meta_filt$eap.pfas)-(1.96*se)
-# mean(meta_filt$eap.pfas)+(1.96*se)
-# 
-
-
-
-#Calculate PFAS burden scores --------------
-## A. Create categorical PFAS which are needed for the score ------
-pfas_names_all <- c("ma_pfos","ma_pfoa","ma_pfna","ma_pfhxs","ma_pfpes","ma_pfhps","ma_pfda")
-data_analysis <- meta_filt %>%
-  mutate_at(.vars = vars(all_of(pfas_names_all[c(1:7)])), 
-            .funs = list(
-              quartile = ~as.integer(cut(., quantile(., probs = seq(0, 1, 0.25)), 
-                                         include.lowest = TRUE
-              ))))
-# mutate(pfas_pfda_detected = ifelse(pfas_pfda<0.05|pfas_pfda==0.2/sqrt(2), 1, 2)) %>%
-# mutate(pfas_pfuna_detected = ifelse(pfas_pfuna<0.05|pfas_pfuna==0.1/sqrt(2), 1, 2)) %>%
-# mutate_at(.vars = vars(c("pfas_pfhpa","pfas_pfuna")),
-#           .funs = list(detected = ~ifelse(.<0.05|.==0.1/sqrt(2), 1, 2))) %>%
-# tidylog::mutate_at(.vars = vars(c("pfas_pfhps", "pfas_pfhpa")), #, 
-#                    .funs = list(tert = ~cut(., 
-#                                                    quantile(., probs = seq(0, 1, 1/3)), 
-#                                                    include.lowest = TRUE) %>% 
-# as.integer()))
-
-# Select just the categorical PFAS
-burden_score_pfas <- data_analysis %>% 
-  dplyr::select(contains("detected"), 
-                contains("quartile"), 
-                contains("tert")) %>% 
-  as.data.frame()
-
-eap.pfas <- ltm::factor.scores(grm(burden_score_pfas), 
-                               method="EAP", 
-                               resp.patterns = burden_score_pfas)$score.dat$z1
-meta_filt$eap.pfas <- eap.pfas
-meta_filt$burden_scaled <- scale(meta_filt$eap.pfas)
-
-burden_score_pfcas <- burden_score_pfas |> 
-  dplyr::select(ma_pfoa_quartile, 
-                ma_pfna_quartile, 
-                ma_pfda_quartile) 
-# pfas_pfuna_detected, 
-# pfas_pfhpa_tert)
-
-# Select PFSAs
-burden_score_pfsas <- burden_score_pfas |> 
-  dplyr::select(ma_pfos_quartile, 
-                ma_pfhxs_quartile, 
-                ma_pfhps_quartile)
-
-
-eap.pfcas <- ltm::factor.scores(grm(burden_score_pfcas), 
-                                method="EAP", 
-                                resp.patterns = burden_score_pfcas)$score.dat$z1
-eap.pfsas <- ltm::factor.scores(grm(burden_score_pfsas), 
-                                method="EAP", 
-                                resp.patterns = burden_score_pfsas)$score.dat$z1
-
-meta_filt$eap.pfcas <- eap.pfcas
-meta_filt$burden_scaled_pfcas <- scale(meta_filt$eap.pfcas)
-
-meta_filt$eap.pfsas <- eap.pfsas
-meta_filt$burden_scaled_pfsas <- scale(meta_filt$eap.pfsas)
-
-
-burden_score <- c("burden_scaled","burden_scaled_pfcas","burden_scaled_pfsas")
+# Create the heatmap
+ggplot(df, aes(x = Feature, y = Biomarker, fill = Beta)) +
+  geom_tile(color = "white") +  # White grid lines between tiles
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) + # Color scale for Beta
+  theme_minimal() +
+  labs(title = "Protein-Brain Biomarker Heatmap",
+       x = "Protein",
+       y = "Brain Biomarker",
+       fill = "Beta") +  # Legend title
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for readability
 
 ```
 
-#5. Integration Analysis
+
+
 ##a. Prepare Datasets for Analysis 
 ```{r Prepare Datasets for Analysis , echo=F, include=F}
 # Define exposure and outcome names
