@@ -147,7 +147,7 @@ degs_fxn <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_gr
     filename <- paste0(additional_group,"_Bulk_DEGs_for_",condition,".pdf") 
   }
   }
-  if(!is.null(additional_group)) {
+  if(is.null(additional_group)) {
     if (!is.null(cell)){
       filename <- paste0("DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
     } else {
@@ -257,9 +257,15 @@ degs_fxn <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_gr
     # Print a message
     message("Excel file with multiple sheets created: ", output_file)
   } 
+  
+  if (enrichment=="Yes") {
   # Example usage
   df1 <- deg_results
   df2 <- eaRes
+  } else {
+    df1 <- deg_results
+    df2 <- NULL
+  }
   
   # Specify the file name and data
   if (!is.null(cell)){
