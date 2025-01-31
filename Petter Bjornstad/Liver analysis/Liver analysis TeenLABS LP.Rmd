@@ -1,0 +1,267 @@
+---
+title: "Liver Analysis -- Teen-LABS"
+author: "Hailey Hampson/Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r libraries}
+#| include: false
+library(limma)
+library(clusterProfiler)
+library(ReactomePA)
+library(enrichplot)
+library(Hmisc)
+library(knitr)
+library(tidyverse)
+library(gtsummary)
+library(ggpubr)
+library(nlme)
+library(parallel)
+library(emmeans)
+library(RColorBrewer)
+library(VennDiagram)
+library(broom.mixed)
+library(ggrepel)
+#library(xlsx)
+```
+
+```{r functions}
+scaleFUN <- function(x) sprintf("%.2f", x)
+
+# Volcano plot
+volcano <- function(data, lab = "Target", xcol = "estimate", ycol = "p.value",
+                    top = 15,
+                    xlimit = c(-1, 1), ylimit = c(0, -log10(10e-7)),
+                    xlabel = "Beta", pCutoff = 0.05, overlaps = 50,
+                    log_t = F) {
+  data <- as.data.frame(data)
+  t <- data[data[, "p.value.adj"] <= pCutoff, ]
+  if (log_t) {
+    t <- t[order(abs(log(t[, ycol])), decreasing = F), ]
+  } else {
+    t <- t[order(abs(t[, ycol]), decreasing = F), ]
+  }
+  data$top <- data[, "AptName"] %in% t[1:top, "AptName"]
+  #data$top <- data[, "AptName"] %in% t[t$Target %in% top, "AptName"]
+  data$logp <- -log10(data[, ycol])
+  data$fc <- data[, xcol]
+  data$sig <- data[, ycol] <= pCutoff
+  p <- ggplot(data = data, aes(x = fc, y = logp, color = sig)) +
+    geom_hline(yintercept = -log10(pCutoff), linetype = "dashed") +
+    geom_point(size = 2.5) +
+    geom_label_repel(
+      data = data[data$top, ], aes(label = Target), color = "black",
+      max.overlaps = overlaps
+    ) +
+    scale_color_manual(values = c("grey", "#3e6dbf")) +
+    xlab(xlabel) + scale_x_continuous(labels = scaleFUN) +
+    ylab(bquote(~ -Log[10] ~ italic(P))) +
+    theme_bw() +
+    theme(legend.position = "none")
+  return(p)
+}
+```
+
+
+```{r clean data}
+# source("/Users/timvigers/GitHub/CHCO-Code/Petter Bjornstad/Teen-LABS/create_teen_labs_analysis_dataset.R")
+load("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Teen Labs/Data_Cleaned/analysis_dataset.RData")
+# Tim already log transformed proteins when creating dataframe
+df$map <- NA
+for (i in 1:nrow(df)) {
+  df[i,]$map <- df[i,]$dbp + ((1/3) * (df[i,]$sbp - df[i,]$dbp))
+}
+#df <- df %>% filter(!is.na(df$seq.10000.28))
+
+# create new variable for UACR in mg/g
+df$CREAU_g_dL <- df$CREAU / 1000
+df$UACRATIO_mg_g <- df$ALBU / df$CREAU_g_dL  
+label(df$UACRATIO_mg_g) <- "UACR (mg/g)"
+label(df$eGFR.fas_cr_cysc) <- "eGFR FAS Cr Cys-C"
+label(df$diabetes_duration) <- "Diabetes duration (yrs)"
+
+# fill upwards missing demographics
+# SEX, age, ETHN, RACE, race_ethnicity, SURG
+df <- df %>% group_by(ID) %>% fill(SEX, .direction = "up")
+df <- df %>% group_by(ID) %>% fill(ETHN, .direction = "up")
+df <- df %>% group_by(ID) %>% fill(RACE, .direction = "up")
+df <- df %>% group_by(ID) %>% fill(race_ethnicity, .direction = "up")
+df <- df %>% group_by(ID) %>% fill(SURG, .direction = "up")
+
+# need to populate missing visit numbers
+# First get the pattern from ID 1
+pattern <- df %>%
+  filter(ID == min(ID)) %>%
+  pull(visit)
+
+df <- df %>%
+  group_by(ID) %>%
+  mutate(row_num = row_number()) %>%
+  # Join pattern based on row number
+  mutate(visit = if_else(is.na(visit), 
+                         pattern[row_number()], 
+                         visit)) %>%
+  # Clean up
+  select(-row_num) %>% ungroup()
+```
+
+```{r include=FALSE}
+sens_genes <- c("ACVR1B","ANG","ANGPT1","ANGPTL4","AREG","AXL","BEX3","BMP2","BMP6","C3","CCL1","CCL13",
+                "CCL16","CCL2","CCL20","CCL24","CCL26","CCL3","CCL4","CCL5","CCL7","CCL8","CD55",
+                "CD9","CSF1","CSF2","CSF2RB","CST4","CTNNB1","CTSB","CXCL1","CXCL10","CXCL12",
+                "CXCL16","CXCL2","CXCL3","CXCL8","CXCR2","DKK1","EDN1","EGF","EGFR","EREG","ESM1",
+                "ETS2","FAS","FGF1","FGF2","FGF7","GDF15","GEM","GMFG","HGF","HMGB1","ICAM1","ICAM3",
+                "IGF1","IGFBP1","IGFBP2","IGFBP3","IGFBP4","IGFBP5","IGFBP6","IGFBP7","IL10","IL13",
+                "IL15","IL18","IL1A","IL1B","IL2","IL32","IL6","IL6ST","IL7","INHA","IQGAP2","ITGA2",
+                "ITPKA","JUN","KITLG","LCP1","MIF","MMP1","MMP10","MMP12","MMP13","MMP14","MMP2",
+                "MMP3","MMP9","NAP1L4","NRG1","PAPPA","PECAM1","PGF","PIGF","PLAT","PLAU","PLAUR",
+                "PTBP1","PTGER2","PTGES","RPS6KA5","SCAMP4","SELPLG","SEMA3F","SERPINB4","SERPINE1",
+                "SERPINE2","SPP1","SPX","TIMP2","TNF","TNFRSF10C","TNFRSF11B","TNFRSF1A","TNFRSF1B",
+                "TUBGCP2","VEGFA","VEGFC","VGF","WNT16","WNT2","CDKN1A")
+
+proteins <- colnames(df)[which(grepl("seq.",colnames(df)))]
+#key <- readRDS(fs::path(dir.dat,"Liver project","gene_prot.RDS"))
+sens_proteins <- analyte_info$AptName[which(analyte_info$EntrezGeneSymbol %in% sens_genes)]
+
+# ALT
+seqs <- sens_proteins
+# Parallel processing
+cl <- makeForkCluster(8)
+rows <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0(y, "~ ALT"))
+  m <- lme(f, random = ~1|ID, data = df, na.action = na.omit)
+  #res <- coef(summary(m))[4,]
+  res <- tidy(m, effects = "fixed")
+  res$protein <- y
+  return(res)
+})
+stopCluster(cl)
+# Save results
+lmm_res <- data.frame(do.call(rbind, rows)) %>%
+  dplyr::select(protein, term, estimate, p.value) %>%
+  filter(term != "(Intercept)")
+lmm_res$AptName <- analyte_info$AptName[match(lmm_res$protein, analyte_info$AptName)]
+lmm_res$protein <- analyte_info$UniProt[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$Target <- analyte_info$Target[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$TargetFullName <- analyte_info$TargetFullName[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$EntrezGeneSymbol <- analyte_info$EntrezGeneSymbol[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$Uniprot <- analyte_info$UniProt[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$p.value.adj <- p.adjust(lmm_res$p.value, method = "BH")
+lmm_res <- lmm_res %>% arrange(p.value.adj)
+lmm_res_alt <- lmm_res
+lmm_res_alt <- lmm_res_alt %>%
+  mutate(fdr_sig=ifelse(p.value.adj<0.05,"*","")) %>%
+  mutate(nom_sig=ifelse(p.value<0.05,"*","")) 
+openxlsx::write.xlsx(lmm_res, file = "/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Melissa Leroux - Tommerdahl Bjornstad Files/Liver project/Results/Teen LABS proteins ALT.xlsx")
+
+
+# AST
+seqs <- sens_proteins
+# Parallel processing
+cl <- makeForkCluster(8)
+rows <- parLapply(cl, seqs, function(y) {
+  f <- as.formula(paste0(y, "~ AST"))
+  m <- lme(f, random = ~1|ID, data = df, na.action = na.omit)
+  #res <- coef(summary(m))[4,]
+  res <- tidy(m, effects = "fixed")
+  res$protein <- y
+  return(res)
+})
+stopCluster(cl)
+# Save results
+lmm_res <- data.frame(do.call(rbind, rows)) %>%
+  dplyr::select(protein, term, estimate, p.value) %>%
+  filter(term != "(Intercept)")
+lmm_res$AptName <- analyte_info$AptName[match(lmm_res$protein, analyte_info$AptName)]
+lmm_res$protein <- analyte_info$UniProt[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$Target <- analyte_info$Target[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$TargetFullName <- analyte_info$TargetFullName[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$EntrezGeneSymbol <- analyte_info$EntrezGeneSymbol[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$Uniprot <- analyte_info$UniProt[match(lmm_res$AptName, analyte_info$AptName)]
+lmm_res$p.value.adj <- p.adjust(lmm_res$p.value, method = "BH")
+lmm_res <- lmm_res %>% arrange(p.value.adj)
+lmm_res_ast <- lmm_res
+lmm_res_ast <- lmm_res_ast %>%
+  mutate(fdr_sig=ifelse(p.value.adj<0.05,"*","")) %>%
+  mutate(nom_sig=ifelse(p.value<0.05,"*","")) 
+openxlsx::write.xlsx(lmm_res, file = "/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Melissa Leroux - Tommerdahl Bjornstad Files/Liver project/Results/Teen LABS proteins AST.xlsx")
+
+```
+
+```{r, include=FALSE}
+# Create the volcano plot for ALT
+volcano_plot_alt <- ggplot(lmm_res_alt, aes(x = estimate, y = -log10(p.value), color = nom_sig)) +
+  geom_point(alpha = 0.8, size = 2) +  # Points with transparency
+   scale_color_manual(values = c("grey", "red")) +  # Custom colors for significance
+  #scale_color_manual(values = c("Not Significant" = "grey", 
+   #                             "Significant Positive" = "red", 
+   #                             "Significant Negative" = "blue")) +
+  theme_minimal() +  # Clean theme
+  labs(
+    title = "",
+    # title = "Cox Proportional Hazards Model for Senescence Proteins and Doubling of ALT (U/L)",
+    x = "Beta",
+    y = "-log10(p-value)"
+  ) +
+  theme(
+    legend.position = "none"
+  )
+# Highlight top significant genes (optional)
+top_genes_alt <- subset(lmm_res_alt, p.value < 0.05)
+if (nrow(top_genes_alt) > 0) {
+  volcano_plot_alt <- volcano_plot_alt +
+    # geom_text(data = top_genes_alt, aes(label = EntrezGeneSymbol), 
+    #           vjust = 1.5, size = 5, color = "black")
+    geom_text_repel(data = top_genes_alt, aes(label = EntrezGeneSymbol), 
+                    box.padding = 0.35, 
+                    point.padding = 0.5, 
+                    max.overlaps = Inf,  # Prevent overlap
+                    size = 3, 
+                    color = "black", 
+                    segment.size = 0.5)
+}
+plot(volcano_plot_alt)
+```
+
+
+```{r, include=FALSE}
+# Create the volcano plot for AST
+volcano_plot_ast <- ggplot(lmm_res_ast, aes(x = estimate, y = -log10(p.value), color = nom_sig)) +
+  geom_point(alpha = 0.8, size = 2) +  # Points with transparency
+   scale_color_manual(values = c("grey", "red")) +  # Custom colors for significance
+  #scale_color_manual(values = c("Not Significant" = "grey", 
+   #                             "Significant Positive" = "red", 
+   #                             "Significant Negative" = "blue")) +
+  theme_minimal() +  # Clean theme
+  labs(
+    title = "",
+    # title = "Cox Proportional Hazards Model for Senescence Proteins and Doubling of ALT (U/L)",
+    x = "Beta",
+    y = "-log10(p-value)"
+  ) +
+  theme(
+    legend.position = "none"
+  )
+# Highlight top significant genes (optional)
+top_genes_ast <- subset(lmm_res_ast, p.value < 0.05)
+if (nrow(top_genes_ast) > 0) {
+  volcano_plot_ast <- volcano_plot_ast +
+    # geom_text(data = top_genes_alt, aes(label = EntrezGeneSymbol), 
+    #           vjust = 1.5, size = 5, color = "black")
+    geom_text_repel(data = top_genes_alt, aes(label = EntrezGeneSymbol), 
+                    box.padding = 0.35, 
+                    point.padding = 0.5, 
+                    max.overlaps = Inf,  # Prevent overlap
+                    size = 3, 
+                    color = "black", 
+                    segment.size = 0.5)
+}
+plot(volcano_plot_ast)
+```
