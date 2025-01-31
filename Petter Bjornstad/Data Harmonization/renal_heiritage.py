@@ -366,6 +366,18 @@ def clean_renal_heiritage():
     plasma_metab["date"] = annual_labs["date"]
     
     # --------------------------------------------------------------------------
+    # Brain biomarkers
+    # --------------------------------------------------------------------------
+
+    var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
+                                               == "biomarkers", "field_name"]]
+    brain = pd.DataFrame(proj.export_records(fields=var))
+    # Replace missing values
+    brain.replace(rep, np.nan, inplace=True)
+    brain["procedure"] = "brain_biomarkers"
+    brain["visit"] = "baseline"
+    
+    # --------------------------------------------------------------------------
     # Missingness
     # --------------------------------------------------------------------------
 
@@ -378,6 +390,7 @@ def clean_renal_heiritage():
     out.dropna(thresh=4, axis=0, inplace=True)
     bold_mri.dropna(thresh=4, axis=0, inplace=True)
     pet.dropna(thresh=6, axis=0, inplace=True)
+    brain.dropna(thresh=2, axis=0, inplace=True)
     biopsy.dropna(thresh=7, axis=0, inplace=True)
     neuro.dropna(thresh=4, axis=0, inplace=True)
     voxelwise.dropna(thresh=4, axis=0, inplace=True)
@@ -397,6 +410,7 @@ def clean_renal_heiritage():
     df = pd.concat([df, bold_mri], join='outer', ignore_index=True)
     pet = pd.merge(pet, voxelwise, how = 'outer')
     df = pd.concat([df, pet], join='outer', ignore_index=True)
+    df = pd.concat([df, brain], join='outer', ignore_index=True)
     df = pd.concat([df, neuro], join='outer', ignore_index=True)
     df = pd.concat([df, biopsy], join='outer', ignore_index=True)
     df = pd.concat([df, az_u_metab], join='outer', ignore_index=True)
