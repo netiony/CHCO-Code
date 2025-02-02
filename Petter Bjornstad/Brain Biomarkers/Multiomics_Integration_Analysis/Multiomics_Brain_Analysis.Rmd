@@ -14,8 +14,9 @@ source("Libraries.R")
 # source("Functions.R")
 
 #Directories
-dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
-dir.results <- c("/Users/hhampson/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Biostatistics Core Shared Drive/Brain Biomarkers and Proteomics/Results")
+#dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
+dir.dat <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive")
+dir.results <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Brain Biomarkers and Proteomics/Results")
 ```
 
 #2. Load & Clean Data
@@ -255,6 +256,7 @@ table1(~age+sex+bmi+ace_inhibitor+angiotensin_receptor_blocker+insulin_injection
 ```
 #5. Analysis
 ##a. CROCODILE 
+###i. All points
 ```{r}
 exposure <- c(proteins,metabolites)
 outcome  <- c("ab40_avg_conc","ab42_avg_conc","tau_avg_conc",
@@ -429,6 +431,229 @@ heatmap <- ggplot(prot, aes(x = Feature, y = Biomarker, fill = Beta)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
+###ii. Remove potential outliers
+```{r}
+#All >3SD above the mean
+#CRC-38: Nfl = 29.252430
+#CRC-2: Tau = 10.031890
+#CRC-43: Tau = 9.160396
+
+dat_CROC2 <- dat_CROC %>% 
+  mutate(tau_avg_conc=ifelse(tau_avg_conc>=9.160396,NA,tau_avg_conc)) %>% 
+  mutate(nfl_avg_conc=ifelse(nfl_avg_conc>=29.252430,NA,nfl_avg_conc))
+
+exposure <- c(proteins,metabolites)
+outcome  <- c("ab40_avg_conc","ab42_avg_conc","tau_avg_conc",
+              "nfl_avg_conc","gfap_avg_conc","ptau_181_avg_conc","ptau_217_avg_conc")
+covars <- c("age","sex","group")
+#Log transform all exposure variables: 
+dat_CROC2 <- dat_CROC2 %>% 
+  mutate(across(all_of(exposure),~log(.),.names = "{.col}_log"))
+dat_CROC2 <- dat_CROC2 %>% 
+  mutate(across(all_of(exposure),~((.-mean(.,na.rm=T))/sd(.,na.rm=T)),.names = "{.col}_scale"))
+exposure_scale <- paste0(exposure,"_scale")
+dat_CROC2 <- dat_CROC2 %>% 
+  mutate(across(all_of(exposure_scale),~((.-mean(.,na.rm=T))/sd(.,na.rm=T)),.names = "{.col}_log"))
+
+exposure_log <- paste0(exposure,"_log")
+exposure_log_scale <- paste0(exposure_scale,"_log")
+dat_CROC2 <- dat_CROC2 %>% 
+  mutate(across(all_of(outcome),~((.-mean(.,na.rm=T))/sd(.,na.rm=T)),.names = "{.col}_scale"))
+outcome_scale <- paste0(outcome,"_scale")
+
+#No Interaction Term with group
+results <- data.frame()
+for (feature in exposure_log_scale) {
+  for (biomarker in outcome_scale) {
+    M0 <- as.formula(paste0(biomarker,"~",feature,"+",paste(covars,collapse="+")))
+    M1 <- lm(M0,data=dat_CROC2)
+    Beta <- summary(M1)$coef[2,1]
+    Pval <- summary(M1)$coef[2,4]
+    lm_results <- data.frame(Feature=feature,Biomarker=biomarker,Beta=Beta,Pval=Pval)
+    results <- rbind(results,lm_results)
+  }
+}
+results <- results %>% 
+  mutate(fdr=p.adjust(Pval,method="fdr")) %>% 
+  mutate(sig=ifelse(fdr<0.05,"*",""))
+write.csv(results,fs::path(dir.results,"Brain_Biomarkers_Proteomics_Metabolomics_Adj_Results_Log_Scale_no_outlier.csv"))
+sig <- results %>% 
+  filter(fdr<0.05)
+write.csv(results,fs::path(dir.results,"Brain_Biomarkers_Proteomics_Metabolomics_Adj_Sig_Results_Log_Scale_no_outlier.csv"))
+
+
+#Make figures
+for (i in 1:length(sig$Feature)) {
+  feature <- sig$Feature[i]
+  biomarker <- sig$Biomarker[i]
+  beta <- round(sig$Beta[i],6)
+  pval <- round(sig$fdr[i],6)
+  p <- ggplot(dat_CROC2,aes(x=.data[[feature]],y=.data[[biomarker]])) +
+    geom_point()+
+    geom_smooth(method="lm",se=F)+
+    theme_bw()+
+    labs(title=paste0(biomarker," vs. ",feature),
+         subtitle=paste0("Log Beta = ",beta,", Adj. P-Val =",pval))
+  pdf(fs::path(dir.results,paste0("Log_Scatterplot_",biomarker,"_vs_",feature,"_no_outlier_.pdf")))
+  print(p)
+  dev.off()
+}
+
+#Interaction Term with group
+results_int <- data.frame()
+covars <- c("age","sex")
+dat_CROC$group <- factor(dat_CROC2$group)
+for (feature in exposure) {
+  for (biomarker in outcome) {
+    M0 <- as.formula(paste0(biomarker,"~",feature,"*group +",paste(covars,collapse="+")))
+    M1 <- lm(M0,data=dat_CROC2)
+    Beta <- summary(M1)$coef[2,1]
+    Pval <- summary(M1)$coef[2,4]
+    Int <- summary(M1)$coef[6,1]
+    Int_Pval <- summary(M1)$coef[6,4]
+    lm_results <- data.frame(Feature=feature,Biomarker=biomarker,Beta=Beta,Pval=Pval,Int=Int,Int_Pval=Int_Pval)
+    results_int <- rbind(results_int,lm_results)
+  }
+}
+results_int <- results_int %>% 
+  mutate(fdr=p.adjust(Pval,method="fdr")) %>% 
+  mutate(sig=ifelse(fdr<0.1,"*","")) %>% 
+  mutate(fdr_int=p.adjust(Int_Pval,method="fdr")) %>% 
+  mutate(sig_fdr=ifelse(fdr_int<0.1,"*",""))
+write.csv(results_int,fs::path(dir.results,"Brain_Biomarkers_Log_Proteomics_Log_Metabolomics_Interaction_Adj_Results_no_outlier.csv"))
+sig_int <- results_int %>%
+  filter(sig=="*" | sig_fdr=="*")
+write.csv(results,fs::path(dir.results,"Brain_Biomarkers_Log_Proteomics_Log_Metabolomics_Interaction_Adj_Sig_Results_no_outlier.csv"))
+
+
+#Make figures
+for (i in 1:length(sig_int$Feature)) {
+  feature <- sig_int$Feature[i]
+  biomarker <- sig_int$Biomarker[i]
+  beta <- round(sig_int$Beta[i],6)
+  pval <- round(sig_int$fdr[i],6)
+  p <- ggplot(dat_CROC2,aes(x=.data[[feature]],y=.data[[biomarker]])) +
+    geom_point()+
+    geom_smooth(method="lm",se=F)+
+    theme_bw()+
+    labs(title=paste0(biomarker," vs. ",feature),
+         subtitle=paste0("Beta = ",beta,", Adj. P-Val =",pval))
+  pdf(fs::path(dir.results,paste0("Log_Scatterplot_",biomarker,"_vs_",feature,"Main_Term_no_outlier.pdf")))
+  print(p_int)
+  dev.off()
+  feature <- sig_int$Feature[i]
+  biomarker <- sig_int$Biomarker[i]
+  beta <- round(sig_int$Int[i],6)
+  pval <- round(sig_int$fdr_int[i],6)
+  p_int <- ggplot(dat_CROC2,aes(x=.data[[feature]],y=.data[[biomarker]])) +
+    geom_point()+
+    geom_smooth(method="lm",se=F)+
+    theme_bw()+
+    labs(title=paste0(biomarker," vs. ",feature),
+         subtitle=paste0("Log Interaction Term Beta = ",beta,", Adj. P-Val =",pval))
+  pdf(fs::path(dir.results,paste0("Log_Scatterplot_",biomarker,"_vs_",feature,"Interaction_Term_no_outlier.pdf")))
+  print(p_int)
+  dev.off()
+}
+
+# Ensure Feature and Biomarker are factors to maintain order
+df <- results %>%
+  mutate(Feature = factor(Feature, levels = unique(Feature)),
+         Biomarker = factor(Biomarker, levels = unique(Biomarker)))
+sig_data <- sig
+prot <- df %>%
+  filter(grepl("seq.", Feature)) %>%
+  filter(Feature %in% unique(sig_data$Feature)) %>%
+  filter(Biomarker %in% unique(sig_data$Biomarker))
+# Create the heatmap
+heatmap <- ggplot(prot, aes(x = Feature, y = Biomarker, fill = Beta)) +
+  geom_tile(color = "white") +  # White grid lines between tiles
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) + # Color scale for Beta
+  theme_minimal() +
+  labs(title = "Protein-Brain Biomarker Heatmap",
+       x = "Protein",
+       y = "Brain Biomarker",
+       fill = "Beta") +  # Legend title
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for readability
+
+pdf(fs::path(dir.results,"Proteomics_Brain_Heatmap_Log_Scaled_no_outlier.pdf"),width=20,height = 20)
+print(heatmap)
+dev.off()
+
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+install.packages("dendextend")
+library(dendextend)
+
+# Assuming your dataframe is named df, with 'Feature', 'Biomarker', and 'Beta' columns
+sig_data <- sig
+
+# Filter the data as you have done
+prot <- df %>%
+  filter(grepl("seq.", Feature)) %>%
+  filter(Feature %in% unique(sig_data$Feature)) %>%
+  filter(Biomarker %in% unique(sig_data$Biomarker))
+
+# Prepare data matrix (Beta values) for clustering
+heatmap_data <- prot %>% 
+  dplyr::select(c("Feature","Biomarker","Beta")) %>% 
+  pivot_wider(names_from=Feature,values_from=Beta)
+heatmap_data_p <- prot %>% 
+  dplyr::select(c("Feature","Biomarker","fdr")) %>% 
+  pivot_wider(names_from=Feature,values_from=fdr)
+  
+heatmap_matrix <- heatmap_data %>% 
+  dplyr::select(-Biomarker)
+heatmap_matrix <- as.matrix(heatmap_matrix)
+rownames(heatmap_matrix) <- heatmap_data$Biomarker
+p <- pheatmap(heatmap_matrix,
+         display_numbers = TRUE,
+         number_color = "black", 
+         fontsize_number = 8)
+
+
+pdf(fs::path(dir.results,"Heatmap_with_betas.pdf"),width=10,height=10)
+print(p)
+dev.off()
+
+# Example Beta values for heatmap (replace with your actual matrix)
+heatmap_matrix <- matrix(rnorm(100), nrow = 10)  # Example matrix of Beta values
+
+p_value_matrix <- as.matrix(heatmap_data_p)
+rownames(p_value_matrix) <- heatmap_data$Biomarker
+p_value_matrix <- p_value_matrix[,-1]
+# Create a matrix for significance stars based on p-values
+significance_matrix <- matrix("", nrow = nrow(heatmap_matrix), ncol = ncol(heatmap_matrix))
+rownames(significance_matrix) <- rownames(heatmap_matrix) 
+colnames(significance_matrix) <- colnames(heatmap_matrix)
+
+# Assign stars based on p-value thresholds
+significance_matrix[p_value_matrix < 0.01] <- "**"  # Two stars for p-value < 0.01
+significance_matrix[p_value_matrix >= 0.01 & p_value_matrix < 0.05] <- "*"  # One star for p-value < 0.05
+significance_matrix[p_value_matrix >= 0.05] <- ""  # No significance (NS) for p-value >= 0.05
+
+pdf(fs::path(dir.results,"Heatmap_with_sig.pdf"),width=15,height=10)
+heatmap.2(heatmap_matrix,
+          #main = "Heatmap with heatmap.2",        # Title of the heatmap
+          trace = "none",                        # Remove the trace lines
+          col = colorRampPalette(c("blue", "white", "orange"))(100),  # Color scale
+          #col = colorRampPalette(c("blue", "yellow", "red"))(100),
+          #scale = "row",                         # Scale the data by row
+          dendrogram = "both",                   # Cluster both rows and columns
+          Rowv = TRUE,                           # Cluster rows
+          Colv = TRUE,                           # Cluster columns
+          key = TRUE,                            # Display color key/legend
+          cexRow = 0.8,                          # Adjust row labels size
+          cexCol = 0.8,                          # Adjust column labels size
+          cellnote = significance_matrix,    # Add numeric values inside cells
+          notecol = "black",                     # Color of the numbers inside the cells
+          main = "Heatmap with Annotations",      # Main title
+          margins = c(8, 8)                      # Adjust margins for readability
+)
+dev.off()
+```
 
 
 ##a. Prepare Datasets for Analysis 
