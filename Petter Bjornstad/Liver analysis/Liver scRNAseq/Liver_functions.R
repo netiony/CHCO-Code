@@ -10,7 +10,7 @@ sens_genes <- c("ACVR1B","ANG","ANGPT1","ANGPTL4","AREG","AXL","BEX3","BMP2","BM
                 "MMP3","MMP9","NAP1L4","NRG1","PAPPA","PECAM1","PGF","PIGF","PLAT","PLAU","PLAUR",
                 "PTBP1","PTGER2","PTGES","RPS6KA5","SCAMP4","SELPLG","SEMA3F","SERPINB4","SERPINE1",
                 "SERPINE2","SPP1","SPX","TIMP2","TNF","TNFRSF10C","TNFRSF11B","TNFRSF1A","TNFRSF1B",
-                "TUBGCP2","VEGFA","VEGFC","VGF","WNT16","WNT2","CDKN1A")
+                "TUBGCP2","VEGFA","VEGFC","VGF","WNT16","WNT2")
 #sens_genes2 <- c("GLB1","TP53", "CDKN2A", "RB1", "CDK4", "CDK6",
 #                  "IL6", "IL8", "CXCL1", "CXCL10", "CXCL12", "ICAM1", "MMP1", "MMP2", "MMP3", "TIMP1",
 #                  "H2AFX", "ATM", "ATR", "CHEK1", "CHEK2", "TP53BP1", "MDC1",
