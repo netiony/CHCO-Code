@@ -787,14 +787,14 @@ visualize_function <- function(exposure,cell) {
 #ref_group="Lean Control"
 
 #Mast Function----
-mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,ref_group) {
+mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,ref_group,additional_group) {
   DefaultAssay(so) <- "RNA"
 
   #Conidtion names
   if (!is.null(exp_group)) {
-  condition <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group," vs. ",ref_group,")")
+  condition <- paste0(additional_group,"_",str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group," vs. ",ref_group,") ")
   } else {
-    condition <- paste0(str_to_title(exposure))
+    condition <- paste0(additional_group,"_",str_to_title(exposure))
   }
 
   #Filter so to specified cell type
@@ -872,9 +872,9 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
 
   # Specify the file name and data
   if (!is.null(cell)){
-    output_file <- paste0("Results_",cell_name,"_cells_for_",condition,".xlsx")
+    output_file <- paste0("Results_for_",str_replace_all(" ", "_",additional_group),"_",cell_name,"_cells_for_",condition,".xlsx")
   } else {
-    output_file <- paste0("Results_for_",condition,".xlsx")
+    output_file <- paste0("Results_Bulk_",str_replace_all(" ", "_",additional_group),"_",condition,".xlsx")
   }
 
   write.csv(combined_results,fs::path(dir.results,output_file))
@@ -908,19 +908,25 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
   top_genes <- top_genes %>%
     mutate(Gene = factor(Gene, levels = Gene[order(Direction, LogFoldChange)]))  # Order by Direction and log2FC
   
+  if (!is.null(cell)){
+    title <- paste0(additional_group," ",condition," ",cell_name)
+  } else {
+    title <- paste0("Bulk",additional_group," ",condition)
+  }
+  
   # # Bar chart with flipped x and y axes
   p <- ggplot(top_genes, aes(x = LogFoldChange, y = Gene, fill = Direction)) +
     geom_bar(stat = "identity") +
-    labs(x = "logFC", y = "Gene",title=paste0(condition,"vs. ",reference," among", cell," cells in youth with Type 2 Diabetes")) +
+    labs(x = "logFC", y = "Gene",title=title) +
     scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
     theme_minimal()+
     theme(element_text(family="Times"))+
     theme(legend.position="none")
   
   if (!is.null(cell)){
-    figure_file<- paste0("MAST_Barchart_",cell_name,"_cells_for_",condition,".pdf")
+    figure_file<- paste0("MAST_Barchart_",cell_name,"_cells_for_",condition,"_",str_replace_all(" ", "_",additional_group),".pdf")
   } else {
-    figure_file <- paste0("MAST_Barchart_for_",condition,".pdf")
+    figure_file <- paste0("MAST_Barchart_for_",condition,"_",str_replace_all(" ", "_",additional_group),".pdf")
   }
   
   pdf(fs::path(dir.results,figure_file),width=20,height=20)
