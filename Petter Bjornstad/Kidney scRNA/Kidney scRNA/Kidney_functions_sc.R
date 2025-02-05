@@ -879,9 +879,9 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
   
   # Specify the file name and data
   if (!is.null(cell)){
-    output_file <- paste0("Results_for_",str_replace_all(" ", "_",additional_group),"_",cell_name,"_cells_for_",condition,".xlsx")
+    output_file <- paste0("Results_MAST_for_",str_replace_all(" ", "_",additional_group),"_",cell_name,"_cells_for_",condition,".xlsx")
   } else {
-    output_file <- paste0("Results_Bulk_",str_replace_all(" ", "_",additional_group),"_",condition,".xlsx")
+    output_file <- paste0("Results_MAST_Bulk_",str_replace_all(" ", "_",additional_group),"_",condition,".xlsx")
   }
   
   write.csv(combined_results,fs::path(dir.results,output_file))
@@ -994,12 +994,12 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
     dev.off()
   }
   
-  if (!is.null(p)) {
-    return(p)
-  } 
-  if(is.null(p)) {
-    return(p2)
-  } 
+  # if (!is.null(p)) {
+  #   return(p)
+  # } 
+  # if(is.null(p)) {
+  #   return(p2)
+  # } 
 }
 
 
