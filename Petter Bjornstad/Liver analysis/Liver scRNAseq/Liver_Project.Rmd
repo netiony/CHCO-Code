@@ -1,0 +1,511 @@
+---
+title: "Liver Project"
+author: "Hailey Hampson"
+date: "2025-02-10"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# 1. Set up Libraries & Directores
+```{r libraries, echo=F, include = F}
+library(reprex)
+library(tidyverse)
+library(BiocManager)        
+library(arsenal)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(Seurat)
+library(future)
+library(colorspace)
+library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggpubr)
+library(venn)
+library(rstatix)
+library(table1)
+library(Biobase)
+library(ReactomeGSA)
+library(GSEABase)
+library(msigdbr)
+library(kableExtra)
+library(knitr)
+library(SingleCellExperiment)
+library(fgsea)
+library(EnhancedVolcano)
+library(openxlsx)
+library(BiocManager)
+library(MAST)
+library(ggrepel)
+# library(qpcR)
+library(ggpubr)
+library(openxlsx)
+library(ggplot2)
+library(GGally)
+library(GSEABase)
+library(limma)
+library(reshape2)
+library(data.table)
+library(knitr)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(stringr)
+library(NMF)
+library(rsvd)
+library(RColorBrewer)
+library(MAST)
+library(devtools)
+# install_github("Sun-lab/ideas",force=T)
+# library(ideas)
+library(foreach)
+library(doRNG)
+library(doParallel)
+library(fs)
+registerDoParallel(cores = 6)
+library(VennDiagram)
+#install.packages("survival")
+library(survival)
+#install.packages("lme4")  # If not already installed
+library(lme4)
+#install.packages("lmerTest")
+library(lmerTest)
+
+#Local file path
+# dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
+# dir.dat2 <- c("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean")
+# dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+# dir.results <- c("/Users/hhampson/Documents/UW/1_Ongoing Projects/Liver scRNAseq/2_Results")
+
+#Lambda file path
+dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
+dir.code <- c("/home/Github_Repo/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+dir.results <- c(fs::path(dir.dat,"Liver project/Results"))
+
+#Load functions
+#source("Liver_functions.R")
+
+```
+
+# 2. Load Full Data & Clean: 
+##a . snRNA & MetaData
+```{r, include = F}
+# Liver snRNA data processing
+gc()
+#Local
+# so_liver_sn <- readRDS(fs::path(dir.dat,"scRNA","data_raw","NoRef_PetterLiver_ClinData_Labels_Char_041924.RDS"))
+#Lambda
+so_liver_sn <- readRDS(fs::path(dir.dat,"scRNA","data_raw","NoRef_PetterLiver_ClinData_Labels_Char_041924.RDS"))
+
+gc()
+#Local
+# meta_liver_raw <- read.csv(fs::path(dir.dat,"scRNA","data_clean","liver_biopsy_metadata_PN.csv"))
+#Lambda
+meta_liver_raw <- read.csv(fs::path(dir.dat,"scRNA","data_clean","liver_biopsy_metadata_PN.csv"))
+unique(meta_liver_raw$Kit_Lot)
+meta_liver_raw <- meta_liver_raw %>%
+  filter(StudyID!="IT2D-18") %>%
+  filter(StudyID!="IT2D-16")
+meta_liver_raw <- meta_liver_raw %>%
+  mutate(both=ifelse(diagnosis_of_diabetes=="Yes" & glp1agonist=="Yes" & sglt2=="Yes","Yes","No")) %>% 
+  mutate(sglt2_exclusive=ifelse(diagnosis_of_diabetes=="Yes" & sglt2=="Yes" & glp1agonist=="No","Yes","No")) %>% 
+  mutate(glp1_exclusive=ifelse(diagnosis_of_diabetes=="Yes" & sglt2=="No" & glp1agonist=="Yes","Yes","No")) %>% 
+  mutate(either=ifelse(glp1agonist=="Yes" | sglt2=="Yes","Yes","No")) %>%
+  mutate(neither=ifelse(diagnosis_of_diabetes=="Yes" & sglt2=="No" & glp1agonist=="No","Yes","No")) %>%
+  mutate(hc=ifelse(diagnosis_of_diabetes=="No","Yes","No"))
+meta_liver_raw <- meta_liver_raw %>%
+    mutate(group2=case_when(both == "Yes" ~ "both",
+                          sglt2_exclusive == "Yes" ~ "sglt2_exclusive",
+                          glp1_exclusive == "Yes" ~ "glp1_exclusive",
+                          either == "Yes" ~ "either",
+                          neither == "Yes" ~ "neither",
+                          hc == "Yes" ~ "obese_control"))
+meta_liver_raw <- meta_liver_raw %>%
+  mutate(group3=ifelse(either=="Yes","either","neither"))
+meta_liver_sn <-  so_liver_sn@meta.data[,1:11] %>%
+  dplyr::mutate(RNAlater_ID = SampleID) %>%
+  left_join(meta_liver_raw)
+
+rownames(meta_liver_sn) <- rownames(so_liver_sn@meta.data)
+so_liver_sn <- AddMetaData(so_liver_sn, meta_liver_sn)
+rm(meta_liver_sn,meta_liver_raw)
+
+#Switch default assay in seurat object to RNA
+DefaultAssay(so_liver_sn) <- "RNA"
+gc()
+
+#Create liver disease and drug groups
+#so_liver_sn@meta.data <- so_liver_sn@meta.data %>% 
+#  mutate(both=ifelse(diagnosis_of_diabetes=="Yes" & glp1agonist=="Yes" & sglt2=="Yes","Yes","No")) %>% 
+ # mutate(sglt2_exclusive=ifelse(diagnosis_of_diabetes=="Yes" & sglt2=="Yes" & glp1agonist=="No","Yes","No")) %>% 
+ # mutate(glp1_exclusive=ifelse(diagnosis_of_diabetes=="Yes" & sglt2=="No" & glp1agonist=="Yes","Yes","No")) %>% 
+#  mutate(either=ifelse(glp1agonist=="Yes" | sglt2=="Yes","Yes","No")) %>%
+#  mutate(neither=ifelse(diagnosis_of_diabetes=="Yes" & sglt2=="No" & glp1agonist=="No","Yes","No")) %>%
+#  mutate(hc=ifelse(diagnosis_of_diabetes=="No","Yes","No"))
+
+# Create a single grouping variable
+#so_liver_sn@meta.data <- so_liver_sn@meta.data %>% 
+#  mutate(group2=case_when(both == "Yes" ~ "both",
+#                          sglt2_exclusive == "Yes" ~ "sglt2_exclusive",
+#                          glp1_exclusive == "Yes" ~ "glp1_exclusive",
+#                          either == "Yes" ~ "either",
+#                          neither == "Yes" ~ "neither",
+#                          hc == "Yes" ~ "obese_control"))
+
+#so_liver_sn@meta.data$group2 <- factor(so_liver_sn@meta.data$group2, levels = c("obese_control","neither","sglt2_exclusive", #"glp1_exclusive","either","both"))
+
+# #Create Diabetes only seurat object
+# so_diab <- subset(so_liver_sn,diagnosis_of_diabetes=="Yes")
+
+#Create senesence so in all cell types
+#sens_gene_in_data <- intersect(sens_genes, rownames(so_liver_sn))
+# Subset the Seurat object to include only genes in sens_gene_in_data
+#so_sens_all <- subset(so_liver_sn, features = sens_gene_in_data)
+
+# #Filter to hepatocytes only
+# so_liver_sn$Hepatocyte <- ifelse(grepl("Hep-",so_liver_sn$celltype),"Yes","No")
+# so_hep <- subset(so_liver_sn, Hepatocyte=="Yes")
+# rm(so_liver_sn)
+# DefaultAssay(so_hep) <- "RNA"  
+
+```
+
+##b. scRNA & MetaData 
+```{r}
+gc()
+so_liver_sc <- readRDS(fs::path(dir.dat,"scRNA","data_raw","PB_Liver_7SingleCellDatasets.RDS"))
+gc()
+
+#Switch default assay in seurat object to RNA
+DefaultAssay(so_liver_sc) <- "RNA"
+gc()
+
+#Get metadata for each individual with sc data
+meta.data <- so_liver_sc@meta.data
+liver_ids <- str_remove(unique(meta.data$orig.ident),"-Liv")
+biopsy <- read.xlsx(fs::path(dir.dat,"Data Harmonization","Biopsies","Biopsy master tracker.xlsx"),sheet=4)
+colnames(biopsy) <- biopsy[2,]
+biopsy <- biopsy[-c(1:2),]
+biopsy <- biopsy %>%
+  dplyr::rename(cryostor_id=`Cryostor ID`) %>%
+  dplyr::rename(rnalater_id=`RNAlater ID`)
+biopsy <- biopsy %>%
+  dplyr::select(all_of(c("Study ID","cryostor_id","rnalater_id")))
+biopsy$`Study ID`[which(biopsy$cryostor_id %in% liver_ids)] #Liver biopsy ids
+#biopsy$`Study ID`[which(!biopsy$cryostor_id %in% liver_ids)]
+biopsy$rnalater_id[which(biopsy$cryostor_id %in% liver_ids)] #Liver biopsy ids
+rnalater_ids <- biopsy$rnalater_id[which(biopsy$cryostor_id %in% liver_ids)]
+which(dat_harm$cryostor_id %in% rnalater_ids)
+
+
+dat_harm <- read.csv(fs::path(dir.dat,"Data Harmonization","Data Clean","harmonized_dataset.csv"))
+dat_harm <- dat_harm %>%
+  filter(rnalater_id %in% liver_ids)
+  dplyr::select(all_of(c("cryostor_id","rnalater_id","age","sbp","dbp")))
+```
+
+# 3. Outline 
+### a. Comparison Groups of Interest
+1. Steatosis (0+1 vs. 2+3)
+2. No Liver Disease (No Steatosis, No Fibrosis) vs. Steatosis (1,2, or 3 Steatosis, No Fibrosis) vs. Fibrosis (Any Fibrosis, Any Steatosis)
+
+### b. Disease Categories of Interest
+1. OB (Obese Controls Only)
+a. T2D + OB (Full Cohort: Type 2s and Obese Controls)
+
+### e. Characteristics of Interest
+HbA1c, Medication Status, TGs
+
+### f. Gene Sets & Genes of Interest
+1. All Genes 
+2. Senescence 
+3. Metabolism
+4. Inflammation
+5. PNLAP3
+6. GCKR
+7. TM6SF2
+8. APOC3
+9. MTOR
+10. Growth Factors
+11. HNF4alpha?
+
+### g. Analysis Plan
+1. All Genes
+  a. DEGS + IPA
+  b. LMEM + IPA, adjusting for HbA1c, Med Status, TGs 
+  c. Pseuodbulk all cell types
+  d. Hepatocytes
+  e. Cell Specific (All other cell types)
+2. Pathway Gene Sets
+  a. DEGS + IPA
+  b. LMEM + IPA, adjusting for HbA1c, Med Status, TGs
+  c. Pseuodbulk all cell types
+  d. Hepatocytes
+  e. Cell Specific (All other cell types)
+
+#4. Descriptive Statistics
+## a. Participants with Single Nucleus Data
+```{r, echo = F,warning=F}
+#Define disease and drug groups
+# dat <- read.csv(fs::path(dir.dat,"scRNA","data_clean","liver_biopsy_metadata_PN.csv"))
+dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean/liver_biopsy_metadata_PN.csv")
+#FILTER OUT 2 T2D IDs
+dat <- dat %>%
+  filter(StudyID!="IT2D-18") %>%
+  filter(StudyID!="IT2D-16")
+dat <- dat %>% 
+  mutate(both=ifelse(glp1agonist=="Yes" & sglt2=="Yes","Yes","No")) %>% 
+  mutate(sglt2_exclusive=ifelse(sglt2=="Yes" & glp1agonist=="No","Yes","No")) %>% 
+  mutate(glp1_exclusive=ifelse(sglt2=="No" & glp1agonist=="Yes","Yes","No")) %>% 
+  mutate(neither=ifelse(sglt2=="No" & glp1agonist=="No","Yes","No")) 
+
+# table(dat2$sglt2_exclusive) #-/+ #5 No, 0 yes
+# table(dat2$glp1_exclusive) #+/- # 2 Yes, 3 No
+# table(dat2$both) #+/+ #1 Both, 4 not both
+# table(dat2$neither) #-/- #3 neither, 2 on someting
+# 
+# #Create table 1
+# dat <- read.csv(fs::path(dir.dat,"scRNA","data_clean","liver_biopsy_metadata_PN.csv"))
+# dat <- dat %>% 
+#   filter(diagnosis_of_diabetes=="Yes")
+# cor(dat$ast,dat$alt,method="pearson")
+# cor(dat$ast,dat$alt,method="spearman")
+# cor(dat$alt,dat$tg,method="spearman")
+
+dat$diagnosis_of_diabetes <- factor(dat$diagnosis_of_diabetes, levels=c("Yes","No"), labels=c("Type 2 Diabetes", "Obese Controls"))
+dat$nih_sex     <- factor(dat$nih_sex, levels=c("Male", "Female"), labels=c("Male", "Female"))
+dat$nih_ethnicity   <- factor(dat$nih_ethnicity, levels=c("Hispanic_Or_Latino","NonHispanic"), labels=c("Hispanic or Latino","Non-Hispanic/Non-Latino"))
+dat$nih_race   <- factor(dat$nih_race, levels=c("White","BlackAfAm","Multiracial","Other"),
+                         labels=c("White","Black","Multirace","Other"))
+dat$steatosis_grade <- as.factor(dat$steatosis_grade)
+dat$fibrosis_stage <- as.factor(dat$fibrosis_stage)
+dat$lobular_inflammation_percent <- as.factor(dat$lobular_inflammation_percent)
+
+label(dat$age)      <- "Age (y)"
+label(dat$sglt2_exclusive) <- "SGLT2 Inhibitors (Yes/No)"
+label(dat$glp1agonist) <- "GLP-1 Receptor Agonists (Yes/No)"
+label(dat$nih_sex)      <- "Sex"
+label(dat$nih_race)    <- "Race"
+label(dat$nih_ethnicity)    <- "Ethnicity"
+label(dat$diagnosis_of_diabetes)  <- "Diabetes Status"
+label(dat$bmi)   <- "Body Mass Index (kg/m2)"
+label(dat$diagnosis_of_MASLD)  <- "MASLD Status"
+label(dat$sbp)     <- "Systolic Blood Pressure (mmHg)"
+label(dat$dbp) <- "Diastolic Blood Pressure (mmHg)"
+label(dat$tg) <-  "Triglycerides (mg/dL)"
+label(dat$creatinine) <-  "Creatinine (mg/dL)"
+label(dat$steatosis_percent) <- "Steatosis Percent (%)"
+label(dat$fibrosis_stage) <- "Fibrosis Stage"
+label(dat$lobular_inflammation_percent) <- "Lobular Inflammation Percent (%)"
+label(dat$sglt2_exclusive) <- "Exclusive SGLT2 Inhibitors (Yes/No)"
+label(dat$glp1_exclusive) <- "Exclusive GLP-1 Receptor Agonists (Yes/No)"
+label(dat$both) <- "SLGT2i + GLP-1ra (Yes/No)"
+label(dat$neither) <- "No Medication (Yes/No)"
+
+table1(~ age + nih_sex + nih_race + nih_ethnicity + bmi + diagnosis_of_MASLD + sbp + dbp + tg + creatinine + sglt2_exclusive + glp1_exclusive + both | diagnosis_of_diabetes, data=dat)
+
+table1(~ age + nih_sex + nih_race + nih_ethnicity + bmi + diagnosis_of_MASLD + sbp + dbp + tg + steatosis_grade +fibrosis_stage + creatinine + sglt2_exclusive + glp1_exclusive + both | diagnosis_of_diabetes, data=dat)
+
+table1(~ age + nih_sex + nih_race + nih_ethnicity + bmi + diagnosis_of_MASLD + sbp + dbp + tg + creatinine + sglt2_exclusive + glp1_exclusive + both, data=dat)
+
+table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage | diagnosis_of_diabetes, data = dat)
+
+table1(~ diagnosis_of_MASLD + diagnosis_of_diabetes + a1c  + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage + sglt2 | glp1agonist, data = dat)
+
+
+pvalue <- function(x,...) {
+  # Construct vectors of data y, and groups (strata) g
+  y <- unlist(x)
+  g <- factor(rep(1:length(x), times=sapply(x, length)))
+  if (is.numeric(y)) {
+    # For numeric variables, perform a standard 2-sample t-test
+    p <- t.test(y ~ g)$p.value
+  } else {
+    # For categorical variables, perform a chi-squared test of independence
+    p <- chisq.test(table(y, g))$p.value
+  }
+  # Format the p-value, using an HTML entity for the less-than sign.
+  # The initial empty string places the output on the line below the variable label.
+  c("", sub("<", "&lt;", format.pval(p, digits=3, eps=0.001)))
+}
+
+mean_sd <- function(x) {
+  # Handle missing values explicitly
+  s <- stats::sd(x, na.rm=TRUE)
+  m <- mean(x, na.rm=TRUE)
+  sprintf("%.2f (%.2f)", m, s)
+}
+
+table1(~ age + nih_sex + nih_race + bmi + diagnosis_of_MASLD + sbp + dbp + tg | diagnosis_of_diabetes, data=dat,overall=F, extra.col=list(`P-value`=pvalue), render.continuous = mean_sd)
+
+table1(~ age + nih_sex + nih_race + bmi + diagnosis_of_MASLD + sbp + dbp + tg + diagnosis_of_diabetes | glp1agonist, data=dat,overall=F, extra.col=list(`P-value`=pvalue), render.continuous = mean_sd)
+
+table1(~ age + nih_sex + nih_race + bmi + diagnosis_of_MASLD + sbp + dbp + tg | diagnosis_of_diabetes, data=dat,render.continuous = render.continuous.custom)
+
+table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage | diagnosis_of_diabetes, data = dat,render.continuous = render.continuous.custom)
+
+# Generate the table
+table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage | diagnosis_of_diabetes, 
+       data = dat, 
+       overall = , 
+       extra.col = list(`P-value` = pvalue), 
+       render.continuous = render.continuous.custom)
+#bmi,masld,TGs,AST/ALT (Liver enzymes),ggt, steatosis grade and or percentages,lobular inflam grade, fibrosis stage
+
+# Descriptive stats
+liver_meta_raw_sc <- meta_liver_raw %>%
+  filter(Cryostor_ID!="")
+form <- paste("diagnosis_of_diabetes", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
+
+summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
+
+## MASLD Y/N
+liver_meta_raw_sc <- meta_liver_raw %>%
+  filter(Cryostor_ID!="")
+form <- paste("diagnosis_of_MASLD", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
+
+summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
+
+## GLP-1RA Y/N
+liver_meta_raw_sc <- liver_meta_raw %>%
+  filter(Cryostor_ID!="")
+form <- paste("glp1agonist", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
+
+summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
+
+```
+
+## b. Participants with Single Cell Data
+```{r, echo = F,warning=F}
+#Define disease and drug groups
+# dat <- read.csv(fs::path(dir.dat,"scRNA","data_clean","liver_biopsy_metadata_PN.csv"))
+#dat <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean/liver_biopsy_metadata_PN.csv")
+
+dat <- meta.data %>%
+  dplyr::select(all_of(c("orig.ident","nih_sex","nih_ethnicity","nih_race","diagnosis_of_diabetes",
+                         "steatosis_grade","fibrosis_stage",
+                         "lobular_inflammation_percent","tg","creatinine")))
+  group_by(orig.ident) %>%
+  summarise(across(everything(), first)) %>%
+  ungroup() 
+dat <- dat %>% 
+  mutate(both=ifelse(glp1agonist=="Yes" & sglt2=="Yes","Yes","No")) %>% 
+  mutate(sglt2_exclusive=ifelse(sglt2=="Yes" & glp1agonist=="No","Yes","No")) %>% 
+  mutate(glp1_exclusive=ifelse(sglt2=="No" & glp1agonist=="Yes","Yes","No")) %>% 
+  mutate(neither=ifelse(sglt2=="No" & glp1agonist=="No","Yes","No")) 
+
+# table(dat2$sglt2_exclusive) #-/+ #5 No, 0 yes
+# table(dat2$glp1_exclusive) #+/- # 2 Yes, 3 No
+# table(dat2$both) #+/+ #1 Both, 4 not both
+# table(dat2$neither) #-/- #3 neither, 2 on someting
+# 
+# #Create table 1
+# dat <- read.csv(fs::path(dir.dat,"scRNA","data_clean","liver_biopsy_metadata_PN.csv"))
+# dat <- dat %>% 
+#   filter(diagnosis_of_diabetes=="Yes")
+# cor(dat$ast,dat$alt,method="pearson")
+# cor(dat$ast,dat$alt,method="spearman")
+# cor(dat$alt,dat$tg,method="spearman")
+
+dat$diagnosis_of_diabetes <- factor(dat$diagnosis_of_diabetes, levels=c("Yes","No"), labels=c("Type 2 Diabetes", "Obese Controls"))
+dat$nih_sex     <- factor(dat$nih_sex, levels=c("Male", "Female"), labels=c("Male", "Female"))
+dat$nih_ethnicity   <- factor(dat$nih_ethnicity, levels=c("Hispanic_Or_Latino","NonHispanic"), labels=c("Hispanic or Latino","Non-Hispanic/Non-Latino"))
+dat$nih_race   <- factor(dat$nih_race, levels=c("White","BlackAfAm","Multiracial","Other"),
+                         labels=c("White","Black","Multirace","Other"))
+dat$steatosis_grade <- as.factor(dat$steatosis_grade)
+dat$fibrosis_stage <- as.factor(dat$fibrosis_stage)
+dat$lobular_inflammation_percent <- as.factor(dat$lobular_inflammation_percent)
+
+label(dat$age)      <- "Age (y)"
+label(dat$sglt2_exclusive) <- "SGLT2 Inhibitors (Yes/No)"
+label(dat$glp1agonist) <- "GLP-1 Receptor Agonists (Yes/No)"
+label(dat$nih_sex)      <- "Sex"
+label(dat$nih_race)    <- "Race"
+label(dat$nih_ethnicity)    <- "Ethnicity"
+label(dat$diagnosis_of_diabetes)  <- "Diabetes Status"
+label(dat$bmi)   <- "Body Mass Index (kg/m2)"
+label(dat$diagnosis_of_MASLD)  <- "MASLD Status"
+label(dat$sbp)     <- "Systolic Blood Pressure (mmHg)"
+label(dat$dbp) <- "Diastolic Blood Pressure (mmHg)"
+label(dat$tg) <-  "Triglycerides (mg/dL)"
+label(dat$creatinine) <-  "Creatinine (mg/dL)"
+label(dat$steatosis_percent) <- "Steatosis Percent (%)"
+label(dat$fibrosis_stage) <- "Fibrosis Stage"
+label(dat$lobular_inflammation_percent) <- "Lobular Inflammation Percent (%)"
+label(dat$sglt2_exclusive) <- "Exclusive SGLT2 Inhibitors (Yes/No)"
+label(dat$glp1_exclusive) <- "Exclusive GLP-1 Receptor Agonists (Yes/No)"
+label(dat$both) <- "SLGT2i + GLP-1ra (Yes/No)"
+label(dat$neither) <- "No Medication (Yes/No)"
+
+table1(~ age + nih_sex + nih_race + nih_ethnicity + bmi + diagnosis_of_MASLD + sbp + dbp + tg + creatinine + sglt2_exclusive + glp1_exclusive + both | diagnosis_of_diabetes, data=dat)
+
+table1(~ age + nih_sex + nih_race + nih_ethnicity + bmi + diagnosis_of_MASLD + sbp + dbp + tg + steatosis_grade +fibrosis_stage + creatinine + sglt2_exclusive + glp1_exclusive + both | diagnosis_of_diabetes, data=dat)
+
+table1(~ age + nih_sex + nih_race + nih_ethnicity + bmi + diagnosis_of_MASLD + sbp + dbp + tg + creatinine + sglt2_exclusive + glp1_exclusive + both, data=dat)
+
+table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage | diagnosis_of_diabetes, data = dat)
+
+table1(~ diagnosis_of_MASLD + diagnosis_of_diabetes + a1c  + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage + sglt2 | glp1agonist, data = dat)
+
+
+pvalue <- function(x,...) {
+  # Construct vectors of data y, and groups (strata) g
+  y <- unlist(x)
+  g <- factor(rep(1:length(x), times=sapply(x, length)))
+  if (is.numeric(y)) {
+    # For numeric variables, perform a standard 2-sample t-test
+    p <- t.test(y ~ g)$p.value
+  } else {
+    # For categorical variables, perform a chi-squared test of independence
+    p <- chisq.test(table(y, g))$p.value
+  }
+  # Format the p-value, using an HTML entity for the less-than sign.
+  # The initial empty string places the output on the line below the variable label.
+  c("", sub("<", "&lt;", format.pval(p, digits=3, eps=0.001)))
+}
+
+mean_sd <- function(x) {
+  # Handle missing values explicitly
+  s <- stats::sd(x, na.rm=TRUE)
+  m <- mean(x, na.rm=TRUE)
+  sprintf("%.2f (%.2f)", m, s)
+}
+
+table1(~ age + nih_sex + nih_race + bmi + diagnosis_of_MASLD + sbp + dbp + tg | diagnosis_of_diabetes, data=dat,overall=F, extra.col=list(`P-value`=pvalue), render.continuous = mean_sd)
+
+table1(~ age + nih_sex + nih_race + bmi + diagnosis_of_MASLD + sbp + dbp + tg + diagnosis_of_diabetes | glp1agonist, data=dat,overall=F, extra.col=list(`P-value`=pvalue), render.continuous = mean_sd)
+
+table1(~ age + nih_sex + nih_race + bmi + diagnosis_of_MASLD + sbp + dbp + tg | diagnosis_of_diabetes, data=dat,render.continuous = render.continuous.custom)
+
+table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage | diagnosis_of_diabetes, data = dat,render.continuous = render.continuous.custom)
+
+# Generate the table
+table1(~ age + nih_sex + nih_race + diagnosis_of_MASLD + bmi+ tg + ast + alt + ggt + steatosis_percent + lobular_inflammation_percent + fibrosis_stage | diagnosis_of_diabetes, 
+       data = dat, 
+       overall = , 
+       extra.col = list(`P-value` = pvalue), 
+       render.continuous = render.continuous.custom)
+#bmi,masld,TGs,AST/ALT (Liver enzymes),ggt, steatosis grade and or percentages,lobular inflam grade, fibrosis stage
+
+# Descriptive stats
+liver_meta_raw_sc <- meta_liver_raw %>%
+  filter(Cryostor_ID!="")
+form <- paste("diagnosis_of_diabetes", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
+
+summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
+
+## MASLD Y/N
+liver_meta_raw_sc <- meta_liver_raw %>%
+  filter(Cryostor_ID!="")
+form <- paste("diagnosis_of_MASLD", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
+
+summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
+
+## GLP-1RA Y/N
+liver_meta_raw_sc <- liver_meta_raw %>%
+  filter(Cryostor_ID!="")
+form <- paste("glp1agonist", paste(colnames(liver_meta_raw_sc)[6:36], collapse = " + "), sep = " ~ ")
+
+summary(arsenal::tableby(formula = as.formula(form), data = liver_meta_raw_sc, test = F))
+
+```
