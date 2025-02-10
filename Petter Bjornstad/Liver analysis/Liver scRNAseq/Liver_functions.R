@@ -22,7 +22,7 @@ sens_genes <- c("ACVR1B","ANG","ANGPT1","ANGPTL4","AREG","AXL","BEX3","BMP2","BM
 #sens_genes <- full_sens_genes
 
 #Metabolism Pathway Gene Sets
-tca <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","tca_cycle_pathway.csv")) %>%
+cd<- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","tca_cycle_pathway.csv")) %>%
   pull(genesymbol)
 gluco <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","gluconeogenesis_pathway.csv"))%>%
   pull(genesymbol)
