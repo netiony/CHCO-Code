@@ -75,19 +75,7 @@ dat <- attempt_dat$data %>%
   filter(visit != "Screening") %>%
   left_join(attempt_grp)
 
-# manually adding three participants missing in REDCap for now...
-dat[nrow(dat) + 1, "subject_id"] <- 30058
-dat[nrow(dat), "visit"] <- "PRE"
-dat[nrow(dat), "treatment"] <- "Placebo"
-dat[nrow(dat) + 1, "subject_id"] <- 30058
-dat[nrow(dat), "visit"] <- "POST"
-dat[nrow(dat), "treatment"] <- "Placebo"
-dat[nrow(dat) + 1, "subject_id"] <- 30173
-dat[nrow(dat), "visit"] <- "PRE"
-dat[nrow(dat), "treatment"] <- "Placebo"
-dat[nrow(dat) + 1, "subject_id"] <- 30173
-dat[nrow(dat), "visit"] <- "POST"
-dat[nrow(dat), "treatment"] <- "Placebo"
+# manually adding participants missing in REDCap for now...
 dat[nrow(dat) + 1, "subject_id"] <- 30186
 dat[nrow(dat), "visit"] <- "PRE"
 dat[nrow(dat), "treatment"] <- "Placebo"
@@ -112,6 +100,7 @@ rownames(so_attempt_meta) <- so_attempt_meta$barcode
 so_attempt <- AddMetaData(so_attempt, so_attempt_meta)
 saveRDS(so_attempt, file = "/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/ATTEMPT/Data Clean/so_attempt.RDS")
 
+# PT cells
 so_attempt$celltype_pt <- ifelse(grepl("PT-", so_attempt$celltype),
                                  "PT", as.character(so_attempt$celltype))
 so_attempt_pt <- subset(so_attempt, celltype_pt == "PT" & celltype != "PT_lowQuality")
@@ -129,6 +118,276 @@ so_attempt_pt$treatment <- factor(so_attempt_pt$treatment, levels = c("Placebo",
                                   labels = c("Placebo", "Dapagliflozin"))
 
 saveRDS(so_attempt_pt, file = "/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/ATTEMPT/Data Clean/attempt_so_pt.RDS")
+
+
+# TAL cells
+so_attempt$celltype_tal <- ifelse(grepl("TAL-", so_attempt$celltype),
+                                 "TAL", as.character(so_attempt$celltype))
+so_attempt_tal <- subset(so_attempt, celltype_tal == "TAL" & celltype != "TAL_highUMI")
+options(future.globals.maxSize = 3000 * 1024^3)
+plan("multicore", workers = 4) 
+so_attempt_tal <- NormalizeData(so_attempt_tal)
+so_attempt_tal <- ScaleData(so_attempt_tal)
+ElbowPlot(so_attempt_tal)
+so_attempt_tal <- RunPCA(so_attempt_tal, ncomponents = 10, features = VariableFeatures(object = so_attempt_tal))
+so_attempt_tal <- FindNeighbors(so_attempt_tal)
+so_attempt_tal <- FindClusters(so_attempt_tal)
+so_attempt_tal <- RunUMAP(so_attempt_tal, dims = 1:30, reduction.key = "UMAP_")
+gc()
+so_attempt_tal$visit <- factor(so_attempt_tal$visit, levels = c("PRE", "POST"))
+so_attempt_tal$treatment <- factor(so_attempt_tal$treatment, levels = c("Placebo", "Dapagliflozin 5mg"),
+                                  labels = c("Placebo", "Dapagliflozin"))
+
+saveRDS(so_attempt_tal, file = "/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/ATTEMPT/Data Clean/attempt_so_tal.RDS")
+
+# POD cells
+so_attempt$celltype_pod <- ifelse(grepl("POD", so_attempt$celltype),
+                                  "POD", as.character(so_attempt$celltype))
+so_attempt_pod <- subset(so_attempt, celltype_pod == "POD")
+options(future.globals.maxSize = 3000 * 1024^3)
+plan("multicore", workers = 4) 
+so_attempt_pod <- NormalizeData(so_attempt_pod)
+so_attempt_pod <- ScaleData(so_attempt_pod)
+ElbowPlot(so_attempt_pod)
+so_attempt_pod <- RunPCA(so_attempt_pod, ncomponents = 10, features = VariableFeatures(object = so_attempt_pod))
+so_attempt_pod <- FindNeighbors(so_attempt_pod)
+so_attempt_pod <- FindClusters(so_attempt_pod)
+so_attempt_pod <- RunUMAP(so_attempt_pod, dims = 1:30, reduction.key = "UMAP_")
+gc()
+so_attempt_pod$visit <- factor(so_attempt_pod$visit, levels = c("PRE", "POST"))
+so_attempt_pod$treatment <- factor(so_attempt_pod$treatment, levels = c("Placebo", "Dapagliflozin 5mg"),
+                                   labels = c("Placebo", "Dapagliflozin"))
+
+saveRDS(so_attempt_pod, file = "/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/ATTEMPT/Data Clean/attempt_so_pod.RDS")
+
+# EC cells
+so_attempt$celltype_ec <- ifelse(grepl("EC-", so_attempt$celltype),
+                                  "EC", as.character(so_attempt$celltype))
+so_attempt_ec <- subset(so_attempt, celltype_ec == "EC")
+options(future.globals.maxSize = 3000 * 1024^3)
+plan("multicore", workers = 4) 
+so_attempt_ec <- NormalizeData(so_attempt_ec)
+so_attempt_ec <- ScaleData(so_attempt_ec)
+ElbowPlot(so_attempt_ec)
+so_attempt_ec <- RunPCA(so_attempt_ec, ncomponents = 10, features = VariableFeatures(object = so_attempt_ec))
+so_attempt_ec <- FindNeighbors(so_attempt_ec)
+so_attempt_ec <- FindClusters(so_attempt_ec)
+so_attempt_ec <- RunUMAP(so_attempt_ec, dims = 1:30, reduction.key = "UMAP_")
+gc()
+so_attempt_ec$visit <- factor(so_attempt_ec$visit, levels = c("PRE", "POST"))
+so_attempt_ec$treatment <- factor(so_attempt_ec$treatment, levels = c("Placebo", "Dapagliflozin 5mg"),
+                                   labels = c("Placebo", "Dapagliflozin"))
+
+saveRDS(so_attempt_ec, file = "/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/ATTEMPT/Data Clean/attempt_so_ec.RDS")
+
+# PEC cells
+so_attempt$celltype_pec <- ifelse(grepl("PEC", so_attempt$celltype),
+                                 "PEC", as.character(so_attempt$celltype))
+so_attempt_pec <- subset(so_attempt, celltype_pec == "PEC")
+options(future.globals.maxSize = 3000 * 1024^3)
+plan("multicore", workers = 4) 
+so_attempt_pec <- NormalizeData(so_attempt_pec)
+so_attempt_pec <- ScaleData(so_attempt_pec)
+ElbowPlot(so_attempt_pec)
+so_attempt_pec <- RunPCA(so_attempt_pec, ncomponents = 10, features = VariableFeatures(object = so_attempt_pec))
+so_attempt_pec <- FindNeighbors(so_attempt_pec)
+so_attempt_pec <- FindClusters(so_attempt_pec)
+so_attempt_pec <- RunUMAP(so_attempt_pec, dims = 1:30, reduction.key = "UMAP_")
+gc()
+so_attempt_pec$visit <- factor(so_attempt_pec$visit, levels = c("PRE", "POST"))
+so_attempt_pec$treatment <- factor(so_attempt_pec$treatment, levels = c("Placebo", "Dapagliflozin 5mg"),
+                                  labels = c("Placebo", "Dapagliflozin"))
+
+saveRDS(so_attempt_pec, file = "/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/ATTEMPT/Data Clean/attempt_so_pec.RDS")
+
+# immune cells
+so_attempt$celltype_immune <- ifelse(grepl("MAC|MON|B|T|NKT/NKC", so_attempt$celltype),
+                                  "IMMUNE", as.character(so_attempt$celltype))
+so_attempt_immune <- subset(so_attempt, celltype_immune == "IMMUNE")
+so_attempt_immune <- NormalizeData(so_attempt_immune)
+so_attempt_immune <- ScaleData(so_attempt_immune)
+ElbowPlot(so_attempt_immune)
+so_attempt_immune <- RunPCA(so_attempt_immune, ncomponents = 10, features = VariableFeatures(object = so_attempt_immune))
+so_attempt_immune <- FindNeighbors(so_attempt_immune)
+so_attempt_immune <- FindClusters(so_attempt_immune)
+so_attempt_immune <- RunUMAP(so_attempt_immune, dims = 1:30, reduction.key = "UMAP_")
+gc()
+so_attempt_immune$visit <- factor(so_attempt_immune$visit, levels = c("PRE", "POST"))
+so_attempt_immune$treatment <- factor(so_attempt_immune$treatment, levels = c("Placebo", "Dapagliflozin 5mg"),
+                                   labels = c("Placebo", "Dapagliflozin"))
+
+saveRDS(so_attempt_immune, file = "/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/ATTEMPT/Data Clean/attempt_so_immune.RDS")
+
+# DTL cells
+so_attempt$celltype_dtl <- ifelse(grepl("DTL-", so_attempt$celltype),
+                                 "DTL", as.character(so_attempt$celltype))
+so_attempt_dtl <- subset(so_attempt, celltype_dtl == "DTL")
+options(future.globals.maxSize = 3000 * 1024^3)
+so_attempt_dtl <- NormalizeData(so_attempt_dtl)
+so_attempt_dtl <- ScaleData(so_attempt_dtl)
+ElbowPlot(so_attempt_dtl)
+so_attempt_dtl <- RunPCA(so_attempt_dtl, ncomponents = 10, features = VariableFeatures(object = so_attempt_dtl))
+so_attempt_dtl <- FindNeighbors(so_attempt_dtl)
+so_attempt_dtl <- FindClusters(so_attempt_dtl)
+so_attempt_dtl <- RunUMAP(so_attempt_dtl, dims = 1:30, reduction.key = "UMAP_")
+gc()
+so_attempt_dtl$visit <- factor(so_attempt_dtl$visit, levels = c("PRE", "POST"))
+so_attempt_dtl$treatment <- factor(so_attempt_dtl$treatment, levels = c("Placebo", "Dapagliflozin 5mg"),
+                                  labels = c("Placebo", "Dapagliflozin"))
+
+saveRDS(so_attempt_dtl, file = "/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/ATTEMPT/Data Clean/attempt_so_dtl.RDS")
+
+# ATL cells
+so_attempt$celltype_atl <- ifelse(grepl("ATL", so_attempt$celltype),
+                                  "ATL", as.character(so_attempt$celltype))
+so_attempt_atl <- subset(so_attempt, celltype_atl == "ATL")
+options(future.globals.maxSize = 3000 * 1024^3)
+so_attempt_atl <- NormalizeData(so_attempt_atl)
+so_attempt_atl <- ScaleData(so_attempt_atl)
+ElbowPlot(so_attempt_atl)
+so_attempt_atl <- RunPCA(so_attempt_atl, ncomponents = 10, features = VariableFeatures(object = so_attempt_atl))
+so_attempt_atl <- FindNeighbors(so_attempt_atl)
+so_attempt_atl <- FindClusters(so_attempt_atl)
+so_attempt_atl <- RunUMAP(so_attempt_atl, dims = 1:30, reduction.key = "UMAP_")
+gc()
+so_attempt_atl$visit <- factor(so_attempt_atl$visit, levels = c("PRE", "POST"))
+so_attempt_atl$treatment <- factor(so_attempt_atl$treatment, levels = c("Placebo", "Dapagliflozin 5mg"),
+                                   labels = c("Placebo", "Dapagliflozin"))
+
+saveRDS(so_attempt_atl, file = "/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/ATTEMPT/Data Clean/attempt_so_atl.RDS")
+
+# DCT cells
+so_attempt$celltype_dct <- ifelse(grepl("DCT", so_attempt$celltype),
+                                  "DCT", as.character(so_attempt$celltype))
+so_attempt_dct <- subset(so_attempt, celltype_dct == "DCT")
+options(future.globals.maxSize = 3000 * 1024^3)
+so_attempt_dct <- NormalizeData(so_attempt_dct)
+so_attempt_dct <- ScaleData(so_attempt_dct)
+ElbowPlot(so_attempt_dct)
+so_attempt_dct <- RunPCA(so_attempt_dct, ncomponents = 10, features = VariableFeatures(object = so_attempt_dct))
+so_attempt_dct <- FindNeighbors(so_attempt_dct)
+so_attempt_dct <- FindClusters(so_attempt_dct)
+so_attempt_dct <- RunUMAP(so_attempt_dct, dims = 1:30, reduction.key = "UMAP_")
+gc()
+so_attempt_dct$visit <- factor(so_attempt_dct$visit, levels = c("PRE", "POST"))
+so_attempt_dct$treatment <- factor(so_attempt_dct$treatment, levels = c("Placebo", "Dapagliflozin 5mg"),
+                                   labels = c("Placebo", "Dapagliflozin"))
+
+saveRDS(so_attempt_dct, file = "/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/ATTEMPT/Data Clean/attempt_so_dct.RDS")
+
+# CNT cells
+so_attempt$celltype_cnt <- ifelse(grepl("CNT", so_attempt$celltype),
+                                  "CNT", as.character(so_attempt$celltype))
+so_attempt_cnt <- subset(so_attempt, celltype_cnt == "CNT")
+options(future.globals.maxSize = 3000 * 1024^3)
+so_attempt_cnt <- NormalizeData(so_attempt_cnt)
+so_attempt_cnt <- ScaleData(so_attempt_cnt)
+ElbowPlot(so_attempt_cnt)
+so_attempt_cnt <- RunPCA(so_attempt_cnt, ncomponents = 10, features = VariableFeatures(object = so_attempt_cnt))
+so_attempt_cnt <- FindNeighbors(so_attempt_cnt)
+so_attempt_cnt <- FindClusters(so_attempt_cnt)
+so_attempt_cnt <- RunUMAP(so_attempt_cnt, dims = 1:30, reduction.key = "UMAP_")
+gc()
+so_attempt_cnt$visit <- factor(so_attempt_cnt$visit, levels = c("PRE", "POST"))
+so_attempt_cnt$treatment <- factor(so_attempt_cnt$treatment, levels = c("Placebo", "Dapagliflozin 5mg"),
+                                   labels = c("Placebo", "Dapagliflozin"))
+
+saveRDS(so_attempt_cnt, file = "/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/ATTEMPT/Data Clean/attempt_so_cnt.RDS")
+
+# PC cells
+so_attempt$celltype_pc <- ifelse(grepl("PC-", so_attempt$celltype),
+                                  "PC", as.character(so_attempt$celltype))
+so_attempt_pc <- subset(so_attempt, celltype_pc == "PC")
+options(future.globals.maxSize = 3000 * 1024^3)
+so_attempt_pc <- NormalizeData(so_attempt_pc)
+so_attempt_pc <- ScaleData(so_attempt_pc)
+ElbowPlot(so_attempt_pc)
+so_attempt_pc <- RunPCA(so_attempt_pc, ncomponents = 10, features = VariableFeatures(object = so_attempt_pc))
+so_attempt_pc <- FindNeighbors(so_attempt_pc)
+so_attempt_pc <- FindClusters(so_attempt_pc)
+so_attempt_pc <- RunUMAP(so_attempt_pc, dims = 1:30, reduction.key = "UMAP_")
+gc()
+so_attempt_pc$visit <- factor(so_attempt_pc$visit, levels = c("PRE", "POST"))
+so_attempt_pc$treatment <- factor(so_attempt_pc$treatment, levels = c("Placebo", "Dapagliflozin 5mg"),
+                                   labels = c("Placebo", "Dapagliflozin"))
+
+saveRDS(so_attempt_pc, file = "/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/ATTEMPT/Data Clean/attempt_so_pc.RDS")
+
+# IC cells
+so_attempt$celltype_ic <- ifelse(grepl("IC-", so_attempt$celltype),
+                                 "IC", as.character(so_attempt$celltype))
+so_attempt_ic <- subset(so_attempt, celltype_ic == "IC")
+options(future.globals.maxSize = 3000 * 1024^3)
+so_attempt_ic <- NormalizeData(so_attempt_ic)
+so_attempt_ic <- ScaleData(so_attempt_ic)
+ElbowPlot(so_attempt_ic)
+so_attempt_ic <- RunPCA(so_attempt_ic, ncomponents = 10, features = VariableFeatures(object = so_attempt_ic))
+so_attempt_ic <- FindNeighbors(so_attempt_ic)
+so_attempt_ic <- FindClusters(so_attempt_ic)
+so_attempt_ic <- RunUMAP(so_attempt_ic, dims = 1:30, reduction.key = "UMAP_")
+gc()
+so_attempt_ic$visit <- factor(so_attempt_ic$visit, levels = c("PRE", "POST"))
+so_attempt_ic$treatment <- factor(so_attempt_ic$treatment, levels = c("Placebo", "Dapagliflozin 5mg"),
+                                  labels = c("Placebo", "Dapagliflozin"))
+
+saveRDS(so_attempt_ic, file = "/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/ATTEMPT/Data Clean/attempt_so_ic.RDS")
+
+# MC cells
+so_attempt$celltype_mc <- ifelse(grepl("MC-", so_attempt$celltype),
+                                 "MC", as.character(so_attempt$celltype))
+so_attempt_mc <- subset(so_attempt, celltype_mc == "MC")
+options(future.globals.maxSize = 3000 * 1024^3)
+so_attempt_mc <- NormalizeData(so_attempt_mc)
+so_attempt_mc <- ScaleData(so_attempt_mc)
+ElbowPlot(so_attempt_mc)
+so_attempt_mc <- RunPCA(so_attempt_mc, ncomponents = 10, features = VariableFeatures(object = so_attempt_mc))
+so_attempt_mc <- FindNeighbors(so_attempt_mc)
+so_attempt_mc <- FindClusters(so_attempt_mc)
+so_attempt_mc <- RunUMAP(so_attempt_mc, dims = 1:30, reduction.key = "UMAP_")
+gc()
+so_attempt_mc$visit <- factor(so_attempt_mc$visit, levels = c("PRE", "POST"))
+so_attempt_mc$treatment <- factor(so_attempt_mc$treatment, levels = c("Placebo", "Dapagliflozin 5mg"),
+                                  labels = c("Placebo", "Dapagliflozin"))
+
+saveRDS(so_attempt_mc, file = "/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/ATTEMPT/Data Clean/attempt_so_mc.RDS")
+
+# VSMC/P cells
+so_attempt$celltype_vsmc_p <- ifelse(grepl("VSMC/P", so_attempt$celltype),
+                                 "VSMC/P", as.character(so_attempt$celltype))
+so_attempt_vsmc_p <- subset(so_attempt, celltype_vsmc_p == "VSMC/P")
+options(future.globals.maxSize = 3000 * 1024^3)
+so_attempt_vsmc_p <- NormalizeData(so_attempt_vsmc_p)
+so_attempt_vsmc_p <- ScaleData(so_attempt_vsmc_p)
+ElbowPlot(so_attempt_vsmc_p)
+so_attempt_vsmc_p <- RunPCA(so_attempt_vsmc_p, ncomponents = 10, features = VariableFeatures(object = so_attempt_vsmc_p))
+so_attempt_vsmc_p <- FindNeighbors(so_attempt_vsmc_p)
+so_attempt_vsmc_p <- FindClusters(so_attempt_vsmc_p)
+so_attempt_vsmc_p <- RunUMAP(so_attempt_vsmc_p, dims = 1:30, reduction.key = "UMAP_")
+gc()
+so_attempt_vsmc_p$visit <- factor(so_attempt_vsmc_p$visit, levels = c("PRE", "POST"))
+so_attempt_vsmc_p$treatment <- factor(so_attempt_vsmc_p$treatment, levels = c("Placebo", "Dapagliflozin 5mg"),
+                                  labels = c("Placebo", "Dapagliflozin"))
+
+saveRDS(so_attempt_vsmc_p, file = "/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/ATTEMPT/Data Clean/attempt_so_vsmc_p.RDS")
+
+# FIB cells
+so_attempt$celltype_fib <- ifelse(grepl("FIB", so_attempt$celltype),
+                                 "FIB", as.character(so_attempt$celltype))
+so_attempt_fib <- subset(so_attempt, celltype_fib == "FIB")
+options(future.globals.maxSize = 3000 * 1024^3)
+so_attempt_fib <- NormalizeData(so_attempt_fib)
+so_attempt_fib <- ScaleData(so_attempt_fib)
+ElbowPlot(so_attempt_fib)
+so_attempt_fib <- RunPCA(so_attempt_fib, ncomponents = 10, features = VariableFeatures(object = so_attempt_fib))
+so_attempt_fib <- FindNeighbors(so_attempt_fib)
+so_attempt_fib <- FindClusters(so_attempt_fib)
+so_attempt_fib <- RunUMAP(so_attempt_fib, dims = 1:30, reduction.key = "UMAP_")
+gc()
+so_attempt_fib$visit <- factor(so_attempt_fib$visit, levels = c("PRE", "POST"))
+so_attempt_fib$treatment <- factor(so_attempt_fib$treatment, levels = c("Placebo", "Dapagliflozin 5mg"),
+                                  labels = c("Placebo", "Dapagliflozin"))
+
+saveRDS(so_attempt_fib, file = "/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/ATTEMPT/Data Clean/attempt_so_fib.RDS")
 
 # Fetch all data upfront
 gene_names <- rownames(so_attempt_pt)

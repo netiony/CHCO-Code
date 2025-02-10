@@ -1,18 +1,3 @@
-#Define genes
-sens_genes <- c("ACVR1B","ANG","ANGPT1","ANGPTL4","AREG","AXL","BEX3","BMP2","BMP6","C3","CCL1","CCL13",
-                "CCL16","CCL2","CCL20","CCL24","CCL26","CCL3","CCL4","CCL5","CCL7","CCL8","CD55",
-                "CD9","CSF1","CSF2","CSF2RB","CST4","CTNNB1","CTSB","CXCL1","CXCL10","CXCL12",
-                "CXCL16","CXCL2","CXCL3","CXCL8","CXCR2","DKK1","EDN1","EGF","EGFR","EREG","ESM1",
-                "ETS2","FAS","FGF1","FGF2","FGF7","GDF15","GEM","GMFG","HGF","HMGB1","ICAM1","ICAM3",
-                "IGF1","IGFBP1","IGFBP2","IGFBP3","IGFBP4","IGFBP5","IGFBP6","IGFBP7","IL10","IL13",
-                "IL15","IL18","IL1A","IL1B","IL2","IL32","IL6","IL6ST","IL7","INHA","IQGAP2","ITGA2",
-                "ITPKA","JUN","KITLG","LCP1","MIF","MMP1","MMP10","MMP12","MMP13","MMP14","MMP2",
-                "MMP3","MMP9","NAP1L4","NRG1","PAPPA","PECAM1","PGF","PIGF","PLAT","PLAU","PLAUR",
-                "PTBP1","PTGER2","PTGES","RPS6KA5","SCAMP4","SELPLG","SEMA3F","SERPINB4","SERPINE1",
-                "SERPINE2","SPP1","SPX","TIMP2","TNF","TNFRSF10C","TNFRSF11B","TNFRSF1A","TNFRSF1B",
-                "TUBGCP2","VEGFA","VEGFC","VGF","WNT16","WNT2")
-sens_genes <- c(sens_genes,"CDKN1A")
-
 #DEGS ----
 # de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", NULL, "_top")
 # seurat_object <- so_kidney_sc
@@ -25,8 +10,7 @@ sens_genes <- c(sens_genes,"CDKN1A")
 # # function for de.markers
 de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, extension,logfc.threshold,min.pct){
   m = FindMarkers(seurat_object, features = genes,group.by = group.by,ident.1 = id1, 
-                  ident.2 = id2, subset.ident = celltype, verbose = F, logfc.threshold=0.001,
-                  min.pct = 0.001)
+                  ident.2 = id2, subset.ident = celltype, verbose = F)
   m$p_val_adj = p.adjust(m$p_val,method = "fdr")
   m <- m %>% 
     rownames_to_column('gene') %>%
@@ -52,8 +36,8 @@ degs_fxn <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_gr
   
   #Conidtion names
   if(is.null(additional_group)) {
-  condition <- paste0(str_to_title(str_replace_all(exposure,"_"," ")),"_",exp_group,"_vs_",ref_group)
-  condition <- str_replace_all(condition," ","_")
+    condition <- paste0(str_to_title(str_replace_all(exposure,"_"," ")),"_",exp_group,"_vs_",ref_group)
+    condition <- str_replace_all(condition," ","_")
   } 
   if(!is.null(additional_group)) {
     condition <- paste0(additional_group,"_",str_to_title(str_replace_all(exposure,"_"," ")),"_",exp_group,"_vs_",ref_group)
@@ -61,10 +45,9 @@ degs_fxn <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_gr
   }
   #Differential Expression by Group
   if (!is.null(cell)) {
-  cell_name <- str_replace_all(cell,"/","_")
+    cell_name <- str_replace_all(cell,"/","_")
   }
-  # sens_genes <- c(sens_genes,"CDKN1A")
-  # de.markers(so, gene_set, "group", id2 = "neither", id1 = "both", "PT", "")
+  
   de.markers(so, gene_set, exposure, id2 = ref_group, id1 = exp_group, cell, "")
   colnames(m)[2] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group,")")
   colnames(m)[3] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",ref_group,")")
@@ -104,12 +87,12 @@ degs_fxn <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_gr
   )
   
   if(is.null(additional_group)) {
-  condition2 <- paste0(str_to_title(exposure)," (",exp_group," vs. ",ref_group,")")
-  if (!is.null(cell)){
-    title <- paste0("DEGs in ",cell_name," cells for ",condition2)
-  } else {
-    title <- paste0("Bulk DEGs for ",condition2)
-  }
+    condition2 <- paste0(str_to_title(exposure)," (",exp_group," vs. ",ref_group,")")
+    if (!is.null(cell)){
+      title <- paste0("DEGs in ",cell_name," cells for ",condition2)
+    } else {
+      title <- paste0("Bulk DEGs for ",condition2)
+    }
   }
   if(!is.null(additional_group)) {
     condition2 <- paste0(additional_group," ",str_to_title(exposure)," (",exp_group," vs. ",ref_group,")")
@@ -119,16 +102,23 @@ degs_fxn <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_gr
       title <- paste0("Bulk DEGs for ",condition2)
     }
   } 
-
+  
   
   labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+  total_cells <- ncol(so)  # Total number of cells
+  total_genes <- nrow(m)  # Total number of genes in m_top
+  # Create subtitle with additional information
+  subtitle_text <- paste0(
+    "Positive Log2 FC = Greater Expression in ", condition2, "\n",
+    "(Significant at FDR-P<0.05, FC Threshold = 0.5, Min Gene Exp 5% Threshold) \n",
+    "Total Cells = ", total_cells, " | Total Genes = ", total_genes
+  )
   p <- EnhancedVolcano(m_top,
                        lab = labels,
                        x = 'avg_log2FC',
                        y = 'p_val_adj',
                        title = title,
-                       subtitle = paste0("Positive Log2 FC = Greater Expression in ", condition2,"\n",
-                                         "(Significant at FDR-P<0.05, FC Threshold = 0.5)"),
+                       subtitle = subtitle_text,
                        pCutoff = 0.05,
                        FCcutoff = 0.5,
                        labFace = 'bold',
@@ -140,12 +130,14 @@ degs_fxn <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_gr
                        legendPosition=NULL,
                        boxedLabels = TRUE,
                        max.overlaps=60)
+  
+  
   if(!is.null(additional_group)) {
-  if (!is.null(cell)){
-  filename <- paste0(additional_group,"_DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
-  } else {
-    filename <- paste0(additional_group,"_Bulk_DEGs_for_",condition,".pdf") 
-  }
+    if (!is.null(cell)){
+      filename <- paste0(additional_group,"_DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
+    } else {
+      filename <- paste0(additional_group,"_Bulk_DEGs_for_",condition,".pdf") 
+    }
   }
   if(is.null(additional_group)) {
     if (!is.null(cell)){
@@ -158,131 +150,146 @@ degs_fxn <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_gr
   plot(p)
   dev.off()
   
-  #GSEA
-  if (enrichment=="Yes") {
-    #Gene set enrichment analysis
-    gc()
-    sce_sn_hep <- as.SingleCellExperiment(so)
-    ## C2 category is according to canonical pathways: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
-    geneSets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG")
-    ### filter background to only include genes that we assessed
-    geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
-    geneSets <- geneSets[geneSets$gene_symbol %in% names(sce_sn_hep),]
-    m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
-    stats <- m$p_val_adj
-    names(stats) <- rownames(m)
-    eaRes <- fgsea(pathways = m_list, stats = na.omit(stats))
-    #ooEA <- order(eaRes$pval, decreasing = FALSE)
-    #kable(head(eaRes[ooEA, 1:7], n = 20))
-    # Convert the leadingEdge column to comma-separated strings
-    eaRes$leadingEdge <- sapply(eaRes$leadingEdge, function(x) paste(x, collapse = ", "))
-    gc()
-    #Significant pathways
-    sig <- eaRes %>% 
-      filter(padj<0.05)
-    
-    #Plot top pathways
-    # Subset top pathways for visualization
-    top_pathways <- eaRes[order(-abs(eaRes$NES)), ][1:top_gsea, ]  # Top 10 pathways based on adjusted p-value
-    
-    # Define a significance threshold
-    significance_threshold <- 0.05
-    
-    # Add a significance column for coloring
-    top_pathways$significance <- ifelse(
-      top_pathways$padj > significance_threshold, "Non-significant",
-      ifelse(top_pathways$NES > 0, "Positive Significant", "Negative Significant")
-    )
-    
-    if (!is.null(cell)) {
-      title <- paste0(additional_group,"_Top Enriched Pathways by NES (GSEA) in ",cell_name," cells among ",condition2)
-    } else {
-      title <- paste0(additional_group,"_Top Enriched Pathways by NES (GSEA) for ",condition2," (Bulk)")
-    }
-    # Create a bar plot
-    gsea_plot <- ggplot(top_pathways, aes(x = reorder(pathway, NES), y = NES, fill = significance)) +
-      geom_bar(stat = "identity") +
-      coord_flip() +  # Flip coordinates for better readability
-      scale_fill_manual(
-        values = c(
-          "Positive Significant" = "red",
-          "Negative Significant" = "blue",
-          "Non-significant" = "gray"
-        ),
-        name = "Significance"
-      ) +
-      labs(
-        title = title,
-        x = "Pathway",
-        y = "Normalized Enrichment Score (NES)"
-      ) +
-      theme_minimal(base_size = 12) +
-      theme(
-        axis.text.y = element_text(size = 10),
-        axis.title.y = element_text(size = 12),
-        plot.title = element_text(size = 14, face = "bold")
-      )
-    
-  
-    if (!is.null(cell)){
-      filename <- paste0(additional_group,"_GSEA_top_",top_gsea,"_pathways_",cell_name,"_cells_for",condition,".pdf")
-    } else {
-      filename <- paste0(additional_group,"_Bulk_GSEA_for_",condition,".pdf") 
-    }
-    pdf(fs::path(dir.results,filename),width=20,height=20)
-    plot(gsea_plot)
-    dev.off()
-    
-  }
+  # #GSEA
+  # if (enrichment=="Yes") {
+  #   #Gene set enrichment analysis
+  #   gc()
+  #   sce_sn_hep <- as.SingleCellExperiment(so)
+  #   ## C2 category is according to canonical pathways: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
+  #   geneSets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG")
+  #   ### filter background to only include genes that we assessed
+  #   geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
+  #   geneSets <- geneSets[geneSets$gene_symbol %in% names(sce_sn_hep),]
+  #   m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
+  #   stats <- m$p_val_adj
+  #   names(stats) <- rownames(m)
+  #   eaRes <- fgsea(pathways = m_list, stats = na.omit(stats))
+  #   #ooEA <- order(eaRes$pval, decreasing = FALSE)
+  #   #kable(head(eaRes[ooEA, 1:7], n = 20))
+  #   # Convert the leadingEdge column to comma-separated strings
+  #   eaRes$leadingEdge <- sapply(eaRes$leadingEdge, function(x) paste(x, collapse = ", "))
+  #   gc()
+  #   #Significant pathways
+  #   sig <- eaRes %>% 
+  #     filter(padj<0.05)
+  #   
+  #   #Plot top pathways
+  #   # Subset top pathways for visualization
+  #   top_pathways <- eaRes[order(-abs(eaRes$NES)), ][1:top_gsea, ]  # Top 10 pathways based on adjusted p-value
+  #   
+  #   # Define a significance threshold
+  #   significance_threshold <- 0.05
+  #   
+  #   # Add a significance column for coloring
+  #   top_pathways$significance <- ifelse(
+  #     top_pathways$padj > significance_threshold, "Non-significant",
+  #     ifelse(top_pathways$NES > 0, "Positive Significant", "Negative Significant")
+  #   )
+  #   
+  #   if (!is.null(cell)) {
+  #     title <- paste0(additional_group,"_Top Enriched Pathways by NES (GSEA) in ",cell_name," cells among ",condition2)
+  #   } else {
+  #     title <- paste0(additional_group,"_Top Enriched Pathways by NES (GSEA) for ",condition2," (Bulk)")
+  #   }
+  #   # Create a bar plot
+  #   gsea_plot <- ggplot(top_pathways, aes(x = reorder(pathway, NES), y = NES, fill = significance)) +
+  #     geom_bar(stat = "identity") +
+  #     coord_flip() +  # Flip coordinates for better readability
+  #     scale_fill_manual(
+  #       values = c(
+  #         "Positive Significant" = "red",
+  #         "Negative Significant" = "blue",
+  #         "Non-significant" = "gray"
+  #       ),
+  #       name = "Significance"
+  #     ) +
+  #     labs(
+  #       title = title,
+  #       x = "Pathway",
+  #       y = "Normalized Enrichment Score (NES)"
+  #     ) +
+  #     theme_minimal(base_size = 12) +
+  #     theme(
+  #       axis.text.y = element_text(size = 10),
+  #       axis.title.y = element_text(size = 12),
+  #       plot.title = element_text(size = 14, face = "bold")
+  #     )
+  #   
+  #   
+  #   if (!is.null(cell)){
+  #     filename <- paste0(additional_group,"_GSEA_top_",top_gsea,"_pathways_",cell_name,"_cells_for",condition,".pdf")
+  #   } else {
+  #     filename <- paste0(additional_group,"_Bulk_GSEA_for_",condition,".pdf") 
+  #   }
+  #   pdf(fs::path(dir.results,filename),width=20,height=20)
+  #   plot(gsea_plot)
+  #   dev.off()
+  # }
   #Make sure gene nemaes are in printed file
   deg_results <- m 
   deg_results$Gene <- rownames(deg_results)
-    
-  #save results to excel file
-  write_multiple_sheets <- function(output_file, sheet_data) {
-    # Create a new workbook
-    wb <- createWorkbook()
-    
-    # Loop over the list of data frames
-    for (sheet_name in names(sheet_data)) {
-      # Add a new sheet to the workbook
-      addWorksheet(wb, sheet_name)
-      
-      # Write the data frame to the sheet
-      writeData(wb, sheet_name, sheet_data[[sheet_name]])
-    }
-    # Save the workbook to the specified file
-    saveWorkbook(wb, file = output_file, overwrite = TRUE)
-    
-    # Print a message
-    message("Excel file with multiple sheets created: ", output_file)
-  } 
   
-  if (enrichment=="Yes") {
-  # Example usage
-  df1 <- deg_results
-  df2 <- eaRes
-  } else {
-    df1 <- deg_results
-    df2 <- NULL
-  }
+  # #save results to excel file
+  # write_multiple_sheets <- function(output_file, sheet_data) {
+  #   # Create a new workbook
+  #   wb <- createWorkbook()
+  #   
+  #   # Loop over the list of data frames
+  #   for (sheet_name in names(sheet_data)) {
+  #     # Add a new sheet to the workbook
+  #     addWorksheet(wb, sheet_name)
+  #     
+  #     # Write the data frame to the sheet
+  #     writeData(wb, sheet_name, sheet_data[[sheet_name]])
+  #   }
+  #   # Save the workbook to the specified file
+  #   saveWorkbook(wb, file = output_file, overwrite = TRUE)
+  # } 
+  
+  # if (enrichment=="Yes") {
+  #   # Example usage
+  #   df1 <- deg_results
+  #   df2 <- eaRes
+  # } else {
+  #   df1 <- deg_results
+  #   df2 <- NULL
+  # }
   
   # Specify the file name and data
   if (!is.null(cell)){
-  output_file <- fs::path(dir.results,paste0("Results_",cell_name,"_cells_for_",condition,".xlsx"))  
+    output_file <- fs::path(dir.results,paste0("Results_",cell_name,"_cells_for_",condition,".csv"))  
   } else {
-  output_file <- fs::path(dir.results,paste0("Bulk_Results_for_",condition,".xlsx"))
+    output_file <- fs::path(dir.results,paste0("Bulk_Results_for_",condition,".csv"))
   }
-
-  sheet_data <- list(
-    "DEG" = df1,
-    "Pathway_Results" = df2
-  )
+  write.csv(deg_results,output_file)
   
+  # sheet_data <- list(
+  #   "DEG" = df1,
+  #   "Pathway_Results" = df2
+  # )
+  # 
+  # # Call the function
+  # write_multiple_sheets(output_file, sheet_data)
+  # 
+  #Save for IPA
   # Call the function
-  write_multiple_sheets(output_file, sheet_data)
+  ipa_results <- deg_results %>% 
+    dplyr::select(all_of(c("Gene","avg_log2FC","p_val","p_val_adj"))) %>% 
+    dplyr::rename(ID=Gene,
+                  `Fold Change`=avg_log2FC,
+                  `P-Value`=p_val,
+                  `Adjusted P-Value`=p_val_adj)
+  if (!is.null(cell)){
+    output_file2 <- fs::path(dir.ipa,paste0("Results_",cell_name,"_cells_for_",condition,".csv"))  
+  } else {
+    output_file2 <- fs::path(dir.ipa,paste0("Bulk_Results_for_",condition,".csv"))
+  }
+  write.csv(ipa_results, output_file2)
+  return(p)
 }
-#b. Senescence Genes
+
+
+#b. Senescence Genes ----
 degs_fxn_sens <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,top_gsea) {
   DefaultAssay(so) <- "RNA"
   
@@ -486,6 +493,251 @@ degs_fxn_sens <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichme
   # Call the function
   write_multiple_sheets(output_file, sheet_data)
 }
+
+#c. Pathway Genes ----
+degs_fxn_path <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_group,enrichment,top_gsea,pathway) {
+  DefaultAssay(so) <- "RNA"
+  
+  #Conidtion names
+  if(is.null(additional_group)) {
+    condition <- paste0(str_to_title(str_replace_all(exposure,"_"," ")),"_",exp_group,"_vs_",ref_group)
+    condition <- str_replace_all(condition," ","_")
+  } 
+  if(!is.null(additional_group)) {
+    condition <- paste0(additional_group,"_",str_to_title(str_replace_all(exposure,"_"," ")),"_",exp_group,"_vs_",ref_group)
+    condition <- str_replace_all(condition," ","_")
+  }
+  #Differential Expression by Group
+  if (!is.null(cell)) {
+    cell_name <- str_replace_all(cell,"/","_")
+  }
+  
+  de.markers(so, gene_set, exposure, id2 = ref_group, id1 = exp_group, cell, "")
+  colnames(m)[2] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group,")")
+  colnames(m)[3] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",ref_group,")")
+  
+  # Filter for significant genes
+  m_top <- m
+  significant_genes <- m_top %>% filter(p_val_adj < 0.05)
+  
+  # Select the top 10 positive and 10 negative log2FC genes based on the largest magnitude of fold change
+  top_positive_by_fc <- significant_genes %>% 
+    filter(avg_log2FC > 0) %>% 
+    arrange(desc(abs(avg_log2FC))) %>%  # Sort by absolute fold change (largest first)
+    head(10)  # Top 10 positive fold changes
+  
+  top_negative_by_fc <- significant_genes %>% 
+    filter(avg_log2FC < 0) %>% 
+    arrange(desc(abs(avg_log2FC))) %>%  # Sort by absolute fold change (largest first)
+    head(10)  # Top 10 negative fold changes
+  
+  # Select the top 10 positive and 10 negative log2FC genes based on significance (p_val_adj)
+  top_positive_by_significance <- significant_genes %>% 
+    filter(avg_log2FC > 0) %>% 
+    arrange(p_val_adj) %>%  # Sort by smallest p-value (most significant)
+    head(10)  # Top 10 most significant positive fold changes
+  
+  top_negative_by_significance <- significant_genes %>% 
+    filter(avg_log2FC < 0) %>% 
+    arrange(p_val_adj) %>%  # Sort by smallest p-value (most significant)
+    head(10)  # Top 10 most significant negative fold changes
+  
+  # Combine top fold-change based and significance-based genes into a final list
+  top_genes <- rbind(
+    top_positive_by_fc %>% mutate(Selection = "Top 10 by Fold Change"),
+    top_negative_by_fc %>% mutate(Selection = "Top 10 by Fold Change"),
+    top_positive_by_significance %>% mutate(Selection = "Top 10 by Significance"),
+    top_negative_by_significance %>% mutate(Selection = "Top 10 by Significance")
+  )
+  
+  if(is.null(additional_group)) {
+    condition2 <- paste0(str_to_title(exposure)," (",exp_group," vs. ",ref_group,")")
+    if (!is.null(cell)){
+      title <- paste0("DEGs in ",cell_name," cells for ",condition2)
+    } else {
+      title <- paste0("Bulk DEGs for ",condition2)
+    }
+  }
+  if(!is.null(additional_group)) {
+    condition2 <- paste0(additional_group," ",str_to_title(exposure)," (",exp_group," vs. ",ref_group,")")
+    if (!is.null(cell)){
+      title <- paste0("DEGs in ",cell_name," cells for ",condition2)
+    } else {
+      title <- paste0("Bulk DEGs for ",condition2)
+    }
+  } 
+  
+  
+  labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+  total_cells <- ncol(so)  # Total number of cells
+  total_genes <- nrow(m)  # Total number of genes in m_top
+  # Create subtitle with additional information
+  subtitle_text <- paste0(
+    "Positive Log2 FC = Greater Expression in ", condition2, "\n",
+    "(Significant at FDR-P<0.05, FC Threshold = 0.5, Min Gene Exp 5% Threshold) \n",
+    "Total Cells = ", total_cells, " | Total Genes = ", total_genes
+  )
+  p <- EnhancedVolcano(m_top,
+                       lab = labels,
+                       x = 'avg_log2FC',
+                       y = 'p_val_adj',
+                       title = title,
+                       subtitle = subtitle_text,
+                       pCutoff = 0.05,
+                       FCcutoff = 0.5,
+                       labFace = 'bold',
+                       pointSize = 4,
+                       labSize = 5,
+                       drawConnectors = TRUE,
+                       widthConnectors = 1.0,
+                       colConnectors = 'black',
+                       legendPosition=NULL,
+                       boxedLabels = TRUE,
+                       max.overlaps=60)
+  
+  
+  if(!is.null(additional_group)) {
+    if (!is.null(cell)){
+      filename <- paste0(additional_group,"_DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
+    } else {
+      filename <- paste0(additional_group,"_Bulk_DEGs_for_",condition,".pdf") 
+    }
+  }
+  if(is.null(additional_group)) {
+    if (!is.null(cell)){
+      filename <- paste0("DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
+    } else {
+      filename <- paste0("Bulk_DEGs_for_",condition,".pdf") 
+    }
+  }
+  pdf(fs::path(dir.results,filename),width=20,height=10)
+  plot(p)
+  dev.off()
+  
+  #GSEA
+  if (enrichment=="Yes") {
+    #Gene set enrichment analysis
+    gc()
+    sce_sn_hep <- as.SingleCellExperiment(so)
+    ## C2 category is according to canonical pathways: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
+    geneSets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG")
+    ### filter background to only include genes that we assessed
+    geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
+    geneSets <- geneSets[geneSets$gene_symbol %in% names(sce_sn_hep),]
+    m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
+    stats <- m$p_val_adj
+    names(stats) <- rownames(m)
+    eaRes <- fgsea(pathways = m_list, stats = na.omit(stats))
+    #ooEA <- order(eaRes$pval, decreasing = FALSE)
+    #kable(head(eaRes[ooEA, 1:7], n = 20))
+    # Convert the leadingEdge column to comma-separated strings
+    eaRes$leadingEdge <- sapply(eaRes$leadingEdge, function(x) paste(x, collapse = ", "))
+    gc()
+    #Significant pathways
+    sig <- eaRes %>% 
+      filter(padj<0.05)
+    
+    #Plot top pathways
+    # Subset top pathways for visualization
+    top_pathways <- eaRes[order(-abs(eaRes$NES)), ][1:top_gsea, ]  # Top 10 pathways based on adjusted p-value
+    
+    # Define a significance threshold
+    significance_threshold <- 0.05
+    
+    # Add a significance column for coloring
+    top_pathways$significance <- ifelse(
+      top_pathways$padj > significance_threshold, "Non-significant",
+      ifelse(top_pathways$NES > 0, "Positive Significant", "Negative Significant")
+    )
+    
+    if (!is.null(cell)) {
+      title <- paste0(additional_group,"_Top Enriched Pathways by NES (GSEA) in ",cell_name," cells among ",condition2)
+    } else {
+      title <- paste0(additional_group,"_Top Enriched Pathways by NES (GSEA) for ",condition2," (Bulk)")
+    }
+    # Create a bar plot
+    gsea_plot <- ggplot(top_pathways, aes(x = reorder(pathway, NES), y = NES, fill = significance)) +
+      geom_bar(stat = "identity") +
+      coord_flip() +  # Flip coordinates for better readability
+      scale_fill_manual(
+        values = c(
+          "Positive Significant" = "red",
+          "Negative Significant" = "blue",
+          "Non-significant" = "gray"
+        ),
+        name = "Significance"
+      ) +
+      labs(
+        title = title,
+        x = "Pathway",
+        y = "Normalized Enrichment Score (NES)"
+      ) +
+      theme_minimal(base_size = 12) +
+      theme(
+        axis.text.y = element_text(size = 10),
+        axis.title.y = element_text(size = 12),
+        plot.title = element_text(size = 14, face = "bold")
+      )
+    
+    
+    if (!is.null(cell)){
+      filename <- paste0(additional_group,"_GSEA_top_",top_gsea,"_pathways_",cell_name,"_cells_for",condition,".pdf")
+    } else {
+      filename <- paste0(additional_group,"_Bulk_GSEA_for_",condition,".pdf") 
+    }
+    pdf(fs::path(dir.results,filename),width=20,height=20)
+    plot(gsea_plot)
+    dev.off()
+    
+  }
+  #Make sure gene nemaes are in printed file
+  deg_results <- m 
+  deg_results$Gene <- rownames(deg_results)
+  
+  #save results to excel file
+  write_multiple_sheets <- function(output_file, sheet_data) {
+    # Create a new workbook
+    wb <- createWorkbook()
+    
+    # Loop over the list of data frames
+    for (sheet_name in names(sheet_data)) {
+      # Add a new sheet to the workbook
+      addWorksheet(wb, sheet_name)
+      
+      # Write the data frame to the sheet
+      writeData(wb, sheet_name, sheet_data[[sheet_name]])
+    }
+    # Save the workbook to the specified file
+    saveWorkbook(wb, file = output_file, overwrite = TRUE)
+  } 
+  
+  if (enrichment=="Yes") {
+    # Example usage
+    df1 <- deg_results
+    df2 <- eaRes
+  } else {
+    df1 <- deg_results
+    df2 <- NULL
+  }
+  
+  # Specify the file name and data
+  if (!is.null(cell)){
+    output_file <- fs::path(dir.results,paste0("Results_",cell_name,"_cells_for_",condition,".xlsx"))  
+  } else {
+    output_file <- fs::path(dir.results,paste0("Bulk_Results_for_",condition,".xlsx"))
+  }
+  
+  sheet_data <- list(
+    "DEG" = df1,
+    "Pathway_Results" = df2
+  )
+  
+  # Call the function
+  write_multiple_sheets(output_file, sheet_data)
+  return(p)
+  
+}
+
 
 #Visualize Function ----
 ##a. Bulk ----
@@ -775,7 +1027,7 @@ visualize_function <- function(exposure,cell) {
   }
   draw_venn(up1, up2, up3, down1, down2, down3)
   
- print(paste0("Group 1 = ",group1_title),paste0("Group 2 = ",group2_title),paste0("Group 3 = ",group3_title))
+  print(paste0("Group 1 = ",group1_title),paste0("Group 2 = ",group2_title),paste0("Group 3 = ",group3_title))
 }
 
 #so=so_sub
@@ -787,16 +1039,16 @@ visualize_function <- function(exposure,cell) {
 #ref_group="Lean Control"
 
 #Mast Function----
-mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,ref_group) {
+mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,ref_group,additional_group) {
   DefaultAssay(so) <- "RNA"
-
+  
   #Conidtion names
   if (!is.null(exp_group)) {
-  condition <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group," vs. ",ref_group,")")
+    condition <- paste0(additional_group,"_",str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group," vs. ",ref_group,") ")
   } else {
-    condition <- paste0(str_to_title(exposure))
+    condition <- paste0(additional_group,"_",str_to_title(exposure))
   }
-
+  
   #Filter so to specified cell type
   if (!is.null(cell)){
     so <- subset(so,celltype2==cell)
@@ -843,7 +1095,7 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
     
     #Overall with Hurdle and logFC
     fcHurdle1 <- merge(summary_dt[contrast==exp & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
-                      summary_dt[contrast==exp & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+                       summary_dt[contrast==exp & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
     fcHurdle1[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
     fcHurdle1$component <- "FC_H"
     fcHurdle2 <- merge(summary_dt[contrast==exp & component=='C',.(primerid, `Pr(>Chisq)`)], #hurdle P values
@@ -860,7 +1112,7 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
     
     result1 <- fcHurdle
     result1 <- result1 %>%
-      filter(fdr<0.05) %>% 
+      # filter(fdr<0.05) %>% 
       dplyr::rename(LogFoldChange=coef) %>% 
       dplyr::rename(Gene=primerid)
     
@@ -869,64 +1121,258 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
     combined_results <- rbindlist(list(combined_results, result1), use.names = TRUE, fill = TRUE)
     
   }
-
+  
   # Specify the file name and data
   if (!is.null(cell)){
-    output_file <- paste0("Results_",cell_name,"_cells_for_",condition,".xlsx")
+    output_file <- paste0("Results_MAST_for_",str_replace_all(" ", "_",additional_group),"_",cell_name,"_cells_for_",condition,".xlsx")
   } else {
-    output_file <- paste0("Results_for_",condition,".xlsx")
+    output_file <- paste0("Results_MAST_Bulk_",str_replace_all(" ", "_",additional_group),"_",condition,".xlsx")
   }
 
   write.csv(combined_results,fs::path(dir.results,output_file))
+
+  # # Filter top positive and negative log2FoldChange, including significance based on fdr
+  # top_pos <- as.data.frame(combined_results) %>%
+  #   filter(component == "FC_H") %>%
+  #   filter(LogFoldChange > 0 & fdr < 0.05)  # Positive fold change and significant (fdr < 0.05)
+  # 
+  # top_neg <- as.data.frame(combined_results) %>%
+  #   filter(component == "FC_H") %>%
+  #   filter(LogFoldChange < 0 & fdr < 0.05)  # Negative fold change and significant (fdr < 0.05)
+  # 
+  # # Non-significant data
+  # top_non_sig <- as.data.frame(combined_results) %>%
+  #   filter(component == "FC_H") %>%
+  #   filter(fdr >= 0.05)  # Non-significant data
+  # 
+  # # Combine positive, negative, and non-significant results
+  # top_genes <- bind_rows(top_pos, top_neg, top_non_sig)
+  # 
+  # # Add Direction column for positive and negative fold changes
+  # top_genes$Direction <- ifelse(top_genes$LogFoldChange > 0, "Positive", 
+  #                               ifelse(top_genes$LogFoldChange < 0, "Negative", "Non-significant"))
+  # 
+  # # Set sorting order: negative significant genes, positive significant genes, and non-significant
+  # top_genes <- top_genes %>%
+  #   mutate(Gene = factor(Gene, levels = Gene[order(Direction, LogFoldChange)]))  # Order by Direction and log2FC
+  # 
+  # # Assign colors based on significance and fold change
+  # top_genes$Color <- case_when(
+  #   top_genes$fdr < 0.05 & top_genes$LogFoldChange > 0 ~ "red",   # Positive and significant
+  #   top_genes$fdr < 0.05 & top_genes$LogFoldChange < 0 ~ "blue",  # Negative and significant
+  #   top_genes$fdr >= 0.05 ~ "grey"                                # Non-significant
+  # )
+  # 
+  # # Title setup
+  # if (!is.null(cell)) {
+  #   title <- paste0(additional_group, " ", condition, " ", cell_name)
+  # } else {
+  #   title <- paste0("Bulk", additional_group, " ", condition)
+  # }
+  # 
+  # # Volcano plot
+  # p <- ggplot(top_genes, aes(x = LogFoldChange, y = -log10(fdr), color = Color)) +
+  #   geom_point(size = 3) +  # Plot points
+  #   labs(x = "logFC", y = "-log10(FDR)", title = title) +
+  #   scale_color_identity() +  # Use predefined colors
+  #   theme_minimal() +
+  #   theme(text = element_text(family = "Times")) +
+  #   theme(legend.position = "none") +
+  #   theme(plot.title = element_text(hjust = 0.5))  # Center the plot title
   
-  # Filter top 10 positive and negative log2FoldChange
+  # # Filter top 10 positive and negative log2FoldChange
+  # top_pos <- as.data.frame(combined_results) %>%
+  #   filter(component == "FC_H") %>%
+  #   # filter(fdr < 0.05) %>%
+  #   filter(LogFoldChange > 0) 
+  #   # arrange(desc(LogFoldChange)) %>%
+  #   # dplyr::slice(1:30) 
+  # 
+  # top_neg <- as.data.frame(combined_results) %>%
+  #   filter(component == "FC_H") %>%
+  #   # filter(fdr < 0.05) %>%
+  #   filter(LogFoldChange < 0) 
+  #   # arrange(LogFoldChange) %>%
+  #   # dplyr::slice(1:30) 
+  # 
+  # if (dim(top_pos)[1] > 0 | dim(top_neg)[1] > 0) {
+  #   top_pos$Direction <- "Positive"
+  #   top_neg$Direction <- "Negative"
+  #   
+  #   # Combine and prepare for plotting
+  #   top_genes <- bind_rows(top_pos, top_neg)
+  #   
+  #   # Set sorting order: all negative genes first, then all positive genes
+  #   top_genes <- top_genes %>%
+  #     mutate(Gene = factor(Gene, levels = Gene[order(Direction, LogFoldChange)]))  # Order by Direction and log2FC
+  #   
+  #   if (!is.null(cell)) {
+  #     title <- paste0(additional_group, " ", condition, " ", cell_name)
+  #   } else {
+  #     title <- paste0("Bulk", additional_group, " ", condition)
+  #   }
+  #   
+  #   # Volcano plot
+  #   p <- ggplot(top_genes, aes(x = LogFoldChange, y = -log10(fdr), color = Direction)) +
+  #     geom_point(size = 3) +  # Plot points
+  #     labs(x = "logFC", y = "-log10(FDR)", title = title) +
+  #     scale_color_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  #     theme_minimal() +
+  #     theme(text = element_text(family = "Times")) +
+  #     theme(legend.position = "none") +
+  #     theme(plot.title = element_text(hjust = 0.5))  # Center the plot title
+  #   
+  
+  # Filter top positive and negative log2FoldChange, including significance based on fdr
   top_pos <- as.data.frame(combined_results) %>%
-    filter(component=="FC_H") %>% 
-    filter(fdr<0.05) %>%
-    filter(LogFoldChange>0) %>% 
-    arrange(desc(LogFoldChange)) %>%
-    dplyr::slice(1:30) 
-    # dplyr::rename(Gene=primerid,
-    #               LogFC=coef)
+    filter(component == "FC_H") %>%
+    filter(LogFoldChange > 0 & fdr < 0.05)  # Positive fold change and significant (fdr < 0.05)
   
   top_neg <- as.data.frame(combined_results) %>%
-    filter(component=="FC_H") %>% 
-    filter(fdr<0.05) %>%
-    filter(LogFoldChange<0)  %>% 
-      arrange(LogFoldChange) %>%
-      dplyr::slice(1:30) 
-    # dplyr::rename(Gene=primerid,
-    #               LogFC=coef)
-  if(dim(top_pos)[[1]] > 0 | dim(top_neg)[[1]] > 0) {
-  top_pos$Direction <- "Positive"
-  top_neg$Direction <- "Negative"
+    filter(component == "FC_H") %>%
+    filter(LogFoldChange < 0 & fdr < 0.05)  # Negative fold change and significant (fdr < 0.05)
   
-  # Combine and prepare for plotting
-  top_genes <- bind_rows(top_pos, top_neg)
+  # Non-significant data
+  top_non_sig <- as.data.frame(combined_results) %>%
+    filter(component == "FC_H") %>%
+    filter(fdr >= 0.05)  # Non-significant data
   
-  # Set sorting order: all negative genes first, then all positive genes
+  # Combine positive, negative, and non-significant results
+  top_genes <- bind_rows(top_pos, top_neg, top_non_sig)
+  
+  # Add Direction column for positive and negative fold changes
+  top_genes$Direction <- ifelse(top_genes$LogFoldChange > 0, "Positive", 
+                                ifelse(top_genes$LogFoldChange < 0, "Negative", "Non-significant"))
+  
+  # Set sorting order: negative significant genes, positive significant genes, and non-significant
   top_genes <- top_genes %>%
     mutate(Gene = factor(Gene, levels = Gene[order(Direction, LogFoldChange)]))  # Order by Direction and log2FC
   
-  # # Bar chart with flipped x and y axes
-  p <- ggplot(top_genes, aes(x = LogFoldChange, y = Gene, fill = Direction)) +
-    geom_bar(stat = "identity") +
-    labs(x = "logFC", y = "Gene",title=paste0(condition,"vs. ",reference," among", cell," cells in youth with Type 2 Diabetes")) +
-    scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
-    theme_minimal()+
-    theme(element_text(family="Times"))+
-    theme(legend.position="none")
+  # Assign colors based on significance and fold change
+  top_genes$Color <- case_when(
+    top_genes$fdr < 0.05 & top_genes$LogFoldChange > 0 ~ "red",   # Positive and significant
+    top_genes$fdr < 0.05 & top_genes$LogFoldChange < 0 ~ "blue",  # Negative and significant
+    top_genes$fdr >= 0.05 ~ "grey"                                # Non-significant
+  )
   
-  if (!is.null(cell)){
-    figure_file<- paste0("MAST_Barchart_",cell_name,"_cells_for_",condition,".pdf")
+  # Identify top 10 most positive and top 10 most negative significant genes
+  top_pos_10 <- top_pos %>%
+    arrange(desc(LogFoldChange)) %>%
+    slice_head(n = 10)  # Top 10 positive significant genes
+  
+  top_neg_10 <- top_neg %>%
+    arrange(LogFoldChange) %>%
+    slice_head(n = 10)  # Top 10 negative significant genes
+  
+  # Combine the top 10 positive and negative significant genes for labeling
+  top_labels <- bind_rows(top_pos_10, top_neg_10)
+  
+  # Count the number of genes and cells included in the plot
+  num_genes <- nrow(top_genes)
+  num_cells <- length(unique(top_genes$Gene))  # Assuming each Gene represents a unique cell (adjust if you have specific cell data)
+  
+  # Title setup
+  if (!is.null(cell)) {
+    title <- paste0(additional_group, " ", condition, " ", cell_name)
   } else {
-    figure_file <- paste0("MAST_Barchart_for_",condition,".pdf")
+    title <- paste0("Bulk", additional_group, " ", condition)
+  }
+  subtitle <- paste0("Genes: ", num_genes, " | Cells: ", num_cells)
+  
+  # Volcano plot
+  g <- ggplot(top_genes, aes(x = LogFoldChange, y = -log10(fdr), color = Color)) +
+    geom_point(size = 3) +  # Plot points
+    labs(x = "logFC", y = "-log10(FDR)", title = title,subtitle = subtitle) +
+    scale_color_identity() +  # Use predefined colors
+    theme_minimal() +
+    theme(text = element_text(family = "Times")) +
+    theme(legend.position = "none") +
+    theme(plot.title = element_text(hjust = 0.5))  # Center the plot title
+  
+  # Add labels for the top 10 positive and negative significant genes
+  p <- g + geom_text(data = top_labels, aes(x = LogFoldChange, y = -log10(fdr), label = Gene), 
+                     vjust = 1, hjust = 1, size = 3, color = "black")
+  
+  # Generate the file name for the figure
+  if (!is.null(cell)) {
+    figure_file <- paste0("MAST_Volcano Plot_", cell_name, "_cells_for_", condition, "_", str_replace_all(" ", "_", additional_group), ".pdf")
+  } else {
+    figure_file <- paste0("MAST_Volcano_for_", condition, "_", str_replace_all(" ", "_", additional_group), ".pdf")
   }
   
-  pdf(fs::path(dir.results,figure_file),width=20,height=20)
+  # Save the plot as a PDF
+  pdf(fs::path(dir.results, figure_file), width = 20, height = 20)
   plot(p)
   dev.off()
+  
+  
+    if (!is.null(cell)){
+      figure_file<- paste0("MAST_Volcano Plot_",cell_name,"_cells_for_",condition,"_",str_replace_all(" ", "_",additional_group),".pdf")
+    } else {
+      figure_file <- paste0("MAST_Volcano_for_",condition,"_",str_replace_all(" ", "_",additional_group),".pdf")
+    }
+    
+    pdf(fs::path(dir.results,figure_file),width=20,height=20)
+    plot(p)
+    dev.off()
+  # }
+  
+  # Filter top 10 positive and negative log2FoldChange
+  top_pos <- as.data.frame(combined_results) %>%
+    filter(component=="FC_H") %>%
+    filter(fdr<0.05) %>%
+    filter(LogFoldChange>0) %>%
+    arrange(desc(LogFoldChange)) %>%
+    dplyr::slice(1:30)
+  # dplyr::rename(Gene=primerid,
+  #               LogFC=coef)
+  
+  top_neg <- as.data.frame(combined_results) %>%
+    filter(component=="FC_H") %>%
+    filter(fdr<0.05) %>%
+    filter(LogFoldChange<0)  %>%
+    arrange(LogFoldChange) %>%
+    dplyr::slice(1:30)
+  # dplyr::rename(Gene=primerid,
+  #               LogFC=coef)
+  if(dim(top_pos)[[1]] > 0 | dim(top_neg)[[1]] > 0) {
+    top_pos$Direction <- "Positive"
+    top_neg$Direction <- "Negative"
+    
+    # Combine and prepare for plotting
+    top_genes <- bind_rows(top_pos, top_neg)
+    
+    # Set sorting order: all negative genes first, then all positive genes
+    top_genes <- top_genes %>%
+      mutate(Gene = factor(Gene, levels = Gene[order(Direction, LogFoldChange)]))  # Order by Direction and log2FC
+    
+    if (!is.null(cell)){
+      title <- paste0(additional_group," ",condition," ",cell_name)
+    } else {
+      title <- paste0("Bulk",additional_group," ",condition)
+    }
+    
+    # # Bar chart with flipped x and y axes
+    p2 <- ggplot(top_genes, aes(x = LogFoldChange, y = Gene, fill = Direction)) +
+      geom_bar(stat = "identity") +
+      labs(x = "logFC", y = "Gene",title=title) +
+      scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+      theme_minimal()+
+      theme(element_text(family="Times"))+
+      theme(legend.position="none")
+    
+    if (!is.null(cell)){
+      figure_file<- paste0("MAST_Barchart_",cell_name,"_cells_for_",condition,"_",str_replace_all(" ", "_",additional_group),".pdf")
+    } else {
+      figure_file <- paste0("MAST_Barchart_for_",condition,"_",str_replace_all(" ", "_",additional_group),".pdf")
+    }
+    
+    pdf(fs::path(dir.results,figure_file),width=20,height=20)
+    plot(p2)
+    dev.off()
   }
+  return (p)
+  # return(p2)
 }
 
 

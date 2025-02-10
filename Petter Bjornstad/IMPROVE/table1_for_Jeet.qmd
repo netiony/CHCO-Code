@@ -12,9 +12,6 @@ format:
 editor: source
 ---
 
-Questions:
-
-1) Jeet's VSG paper has N = 5 pairs, we have N = 6
 
 ```{r}
 #| include: false
@@ -25,16 +22,12 @@ library(knitr)
 df <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", na.strings = "")
 df <- df %>% filter(study == "IMPROVE", visit %in% c("baseline", "3_months_post_surgery", "12_months_post_surgery"))
 load("/Volumes/Peds Endo/Petter Bjornstad/IMPROVE T2D/Olink Data/improve_olink_plasma.Rdata")
+full_vars <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/IMPROVE T2D/Data_Raw/IMPROVE_data_dump_dict.csv", na.strings = "")
 
 # Select variables for T1
 df <- df %>%
   dplyr::select(
-    record_id, visit, weight, bmi,
-    bod_pod_body_fat, gfr_raw_plasma, gfr_bsa_plasma,
-    ff, acr_u,albuminuria_cat, elevated_albuminuria,
-    contains("fsoc_"), map, sbp, dbp, fbg, hba1c, airg, acprg,
-    contains("glom_volume"), mes_matrix_area, mes_index,
-    contains("mes_volume"), glom_nuc_count,
+    record_id, visit, full_vars$variable_name,
     metformin_timepoint, insulin_med_timepoint,
     gir_190, gir_200, 
     total_kidney_volume_ml, left_kidney_volume_ml, right_kidney_volume_ml,
@@ -43,22 +36,54 @@ df <- df %>%
   ) %>%
   group_by(record_id, visit) %>%
   summarise_all(~ last(na.omit(.x)))
+df <- df[, colSums(!is.na(df)) > 0]
+dat <- df
+
+ids <- df$record_id[which(duplicated(df$record_id))]
+df <- df %>% filter(record_id %in% ids) # participants with at least 2 visits
+
+
+# manual kidney volume
+kv_dat <- read.csv("/Users/choiyej/GitHub/YC_CHCO/RH/Phoom/RENALHEIR_IMPROVE_kidney volume.csv", na.strings = "")
+
+kv_dat_long <- kv_dat %>%
+  filter(record_id %in% df$record_id) %>%
+  reshape(direction = "long",
+          varying = list(c("X1_date", "X2_date", "X3_date"),
+                         c("X1_length_left", "X2_length_left", "X3_length_left"),
+                         c("X1_length_right", "X2_length_right", "X3_length_right"),
+                         c("X1_width_left", "X2_width_left", "X3_width_left"),
+                         c("X1_width_right", "X2_width_right", "X3_width_right"),
+                         c("X1_depth_left", "X2_depth_left", "X3_depth_left"),
+                         c("X1_depth_right", "X2_depth_right", "X3_depth_right")),
+          v.names = c("date", "length_left", "length_right", 
+                      "width_left", "width_right",
+                      "depth_left", "depth_right"),
+          idvar = c("record_id"),
+          timevar = "visit") %>%
+  filter(!is.na(date)) %>%
+  dplyr::mutate(skv_left = as.numeric(length_left) * as.numeric(width_left) * as.numeric(depth_left) * (pi/6),
+         skv_right = as.numeric(length_right) * as.numeric(width_right) * as.numeric(depth_right) * (pi/6),
+         tkv_manual = coalesce(skv_left, 0) + coalesce(skv_right, 0))
+kv_dat_long$date <- as.Date(kv_dat_long$date, format ="%Y_%m_%d")
+kv_dat_long <- kv_dat_long %>%
+  dplyr::group_by(record_id) %>%
+  dplyr::mutate(date_diff = round(as.period(interval(min(date), date)) / months(1),1),
+                visit = case_when(date_diff == 0 ~ "baseline",
+                                  date_diff < 6 ~ "3_months_post_surgery",
+                                  date_diff > 6 ~ "12_months_post_surgery")) %>%
+  dplyr::select(record_id, visit, skv_left, skv_right, tkv_manual)
+
+df <- left_join(df, kv_dat_long) %>% 
+  dplyr::mutate(volume_left_comb = coalesce(skv_left, volume_left),
+                volume_right_comb = coalesce(skv_right, volume_right),
+                tkv_comb = coalesce(tkv_manual, sum(volume_left, volume_right)))
+
 # Additional formatting
 df$visit <- factor(df$visit,
                    levels = c("baseline", "3_months_post_surgery", "12_months_post_surgery"),
                    labels = c("Baseline", "3 Months Post Surgery", "12 Months Post Surgery")
 )
-
-dat <- df
-
-ids <- df$record_id[which(duplicated(df$record_id))]
-df <- df %>% filter(record_id %in% ids) # participants with at least 2 visits
-# Get names
-var_names <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv", na.strings = "")
-vars <- colnames(df)[3:(ncol(df)-1)]
-var_names <- var_names[var_names$variable_name %in% vars, ]
-labels <- as.list(var_names$label)
-names(labels) <- var_names$variable_name
 
 # dataframe with only baseline and month 12
 df_baseline_m12 <- df %>% filter(visit %in% c("Baseline", "12 Months Post Surgery"))
@@ -68,12 +93,19 @@ df_baseline_m12$visit <- droplevels(df_baseline_m12$visit)
 df_biopsy <- df %>% filter(!is.na(kit_id))
 df_biopsy_baseline_m12 <- df_biopsy %>% filter(visit %in% c("Baseline", "12 Months Post Surgery"))
 df_biopsy_baseline_m12$visit <- droplevels(df_biopsy_baseline_m12$visit)
+
+# Get names
+dict <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/data_dictionary_master.csv", na.strings = "")
+vars <- colnames(df)[3:(ncol(df)-1)]
+var_names <- dict[dict$variable_name %in% vars, ]
+labels <- as.list(var_names$label)
+names(labels) <- var_names$variable_name
 ```
 
 ```{r results='asis'}
 #| label: tbl-t1
 #| tbl-cap: Comparisons by Visit (Full Cohort)
-t1 <- paired(visit ~ 
+t1 <- paired(visit ~ sex + age + race + ethnicity + eGFR_CKD_epi +
                weight + bmi + bod_pod_body_fat + gfr_raw_plasma + gfr_bsa_plasma + 
                ff + signed.rank(acr_u,"Nmiss", "median", "q1q3", "range") + 
                albuminuria_cat + elevated_albuminuria +
@@ -82,9 +114,9 @@ t1 <- paired(visit ~
                dbp + fbg + hba1c + airg + acprg + gir_190 + glom_volume_con + glom_volume_weibel + 
                glom_volume_wiggins + mes_matrix_area + mes_index + mes_volume_con + 
                mes_volume_weibel + mes_volume_wiggins + glom_nuc_count + 
-               volume_left + volume_right , 
+               volume_left_comb + volume_right_comb + tkv_comb, 
              data = df_baseline_m12, id = record_id)
-summary(t1, labelTranslations = labels,pfootnote = T)
+summary(t1, labelTranslations = labels, pfootnote = T)
 ```
 
 
@@ -92,16 +124,18 @@ summary(t1, labelTranslations = labels,pfootnote = T)
 ```{r results='asis'}
 #| label: tbl-t1-biopsy
 #| tbl-cap: Comparisons by Visit (Participants with biopsy)
-t1_biopsy <- paired(visit ~ 
-               weight + bmi + bod_pod_body_fat + gfr_raw_plasma + gfr_bsa_plasma +
-               ff + signed.rank(acr_u,"Nmiss", "median", "q1q3", "range") + 
-               albuminuria_cat + elevated_albuminuria +
-               map + sbp + 
-               dbp + fbg + hba1c + airg + acprg + gir_190 + glom_volume_con + glom_volume_weibel + 
-               glom_volume_wiggins + mes_matrix_area + mes_index + mes_volume_con + 
-               mes_volume_weibel + mes_volume_wiggins + glom_nuc_count ,
- #              volume_left + volume_right 
-             data = df_biopsy_baseline_m12, id = record_id)
+df_biopsy_baseline_m12 <- df_biopsy_baseline_m12 %>% filter(record_id %nin% "IT_14") # manually removing IT_14 w/o baseline scRNA
+t1_biopsy <- paired(visit ~ sex + age + race + ethnicity + eGFR_CKD_epi +
+                      weight + bmi + bod_pod_body_fat +
+                      gfr_raw_plasma + gfr_bsa_plasma +
+                      ff + signed.rank(acr_u,"Nmiss", "median", "q1q3", "range") + 
+                      albuminuria_cat + elevated_albuminuria +
+                      map + sbp +  dbp + fbg + hba1c + airg + acprg + 
+                      gir_190 + glom_volume_con + glom_volume_weibel + 
+                      glom_volume_wiggins + mes_matrix_area + mes_index + mes_volume_con + 
+                      mes_volume_weibel + mes_volume_wiggins + glom_nuc_count +
+                      volume_left_comb + volume_right_comb + tkv_comb, 
+                    data = df_biopsy_baseline_m12, id = record_id)
 summary(t1_biopsy, labelTranslations = labels,pfootnote = T)
 
 ```
@@ -140,7 +174,7 @@ summary(t1_biopsy, labelTranslations = labels,pfootnote = T)
 ```{r results='asis'}
 #| label: tbl-t1-all-improve
 #| tbl-cap: Comparisons by Visit (Everyone enrolled in study)
-t1 <- tableby(visit ~ 
+t1 <- tableby(visit ~ sex + age + race + ethnicity + eGFR_CKD_epi +
                weight + bmi + bod_pod_body_fat + gfr_raw_plasma + gfr_bsa_plasma + 
                ff + kwt(acr_u,"Nmiss", "median", "q1q3", "range") + 
                albuminuria_cat + elevated_albuminuria +
@@ -149,8 +183,8 @@ t1 <- tableby(visit ~
                dbp + fbg + hba1c + airg + acprg + gir_190 + glom_volume_con + glom_volume_weibel + 
                glom_volume_wiggins + mes_matrix_area + mes_index + mes_volume_con + 
                mes_volume_weibel + mes_volume_wiggins + glom_nuc_count + 
-               volume_left + volume_right , 
-             data = dat)
+               volume_left_comb + volume_right_comb + tkv_comb,  
+             data = df)
 summary(t1, labelTranslations = labels, pfootnote = T, test = F)
   
 #   

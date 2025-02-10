@@ -1,0 +1,825 @@
+---
+title: "Liver scRNA analysis YC"
+author: "Ye Ji Choi"
+date: "2025-01-28"
+output: html_document
+--- 
+
+#1. Set up Libraries & Directores
+```{r libraries, echo=F, include = F}
+library(reprex)
+library(tidyverse)
+library(BiocManager)        
+library(arsenal)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(Seurat)
+library(future)
+library(colorspace)
+library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggpubr)
+library(rstatix)
+library(table1)
+library(Biobase)
+library(ReactomeGSA)
+library(GSEABase)
+library(msigdbr)
+library(kableExtra)
+library(knitr)
+library(SingleCellExperiment)
+library(fgsea)
+library(EnhancedVolcano)
+library(openxlsx)
+library(BiocManager)
+library(MAST)
+library(ggrepel)
+# library(qpcR)
+library(ggpubr)
+library(openxlsx)
+library(ggplot2)
+library(GGally)
+library(GSEABase)
+library(limma)
+library(reshape2)
+library(data.table)
+library(knitr)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(stringr)
+library(NMF)
+library(rsvd)
+library(RColorBrewer)
+library(MAST)
+library(devtools)
+# install_github("Sun-lab/ideas",force=T)
+library(ideas)
+library(foreach)
+library(doRNG)
+library(doParallel)
+registerDoParallel(cores = 6)
+
+
+#options(mc.cores = detectCores() - 1) #if you have multiple cores to spin
+options(mc.cores = 1)
+knitr::opts_chunk$set(message = FALSE,error = FALSE,warning = FALSE,cache = FALSE,fig.width=8,fig.height=6)
+
+#Local file path
+# dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
+dir.dat2 <- c("/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/data_clean")
+# dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+# dir.results <- c("/Users/hhampson/Documents/UW/1_Ongoing Projects/Liver scRNAseq/2_Results")
+
+#Lambda file path
+dir.dat <- c("/run/user/778527649/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
+dir.code <- c("/home/choiyej/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+dir.results <- c(fs::path(dir.dat,"Liver project/Results"))
+
+
+plan()
+future::plan("sequential")
+options(future.globals.maxSize = 3e9)
+
+#Load functions
+source("Liver_functions.R")
+
+```
+
+#2a. Load Full Data & Clean: snRNA & MetaData
+```{r echo = F}
+# Liver snRNA data processing
+gc()
+#Local
+# so_liver_sn <- readRDS(fs::path(dir.dat,"scRNA","data_raw","NoRef_PetterLiver_ClinData_Labels_Char_041924.RDS"))
+#Lambda
+so_liver_sn <- readRDS(fs::path(dir.dat,"scRNA","data_raw","NoRef_PetterLiver_ClinData_Labels_Char_041924.RDS"))
+
+gc()
+#Local
+# meta_liver_raw <- read.csv(fs::path(dir.dat,"scRNA","data_clean","liver_biopsy_metadata_PN.csv"))
+#Lambda
+meta_liver_raw <- read.csv(fs::path(dir.dat,"scRNA","data_clean","liver_biopsy_metadata_PN.csv"))
+
+meta_liver_sn <-  so_liver_sn@meta.data[,1:11] %>%
+  dplyr::mutate(RNAlater_ID = SampleID) %>%
+  left_join(meta_liver_raw)
+
+rownames(meta_liver_sn) <- rownames(so_liver_sn@meta.data)
+so_liver_sn <- AddMetaData(so_liver_sn, meta_liver_sn)
+rm(meta_liver_sn,meta_liver_raw)
+
+#Switch default assay in seurat object to RNA
+DefaultAssay(so_liver_sn) <- "RNA"
+gc()
+
+#Create liver disease and drug groups
+so_liver_sn@meta.data <- so_liver_sn@meta.data %>% 
+  mutate(both=ifelse(glp1agonist=="Yes" & sglt2=="Yes","Yes","No")) %>% 
+  mutate(sglt2_exclusive=ifelse(sglt2=="Yes" & glp1agonist=="No","Yes","No")) %>% 
+  mutate(glp1_exclusive=ifelse(sglt2=="No" & glp1agonist=="Yes","Yes","No")) %>% 
+  mutate(neither=ifelse(sglt2=="No" & glp1agonist=="No","Yes","No"))
+
+# Create a single grouping variable
+so_liver_sn@meta.data <- so_liver_sn@meta.data %>% 
+  mutate(group2=case_when(both == "Yes" ~ "both",
+                         sglt2_exclusive == "Yes" ~ "sglt2_exclusive",
+                         glp1_exclusive == "Yes" ~ "glp1_exclusive",
+                         neither == "Yes" ~ "neither"))
+
+so_liver_sn@meta.data$group2 <- factor(so_liver_sn@meta.data$group2, levels = c("neither", "sglt2_exclusive", "glp1_exclusive","both"))
+```
+
+-OR-
+#2b. Load Cleaned & Formatted snRNA Hepatocyte Data
+```{r}
+# #Create heptatocyte only so
+gc()
+so_liver_sn_hep <- subset(so_liver_sn, celltype %in% c("Hep-1", "Hep-2", "Hep-3", "Hep-4", "Hep-5"))
+gc()
+so_liver_sn_hep$hepatocyte <- "Hepatocyte"
+Idents(so_liver_sn_hep) <- so_liver_sn_hep$hepatocyte
+gc()
+```
+
+#2c. Load Senesence Data 
+```{r}
+so_sens <- readRDS(fs::path(dir.dat2,"so_sens_genes.RDS"))
+so_diab <- subset(so_sens, diagnosis_of_diabetes == "Yes")
+DefaultAssay(object = so_diab) <- "RNA"
+# so_sens <- readRDS("/Users/hhampson/Desktop/so_sens_genes.RDS")
+
+#Create senesence so in all cell types
+sens_gene_in_data <- intersect(sens_genes, rownames(so_liver_sn))
+# Subset the Seurat object to include only genes in sens_gene_in_data
+so_sens_all <- subset(so_liver_sn, features = sens_gene_in_data)
+# rm(so_liver_sn)
+#saveRDS(so_sens_all,fs::path(dir.dat2,"so_sens_genes_all_cells.RDS"))
+
+#Load sens all cells
+so_sens <- readRDS(fs::path(dir.dat2,"so_sens_genes_all_cells.RDS"))
+so_diab <- subset(so_sens, diagnosis_of_diabetes == "Yes")
+DefaultAssay(object = so_diab) <- "RNA"
+sens_genes <- head(sens_genes, -1) # last element doesn't exist (CDKN1A)
+```
+
+# DEG of senescence
+## Pooled
+```{r echo = F}
+# T2D vs. OC
+de.markers(so_liver_sn_hep, sens_genes, "diagnosis_of_diabetes", "Yes", "No", 
+           NULL, "", logfc.threshold = 0.25)
+# Select the top 10 positive and top 10 negative log2FC genes that are significant
+top_genes <- rbind(
+  m %>% filter(p_val_adj < 0.05) %>% arrange(desc(avg_log2FC)) %>% head(10),  # Top 10 positive log2FC
+  m %>% filter(p_val_adj < 0.05) %>% arrange(avg_log2FC) %>% head(10)         # Top 10 negative log2FC
+)
+labels <- ifelse(rownames(m) %in% rownames(top_genes), rownames(m), NA)
+
+p <- EnhancedVolcano(m,
+                     lab = labels,
+                     x = 'avg_log2FC',
+                     y = 'p_val_adj',
+                     title = paste0("T2D vs. Obese Control"),
+                     subtitle = "",
+                     pCutoff = 0.05,
+                     FCcutoff = 0.25,
+                     labFace = 'bold',
+                     pointSize = 4,
+                     labSize = 5,
+                     drawConnectors = TRUE,
+                     widthConnectors = 1.0,
+                     colConnectors = 'black',
+                     legendPosition=c(0.9,0.5),
+                     boxedLabels = TRUE,
+                     max.overlaps=30, 
+                     caption = "")
+p
+ggsave("/home/choiyej/thinclient_drives/Biostati/Liver project/Figures/DEG_volcano_hep_group.jpeg", p,
+       width = 12, height = 10)
+
+# MASLD vs. no MASLD
+de.markers(so_liver_sn_hep, sens_genes, "diagnosis_of_MASLD", "Yes", "No", 
+           NULL, "", logfc.threshold = 0.25)
+# Select the top 10 positive and top 10 negative log2FC genes that are significant
+top_genes <- rbind(
+  m %>% filter(p_val_adj < 0.05) %>% arrange(desc(avg_log2FC)) %>% head(10),  # Top 10 positive log2FC
+  m %>% filter(p_val_adj < 0.05) %>% arrange(avg_log2FC) %>% head(10)         # Top 10 negative log2FC
+)
+labels <- ifelse(rownames(m) %in% rownames(top_genes), rownames(m), NA)
+
+p <- EnhancedVolcano(m,
+                     lab = labels,
+                     x = 'avg_log2FC',
+                     y = 'p_val_adj',
+                     title = paste0("MASLD vs. No MASLD"),
+                     subtitle = "",
+                     pCutoff = 0.05,
+                     FCcutoff = 0.25,
+                     labFace = 'bold',
+                     pointSize = 4,
+                     labSize = 5,
+                     drawConnectors = TRUE,
+                     widthConnectors = 1.0,
+                     colConnectors = 'black',
+                     legendPosition=c(0.9,0.5),
+                     boxedLabels = TRUE,
+                     max.overlaps=30, 
+                     caption = "")
+p
+ggsave("/home/choiyej/thinclient_drives/Biostati/Liver project/Figures/DEG_volcano_hep_MASLD_pooled.jpeg", p,
+       width = 12, height = 10)
+```
+
+## Obese only
+```{r echo = F}
+so_liver_sn_hep_ob <- subset(so_liver_sn_hep, diagnosis_of_diabetes == "No")
+```
+
+```{r echo = F}
+# Fibrosis vs. no fibrosis
+de.markers(so_liver_sn_hep_ob, sens_genes, "fibrosis_stage", "1", "0", 
+           NULL, "", logfc.threshold = 0.25)
+# Select the top 10 positive and top 10 negative log2FC genes that are significant
+top_genes <- rbind(
+  m %>% filter(p_val_adj < 0.05) %>% arrange(desc(avg_log2FC)) %>% head(10),  # Top 10 positive log2FC
+  m %>% filter(p_val_adj < 0.05) %>% arrange(avg_log2FC) %>% head(10)         # Top 10 negative log2FC
+)
+labels <- ifelse(rownames(m) %in% rownames(top_genes), rownames(m), NA)
+
+p <- EnhancedVolcano(m,
+                     lab = labels,
+                     x = 'avg_log2FC',
+                     y = 'p_val_adj',
+                     title = paste0("Fibrosis vs. No Fibrosis (Obese only N=7)"),
+                     subtitle = "",
+                     pCutoff = 0.05,
+                     FCcutoff = 0.25,
+                     labFace = 'bold',
+                     pointSize = 4,
+                     labSize = 5,
+                     drawConnectors = TRUE,
+                     widthConnectors = 1.0,
+                     colConnectors = 'black',
+                     legendPosition=c(0.9,0.5),
+                     boxedLabels = TRUE,
+                     max.overlaps=30, 
+                     caption = "")
+p
+ggsave("/home/choiyej/thinclient_drives/Biostati/Liver project/Figures/DEG_volcano_hep_fib_OB.jpeg", p,
+       width = 12, height = 10)
+
+# MASLD vs. no MASLD
+de.markers(so_liver_sn_hep_ob, sens_genes, "diagnosis_of_MASLD", "Yes", "No", 
+           NULL, "", logfc.threshold = 0.25)
+# Select the top 10 positive and top 10 negative log2FC genes that are significant
+top_genes <- rbind(
+  m %>% filter(p_val_adj < 0.05) %>% arrange(desc(avg_log2FC)) %>% head(10),  # Top 10 positive log2FC
+  m %>% filter(p_val_adj < 0.05) %>% arrange(avg_log2FC) %>% head(10)         # Top 10 negative log2FC
+)
+labels <- ifelse(rownames(m) %in% rownames(top_genes), rownames(m), NA)
+
+p <- EnhancedVolcano(m,
+                     lab = labels,
+                     x = 'avg_log2FC',
+                     y = 'p_val_adj',
+                     title = paste0("MASLD vs. No MASLD (Obese only N=7)"),
+                     subtitle = "",
+                     pCutoff = 0.05,
+                     FCcutoff = 0.25,
+                     labFace = 'bold',
+                     pointSize = 4,
+                     labSize = 5,
+                     drawConnectors = TRUE,
+                     widthConnectors = 1.0,
+                     colConnectors = 'black',
+                     legendPosition=c(0.9,0.5),
+                     boxedLabels = TRUE,
+                     max.overlaps=30, 
+                     caption = "")
+p
+ggsave("/home/choiyej/thinclient_drives/Biostati/Liver project/Figures/DEG_volcano_hep_MASLD_OB.jpeg", p,
+       width = 12, height = 10)
+```
+## T2D only
+```{r echo = F}
+so_liver_sn_hep_t2d <- subset(so_liver_sn_hep, diagnosis_of_diabetes == "Yes")
+```
+
+
+# MAST
+## Pooled
+```{r}
+# subset so to just scenescence genes
+so_liver_sn_hep_sens <- subset(so_liver_sn_hepyyZZZ, features = sens_genes)
+# Extract the expression data matrix (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_liver_sn_hep_sens, layer = "data"))
+
+# Extract metadata
+cell_metadata <- so_liver_sn_hep_sens@meta.data
+
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+```
+
+```{r echo = F}
+# AST
+summary_zlm <- summary(zlm(~ast, sca), doLRT = "ast")
+summary_dt <- summary_zlm$datatable
+fcHurdle <- merge(summary_dt[contrast=='ast' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                  summary_dt[contrast=='ast' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+m <- fcHurdle[,c("primerid","coef","fdr")]
+top_pos <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef>0) %>% 
+  dplyr::rename(Gene=primerid)
+top_pos <- top_pos[c("Gene","coef","fdr")]
+rownames(top_pos) <- NULL
+top_pos$Direction <- "Positive"
+
+top_neg <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef<0) %>% 
+  dplyr::rename(Gene=primerid)
+top_neg$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes <- bind_rows(top_pos, top_neg) 
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes <- top_genes %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, coef)]))  # Order by Direction and log2FC
+# # Bar chart with flipped x and y axes
+b <- ggplot(top_genes, aes(x = coef, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "logFC", y = "Gene", title = "AST (Pooled)") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(legend.position="none")
+b
+ggsave("/home/choiyej/thinclient_drives/Biostati/Liver project/Figures/hurdle_ast_pooled.jpeg", b,
+       width = 7, height = 10)
+
+# ALT
+summary_zlm <- summary(zlm(~alt, sca), doLRT = "alt")
+summary_dt <- summary_zlm$datatable
+fcHurdle <- merge(summary_dt[contrast=='alt' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                  summary_dt[contrast=='alt' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+m <- fcHurdle[,c("primerid","coef","fdr")]
+top_pos <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef>0) %>% 
+  dplyr::rename(Gene=primerid)
+top_pos <- top_pos[c("Gene","coef","fdr")]
+rownames(top_pos) <- NULL
+top_pos$Direction <- "Positive"
+
+top_neg <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef<0) %>% 
+  dplyr::rename(Gene=primerid)
+top_neg$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes <- bind_rows(top_pos, top_neg) 
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes <- top_genes %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, coef)]))  # Order by Direction and log2FC
+# # Bar chart with flipped x and y axes
+b <- ggplot(top_genes, aes(x = coef, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "logFC", y = "Gene", title = "ALT (Pooled)") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(legend.position="none")
+b
+ggsave("/home/choiyej/thinclient_drives/Biostati/Liver project/Figures/hurdle_alt_pooled.jpeg", b,
+       width = 7, height = 10)
+
+# Fibrosis (No one in T2D has fibrosis)
+colData(sca)$fibrosis_stage <- as.factor(colData(sca)$fibrosis_stage)
+summary_zlm <- summary(zlm(~fibrosis_stage, sca), doLRT = "fibrosis_stage1")
+summary_dt <- summary_zlm$datatable
+fcHurdle <- merge(summary_dt[contrast=='fibrosis_stage1' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                  summary_dt[contrast=='fibrosis_stage1' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+m <- fcHurdle[,c("primerid","coef","fdr")]
+top_pos <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef>0) %>%
+  dplyr::rename(Gene=primerid)
+top_pos <- top_pos[c("Gene","coef","fdr")]
+rownames(top_pos) <- NULL
+top_pos$Direction <- "Positive"
+
+top_neg <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef<0) %>%
+  dplyr::rename(Gene=primerid)
+top_neg$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes <- bind_rows(top_pos, top_neg)
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes <- top_genes %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, coef)]))  # Order by Direction and log2FC
+# # Bar chart with flipped x and y axes
+b <- ggplot(top_genes, aes(x = coef, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "logFC", y = "Gene", title = "Fibrosis (Pooled)") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(legend.position="none")
+b
+ggsave("/home/choiyej/thinclient_drives/Biostati/Liver project/Figures/hurdle_fibrosis_pooled.jpeg", b,
+       width = 7, height = 10)
+
+# Steatosis
+summary_zlm <- summary(zlm(~steatosis_grade, sca), doLRT = "steatosis_grade")
+summary_dt <- summary_zlm$datatable
+fcHurdle <- merge(summary_dt[contrast=='steatosis_grade' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                  summary_dt[contrast=='steatosis_grade' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+m <- fcHurdle[,c("primerid","coef","fdr")]
+top_pos <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef>0) %>% 
+  dplyr::rename(Gene=primerid)
+top_pos <- top_pos[c("Gene","coef","fdr")]
+rownames(top_pos) <- NULL
+top_pos$Direction <- "Positive"
+
+top_neg <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef<0) %>% 
+  dplyr::rename(Gene=primerid)
+top_neg$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes <- bind_rows(top_pos, top_neg) 
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes <- top_genes %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, coef)]))  # Order by Direction and log2FC
+# # Bar chart with flipped x and y axes
+b <- ggplot(top_genes, aes(x = coef, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "logFC", y = "Gene", title = "Steatosis (Pooled)") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(legend.position="none")
+b
+ggsave("/home/choiyej/thinclient_drives/Biostati/Liver project/Figures/hurdle_steatosis_pooled.jpeg", b,
+       width = 7, height = 10)
+
+
+
+```
+
+## Obese only
+```{r}
+# subset so to just scenescence genes
+so_liver_sn_hep_sens_ob <- subset(so_liver_sn_hep_ob, features = sens_genes)
+# Extract the expression data matrix (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_liver_sn_hep_sens_ob, layer = "data"))
+
+# Extract metadata
+cell_metadata <- so_liver_sn_hep_sens_ob@meta.data
+
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+```
+
+```{r echo = F}
+# AST
+summary_zlm <- summary(zlm(~ast, sca), doLRT = "ast")
+summary_dt <- summary_zlm$datatable
+fcHurdle <- merge(summary_dt[contrast=='ast' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                  summary_dt[contrast=='ast' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+m <- fcHurdle[,c("primerid","coef","fdr")]
+top_pos <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef>0) %>% 
+  dplyr::rename(Gene=primerid)
+top_pos <- top_pos[c("Gene","coef","fdr")]
+rownames(top_pos) <- NULL
+top_pos$Direction <- "Positive"
+
+top_neg <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef<0) %>% 
+  dplyr::rename(Gene=primerid)
+top_neg$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes <- bind_rows(top_pos, top_neg) 
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes <- top_genes %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, coef)]))  # Order by Direction and log2FC
+# # Bar chart with flipped x and y axes
+b <- ggplot(top_genes, aes(x = coef, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "logFC", y = "Gene", title = "AST (Obese only)") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(legend.position="none")
+b
+ggsave("/home/choiyej/thinclient_drives/Biostati/Liver project/Figures/hurdle_ast_ob.jpeg", b,
+       width = 7, height = 10)
+
+# ALT
+summary_zlm <- summary(zlm(~alt, sca), doLRT = "alt")
+summary_dt <- summary_zlm$datatable
+fcHurdle <- merge(summary_dt[contrast=='alt' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                  summary_dt[contrast=='alt' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+m <- fcHurdle[,c("primerid","coef","fdr")]
+top_pos <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef>0) %>% 
+  dplyr::rename(Gene=primerid)
+top_pos <- top_pos[c("Gene","coef","fdr")]
+rownames(top_pos) <- NULL
+top_pos$Direction <- "Positive"
+
+top_neg <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef<0) %>% 
+  dplyr::rename(Gene=primerid)
+top_neg$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes <- bind_rows(top_pos, top_neg) 
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes <- top_genes %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, coef)]))  # Order by Direction and log2FC
+# # Bar chart with flipped x and y axes
+b <- ggplot(top_genes, aes(x = coef, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "logFC", y = "Gene", title = "ALT (Obese only)") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(legend.position="none")
+b
+ggsave("/home/choiyej/thinclient_drives/Biostati/Liver project/Figures/hurdle_alt_ob.jpeg", b,
+       width = 7, height = 10)
+
+# Fibrosis
+summary_zlm <- summary(zlm(~fibrosis_stage, sca), doLRT = "fibrosis_stage")
+summary_dt <- summary_zlm$datatable
+fcHurdle <- merge(summary_dt[contrast=='fibrosis_stage' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                  summary_dt[contrast=='fibrosis_stage' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+m <- fcHurdle[,c("primerid","coef","fdr")]
+top_pos <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef>0) %>% 
+  dplyr::rename(Gene=primerid)
+top_pos <- top_pos[c("Gene","coef","fdr")]
+rownames(top_pos) <- NULL
+top_pos$Direction <- "Positive"
+
+top_neg <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef<0) %>% 
+  dplyr::rename(Gene=primerid)
+top_neg$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes <- bind_rows(top_pos, top_neg) 
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes <- top_genes %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, coef)]))  # Order by Direction and log2FC
+# # Bar chart with flipped x and y axes
+b <- ggplot(top_genes, aes(x = coef, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "logFC", y = "Gene", title = "Fibrosis Stage (Obese only)") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(legend.position="none")
+b
+ggsave("/home/choiyej/thinclient_drives/Biostati/Liver project/Figures/hurdle_fibrosis_ob.jpeg", b,
+       width = 7, height = 10)
+# Steatosis
+summary_zlm <- summary(zlm(~steatosis_grade, sca), doLRT = "steatosis_grade")
+summary_dt <- summary_zlm$datatable
+fcHurdle <- merge(summary_dt[contrast=='steatosis_grade' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                  summary_dt[contrast=='steatosis_grade' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+m <- fcHurdle[,c("primerid","coef","fdr")]
+top_pos <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef>0) %>% 
+  dplyr::rename(Gene=primerid)
+top_pos <- top_pos[c("Gene","coef","fdr")]
+rownames(top_pos) <- NULL
+top_pos$Direction <- "Positive"
+
+top_neg <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef<0) %>% 
+  dplyr::rename(Gene=primerid)
+top_neg$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes <- bind_rows(top_pos, top_neg) 
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes <- top_genes %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, coef)]))  # Order by Direction and log2FC
+# # Bar chart with flipped x and y axes
+b <- ggplot(top_genes, aes(x = coef, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "logFC", y = "Gene", title = "Steatosis (Obese only)") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(legend.position="none")
+b
+ggsave("/home/choiyej/thinclient_drives/Biostati/Liver project/Figures/hurdle_steatosis_ob.jpeg", b,
+       width = 7, height = 10)
+
+
+```
+
+## T2D only
+```{r}
+# subset so to just scenescence genes
+so_liver_sn_hep_sens_t2d <- subset(so_liver_sn_hep_t2d, features = sens_genes)
+# Extract the expression data matrix (e.g., normalized counts)
+expression_matrix <- as.matrix(GetAssayData(so_liver_sn_hep_sens_t2d, layer = "data"))
+
+# Extract metadata
+cell_metadata <- so_liver_sn_hep_sens_t2d@meta.data
+
+# Create SingleCellAssay object
+sca <- FromMatrix(exprsArray = expression_matrix, cData = cell_metadata)
+```
+
+```{r echo = F}
+# AST
+summary_zlm <- summary(zlm(~ast, sca), doLRT = "ast")
+summary_dt <- summary_zlm$datatable
+fcHurdle <- merge(summary_dt[contrast=='ast' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                  summary_dt[contrast=='ast' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+m <- fcHurdle[,c("primerid","coef","fdr")]
+top_pos <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef>0) %>% 
+  dplyr::rename(Gene=primerid)
+top_pos <- top_pos[c("Gene","coef","fdr")]
+rownames(top_pos) <- NULL
+top_pos$Direction <- "Positive"
+
+top_neg <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef<0) %>% 
+  dplyr::rename(Gene=primerid)
+top_neg$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes <- bind_rows(top_pos, top_neg) 
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes <- top_genes %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, coef)]))  # Order by Direction and log2FC
+# # Bar chart with flipped x and y axes
+b <- ggplot(top_genes, aes(x = coef, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "logFC", y = "Gene", title = "AST (T2D only)") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(legend.position="none")
+b
+ggsave("/home/choiyej/thinclient_drives/Biostati/Liver project/Figures/hurdle_ast_t2d.jpeg", b,
+       width = 7, height = 10)
+
+# ALT
+summary_zlm <- summary(zlm(~alt, sca), doLRT = "alt")
+summary_dt <- summary_zlm$datatable
+fcHurdle <- merge(summary_dt[contrast=='alt' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                  summary_dt[contrast=='alt' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+m <- fcHurdle[,c("primerid","coef","fdr")]
+top_pos <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef>0) %>% 
+  dplyr::rename(Gene=primerid)
+top_pos <- top_pos[c("Gene","coef","fdr")]
+rownames(top_pos) <- NULL
+top_pos$Direction <- "Positive"
+
+top_neg <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef<0) %>% 
+  dplyr::rename(Gene=primerid)
+top_neg$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes <- bind_rows(top_pos, top_neg) 
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes <- top_genes %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, coef)]))  # Order by Direction and log2FC
+# # Bar chart with flipped x and y axes
+b <- ggplot(top_genes, aes(x = coef, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "logFC", y = "Gene", title = "ALT (T2D only)") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(legend.position="none")
+b
+ggsave("/home/choiyej/thinclient_drives/Biostati/Liver project/Figures/hurdle_alt_t2d.jpeg", b,
+       width = 7, height = 10)
+
+# Fibrosis (No one in T2D has fibrosis)
+# colData(sca)$fibrosis_stage <- as.factor(colData(sca)$fibrosis_stage)
+# summary_zlm <- summary(zlm(~fibrosis_stage, sca), doLRT = "fibrosis_stage")
+# summary_dt <- summary_zlm$datatable
+# fcHurdle <- merge(summary_dt[contrast=='fibrosis_stage' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+#                   summary_dt[contrast=='fibrosis_stage' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+# fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+# m <- fcHurdle[,c("primerid","coef","fdr")]
+# top_pos <- as.data.frame(m) %>%
+#   filter(fdr<0.05) %>%
+#   filter(coef>0) %>% 
+#   dplyr::rename(Gene=primerid)
+# top_pos <- top_pos[c("Gene","coef","fdr")]
+# rownames(top_pos) <- NULL
+# top_pos$Direction <- "Positive"
+# 
+# top_neg <- as.data.frame(m) %>%
+#   filter(fdr<0.05) %>%
+#   filter(coef<0) %>% 
+#   dplyr::rename(Gene=primerid)
+# top_neg$Direction <- "Negative"
+# 
+# # Combine and prepare for plotting
+# top_genes <- bind_rows(top_pos, top_neg) 
+# 
+# # Set sorting order: all negative genes first, then all positive genes
+# top_genes <- top_genes %>%
+#   mutate(Gene = factor(Gene, levels = Gene[order(Direction, coef)]))  # Order by Direction and log2FC
+# # # Bar chart with flipped x and y axes
+# b <- ggplot(top_genes, aes(x = coef, y = Gene, fill = Direction)) +
+#   geom_bar(stat = "identity") +
+#   labs(x = "logFC", y = "Gene", title = "Fibrosis (T2D only)") +
+#   scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+#   theme_minimal()+
+#   theme(legend.position="none")
+# b
+# ggsave("/home/choiyej/thinclient_drives/Biostati/Liver project/Figures/hurdle_fibrosis_t2d.jpeg", b,
+#        width = 7, height = 10)
+
+# Steatosis
+summary_zlm <- summary(zlm(~steatosis_grade, sca), doLRT = "steatosis_grade")
+summary_dt <- summary_zlm$datatable
+fcHurdle <- merge(summary_dt[contrast=='steatosis_grade' & component=='H',.(primerid, `Pr(>Chisq)`)], #hurdle P values
+                  summary_dt[contrast=='steatosis_grade' & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
+fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
+m <- fcHurdle[,c("primerid","coef","fdr")]
+top_pos <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef>0) %>% 
+  dplyr::rename(Gene=primerid)
+top_pos <- top_pos[c("Gene","coef","fdr")]
+rownames(top_pos) <- NULL
+top_pos$Direction <- "Positive"
+
+top_neg <- as.data.frame(m) %>%
+  filter(fdr<0.05) %>%
+  filter(coef<0) %>% 
+  dplyr::rename(Gene=primerid)
+top_neg$Direction <- "Negative"
+
+# Combine and prepare for plotting
+top_genes <- bind_rows(top_pos, top_neg) 
+
+# Set sorting order: all negative genes first, then all positive genes
+top_genes <- top_genes %>%
+  mutate(Gene = factor(Gene, levels = Gene[order(Direction, coef)]))  # Order by Direction and log2FC
+# # Bar chart with flipped x and y axes
+b <- ggplot(top_genes, aes(x = coef, y = Gene, fill = Direction)) +
+  geom_bar(stat = "identity") +
+  labs(x = "logFC", y = "Gene", title = "Steatosis (T2D only)") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Lower Expression", "Higher Expression")) +
+  theme_minimal()+
+  theme(legend.position="none")
+b
+ggsave("/home/choiyej/thinclient_drives/Biostati/Liver project/Figures/hurdle_steatosis_t2d.jpeg", b,
+       width = 7, height = 10)
+```
+
+```{r echo = F}
+rm(so_liver_sn)
+save.image(file = "/home/choiyej/thinclient_drives/Biostati/Liver project/liver_sn_yc.RData")
+
+```
