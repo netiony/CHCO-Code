@@ -92,7 +92,7 @@ def clean_panther():
 
     var = ["record_id", "dkd_meds_dose", "t2d_meds_dose", "htn_med",\
     "hx_cv_medlist", "meds_weight_type", "glp1ra_med", "mra_med", \
-    "fibrates_med", "uric_acid_med"]
+    "fibrates_med", "uric_acid_med", "screen_birthweight"]
     med = pd.DataFrame(proj.export_records(fields=var, events=["screening_arm_1"]))
     # Replace missing values
     med.replace(rep, np.nan, inplace=True)
@@ -101,6 +101,7 @@ def clean_panther():
         {"screening_arm_1": "baseline", "baseline_arm_1": "baseline", "year_1_arm_1": "year_1", "year_2_arm_1": "year_2"}, 
         inplace=True)
     med = med.rename(columns={"redcap_event_name": "visit"})
+    med.rename({"screen_birthweight": "birthweight"}, inplace=True, axis=1)
     # Meds by regex
     med["sglti_timepoint"]=med.apply(lambda x: x.str.contains('sgl|canag|dapagl|empag|floz|sglt2i_med', case=False).any(), axis=1)
     med["ace_inhibitor"]=med.apply(lambda x: x.str.contains('lisino|liso', case=False).any(), axis=1)
@@ -123,7 +124,7 @@ def clean_panther():
     med[meds] = med[meds].applymap(lambda x: "Yes" if x == "1" or x is True else ("No" if pd.notna(x) and x != "" else x))
     # SGLT2i, RAASi, Metformin
     med = med[["record_id", "visit", "sglti_timepoint", "raasi_timepoint", "metformin_timepoint", "insulin_med_timepoint",\
-    "glp1_agonist_timepoint", "mra", "diuretic", "ca_channel_blocker", "beta_blocker", "statin", "fibrates", "topiramate", "phentermine", "uric_acid_med"]].copy()
+    "glp1_agonist_timepoint", "mra", "diuretic", "ca_channel_blocker", "beta_blocker", "statin", "fibrates", "topiramate", "phentermine", "uric_acid_med", "birthweight"]].copy()
     med["procedure"] = "medications"
     med["date"] = screen["date"]
 
