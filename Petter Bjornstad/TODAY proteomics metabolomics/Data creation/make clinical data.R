@@ -372,5 +372,12 @@ long$visit_num <- as.numeric(str_sub(long$visit,2,length(long$visit)))
 long$si_1_ins0 <- 1/long$ins0min
 long <- merge(long, fup_length, by = "releaseid", all.x = T, all.y = T)
 
+# length of follow-up
+long_unique <- long %>% select(releaseid, fup_years) %>% unique() 
+summary(long_unique$fup_years)
+
+# time to LOGC in those with the outcome
+summary(comorb[comorb$GLYC==1,]$DAYSTOGLYC)
+
 # write file
 save(long,file = "./Clinical data/TODAY/clinical_data_long.Rdata")
