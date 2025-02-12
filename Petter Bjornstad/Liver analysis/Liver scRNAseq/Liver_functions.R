@@ -22,7 +22,7 @@ sens_genes <- c("ACVR1B","ANG","ANGPT1","ANGPTL4","AREG","AXL","BEX3","BMP2","BM
 #sens_genes <- full_sens_genes
 
 #Metabolism Pathway Gene Sets
-cd<- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","tca_cycle_pathway.csv")) %>%
+tca<- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","tca_cycle_pathway.csv")) %>%
   pull(genesymbol)
 gluco <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","gluconeogenesis_pathway.csv"))%>%
   pull(genesymbol)
@@ -301,7 +301,7 @@ degs_fxn_pathway <- function(so,cell,exposure,gene_set,exp_group,ref_group,pathw
   DefaultAssay(so) <- "RNA"
   
   #Conidtion names
-  condition <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group," vs. ",ref_group,")")
+  condition <- paste0(pathway,str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group," vs. ",ref_group,")")
   
   #Differential Expression by Group
   if (!is.null(cell)) {
@@ -313,6 +313,74 @@ degs_fxn_pathway <- function(so,cell,exposure,gene_set,exp_group,ref_group,pathw
   de.markers(so, gene_set, exposure, id2 = ref_group, id1 = exp_group, cell, "")
   colnames(m)[2] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group,")")
   colnames(m)[3] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",ref_group,")")
+  
+  # Filter for significant genes
+  m_top <- m
+  significant_genes <- m_top %>% filter(p_val_adj < 0.05)
+  
+  # Select the top 10 positive and 10 negative log2FC genes based on the largest magnitude of fold change
+  top_positive_by_fc <- significant_genes %>% 
+    filter(avg_log2FC > 0) %>% 
+    arrange(desc(abs(avg_log2FC))) %>%  # Sort by absolute fold change (largest first)
+    head(10)  # Top 10 positive fold changes
+  
+  top_negative_by_fc <- significant_genes %>% 
+    filter(avg_log2FC < 0) %>% 
+    arrange(desc(abs(avg_log2FC))) %>%  # Sort by absolute fold change (largest first)
+    head(10)  # Top 10 negative fold changes
+  
+  # Select the top 10 positive and 10 negative log2FC genes based on significance (p_val_adj)
+  top_positive_by_significance <- significant_genes %>% 
+    filter(avg_log2FC > 0) %>% 
+    arrange(p_val_adj) %>%  # Sort by smallest p-value (most significant)
+    head(10)  # Top 10 most significant positive fold changes
+  
+  top_negative_by_significance <- significant_genes %>% 
+    filter(avg_log2FC < 0) %>% 
+    arrange(p_val_adj) %>%  # Sort by smallest p-value (most significant)
+    head(10)  # Top 10 most significant negative fold changes
+  
+  # Combine top fold-change based and significance-based genes into a final list
+  top_genes <- rbind(
+    top_positive_by_fc %>% mutate(Selection = "Top 10 by Fold Change"),
+    top_negative_by_fc %>% mutate(Selection = "Top 10 by Fold Change"),
+    top_positive_by_significance %>% mutate(Selection = "Top 10 by Significance"),
+    top_negative_by_significance %>% mutate(Selection = "Top 10 by Significance")
+  )
+  
+  
+  if (!is.null(cell)){
+    title <- paste0(str_to_title(pathway)," DEGs in ",cell_name," cells for ",condition)
+  } else {
+    title <- paste0(str_to_title(pathway)," Bulk DEGs for ",condition)
+  }
+  labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+  p <- EnhancedVolcano(m_top,
+                       lab = labels,
+                       x = 'avg_log2FC',
+                       y = 'p_val_adj',
+                       title = title,
+                       subtitle = paste0("Positive Log2 FC = Greater Expression in ", condition,"\n",
+                                         "(Significant at FDR-P<0.05, FC Threshold = 0.5)"),
+                       pCutoff = 0.05,
+                       FCcutoff = 0.5,
+                       labFace = 'bold',
+                       pointSize = 4,
+                       labSize = 5,
+                       drawConnectors = TRUE,
+                       widthConnectors = 1.0,
+                       colConnectors = 'black',
+                       legendPosition=NULL,
+                       boxedLabels = TRUE,
+                       max.overlaps=60)
+  if (!is.null(cell)){
+    filename <- paste0("DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
+  } else {
+    filename <- paste0("Bulk_DEGs_for_",condition,".pdf") 
+  }
+  pdf(fs::path(dir.results,filename),width=20,height=10)
+  plot(p)
+  dev.off()
   
   # Filter for significant genes
   m_top <- m
@@ -368,7 +436,7 @@ degs_fxn_pathway <- function(so,cell,exposure,gene_set,exp_group,ref_group,pathw
               "Non-Significant" = "gray")
   
   # Create the ggplot volcano plot
-  p <- ggplot(m_top, aes(x = avg_log2FC, y = -log10(p_val_adj), color = Significance)) +
+  p2 <- ggplot(m_top, aes(x = avg_log2FC, y = -log10(p_val_adj), color = Significance)) +
     geom_point(size = 4, alpha = 0.8) +  # Points with size and transparency
     scale_color_manual(values = colors) +  # Set custom colors
     labs(
@@ -402,7 +470,7 @@ degs_fxn_pathway <- function(so,cell,exposure,gene_set,exp_group,ref_group,pathw
     filename <- paste0(str_to_title(pathway),"_Bulk_DEGs_for_",condition,".pdf") 
   }
   pdf(fs::path(dir.results,filename),width=10,height=7)
-  plot(p)
+  plot(p2)
   dev.off()
 
   #Make sure gene nemaes are in printed file
@@ -443,6 +511,7 @@ degs_fxn_pathway <- function(so,cell,exposure,gene_set,exp_group,ref_group,pathw
   )
   # Call the function
   write_multiple_sheets(output_file, sheet_data)
+  return(p)
 }
 
 
