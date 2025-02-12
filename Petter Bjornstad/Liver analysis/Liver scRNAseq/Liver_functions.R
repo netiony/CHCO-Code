@@ -267,7 +267,10 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
   } 
   # Example usage
   df1 <- deg_results
+  
+  if (enrichment=="Yes") {
   df2 <- eaRes
+  }
   
   # Specify the file name and data
   if (!is.null(cell)){
@@ -276,14 +279,23 @@ degs_fxn <- function(so,cell,exposure,gene_set,exp_group,ref_group,enrichment,to
   output_file <- fs::path(dir.results,paste0("Bulk_Results_for_",condition,".xlsx"))
   }
 
+  if (enrichment=="Yes") {
   sheet_data <- list(
     "DEG" = df1,
     "Pathway_Results" = df2
   )
+  } else {
+    sheet_data <- list(
+      "DEG" = df1
+    ) 
+  }
   
   # Call the function
   write_multiple_sheets(output_file, sheet_data)
+  
+  return(p)
 }
+
 ##b. Specific Pathways----
 degs_fxn_pathway <- function(so,cell,exposure,gene_set,exp_group,ref_group,pathway) {
   DefaultAssay(so) <- "RNA"
