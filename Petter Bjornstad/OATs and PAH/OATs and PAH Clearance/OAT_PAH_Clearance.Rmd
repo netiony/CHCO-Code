@@ -49,7 +49,7 @@ library(data.table)
 library(knitr)
 library(TxDb.Hsapiens.UCSC.hg19.knownGene)
 library(stringr)
-library(NMF)
+#library(NMF)
 library(rsvd)
 library(RColorBrewer)
 library(MAST)
@@ -63,7 +63,11 @@ library(fs)
 registerDoParallel(cores = 6)
 library(VennDiagram)
 library(janitor)
-
+devtools::install_github('immunogenomics/presto')
+library(presto)
+library(knitr)
+library(lme4)
+library(lmerTest)
 
 #Local file path
 #dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
@@ -71,18 +75,22 @@ library(janitor)
 #dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
 #dir.results <- c("/Volumes/Peds Endo/Petter Bjornstad/Kidney Project/Results")
 
-#Lambda file path
-dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
-dir.code <- c("/home/Github_Repo/CHCO-Code/Petter Bjornstad/Kidney scRNA/Kidney scRNA")
-dir.results <- c(fs::path(dir.dat,"Kidney Project/Results"))
+# #Lambda file path
+#  dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
+#  dir.code <- c("/home/Github_Repo/CHCO-Code/Petter Bjornstad/Kidney scRNA/Kidney scRNA")
+#  dir.results <- c(fs::path(dir.dat,"Kidney Project/Results"))
+
+#Mac Studio File Path
+dir.dat <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive")
+dir.results <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Kidney scRNAseq Project/Results")
+dir.ipa <- c("/Users/hhampson/Documents/IPA/Results")
 
 #Load functions
-source("Kidney_functions_sc.R")
-
+source("2_OAT_Functions.R")
 ```
 
 #2. Load Data & Format
-## a. Format Data
+## a. Format Data - Old KPMP 
 ```{r, include=F}
 #Local
 # dir.dat <- c("/Users/hhampson/Dropbox/Bjornstad data")
@@ -99,7 +107,269 @@ so_kidney_sc$kit_id[which(so_kidney_sc$kit_id=="kl-0023998")] <- "KL-0023998"
 #check2 <- so_kidney_sc@meta.data
 
 #harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc.csv")) #small meta set
-harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc_all_metadata.csv")) #all metadata vars
+#harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc_all_metadata.csv")) #all metadata vars
+harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney scRNAseq Project","Data","harmonized_data_kidney_sc_all_metadata2.csv"))
+#Get coenrolled IDs
+coenroll <- read.csv(fs::path(dir.dat,"Renal HERITAGE/Data_Cleaned/coenrolled_ids.csv"))
+
+#Which IDs are coenrolled 
+coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$rh_id!="")]
+coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$rh_id!="" & coenroll$improve_id!="")]
+
+#"KL-0014634" "KL-0014629" "KL-0014628" coenrolled IDs
+#"KL-0014634" "KL-0014629" "KL-0014628" having missing meta data 
+
+#KL-0014628: IT_10/RH-66-T KL-0014628 KL-0019101
+#KL-0014629: IT_09/RH-65-T
+#KL-0014634: IT_07/RH-59-T
+#check <- harm_meta_data %>%
+#  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group")))
+
+#Partipant 30051 (kit id KL-0027474 at 4m has sc, but at baseline no sc has kit id KL-0027474 metadata)
+#missing <- c("KL-0014628", "KL-0014629", "KL-0014634", "KL-0019059", "KL-0019092", "KL-0019101", "KL-0022159", "KL-0024005", "KL-0027470", #"KL-0027478")
+#Check these ids in metadat
+#check <- harm_meta_data %>%
+#filter(kit_id %in% missing)
+
+#IDs missing group information  
+#Filter out attempt participants
+harm_meta_data <- harm_meta_data %>% 
+  dplyr::select(-X)
+#Create Medication Groups
+harm_meta_data <- harm_meta_data %>%
+  mutate(glp1_sglt2=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
+  mutate(sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
+  mutate(glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
+  mutate(no_med=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+#mutate(=ifelse(group!="Type 2 Diabetes" &  epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+
+#Define 4 exposure groups: 
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
+gc()
+harm_meta_data <- harm_meta_data %>% 
+  mutate(medication = case_when(glp1_sglt2 == "Yes" ~ "glp1_sglt2",
+                                sglt2 == "Yes" ~ "sglt2",
+                                glp1 == "Yes" ~ "glp1",
+                                no_med == "Yes" ~ "no_med"))
+harm_meta_data$medication <- factor(harm_meta_data$medication, levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
+
+#Define a T2D+OB group
+harm_meta_data <- harm_meta_data %>%
+  mutate(group2 = ifelse((group=="Type 2 Diabetes" | group=="Obese Control"),"T2D + OB",group))
+gc()
+meta_kidney_sc <-  so_kidney_sc@meta.data 
+rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+
+#Check for pah clearance
+
+meta_kidney_sc <- meta_kidney_sc %>%
+  #dplyr::mutate(RNAlater_ID = SampleID) %>%
+  left_join(harm_meta_data,by="kit_id")
+rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+#Check to see if all ids still have metadata
+#check4 <- meta_kidney_sc %>%
+#  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+#check4 <- check4 %>%
+#  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","KPMP_celltype")))
+
+#rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+ids <- harm_meta_data$kit_id
+#Filter seurat object to only IDs that have the metadata (83 individuals of interest)
+so_kidney_sc <- AddMetaData(so_kidney_sc, meta_kidney_sc)
+#check5 <- so_kidney_sc@meta.data %>%
+#  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+#check5 <- check5 %>%
+#  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","KPMP_celltype")))
+so_kidney_sc <- subset(so_kidney_sc, kit_id %in% ids)
+#check6 <- so_kidney_sc@meta.data %>%
+#  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+#check6 <- check6 %>%
+#  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","KPMP_celltype")))
+#unique(so_kidney_sc$group)
+#unique(so_kidney_sc$KPMP_celltype)
+rm(meta_kidney_sc,harm_meta_data)
+
+#Switch default assay in seurat object to RNA
+DefaultAssay(so_kidney_sc) <- "RNA"
+gc()
+
+check3 <- so_kidney_sc@meta.data
+check3 <- check3 %>%
+  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group","celltype_rpca","medication")))
+# rm(check3)
+unique(so_kidney_sc$co_enroll_id) 
+#"RH-66-T" "RH-65-T" "RH-59-T" "IT2D-08" "RH-98-T" "RH-99-T" "RH-16-T" "RH-23-T" "RH-19-O" "RH-96-T" "RH-67-T"
+#"RH-99-T" "RH-16-T" "RH-23-T" "RH-19-O" "RH-96-T" "RH-67-T" IDs coenrolled in RH and RH2 as a baseline and followup - filter out their RH2 study visit?
+#RH-67-T/RH2-19 kit id for second visit to filter out: KL-0030621
+#RH-23/RH2-14 kit id for second visit to filter out: KL-0029535
+
+# #Check if coenrolled IDs have multiple biopsies
+# co1 <- coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$rh_id!="")] #Coenrolled in RH&RH2
+# co2 <- coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$rh_id!="" & coenroll$improve_id!="")] #Coenrolled in Improve/RH/RH2
+# co3 <- coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$improve_id!="")] #Coenrolled in Improve/RH2
+# co4 <- coenroll$rh_id[which(coenroll$rh_id!="" & coenroll$improve_id!="")] #Coenroleld in Improve/RH
+# co5 <- coenroll$crc_id[which(coenroll$crc_id!="" & coenroll$panda_id!="")] #Coenrolled in Crocodile and panda
+# co6 <- coenroll$panda_id[which(coenroll$panda_id!="" & coenroll$crc_id!="")]
+# unique(so_kidney_sc$record_id[which(so_kidney_sc$record_id %in% co1)]) #"RH-68-T" "RH-23-T" "RH-60-T" "RH-67-T" "RH-93-T"
+# unique(so_kidney_sc$record_id[which(so_kidney_sc$record_id %in% co2)]) #"RH-60-T"
+# unique(so_kidney_sc$record_id[which(so_kidney_sc$record_id %in% co3)]) #"RH-60-T"
+# unique(so_kidney_sc$record_id[which(so_kidney_sc$record_id %in% co4)]) #"RH-66-T" "RH-65-T" "RH-59-T" "RH-60-T"
+# unique(so_kidney_sc$record_id[which(so_kidney_sc$record_id %in% co5)]) #"CRC-21" "CRC-04" "CRC-09" "CRC-24" "CRC-18" "CRC-07" "CRC-38" "CRC-32" "CRC-36" "CRC-44" "CRC-43" "CRC-16" "CRC-42" "CRC-31" "CRC-48" "CRC-59"
+# unique(so_kidney_sc$record_id[which(so_kidney_sc$record_id %in% co6)]) #"CRC-21" "CRC-04" "CRC-09" "CRC-24" "CRC-18" "CRC-07" "CRC-38" "CRC-32" "CRC-36" "CRC-44" "CRC-43" "CRC-16" "CRC-42" "CRC-31" "CRC-48" "CRC-59"
+# 
+# rm(coenroll,check3)
+
+
+so_kidney_sc <- subset(so_kidney_sc,kit_id!="KL-0030621")
+so_kidney_sc <- subset(so_kidney_sc,kit_id!="KL-0029535")
+check3 <- so_kidney_sc@meta.data
+check3 <- check3 %>%
+  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group","celltype_rpca","medication")))
+length(unique(check3$kit_id)) #81
+rm(check3)
+rm(coenroll)
+
+#Check the total number of cells & genes in the full dataset
+ncol(so_kidney_sc) #186125 cells
+nrow(so_kidney_sc) #31332 genes
+
+dim(so_kidney_sc@assays$RNA@counts) #31332 186125
+sum(grepl("^MT-", rownames(so_kidney_sc@assays$RNA@counts))) #101
+
+# #Filter out mitochondrial DNA
+# gene_expression_matrix <- so_kidney_sc@assays$RNA@counts
+# 
+# # Filter genes expressed in more than 10% of cells
+# expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.1
+# so_kidney_sc@assays$RNA@counts <- gene_expression_matrix[expressed_genes,]
+# 
+# dim(so_kidney_sc@assays$RNA@counts) #5759 186125 
+# sum(grepl("^MT", rownames(so_kidney_sc@assays$RNA@counts))) #45
+# 
+# ncol(so_kidney_sc) #186125 cells
+# nrow(so_kidney_sc) #31332 genes
+# 
+# # Remove mitochondrial genes (prefix "MT")
+# so_kidney_sc@assays$RNA@counts <- so_kidney_sc@assays$RNA@counts[grep("^MT", rownames(so_kidney_sc@assays$RNA@counts), invert = TRUE),]
+# ncol(so_kidney_sc) #186125 cells
+# nrow(so_kidney_sc) #31332 genes
+# dim(so_kidney_sc@assays$RNA@counts) #5714 186125
+# sum(grepl("^MT", rownames(so_kidney_sc@assays$RNA@counts))) #0
+
+# Step 1: Filter to genes expressed in more than 5% of cells
+gene_expression_matrix <- so_kidney_sc@assays$RNA@counts
+# expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.1
+expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.05
+
+so_kidney_sc <- subset(so_kidney_sc, features = rownames(gene_expression_matrix)[expressed_genes])
+dim(so_kidney_sc@assays$RNA@counts) #9289 186125
+dim(so_kidney_sc@assays$RNA) #9289 186125
+dim(so_kidney_sc) #9289 186125
+sum(grepl("^MT-", rownames(so_kidney_sc@assays$RNA@counts))) #70
+ncol(so_kidney_sc) #186125 cells
+nrow(so_kidney_sc) #9289 genes
+
+# Step 2: Remove mitochondrial genes (those starting with "MT")
+mito_genes <- grep("^MT-", rownames(so_kidney_sc), value = TRUE)
+#keep_ids <- unique(rownames(so_kidney_sc)[which(!rownames(so_kidney_sc) %in% mito_genes)])
+# so_kidney_sc <- subset(so_kidney_sc, features = setdiff(rownames(so_kidney_sc), mito_genes))
+# so_kidney_sc <- subset(so_kidney_sc,kit_id!="KL-0029535")
+#so_kidney_sc$Gene <- rownames(so_kidney_sc)
+#so_kidney_sc <- subset(so_kidney_sc, Gene %in% keep_ids)
+so_kidney_sc <- subset(so_kidney_sc, features = setdiff(rownames(so_kidney_sc@assays$RNA@counts), mito_genes))
+#so_kidney_sc <- subset(so_kidney_sc, features = setdiff(rownames(so_kidney_sc@assays$RNA@counts), mito_genes))
+# so_kidney_sc <- subset(so_kidney_sc, !rownames(so_kidney_sc) %in% mito_genes)
+# grep("^MT-", rownames(so_kidney_sc@assays$RNA@counts), value = TRUE)
+dim(so_kidney_sc@assays$RNA@counts) #9276 186125
+dim(so_kidney_sc@assays$RNA@data) #9276 186125
+dim(so_kidney_sc@assays$RNA)#9276 186125
+sum(grepl("^MT-", rownames(so_kidney_sc@assays$RNA@counts))) #0
+ncol(so_kidney_sc) #186125 cells
+nrow(so_kidney_sc) #9276 genes
+
+# # Identify mitochondrial genes
+# mt_genes <- grepl("^MT", rownames(so_kidney_sc@assays$RNA@counts))
+# 
+# # Calculate the percentage of mitochondrial genes per cell
+# mt_percentage <- Matrix::colSums(so_kidney_sc@assays$RNA@counts[mt_genes, ]) / Matrix::colSums(so_kidney_sc@assays$RNA@counts)
+# 
+# # Filter out cells where the proportion of mitochondrial genes is > 15%
+# cells_to_keep <- mt_percentage <= 0.15
+# 
+# # Subset the object to retain only cells with <= 15% mitochondrial genes
+# so_kidney_sc <- so_kidney_sc[, cells_to_keep]
+
+# Check dimensions after filtering
+dim(so_kidney_sc@assays$RNA@counts) #9276 81882
+dim(so_kidney_sc@assays$RNA)#9276 81882
+dim(so_kidney_sc)#9276 81882
+
+# Optionally, you can also check how many MT genes remain in the filtered dataset
+sum(grepl("^MT-", rownames(so_kidney_sc@assays$RNA@counts)))
+ncol(so_kidney_sc)  # Number of cells remaining
+
+
+# Step 3: Renormalize the Seurat object after filtering
+so_kidney_sc <- NormalizeData(so_kidney_sc)
+
+#Check normalized slot
+dim(so_kidney_sc@assays$RNA@data) #5714 186125
+sum(grepl("^MT-", rownames(so_kidney_sc@assays$RNA@data))) #70
+ncol(so_kidney_sc) #186125 cells
+nrow(so_kidney_sc) #5714 genes
+
+#Load in med data to update medication information
+med <- read.xlsx(fs::path(dir.dat,"Kidney scRNAseq Project/Data/Biopsies_w_mrn_Oct3.xlsx"))
+med <- med %>% 
+  dplyr::select(all_of(c("record_id","mrn","raasi_1","insulin_1","mfm_1")))
+meta_kidney_sc <-  so_kidney_sc@meta.data
+med <- med %>% 
+  filter(mrn %in% as.character(meta_kidney_sc$mrn)) #95 remain
+med <- med %>%  
+  filter(record_id %in% meta_kidney_sc$record_id) #81 remain
+# med$mrn <- as.numeric(med$mrn)
+rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+med$mrn <- as.numeric(med$mrn)
+meta_kidney_sc <- meta_kidney_sc %>%
+  left_join(med,by=c("mrn","record_id"))
+rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+
+#Add Med Meta Data to Seurat object
+so_kidney_sc <- AddMetaData(so_kidney_sc, meta_kidney_sc)
+rm(gene_expression_matrix,med,meta_kidney_sc)
+# saveRDS(so_kidney_sc,fs::path(dir.dat,"Kidney scRNAseq Project","Data","so_kidney_sc_10_mito.rds"))
+
+check3 <- so_kidney_sc@meta.data
+check3 <- check3 %>%
+  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group","group2","medication","pah_clear_bsa","pah_clear_abs")))
+unique(check3$kit_id[which(is.na(check3$pah_clear_abs))])
+unique(check3$kit_id[which(is.na(check3$pah_clear_bsa))])
+#Remove kidney ids without pah clearance
+ids2 <- ids[which(!ids %in% unique(check3$kit_id[which(is.na(check3$pah_clear_abs))]))] #69 individuals have pah data
+#Filter to only those 69 ids
+so_kidney_sc <- subset(so_kidney_sc, kit_id %in% ids2)
+rm(check3)
+```
+
+```{r, include=F}
+#Local
+# dir.dat <- c("/Users/hhampson/Dropbox/Bjornstad data")
+# so_kidney_sc <- readRDS(fs::path(dir.dat,"Kidney scRNA","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
+# load("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/PB90_clinical_metadata.RData")
+# so_kidney_sc <- AddMetaData(so_kidney_sc, so_meta_combined)
+# rm(so_meta_combined)
+# gc()
+
+#Lambda
+so_kidney_sc <- readRDS(fs::path(dir.dat,"scRNA","data_raw","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
+so_kidney_sc$kit_id[which(so_kidney_sc$kit_id=="KI-0014643")] <- "KL-0014643"
+so_kidney_sc$kit_id[which(so_kidney_sc$kit_id=="kl-0023998")] <- "KL-0023998"
+#check2 <- so_kidney_sc@meta.data
+
+#harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc.csv")) #small meta set
+# harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc_all_metadata2.csv")) #all metadata vars
+harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney scRNAseq Project","Data","harmonized_data_kidney_sc_all_metadata2.csv"))
+
 #"KL-0014634" "KL-0014629" "KL-0014628" coenrolled IDs
 #"KL-0014634" "KL-0014629" "KL-0014628" having missing meta data 
 
@@ -179,6 +449,21 @@ check3 <- check3 %>%
   dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group","group2","medication","pah_clear_bsa","pah_clear_abs")))
 unique(check3$kit_id[which(is.na(check3$pah_clear_abs))])
 unique(check3$kit_id[which(is.na(check3$pah_clear_bsa))])
+
+#Find pah clearance abs and bsa new
+harm_data <- read.csv("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/harmonized_dataset.csv")
+pah <- harm_data %>% 
+  dplyr::select(all_of(c("mrn","kit_id","cryostor_id","rnalater_id","pah_clear_bsa","pah_clear_abs","visit","procedure")))
+unique(so_kidney_sc$kit_id)
+unique(so_kidney_sc$mrn) 
+pah <- pah %>% 
+  filter(mrn %in% unique(so_kidney_sc$mrn) )
+pah <- pah %>% 
+  filter(procedure=="clamp") %>% 
+  filter(visit=="baseline")
+pah <- pah %>% 
+  filter(!is.na(pah_clear_abs))
+
 #Remove kidney ids without pah clearance
 ids2 <- ids[which(!ids %in% unique(check3$kit_id[which(is.na(check3$pah_clear_abs))]))] #69 individuals have pah data
 #Filter to only those 69 ids
@@ -186,48 +471,244 @@ so_kidney_sc <- subset(so_kidney_sc, kit_id %in% ids2)
 rm(check3)
 #FIlter to oat genes only
 
-#saveRDS(so_kidney_sc,fs::path(dir.dat,"scRNA","data_clean","Formatted_so_kidney_sc_01_26_25.rds"))
-#Create senesence so in all cell types
-#sens_genes <- c(sens_genes,"CDKN1A")
-#sens_gene_in_data <- intersect(sens_genes, rownames(so_kidney_sc))
-# Subset the Seurat object to include only genes in sens_gene_in_data
-#so_sens_all <- subset(so_kidney_sc, features = sens_gene_in_data)
-#rm(so_kidney_sc)
-# # saveRDS(so_sens_all,fs::path(dir.dat,"so_sens_genes_all_cells_KIDNEY.RDS"))
-# # rm(so_sens_all)
-# # 
-# # #Load sens all cells
-# # so_sens <- readRDS(fs::path(dir.dat,"so_sens_genes_all_cells_KIDNEY.RDS"))
-# # dat <- so_sens@meta.data
-# # so_diab <- subset(so_sens, diagnosis_of_diabetes == "Yes")
-# # 
-# #PT Cells
-# so_sens_all@meta.data$PT <- ifelse(grepl("PT-",so_sens_all@meta.data$celltype_rpca),"PT","Non-PT")
-# Idents(so_sens_all) <- so_sens_all$PT
-# so_sens <- subset(so_sens_all, PT=="PT")
-# # saveRDS(so_sens,fs::path(dir.dat,"so_sens_genes_PT_Cells_KIDNEY.RDS"))
-# rm(so_sens_all,so_sens)
-# so_sens_PT <- readRDS(fs::path(dir.dat,"Liver Project","so_sens_genes_PT_Cells_KIDNEY.RDS"))
-# so_sens_PT@meta.data$group1 <- ifelse(so_sens_PT@meta.data$group=="Type 2 Diabetes" | so_sens_PT@meta.data$group=="Lean Control" ,"Yes","No")
-# so_sens_PT1 <- subset(so_sens_PT, group1=="Yes")
-# so_sens_PT@meta.data$group2 <- ifelse(so_sens_PT@meta.data$group=="Type 2 Diabetes","Yes","No")
-# so_sens_PT2 <- subset(so_sens_PT, group2=="Yes")
-# so_sens_PT3 <- subset(so_sens_PT, group=="Type 2 Diabetes")
+```
+
+## b. Format Data - New KPMP
+```{r, include=F}
+#Load KPMP Cell Types 2 (new)
+#Mac Studio
+so_kpmp_sc <- readRDS("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/scRNA/data_raw/PB_90_RPCAFix_Metadata_LR_RM_kpmpV1labelled.rds")
+
+so_kpmp_sc$kit_id[which(so_kpmp_sc$kit_id=="KI-0014643")] <- "KL-0014643"
+so_kpmp_sc$kit_id[which(so_kpmp_sc$kit_id=="kl-0023998")] <- "KL-0023998"
+#check2 <- so_kpmp_sc@meta.data
+
+#harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc.csv")) #small meta set
+#harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc_all_metadata.csv")) #all metadata vars
+harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney scRNAseq Project","Data","harmonized_data_kidney_sc_all_metadata2.csv"))
+#Get coenrolled IDs
+coenroll <- read.csv(fs::path(dir.dat,"Renal HERITAGE/Data_Cleaned/coenrolled_ids.csv"))
+
+#Which IDs are coenrolled 
+coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$rh_id!="")]
+coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$rh_id!="" & coenroll$improve_id!="")]
+
+#"KL-0014634" "KL-0014629" "KL-0014628" coenrolled IDs
+#"KL-0014634" "KL-0014629" "KL-0014628" having missing meta data 
+
+#KL-0014628: IT_10/RH-66-T KL-0014628 KL-0019101
+#KL-0014629: IT_09/RH-65-T
+#KL-0014634: IT_07/RH-59-T
+#check <- harm_meta_data %>%
+#  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group")))
+
+#Partipant 30051 (kit id KL-0027474 at 4m has sc, but at baseline no sc has kit id KL-0027474 metadata)
+#missing <- c("KL-0014628", "KL-0014629", "KL-0014634", "KL-0019059", "KL-0019092", "KL-0019101", "KL-0022159", "KL-0024005", "KL-0027470", #"KL-0027478")
+#Check these ids in metadat
+#check <- harm_meta_data %>%
+#filter(kit_id %in% missing)
+
+#IDs missing group information  
+#Filter out attempt participants
+harm_meta_data <- harm_meta_data %>% 
+  dplyr::select(-X)
+#Create Medication Groups
+harm_meta_data <- harm_meta_data %>%
+  mutate(glp1_sglt2=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
+  mutate(sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
+  mutate(glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
+  mutate(no_med=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+#mutate(=ifelse(group!="Type 2 Diabetes" &  epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+
+#Define 4 exposure groups: 
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
+gc()
+harm_meta_data <- harm_meta_data %>% 
+  mutate(medication = case_when(glp1_sglt2 == "Yes" ~ "glp1_sglt2",
+                                sglt2 == "Yes" ~ "sglt2",
+                                glp1 == "Yes" ~ "glp1",
+                                no_med == "Yes" ~ "no_med"))
+harm_meta_data$medication <- factor(harm_meta_data$medication, levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
+#Define a T2D+OB group
+harm_meta_data <- harm_meta_data %>%
+  mutate(group2 = ifelse((group=="Type 2 Diabetes" | group=="Obese Control"),"T2D + OB",group))
+gc()
+meta_kidney_sc <-  so_kpmp_sc@meta.data 
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+meta_kidney_sc <- meta_kidney_sc %>%
+  #dplyr::mutate(RNAlater_ID = SampleID) %>%
+  left_join(harm_meta_data,by="kit_id")
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+#Check to see if all ids still have metadata
+#check4 <- meta_kidney_sc %>%
+#  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+#check4 <- check4 %>%
+#  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","KPMP_celltype")))
+
+#rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+ids <- harm_meta_data$kit_id
+#Filter seurat object to only IDs that have the metadata (83 individuals of interest)
+so_kpmp_sc <- AddMetaData(so_kpmp_sc, meta_kidney_sc)
+#check5 <- so_kpmp_sc@meta.data %>%
+#  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+#check5 <- check5 %>%
+#  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","KPMP_celltype")))
+so_kpmp_sc <- subset(so_kpmp_sc, kit_id %in% ids)
+#check6 <- so_kpmp_sc@meta.data %>%
+#  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+#check6 <- check6 %>%
+#  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","KPMP_celltype")))
+#unique(so_kpmp_sc$group)
+#unique(so_kpmp_sc$KPMP_celltype)
+rm(meta_kidney_sc,harm_meta_data)
+
+#Switch default assay in seurat object to RNA
+DefaultAssay(so_kpmp_sc) <- "RNA"
+gc()
+
+check3 <- so_kpmp_sc@meta.data
+check3 <- check3 %>%
+  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group","KPMP_celltype","medication")))
+# rm(check3)
+unique(so_kpmp_sc$co_enroll_id) 
+length(unique(check3$kit_id))
+#"RH-66-T" "RH-65-T" "RH-59-T" "IT2D-08" "RH-98-T" "RH-99-T" "RH-16-T" "RH-23-T" "RH-19-O" "RH-96-T" "RH-67-T"
+#"RH-99-T" "RH-16-T" "RH-23-T" "RH-19-O" "RH-96-T" "RH-67-T" IDs coenrolled in RH and RH2 as a baseline and followup - filter out their RH2 study visit?
+#RH-67-T/RH2-19 kit id for second visit to filter out: KL-0030621
+#RH-23/RH2-14 kit id for second visit to filter out: KL-0029535
+
+# #Check if coenrolled IDs have multiple biopsies
+# co1 <- coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$rh_id!="")] #Coenrolled in RH&RH2
+# co2 <- coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$rh_id!="" & coenroll$improve_id!="")] #Coenrolled in Improve/RH/RH2
+# co3 <- coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$improve_id!="")] #Coenrolled in Improve/RH2
+# co4 <- coenroll$rh_id[which(coenroll$rh_id!="" & coenroll$improve_id!="")] #Coenroleld in Improve/RH
+# co5 <- coenroll$crc_id[which(coenroll$crc_id!="" & coenroll$panda_id!="")] #Coenrolled in Crocodile and panda
+# co6 <- coenroll$panda_id[which(coenroll$panda_id!="" & coenroll$crc_id!="")]
+# unique(so_kpmp_sc$record_id[which(so_kpmp_sc$record_id %in% co1)]) #"RH-68-T" "RH-23-T" "RH-60-T" "RH-67-T" "RH-93-T"
+# unique(so_kpmp_sc$record_id[which(so_kpmp_sc$record_id %in% co2)]) #"RH-60-T"
+# unique(so_kpmp_sc$record_id[which(so_kpmp_sc$record_id %in% co3)]) #"RH-60-T"
+# unique(so_kpmp_sc$record_id[which(so_kpmp_sc$record_id %in% co4)]) #"RH-66-T" "RH-65-T" "RH-59-T" "RH-60-T"
+# unique(so_kpmp_sc$record_id[which(so_kpmp_sc$record_id %in% co5)]) #"CRC-21" "CRC-04" "CRC-09" "CRC-24" "CRC-18" "CRC-07" "CRC-38" "CRC-32" "CRC-36" "CRC-44" "CRC-43" "CRC-16" "CRC-42" "CRC-31" "CRC-48" "CRC-59"
+# unique(so_kpmp_sc$record_id[which(so_kpmp_sc$record_id %in% co6)]) #"CRC-21" "CRC-04" "CRC-09" "CRC-24" "CRC-18" "CRC-07" "CRC-38" "CRC-32" "CRC-36" "CRC-44" "CRC-43" "CRC-16" "CRC-42" "CRC-31" "CRC-48" "CRC-59"
 # 
+# rm(coenroll,check3)
+
+
+so_kpmp_sc <- subset(so_kpmp_sc,kit_id!="KL-0030621")
+so_kpmp_sc <- subset(so_kpmp_sc,kit_id!="KL-0029535")
+check3 <- so_kpmp_sc@meta.data
+check3 <- check3 %>%
+  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group","KPMP_celltype","medication")))
+length(unique(check3$kit_id)) #81
+rm(check3)
+rm(coenroll)
+
+#Check the total number of cells & genes in the full dataset
+ncol(so_kpmp_sc) #186125 cells
+nrow(so_kpmp_sc) #31332 genes
+
+dim(so_kpmp_sc@assays$RNA@layers$counts) #31332 186125
+sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA))) #101
+
+# #Filter out mitochondrial DNA
+# gene_expression_matrix <- so_kpmp_sc@assays$RNA@counts
 # 
+# # Filter genes expressed in more than 10% of cells
+# expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.1
+# so_kpmp_sc@assays$RNA@counts <- gene_expression_matrix[expressed_genes,]
 # 
-# #TAL Cells
-# so_sens_all@meta.data$TAL <- ifelse(grepl("TAL",so_sens_all@meta.data$celltype_rpca),"TAL","Non-TAL")
-# Idents(so_sens_all) <- so_sens_all$TAL
-# so_sens <- subset(so_sens_all, TAL=="TAL")
-# # saveRDS(so_sens,fs::path(dir.dat,"so_sens_genes_TAL_Cells_KIDNEY.RDS"))
-# rm(so_sens_all,so_sens,so_sens_TAL,so_sens_TAL1)
-# so_sens_TAL <- readRDS(fs::path(dir.dat,"Liver Project","so_sens_genes_TAL_Cells_KIDNEY.RDS"))
-# so_sens_TAL@meta.data$group1 <- ifelse(so_sens_TAL@meta.data$group=="Type 2 Diabetes"| so_sens_TAL@meta.data$group=="Lean Control","Yes","No")
-# so_sens_TAL1 <- subset(so_sens_TAL, group1=="Yes")
-# so_sens_TAL@meta.data$group2 <- ifelse(so_sens_TAL@meta.data$group=="Type 2 Diabetes","Yes","No")
-# so_sens_TAL2 <- subset(so_sens_TAL, group2=="Yes")
-# so_sens_TAL3 <- subset(so_sens_TAL, group=="Type 2 Diabetes")
+# dim(so_kpmp_sc@assays$RNA@counts) #5759 186125 
+# sum(grepl("^MT", rownames(so_kpmp_sc@assays$RNA@counts))) #45
+# 
+# ncol(so_kpmp_sc) #186125 cells
+# nrow(so_kpmp_sc) #31332 genes
+# 
+# # Remove mitochondrial genes (prefix "MT")
+# so_kpmp_sc@assays$RNA@counts <- so_kpmp_sc@assays$RNA@counts[grep("^MT", rownames(so_kpmp_sc@assays$RNA@counts), invert = TRUE),]
+# ncol(so_kpmp_sc) #186125 cells
+# nrow(so_kpmp_sc) #31332 genes
+# dim(so_kpmp_sc@assays$RNA@counts) #5714 186125
+# sum(grepl("^MT", rownames(so_kpmp_sc@assays$RNA@counts))) #0
+
+# Step 1: Filter to genes expressed in more than 5% of cells
+gene_expression_matrix <- so_kpmp_sc@assays$RNA@layers$counts
+rownames(gene_expression_matrix) <- rownames(so_kpmp_sc@assays$RNA)
+colnames(gene_expression_matrix) <- colnames(so_kpmp_sc@assays$RNA)
+# expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.1
+expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.05
+names(expressed_genes)
+rownames(gene_expression_matrix)[expressed_genes]
+
+so_kpmp_sc <- subset(so_kpmp_sc, features = rownames(gene_expression_matrix)[expressed_genes])
+dim(so_kpmp_sc@assays$RNA@layers$counts) #9289 186125
+dim(so_kpmp_sc@assays$RNA) #9289 186125
+dim(so_kpmp_sc) #9289 186125
+sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA))) #70
+ncol(so_kpmp_sc) #186125 cells
+nrow(so_kpmp_sc) #9289 genes
+
+# Step 2: Remove mitochondrial genes (those starting with "MT")
+mito_genes <- grep("^MT-", rownames(so_kpmp_sc@assays$RNA), value = TRUE)
+so_kpmp_sc <- subset(so_kpmp_sc, features = setdiff(rownames(so_kpmp_sc), mito_genes))
+dim(so_kpmp_sc@assays$RNA@layers$counts) #9276 186125
+dim(so_kpmp_sc@assays$RNA@layers$data) #9276 186125
+dim(so_kpmp_sc@assays$RNA)#5714 186125
+sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA@layers$counts))) #0
+ncol(so_kpmp_sc) #186125 cells
+nrow(so_kpmp_sc) #9276 genes
+
+# # Identify mitochondrial genes
+# mt_genes <- grepl("^MT", rownames(so_kpmp_sc@assays$RNA@counts))
+# 
+# # Calculate the percentage of mitochondrial genes per cell
+# mt_percentage <- Matrix::colSums(so_kpmp_sc@assays$RNA@counts[mt_genes, ]) / Matrix::colSums(so_kpmp_sc@assays$RNA@counts)
+# 
+# # Filter out cells where the proportion of mitochondrial genes is > 15%
+# cells_to_keep <- mt_percentage <= 0.15
+# 
+# # Subset the object to retain only cells with <= 15% mitochondrial genes
+# so_kpmp_sc <- so_kpmp_sc[, cells_to_keep]
+
+# Check dimensions after filtering
+dim(so_kpmp_sc@assays$RNA@layers$counts) #9289 81882
+dim(so_kpmp_sc@assays$RNA)#9289 81882
+dim(so_kpmp_sc)#9289 81882
+
+# Optionally, you can also check how many MT genes remain in the filtered dataset
+sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA@layers$counts)))
+ncol(so_kpmp_sc)  # Number of cells remaining
+
+
+# Step 3: Renormalize the Seurat object after filtering
+so_kpmp_sc <- NormalizeData(so_kpmp_sc)
+
+#Check normalized slot
+dim(so_kpmp_sc@assays$RNA@layers$data) #5714 186125
+sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA@layers$data))) #70
+ncol(so_kpmp_sc) #186125 cells
+nrow(so_kpmp_sc) #5714 genes
+
+#Load in med data to update medication information
+med <- read.xlsx(fs::path(dir.dat,"Kidney scRNAseq Project/Data/Biopsies_w_mrn_Oct3.xlsx"))
+med <- med %>% 
+  dplyr::select(all_of(c("record_id","mrn","raasi_1","insulin_1","mfm_1")))
+meta_kidney_sc <-  so_kpmp_sc@meta.data
+med <- med %>% 
+  filter(mrn %in% as.character(meta_kidney_sc$mrn)) #95 remain
+med <- med %>%  
+  filter(record_id %in% meta_kidney_sc$record_id) #81 remain
+# med$mrn <- as.numeric(med$mrn)
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+med$mrn <- as.numeric(med$mrn)
+meta_kidney_sc <- meta_kidney_sc %>%
+  left_join(med,by=c("mrn","record_id"))
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+
+#Add Med Meta Data to Seurat object
+so_kpmp_sc <- AddMetaData(so_kpmp_sc, meta_kidney_sc)
+rm(gene_expression_matrix,med,meta_kidney_sc)
+rm(expressed_genes)
+# saveRDS(so_kpmp_sc,fs::path(dir.dat,"Kidney scRNAseq Project","Data","so_kidney_sc_10_mito.rds"))
 ```
 
 # 3. Descriptive Statistics
