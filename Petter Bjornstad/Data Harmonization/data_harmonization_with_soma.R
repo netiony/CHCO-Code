@@ -25,13 +25,13 @@ clean <- clean %>%
 
 # Save clinical harmonized dataset
 write.csv(clean, 
-          "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/harmonized_dataset.csv", row.names = F,
+          "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/harmonized_dataset.csv", row.names = F,
           na = "")
 
 ##########################################################################################
 
 # Combine with SOMA
-load("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Combined SomaScan/soma_combined_anml.RData")
+load("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Combined SomaScan/soma_combined_anml.RData")
 soma <- soma_combined %>%
   as.matrix() %>% as.data.frame() %>%
   mutate_at(vars(starts_with("seq")), as.numeric) %>%
@@ -68,7 +68,7 @@ soma_clean <- clean %>% left_join(soma, by = c("record_id", "visit")) %>%
 
 # Save harmonized data with SOMA
 write.csv(soma_clean, 
-          "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/soma_harmonized_dataset.csv", row.names = F,
+          "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/soma_harmonized_dataset.csv", row.names = F,
           na = "")
 
 
@@ -118,5 +118,5 @@ clean_ind <- clean %>%
 
 # Save indicators
 write.csv(clean_ind, 
-          "/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/procedure_indicator.csv", row.names = F,
+          "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/procedure_indicator.csv", row.names = F,
           na = "")
