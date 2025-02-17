@@ -1030,6 +1030,157 @@ visualize_function <- function(exposure,cell) {
   print(paste0("Group 1 = ",group1_title),paste0("Group 2 = ",group2_title),paste0("Group 3 = ",group3_title))
 }
 
+#Mixed Models ----
+##a. Group ----
+lmm_fxn <- function(exp,ref) {
+  data_subgroup <- data %>% 
+    # filter(group=="Type_2_Diabetes" | group=="Obese_Control")
+    filter(group==ref | group==exp)
+  data_subgroup$group <- factor(data_subgroup$group)
+  data_subgroup$group <-relevel(data_subgroup$group, ref = ref)
+  # full_results <- data.frame()
+  # Prepare parallel execution of gene models
+  full_results <- foreach(gene = gene_list[1:48], .combine = rbind, .packages = c("glmmTMB", "dplyr")) %dopar% {
+    # for (gene in gene_list) {
+    # for (gene in gene_list[1:20]) { #tester genes
+    m0 <- as.formula(paste0(gene," ~ group + (1 | kit_id)"))
+    model <- glmmTMB(m0,data=data_subgroup,family = nbinom2,  # Negative Binomial with a log link
+                     ziformula = ~ 1)
+    #If doesnt fit, try nb 
+    if(summary(model)$coef$zi[1,4]=="NaN") {
+      model2 <- glmmTMB(m0, data=data_subgroup,
+                        family = nbinom2)
+      foldchange <- round(exp(summary(model2)$coef$cond[2,1]) - 1,5)
+      pval <- summary(model2)$coef$cond[2,4]
+      model_name <- "Negative Binomial"
+    } 
+    if(summary(model)$coef$zi[1,4]!="NaN") {
+      #Check if zero inflation component is non-significant, if non-sig, run nb
+      if(summary(model)$coef$zi[1,4]>=0.05) {
+        model2 <- glmmTMB(m0, data=data_subgroup,
+                          family = nbinom2)
+        foldchange <- round(exp(summary(model2)$coef$cond[2,1]) - 1,5)
+        pval <- summary(model2)$coef$cond[2,4]
+        model_name <- "Negative Binomial"
+      } 
+      #If sig, pull estimates from zinb 
+      if(summary(model)$coef$zi[1,4]<0.05) {
+        # foldchange <- round(exp(summary(model)$coef$cond[2,1]) - 1,5)
+        foldchange <- round(exp(summary(model)$coef$cond[2,1]) - 1,5)
+        pval <- summary(model)$coef$cond[2,4]
+        model_name <- "Zero-Inflated Negative Binomial"
+      }
+    }
+    # Collect results for each gene
+    results <- data.frame(Gene = gene, FoldChange = foldchange, PValue = pval,ModelName=model_name)
+    return(results)
+    # results <- data.frame(Gene=gene,FoldChange=foldchange,PValue=pval)
+    # full_results <- rbind(full_results,results)
+    # # print(p)
+    # # return(full_results)
+  }
+  #Make volcano plot of all gene results for group
+  full_results <- full_results %>% 
+    mutate(fdr=p.adjust(PValue,method="fdr"))
+  
+  m_top <- full_results
+  # significant_genes <- m_top %>% filter(fdr < 0.05)
+  # 
+  # # Select the top 10 positive and 10 negative log2FC genes based on the largest magnitude of fold change
+  # top_positive_by_fc <- significant_genes %>% 
+  #   filter(FoldChange > 0) %>% 
+  #   arrange(desc(abs(FoldChange))) %>%  # Sort by absolute fold change (largest first)
+  #   head(10)  # Top 10 positive fold changes
+  # 
+  # top_negative_by_fc <- significant_genes %>% 
+  #   filter(FoldChange < 0) %>% 
+  #   arrange(desc(abs(FoldChange))) %>%  # Sort by absolute fold change (largest first)
+  #   head(10)  # Top 10 negative fold changes
+  # 
+  # # Select the top 10 positive and 10 negative log2FC genes based on significance (fdr)
+  # top_positive_by_significance <- significant_genes %>% 
+  #   filter(FoldChange > 0) %>% 
+  #   arrange(fdr) %>%  # Sort by smallest p-value (most significant)
+  #   head(10)  # Top 10 most significant positive fold changes
+  # 
+  # top_negative_by_significance <- significant_genes %>% 
+  #   filter(FoldChange < 0) %>% 
+  #   arrange(fdr) %>%  # Sort by smallest p-value (most significant)
+  #   head(10)  # Top 10 most significant negative fold changes
+  # 
+  # # Combine top fold-change based and significance-based genes into a final list
+  # top_genes <- rbind(
+  #   top_positive_by_fc %>% mutate(Selection = "Top 10 by Fold Change"),
+  #   top_negative_by_fc %>% mutate(Selection = "Top 10 by Fold Change"),
+  #   top_positive_by_significance %>% mutate(Selection = "Top 10 by Significance"),
+  #   top_negative_by_significance %>% mutate(Selection = "Top 10 by Significance")
+  # )
+  # 
+  # labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+  # total_cells <-  length(unique(data_subgroup$barcode)) # Total number of cells
+  # total_genes <-  length(unique(full_results$Gene)) # Total number of genes in m_top
+  # # Create subtitle with additional information
+  # 
+  # title <- paste0("Differential Gene Expression for ",str_replace_all(exp,"_"," ")," vs. ",str_replace_all(ref,"_"," "))
+  # subtitle_text <- paste0(
+  #   "Fold Change = Greater Gene Expression in ",str_replace_all(exp,"_"," ")," compared to ",str_replace_all(ref,"_"," ")," \n(Significant at FDR-P<0.05, FC Threshold = 0.5, Min Gene Exp 5% Threshold) \n",
+  #   "Total Cells = ", total_cells, " | Total Genes = ", total_genes
+  # )
+  # p <- EnhancedVolcano(m_top,
+  #                      lab = labels,
+  #                      x = 'FoldChange',
+  #                      y = 'fdr',
+  #                      title = title,
+  #                      subtitle = subtitle_text,
+  #                      pCutoff = 0.05,
+  #                      FCcutoff = 0.5,
+  #                      labFace = 'bold',
+  #                      pointSize = 4,
+  #                      labSize = 5,
+  #                      drawConnectors = TRUE,
+  #                      widthConnectors = 1.0,
+  #                      colConnectors = 'black',
+  #                      legendPosition=NULL,
+  #                      boxedLabels = TRUE,
+  #                      max.overlaps=60)
+  
+  # Assuming m_top contains FoldChange, PValue, and fdr columns
+  # Transform PValue into -log10(p-value) for the y-axis
+  m_top$logPValue <- -log10(m_top$PValue)
+  
+  # Calculate the log2 of the fold change (logFC)
+  m_top$logFC <- log2(m_top$FoldChange)
+  
+  # Create a new column for significance based on the p-value cutoff and FC cutoff
+  m_top$Significance <- ifelse(m_top$fdr<0.05, "Significant", "Not Significant")
+  
+  # Create a new column to combine both significance and direction (positive or negative)
+  m_top$Color <- ifelse(m_top$Significance == "Significant" & m_top$logFC > 0, "Positive Significant", 
+                        ifelse(m_top$Significance == "Significant" & m_top$logFC < 0, "Negative Significant", 
+                               "Non-Significant"))
+  
+  # Select the genes that are significant to label
+  m_top$Label <- ifelse(m_top$Significance == "Significant", as.character(m_top$Gene), NA)
+  
+  # Plot
+  p <- ggplot(m_top, aes(x = logFC, y = logPValue, color = Color)) +
+    geom_point(aes(shape = Color), size = 3, alpha = 0.7) +  # Set alpha for transparency
+    scale_color_manual(values = c("Positive Significant" = "red", "Negative Significant" = "blue", "Non-Significant" = "gray")) +  # Custom color scale
+    scale_shape_manual(values = c("Positive Significant" = 19, "Negative Significant" = 19, "Non-Significant" = 1)) +  # Same shape for all but Non-Sig
+    geom_text(aes(label = Label), size = 3, color = "black", vjust = 1, hjust = 1) +  # Add labels for significant genes in black
+    labs(x = "log2 Fold Change", y = "-log10(p-value)", title = "Volcano Plot") +
+    theme_minimal() +
+    theme(legend.position = "top") +
+    theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14))
+  
+  # Print the plot
+  print(p)
+  
+  return(p)
+}
+
+
+
 #so=so_sub
 #cell=NULL
 #exposure="Diabetes"
@@ -1128,9 +1279,9 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
   } else {
     output_file <- paste0("Results_MAST_Bulk_",str_replace_all(" ", "_",additional_group),"_",condition,".xlsx")
   }
-
+  
   write.csv(combined_results,fs::path(dir.results,output_file))
-
+  
   # # Filter top positive and negative log2FoldChange, including significance based on fdr
   # top_pos <- as.data.frame(combined_results) %>%
   #   filter(component == "FC_H") %>%
@@ -1306,15 +1457,15 @@ mast_fxn <- function(so,cell,exposure,covariate,gene_set,batch_size,exp_group,re
   dev.off()
   
   
-    if (!is.null(cell)){
-      figure_file<- paste0("MAST_Volcano Plot_",cell_name,"_cells_for_",condition,"_",str_replace_all(" ", "_",additional_group),".pdf")
-    } else {
-      figure_file <- paste0("MAST_Volcano_for_",condition,"_",str_replace_all(" ", "_",additional_group),".pdf")
-    }
-    
-    pdf(fs::path(dir.results,figure_file),width=20,height=20)
-    plot(p)
-    dev.off()
+  if (!is.null(cell)){
+    figure_file<- paste0("MAST_Volcano Plot_",cell_name,"_cells_for_",condition,"_",str_replace_all(" ", "_",additional_group),".pdf")
+  } else {
+    figure_file <- paste0("MAST_Volcano_for_",condition,"_",str_replace_all(" ", "_",additional_group),".pdf")
+  }
+  
+  pdf(fs::path(dir.results,figure_file),width=20,height=20)
+  plot(p)
+  dev.off()
   # }
   
   # Filter top 10 positive and negative log2FoldChange
