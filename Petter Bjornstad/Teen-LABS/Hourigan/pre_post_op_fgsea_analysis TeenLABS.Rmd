@@ -1,0 +1,271 @@
+---
+title: "Teen-LABS Somascan analysis"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    code_folding: hide
+---
+
+```{r libraries, include=FALSE}
+# Load necessary libraries
+library(tidyverse)  # Data manipulation and visualization
+library(edgeR)      # Differential expression analysis
+library(limma)      # Linear modeling
+library(fgsea)      # Gene set enrichment analysis
+library(ggplot2)    # Visualization
+library(tidyr)      # Data wrangling
+library(gridExtra)  # Combine plots
+library(limma)
+library(clusterProfiler)
+library(ReactomePA)
+library(enrichplot)
+library(Hmisc)
+library(knitr)
+library(tidyverse)
+library(gtsummary)
+library(ggpubr)
+library(lmerTest)
+library(parallel)
+library(emmeans)
+library(RColorBrewer)
+library(VennDiagram)
+library(broom.mixed)
+library(tidyr)
+library(dplyr)
+# Set random seed for reproducibility
+set.seed(42)
+
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+```
+
+```{r data, include=FALSE}
+load("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Teen Labs/Data_Cleaned/analysis_dataset.RData")
+# Tim already log transformed proteins when creating dataframe
+df$map <- NA
+for (i in 1:nrow(df)) {
+  df[i,]$map <- df[i,]$dbp + ((1/3) * (df[i,]$sbp - df[i,]$dbp))
+}
+#df <- df %>% filter(!is.na(df$seq.10000.28))
+
+# create new variable for UACR in mg/g
+df$CREAU_g_dL <- df$CREAU / 1000
+df$UACRATIO_mg_g <- df$ALBU / df$CREAU_g_dL  
+label(df$UACRATIO_mg_g) <- "UACR (mg/g)"
+label(df$eGFR.fas_cr_cysc) <- "eGFR FAS Cr Cys-C"
+label(df$diabetes_duration) <- "Diabetes duration (yrs)"
+
+# fill upwards missing demographics
+# SEX, age, ETHN, RACE, race_ethnicity, SURG
+df <- df %>% group_by(ID) %>% fill(SEX, .direction = "up")
+df <- df %>% group_by(ID) %>% fill(ETHN, .direction = "up")
+df <- df %>% group_by(ID) %>% fill(RACE, .direction = "up")
+df <- df %>% group_by(ID) %>% fill(race_ethnicity, .direction = "up")
+df <- df %>% group_by(ID) %>% fill(SURG, .direction = "up")
+
+# need to populate missing visit numbers
+# First get the pattern from ID 1
+pattern <- df %>%
+  filter(ID == min(ID)) %>%
+  pull(visit)
+
+df <- df %>%
+  group_by(ID) %>%
+  mutate(row_num = row_number()) %>%
+  # Join pattern based on row number
+  mutate(visit = if_else(is.na(visit), 
+                         pattern[row_number()], 
+                         visit)) %>%
+  # Clean up
+  select(-row_num) %>% ungroup()
+
+# variable for site
+df$site <- as.factor(substr(df$ID,1,3))
+
+# keep only m1 and m6 for now
+df_m1 <- df %>% filter(visit == "Month 1")
+df_m1 <- df_m1 %>% filter(!is.na(seq.10000.28))
+df_m6 <- df %>% filter(visit == "Month 6")
+df_m6 <- df_m6 %>% filter(!is.na(seq.10000.28))
+df_m1 <- df_m1 %>% filter(ID %in% df_m6$ID)
+df_m6 <- df_m6 %>% filter(ID %in% df_m1$ID)
+df_m1 <- df_m1 %>% arrange(ID)
+df_m6 <- df_m6 %>% arrange(ID)
+a <- df_m1 %>% select(starts_with("seq"))
+b <- df_m6 %>% select(starts_with("seq"))
+deltas <- as.data.frame(b) - as.data.frame(a)
+deltas <- t(deltas)
+```
+
+```{r differential expression, include=FALSE}
+# create model matrix with covariates
+contrast_unadj <- model.matrix(~1,df_m1)
+contrast_adj <- model.matrix(~1+age+SEX,df_m1)
+
+# unadjusted
+fit <- lmFit(deltas, contrast_unadj)
+fit <- eBayes(fit)
+res <- as.data.frame(topTable(fit, coef = 1, number = Inf))
+# adjusted
+fit_adj <- lmFit(deltas, contrast_adj)
+fit_adj <- eBayes(fit_adj)
+res_fit <- as.data.frame(topTable(fit_adj, coef = 1, number = Inf))
+```
+
+```{r gsea, include=FALSE}
+res$EntrezGeneID <- analyte_info$EntrezGeneID[match(rownames(res), analyte_info$AptName)]
+de <- res$logFC
+names(de) <- res$EntrezGeneID
+de <- de[names(de) != ""]
+de <- de[!duplicated(names(de))]
+de <- sort(de, decreasing = T)
+all_prots_gse <- gsePathway(de,
+                            pvalueCutoff = 0.05,
+                            
+                            pAdjustMethod = "BH",
+                            verbose = FALSE
+)
+```
+
+## Dotplot
+
+```{r}
+dotplot(all_prots_gse)
+```
+
+## Ridge plot
+
+```{r}
+ridgeplot(all_prots_gse)
+```
+
+## Network plot
+
+```{r}
+all_prots_gse_net <- setReadable(all_prots_gse, "org.Hs.eg.db", "ENTREZID")
+cnetplot(all_prots_gse_net, foldChange = de, circular = T, colorEdge = T)
+```
+
+## GSEA scores
+
+```{r}
+gseaplot2(all_prots_gse, geneSetID = 1:7, subplots = 1:2)
+```
+
+## Over-representation analysis 
+
+```{r}
+# Upregulated and downregulated
+up <- rownames(res)[res$logFC > 0]
+up <- analyte_info$EntrezGeneID[match(up, analyte_info$AptName)]
+up <- up[up != ""]
+down <- rownames(res)[res$logFC < 0]
+down <- analyte_info$EntrezGeneID[match(down, analyte_info$AptName)]
+down <- down[down != ""]
+# Reactome enrichment
+upreact <- enrichPathway(up)
+upreact <- setReadable(upreact, "org.Hs.eg.db", "ENTREZID")
+downreact <- enrichPathway(down)
+downreact <- setReadable(downreact, "org.Hs.eg.db", "ENTREZID")
+# Plots
+updot <- dotplot(upreact) + ggtitle("Upregulated") +
+  theme(plot.title = element_text(hjust = 0.5))
+downdot <- dotplot(downreact) + ggtitle("Downregulated") +
+  theme(plot.title = element_text(hjust = 0.5))
+updot + downdot
+```
+
+```{r}
+##############################################
+# # Below is Foo's GSEA code
+# 
+# # Load pathways for GSEA
+# tm <- gmtPathways('/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/Teen-LABS/Hourigan/ReactomePathways.gmt')
+# #tm <- reactomePathways(analyte_info$EntrezGeneID)
+# 
+# # Prepare ranked gene list for fgsea
+# ch <- res %>% arrange(t)
+# res2 <- cbind(rownames(ch), as.numeric(as.character(ch$t)))
+# res2 <- as_tibble(res2)
+# res2$V2 <- as.numeric(res2$V2)
+# ranks <- deframe(as.data.frame(res2))
+# 
+# # Perform fgsea analysis
+# fgseaRes <- fgsea(pathways = tm, stats = ranks, maxSize = 500)
+# 
+# # Filter significant pathways (padj < 0.05)
+# p <- fgseaRes %>%
+#   arrange(padj) %>%
+#   filter(padj < 0.05)
+# 
+# # Create dot plot for significant pathways
+# p1 <- ggplot(p %>%
+#                mutate(size = case_when(
+#                  padj > 0.01 ~ "0.01 - 0.05",
+#                  padj <= 0.01 ~ "<0.01"
+#                )),
+#              aes(y = reorder(pathway, desc(padj)), x = "", size = size, fill = NES)) +
+#   geom_point(shape = 21, alpha = 0.5) +
+#   labs(size = "padj", fill = "NES") +
+#   scale_fill_viridis_c() +
+#   scale_size_manual(values = c(12, 6)) +
+#   xlab("Significant Enrichments for Pre vs Post-op") +
+#   theme_bw() +
+#   theme(
+#     axis.title.y = element_blank(),
+#     strip.text = element_text(size = 20),
+#     strip.background = element_rect(colour = "black", fill = NA),
+#     panel.border = element_rect(fill = NA, color = "black"),
+#     legend.position = "right",
+#     axis.text.x = element_text(color = "black", vjust = 0.5),
+#     text = element_text(size = 14)
+#   )
+# 
+# # Define pathways of interest
+# pathways_interested <- c("IRAK2 mediated activation of TAK1 complex")
+# 
+# # Initialize empty list for plots
+# plots <- list()
+# 
+# # Create line plots for each pathway of interest
+# for (path in pathways_interested) {
+#   filtered_pathway <- p %>%
+#     filter(pathway == path) %>%
+#     select(leadingEdge, pathway)
+#   
+#   # Extract leading edge genes
+#   leading_genes <- unlist(filtered_pathway$leadingEdge)
+#   
+#   # Subset matrix and reshape for plotting
+#   subset_matrix <- a[, c("Subject", "TimePoint", leading_genes)]
+#   subset_long <- subset_matrix %>%
+#     pivot_longer(cols = -c(Subject, TimePoint), names_to = "Gene", values_to = "RFU")
+#   subset_long$TimePoint <- factor(subset_long$TimePoint, levels = c("Pre-Op", "Post-Op"))
+#   
+#   # Plot data
+#   plot <- ggplot(subset_long, aes(x = TimePoint, y = RFU, group = Subject, color = Subject)) +
+#     geom_line() +
+#     geom_point() +
+#     facet_wrap(~Gene) +
+#     theme(text = element_text(size = 14)) +
+#     labs(title = "Pathways: IRAK2 mediated activation of TAK1 complex")
+#   
+#   # Add plot to list
+#   plots[[path]] <- plot
+# }
+# 
+# # Combine plots and save as PDF
+# p1_list <- list(p1)
+# combined_plots <- c(p1_list, plots)
+# 
+# 
+# pdf("pathway_line.pdf", width = 16)
+# grid.arrange(grobs = combined_plots, ncol = 2)
+# dev.off()
+```
+
