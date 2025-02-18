@@ -1,3 +1,28 @@
+#Gene Sets ----
+# Hemodynamics
+# Sodium and fractional sodium excretion (sodium transporter family)
+# Regulation of afferent/efferent dilation (KCNMA1, KCNN family, KCNJ family, RYR family)
+# Auto-/paracrine modulation of vascular resistance (COX family, NOS family, PTGER family, PTGES3)
+# Vascular remodeling/rarefaction: ICAM-1, VCAM1, NOS3, SEL family, ANGPT family, VWF, CD31, EMCN, KDR, PLVAP, VEGFA
+
+# Inflammation
+# NF-κβ: Il-6, IL-8, CXCL-1, CXCL2, CCL20, ICAM-1, TNFAIP3, NaF-1, TRAF-1 and TNF
+# JAK/STAT: Fas, Bcl-2, Bcl-X, p21, p27
+# Systemic inflammation: TNF and IL family
+# Intra-renal inflammation: Complement family, BMP2, immune signatures CD45 CCL2
+
+# Oxidative stress
+# ROS regulation: SOD, NOX family, ERO1, ACOX, DAO, XO, SOD1, HMOX1, KEAP-1, NRF2, FOXO family
+# Hypoxia: EPO, PHD2, HIF1A, VEGFA, glycolytic genes
+# Lipid peroxidation
+# Fibrosis
+# Pro-fibrotic programs: TGFb family, PDGF family, CTGF and associated genes, MAPK, Wnt/B-catenin genes, STAT family, MYK genes, JAK family, Notch family, PI3K/AKT/PKB genes
+# ECM genes: collagens, laminins, FN, VIM, ACTA2, thrombospondins, fibrillins, transglutaminases
+# ECM degradation: MMPs, ADAMTS family
+# Kidney injury
+# Kidney function: LRP2, PPARA, PPARGC1A, SLCs, NPHS1, SYNPO, WT1
+# Kidney injury: CSTC3, HAVCR1, LCN2
+
 #DEGS ----
 # de.markers(so_liver_sn, genes, "diagnosis_of_diabetes", id2 = "No", id1 = "Yes", NULL, "_top")
 # seurat_object <- so_kidney_sc
