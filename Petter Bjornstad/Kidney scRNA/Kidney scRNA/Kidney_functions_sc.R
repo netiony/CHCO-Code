@@ -398,38 +398,6 @@ degs_fxn2 <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_g
     "(Significant at FDR-P<0.05, FC Threshold = 0.5, Min Gene Exp 5% Threshold) \n",
     "N = ", total_individuals, " | Total Genes = ", total_genes
   )
-  # # Determine the max and min of your data for both x and y axes
-  # x_max <- max(m_top$avg_log2FC, na.rm = TRUE)
-  # x_min <- min(m_top$avg_log2FC, na.rm = TRUE)
-  # 
-  # y_max <- max(m_top$p_val_adj, na.rm = TRUE)
-  # y_min <- min(m_top$p_val_adj, na.rm = TRUE)
-  # 
-  # # Add a little padding to the max and min values to extend the axes
-  # x_padding <- 0.1 * (x_max - x_min)
-  # y_padding <- 0.1 * (y_max - y_min)
-  # 
-  # # Create the plot with adjusted axis limits
-  # p <- EnhancedVolcano(m_top,
-  #                      lab = labels,
-  #                      x = 'avg_log2FC',
-  #                      y = 'p_val_adj',
-  #                      title = title,
-  #                      subtitle = subtitle_text,
-  #                      pCutoff = 0.05,
-  #                      FCcutoff = 0.5,
-  #                      labFace = 'bold',
-  #                      pointSize = 4,
-  #                      labSize = 5,
-  #                      drawConnectors = TRUE,
-  #                      widthConnectors = 1.0,
-  #                      colConnectors = 'black',
-  #                      legendPosition=NULL,
-  #                      boxedLabels = TRUE,
-  #                      max.overlaps=60,
-  #                      xlim = c(x_min - x_padding, x_max + x_padding),  # Extend x axis slightly beyond max
-  #                      ylim = c(y_min - y_padding, y_max + y_padding))  # Extend y axis slightly beyond max
-  # 
 
   p <- EnhancedVolcano(m_top,
                        lab = labels,
@@ -598,12 +566,12 @@ degs_fxn2 <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_g
                   `P-Value`=p_val,
                   `Adjusted P-Value`=p_val_adj)
   if (!is.null(cell)){
-    #output_file2 <- fs::path(dir.ipa,paste0("Results_",cell_name,"_cells_for_",condition,".csv"))  
-    output_file2 <- fs::path(dir.results,paste0("Results_",cell_name,"_cells_for_",condition,".csv"))  
+    output_file2 <- fs::path(dir.ipa,paste0("Results_",cell_name,"_cells_for_",condition,".csv"))
+    # output_file2 <- fs::path(dir.results,paste0("Results_",cell_name,"_cells_for_",condition,".csv"))  
     
   } else {
-    #output_file2 <- fs::path(dir.ipa,paste0("Bulk_Results_for_",condition,".csv"))
-    output_file2 <- fs::path(dir.results,paste0("Bulk_Results_for_",condition,".csv"))
+    output_file2 <- fs::path(dir.ipa,paste0("Bulk_Results_for_",condition,".csv"))
+    # output_file2 <- fs::path(dir.results,paste0("Bulk_Results_for_",condition,".csv"))
     
   }
   write.csv(ipa_results, output_file2)
