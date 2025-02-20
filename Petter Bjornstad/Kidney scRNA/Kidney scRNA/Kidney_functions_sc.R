@@ -32,28 +32,64 @@
 # celltype="PT"
 # genes <- sens_genes
 # extension="_top"
-# # function for de.markers
+# function for de.markers
 de.markers <- function(seurat_object, genes, group.by, id1, id2, celltype, extension,logfc.threshold,min.pct){
-  m = FindMarkers(seurat_object, features = genes,group.by = group.by,ident.1 = id1, 
+  m = FindMarkers(seurat_object, features = genes,group.by = group.by,ident.1 = id1,
                   ident.2 = id2, subset.ident = celltype, verbose = F)
-  # m$p_val_adj = p.adjust(m$p_val,method = "fdr")
-  m$fdr = p.adjust(m$p_val,method = "fdr")
-  m$p_val_adj = m$p_val
-  m <- m %>% 
+  m$p_val_adj = p.adjust(m$p_val,method = "fdr")
+  # m$fdr = p.adjust(m$p_val,method = "fdr")
+  # m$p_val_adj = m$p_val
+  m <- m %>%
     rownames_to_column('gene') %>%
     arrange(p_val) %>%
     column_to_rownames('gene') %>%
     dplyr::select(avg_log2FC,pct.1,pct.2,p_val,p_val_adj) %>%
     filter(!is.na(p_val))
-  
+
   genes_subset <- rownames(m)[m$p_val <= 0.05]
-  
+
   if (length(genes_subset) > 0){
     assign(paste0("genes_subset", extension), genes_subset, envir = .GlobalEnv)
   }
   assign(paste0("m", extension), m, envir = .GlobalEnv)
   return(knitr::kable(m, digits = 3
   ))
+}
+
+de.markers2 <- function(seurat_object, genes, group.by, id1, id2, celltype, extension, logfc.threshold, min.pct) {
+  # Run FindMarkers to find differentially expressed genes
+  m = FindMarkers(seurat_object, features = genes, group.by = group.by, ident.1 = id1, 
+                  ident.2 = id2, subset.ident = celltype, verbose = F)
+  
+  # Adjust p-values using FDR
+  m$fdr = p.adjust(m$p_val, method = "fdr")
+  m$p_val_adj = m$p_val
+  
+  # Add columns for mean expression per group
+  m$mean_expr_id1 = rowMeans(seurat_object@assays$RNA@data[genes, seurat_object$seurat_clusters == id1])
+  m$mean_expr_id2 = rowMeans(seurat_object@assays$RNA@data[genes, seurat_object$seurat_clusters == id2])
+  
+  # Clean and select relevant columns
+  m <- m %>%
+    rownames_to_column('gene') %>%
+    arrange(p_val) %>%
+    column_to_rownames('gene') %>%
+    dplyr::select(avg_log2FC, pct.1, pct.2, p_val, p_val_adj, mean_expr_id1, mean_expr_id2) %>%
+    filter(!is.na(p_val))
+  
+  # Identify significant genes
+  genes_subset <- rownames(m)[m$p_val <= 0.05]
+  
+  # Store significant genes in global environment if any
+  if (length(genes_subset) > 0) {
+    assign(paste0("genes_subset", extension), genes_subset, envir = .GlobalEnv)
+  }
+  
+  # Assign results to global environment
+  assign(paste0("m", extension), m, envir = .GlobalEnv)
+  
+  # Return the table of results
+  return(knitr::kable(m, digits = 3))
 }
 
 #DEG & GSEA Function ----
@@ -803,9 +839,47 @@ degs_fxn3 <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_g
     cell_name <- str_replace_all(cell,"/","_")
   }
   
-  de.markers(so, gene_set, exposure, id2 = ref_group, id1 = exp_group, cell, "")
+  # # Scale the data
+  # so <- NormalizeData(so)
+  # so <- ScaleData(so)
+  # 
+  # # Perform PCA for dimensionality reduction
+  # so <- RunPCA(so)
+  # 
+  # # Find clusters
+  # so <- FindNeighbors(so, dims = 1:10)
+  # so <- FindClusters(so, resolution = 0.5)
+  
+  de.markers(so, gene_set, exposure, id2 = ref_group, id1 = exp_group, cell,"")
   colnames(m)[2] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group,")")
   colnames(m)[3] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",ref_group,")")
+  
+  dp <- dp.formatted(so,genes=gene_set,group.by=exposure,m=m,celltype=NULL)
+  # print(dp)
+  
+  # dp <- dp.formatted(so,genes=gene_set,group.by=exposure,m=m,celltype=NULL)
+  # return(dp)
+  # # Create the DotPlot
+  # # p <- DotPlot(object = so, features = gene_set) + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  # # Assuming 'm' contains the results from de.markers() with p-values
+  # # Filter for significant genes (adjusted p-value < 0.05)
+  # significant_genes <- m[m$p_val_adj < 0.5, ]
+  # 
+  # # Extract gene names that are significant
+  # significant_gene_names <- rownames(significant_genes)
+  # 
+  # # Create the DotPlot for the gene set
+  # p <- DotPlot(object = so, features = gene_set) + 
+  #   theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+  # 
+  # # Add '*' annotations for significant genes
+  # plot_new <-p + geom_text(
+  #   data = subset(p$data, features.plot %in% significant_gene_names),  # Only annotate significant genes
+  #   aes(label = "*"),  # Display '*' for significant genes
+  #   size = 4,  # Adjust text size
+  #   color = "black",  # Adjust text color if necessary
+  #   vjust = 0.5  # Adjust vertical position of text
+  # )
   
   # Filter for significant genes
   m_top <- m
@@ -845,17 +919,17 @@ degs_fxn3 <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_g
   if(is.null(additional_group)) {
     condition2 <- paste0(str_to_title(exposure)," (",exp_group," vs. ",ref_group,")")
     if (!is.null(cell)){
-      title <- paste0("DEGs in ",cell_name," cells for ",condition2)
+      title <- paste0("DEGs in ",cell_name," cells \n ",condition2)
     } else {
-      title <- paste0(cellname,"Cells, Individual PseudoBulk DEGs for ",condition2)
+      title <- paste0(cellname,"Cells, \n Individual PseudoBulk DEGs for ",condition2)
     }
   }
   if(!is.null(additional_group)) {
     condition2 <- paste0(additional_group," ",str_to_title(exposure)," (",exp_group," vs. ",ref_group,")")
     if (!is.null(cell)){
-      title <- paste0(pathway," DEGs in ",cell_name," cells for ",condition2)
+      title <- paste0(pathway," DEGs in ",cell_name," cells \n ",condition2)
     } else {
-      title <- paste0(pathway," ",cellname,"Cells, Individual Pseudobulk DEGs for ",condition2)
+      title <- paste0(pathway," ",cellname,"Cells, \n Individual Pseudobulk DEGs for ",condition2)
     }
   } 
   
@@ -864,62 +938,250 @@ degs_fxn3 <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_g
   total_individuals <- ncol(so)  # Total number of cells
   total_genes <- nrow(m)  # Total number of genes in m_top
   # Create subtitle with additional information
-  subtitle_text <- paste0(
-    "Positive Log2 FC = Greater Expression in ", condition2, "\n",
-    "(Significant at FDR-P<0.05, FC Threshold = 0.5, Min Gene Exp 5% Threshold) \n",
-    "N = ", total_individuals, " | Total Genes = ", total_genes
-  )
+  subtitle_text <- paste0("Positive Log2 FC = Greater Expression \n in ", condition2)
+  caption <- paste0("Significant FDR-P<0.05, N = ", total_individuals, " | Total Genes = ", total_genes)
   
   # Create a new column for significance (significant vs non-significant)
   # Create a new column for significance with direction (positive, negative, or non-significant)
-  m_top$significance <- ifelse(m_top$p_val_adj < 0.05 & m_top$avg_log2FC > 0, "Significant Positive", 
+  m_top$Significance <- ifelse(m_top$p_val_adj < 0.05 & m_top$avg_log2FC > 0, "Significant Positive", 
                                ifelse(m_top$p_val_adj < 0.05 & m_top$avg_log2FC < 0, "Significant Negative", 
                                       "Non-Significant"))
   m_top$Gene <- rownames(m_top)
-  # Create the dot plot with gene labels
-  p_dot <- ggplot(m_top, aes(x = avg_log2FC, y = -log10(p_val_adj))) +
+
+  p_dot <- ggplot(m_top, aes(x = "Cell Type", y = Gene)) +
     # Color points based on significance
-    geom_point(aes(color = significance, size = -log10(p_val_adj)), alpha = 0.7) +
-    scale_color_manual(values = c("Significant Positive" = "red", 
-                                  "Significant Negative" = "blue", 
+    geom_point(aes(color = Significance, size = abs(avg_log2FC)), alpha = 0.7) +
+    scale_color_manual(values = c("Significant Positive" = "red",
+                                  "Significant Negative" = "blue",
                                   "Non-Significant" = "gray")) +  # Set colors for positive, negative, and non-significant
-    scale_size_continuous(range = c(2, 8), name = "-log10(p-value)") +
-    geom_text(aes(label = Gene), vjust = 1.5, hjust = 0.5, size = 3, check_overlap = TRUE) +  # Add labels
+    scale_size_continuous(range = c(2, 8), name = "Magnitude (|Log2 Fold Change|)") +
     labs(
       title = title,
       subtitle = subtitle_text,
-      x = "Log2 Fold Change",
-      y = "-Log10 Adjusted P-Value",
-      caption = paste("Significant genes: FDR < 0.05")
+      x = cellname,  # Display a generic x-axis label
+      y = "Gene",
+      caption = caption
     ) +
-    theme_minimal() +
+    theme_classic() +
     theme(
-      plot.title = element_text(size = 16, face = "bold"),
-      plot.subtitle = element_text(size = 14),
-      axis.text = element_text(size = 12),
-      axis.title = element_text(size = 14),
-      legend.title = element_text(size = 12),
-      legend.text = element_text(size = 10)
+      plot.title = element_text(size = 10, face = "bold"),
+      plot.subtitle = element_text(size = 8),
+      axis.text = element_text(size = 6),
+      axis.title = element_text(size = 8),
+      legend.title = element_text(size = 8),
+      legend.text = element_text(size = 6),
+      axis.text.y = element_text(size = 6),  # To make the gene names readable
+      axis.title.x = element_text(size=8),
+      axis.text.x = element_blank(),  # Remove x-axis text
+      axis.ticks.x = element_blank()  # Remove x-axis ticks
+    )
+    # coord_fixed(ratio = 0.05)
+  
+  # Assuming 'm' is a matrix of gene expression data, where rows are genes and columns are cells.
+  # Calculate mean expression for each gene in each group (ref_group and exp_group)
+  ref2 <- colnames(m)[3]
+  exp2 <- colnames(m)[2]
+  mean_exp_ref <- rowMeans(m[ref2])  # Mean expression for ref_group
+  mean_exp_exp <- rowMeans(m[exp2])  # Mean expression for exp_group
+  
+  # Combine mean expressions into a data frame
+  m_top2 <- data.frame(
+    Gene = rownames(m),
+    Mean_Expression_Ref = mean_exp_ref,
+    Mean_Expression_Exp = mean_exp_exp,
+    Significance = ifelse(m_top$p_val_adj < 0.05 & m_top$avg_log2FC > 0, "Significant Positive", 
+                          ifelse(m_top$p_val_adj < 0.05 & m_top$avg_log2FC < 0, "Significant Negative", 
+                                 "Non-Significant"))
+  )
+  
+  # Create subtitle with additional information
+  subtitle_text <- paste0("Positive Log2 FC = Greater Expression \n in ", exp_group)
+  caption <- paste0("Significant FDR-P<0.05, N = ", total_individuals, " | Total Genes = ", total_genes)
+  
+  # Reshape the data to make it suitable for ggplot (long format for groups)
+  m_top_long <- data.frame(
+    Gene = rep(rownames(m_top2), 2),
+    Group = rep(c(exp_group, ref_group), each = nrow(m_top2)),
+    Mean_Expression = c(m_top2$Mean_Expression_Exp, m_top2$Mean_Expression_Ref),
+    Significance = rep(m_top2$Significance, 2)
+  )
+  
+  # p_dot2 <- ggplot(m_top_long, aes(x = Group, y = Gene)) + 
+  #   # Plot points for each gene's mean expression in both groups
+  #   geom_point(aes(color = Mean_Expression, size = Mean_Expression), alpha = 0.7) + 
+  #   # Apply a more granular diverging color scale with fewer breaks in the legend
+  #   scale_color_gradient2(low = "white", mid = "red1", high = "darkred", 
+  #                         midpoint = 0.7, 
+  #                         limits = c(min(m_top_long$Mean_Expression), max(m_top_long$Mean_Expression)),
+  #                         breaks = seq(min(m_top_long$Mean_Expression), max(m_top_long$Mean_Expression), length.out = 5),  # Reduce the number of breaks
+  #                         labels = scales::number_format(accuracy = 0.01),  # Round labels to 2 decimal places
+  #                         name = "% Expression") + 
+  #   scale_size_continuous(range = c(2, 8), name = "% Expression") +  # Size of points based on mean expression
+  #   # Draw boxes around Group 1 and Group 2
+  #   # geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = -Inf, ymax = Inf), fill = NA, color = "black", size = 1.5) + # Box around Group 1
+  #   # geom_rect(aes(xmin = 1.5, xmax = 2.5, ymin = -Inf, ymax = Inf), fill = NA, color = "black", size = 1.5) + # Box around Group 2
+  #   labs(
+  #     title = title,
+  #     subtitle = subtitle_text,
+  #     x = "Group",
+  #     y = "Gene",
+  #     caption = caption
+  #   ) + 
+  #   theme_classic() +
+  #   theme(
+  #     plot.title = element_text(size = 10, face = "bold"),
+  #     plot.subtitle = element_text(size = 8),
+  #     axis.text = element_text(size = 6),
+  #     axis.title = element_text(size = 8),
+  #     legend.title = element_text(size = 8),
+  #     legend.text = element_text(size = 6),
+  #     axis.text.y = element_text(size = 6),  # To make the gene names readable
+  #     axis.title.x = element_text(size = 8),  
+  #     axis.text.x = element_text(angle = 90, hjust = 1),  # Rotate x-axis text for better readability
+  #     axis.ticks.x = element_blank()  # Remove x-axis ticks
+  #   )
+  # p_dot2 <- ggplot(m_top_long, aes(x = Group, y = Gene)) + 
+  #   # Plot points for each gene's mean expression in both groups (just for background grid, no shapes)
+  #   geom_point(aes(color = Mean_Expression, size = Mean_Expression), alpha = 0.7, show.legend = FALSE) + 
+  #   
+  #   # Apply a more granular diverging color scale with fewer breaks in the legend
+  #   scale_color_gradient2(low = "white", mid = "red1", high = "darkred", 
+  #                         midpoint = 0.7, 
+  #                         limits = c(min(m_top_long$Mean_Expression), max(m_top_long$Mean_Expression)),
+  #                         breaks = seq(min(m_top_long$Mean_Expression), max(m_top_long$Mean_Expression), length.out = 5),  # Reduce the number of breaks
+  #                         labels = scales::number_format(accuracy = 0.01),  # Round labels to 2 decimal places
+  #                         name = "% Expression") + 
+  #   
+  #   scale_size_continuous(range = c(2, 8), name = "% Expression") +  # Size of points based on mean expression
+  #   
+  #   # Add asterisks (*) for significant genes (both positive and negative)
+  #   geom_text(data = subset(m_top_long, Significance != "Non-Significant"),
+  #             aes(label = "*"),
+  #             size = 4, color = "black", vjust = 0.5) +  # Center the asterisk on the dot
+  #   
+  #   labs(
+  #     title = title,
+  #     subtitle = subtitle_text,
+  #     x = "Group",
+  #     y = "Gene",
+  #     caption = caption
+  #   ) + 
+  #   theme_classic() +
+  #   theme(
+  #     plot.title = element_text(size = 10, face = "bold"),
+  #     plot.subtitle = element_text(size = 8),
+  #     axis.text = element_text(size = 6),
+  #     axis.title = element_text(size = 8),
+  #     legend.title = element_text(size = 8),
+  #     legend.text = element_text(size = 6),
+  #     axis.text.y = element_text(size = 6),  # To make the gene names readable
+  #     axis.title.x = element_text(size = 8),  
+  #     axis.text.x = element_text(angle = 90, hjust = 1),  # Rotate x-axis text for better readability
+  #     axis.ticks.x = element_blank()  # Remove x-axis ticks
+  #   )
+  
+  # Scale the Mean_Expression values (e.g., z-score scaling)
+  m_top_long$Scaled_Mean_Expression <- scale(m_top_long$Mean_Expression)
+                                             
+  p_dot2 <- ggplot(m_top_long, aes(x = Group, y = Gene)) + 
+    # Plot points for each gene's mean expression in both groups (just for background grid, no shapes)
+    geom_point(aes(color = Mean_Expression, size = Mean_Expression), alpha = 0.7, show.legend = TRUE) +  # Keep the legend for size and color
+    
+    # Apply a more granular diverging color scale with fewer breaks in the legend
+    scale_color_gradient2(low = "white", mid = "red1", high = "darkred", 
+                          midpoint = 0.7, 
+                          limits = c(min(m_top_long$Mean_Expression), max(m_top_long$Mean_Expression)),
+                          breaks = seq(min(m_top_long$Mean_Expression), max(m_top_long$Mean_Expression), length.out = 5),  # Reduce the number of breaks
+                          labels = scales::number_format(accuracy = 0.01),  # Round labels to 2 decimal places
+                          name = "% Expression") + 
+    
+    scale_size_continuous(range = c(2, 8), name = "% Expression", guide = guide_legend(title = "% Expression")) +  # Size of points based on mean expression, ensure size legend
+    
+    # Add asterisks (*) for significant genes (both positive and negative)
+    geom_text(data = subset(m_top_long, Significance != "Non-Significant"),
+              aes(label = "*"),
+              size = 4, color = "black", vjust = 0.5) +  # Center the asterisk on the dot
+    
+    labs(
+      title = title,
+      subtitle = subtitle_text,
+      x = "Group",
+      y = "Gene",
+      caption = caption
+    ) + 
+    theme_classic() +
+    theme(
+      plot.title = element_text(size = 10, face = "bold"),
+      plot.subtitle = element_text(size = 8),
+      axis.text = element_text(size = 6),
+      axis.title = element_text(size = 8),
+      legend.title = element_text(size = 8),
+      legend.text = element_text(size = 6),
+      axis.text.y = element_text(size = 6),  # To make the gene names readable
+      axis.title.x = element_text(size = 8),  
+      axis.text.x = element_text(angle = 90, hjust = 1),  # Rotate x-axis text for better readability
+      axis.ticks.x = element_blank()  # Remove x-axis ticks
     )
   
-  p <- EnhancedVolcano(m_top,
-                       lab = labels,
-                       x = 'avg_log2FC',
-                       y = 'p_val_adj',
-                       title = title,
-                       subtitle = subtitle_text,
-                       pCutoff = 0.05,
-                       FCcutoff = 0.5,
-                       labFace = 'bold',
-                       pointSize = 4,
-                       labSize = 5,
-                       drawConnectors = TRUE,
-                       widthConnectors = 1.0,
-                       colConnectors = 'black',
-                       legendPosition=NULL,
-                       boxedLabels = TRUE,
-                       max.overlaps=60)
   
+  # # Plot the mean expression for each gene in the two groups (side by side)
+  # p_dot2 <- ggplot(m_top_long, aes(x = Group, y = Gene)) + 
+  #   # Plot points for each gene's mean expression in both groups
+  #   geom_point(aes(color = Mean_Expression, size = Mean_Expression), alpha = 0.7) +
+  #   # geom_point(aes(color = Significance, size = Mean_Expression), alpha = 0.7) + 
+  #   # scale_color_manual(values = c("Significant Positive" = "red", 
+  #   #                               "Significant Negative" = "blue", 
+  #   #                               "Non-Significant" = "gray")) +  # Set colors for positive, negative, and non-significant
+  #   # scale_color_gradient(low = "white", high = "darkred", name = "% Expression") +
+  #   # scale_color_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0, name = "% Expression") +
+  #   scale_color_gradient2(low = "white", mid = "orangered", high = "darkred", 
+  #                         midpoint = 0.5, limits = c(min(m_top_long$Mean_Expression), max(m_top_long$Mean_Expression)),
+  #                         breaks = seq(min(m_top_long$Mean_Expression), max(m_top_long$Mean_Expression), length.out = 10),
+  #                         name = "% Expression") + 
+  #   scale_size_continuous(range = c(2, 8), name = "% Expression") +
+  #     # Draw boxes around Group 1 and Group 2
+  #   # geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = -Inf, ymax = Inf), fill = NA, color = "black", size = 1.5) + # Box around Group 1
+  #   # geom_rect(aes(xmin = 1.5, xmax = 2.5, ymin = -Inf, ymax = Inf), fill = NA, color = "black", size = 1.5) + # Box around Group 2
+  #   labs(
+  #     title = title,
+  #     subtitle = subtitle_text,
+  #     x = "Group",
+  #     y = "Gene",
+  #     caption = caption
+  #   ) + 
+  #   theme_classic() +
+  #   theme(
+  #     plot.title = element_text(size = 10, face = "bold"),
+  #     plot.subtitle = element_text(size = 8),
+  #     axis.text = element_text(size = 6),
+  #     axis.title = element_text(size = 8),
+  #     legend.title = element_text(size = 8),
+  #     legend.text = element_text(size = 6),
+  #     axis.text.y = element_text(size = 6),  # To make the gene names readable
+  #     axis.title.x = element_text(size=8),  
+  #     axis.text.x = element_text(angle = 90, hjust = 1),  # Rotate x-axis text for better readability
+  #     axis.ticks.x = element_blank()  # Remove x-axis ticks
+  #   )
+  
+  
+  # p <- EnhancedVolcano(m_top,
+  #                      lab = labels,
+  #                      x = 'avg_log2FC',
+  #                      y = 'p_val_adj',
+  #                      title = title,
+  #                      subtitle = subtitle_text,
+  #                      pCutoff = 0.05,
+  #                      FCcutoff = 0.5,
+  #                      labFace = 'bold',
+  #                      pointSize = 4,
+  #                      labSize = 5,
+  #                      drawConnectors = TRUE,
+  #                      widthConnectors = 1.0,
+  #                      colConnectors = 'black',
+  #                      legendPosition=NULL,
+  #                      boxedLabels = TRUE,
+  #                      max.overlaps=60)
+  # 
   
   if(!is.null(additional_group)) {
     if (!is.null(cell)){
@@ -935,8 +1197,9 @@ degs_fxn3 <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_g
       filename <- paste0(pathway,"_","Pseudobulk_DEGs_for_",condition,".pdf") 
     }
   }
-  pdf(fs::path(dir.results,filename),width=20,height=10)
-  plot(p)
+  pdf(fs::path(dir.results,filename),width=5,height=10)
+  # plot(p_dot2)
+  plot(dp)
   dev.off()
   
   # #GSEA
@@ -1079,7 +1342,360 @@ degs_fxn3 <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_g
   }
   write.csv(ipa_results, output_file2)
   # return(p)
-  return(p_dot)
+  return(p_dot2)
+}
+
+degs_fxn4 <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_group,enrichment,top_gsea,cellname,pathway) {
+  DefaultAssay(so) <- "RNA"
+  
+  #Conidtion names
+  if(is.null(additional_group)) {
+    condition <- paste0(str_to_title(str_replace_all(exposure,"_"," ")),"_",exp_group,"_vs_",ref_group)
+    condition <- str_replace_all(condition," ","_")
+  } 
+  if(!is.null(additional_group)) {
+    condition <- paste0(additional_group,"_",str_to_title(str_replace_all(exposure,"_"," ")),"_",exp_group,"_vs_",ref_group)
+    condition <- str_replace_all(condition," ","_")
+  }
+  #Differential Expression by Group
+  if (!is.null(cell)) {
+    cell_name <- str_replace_all(cell,"/","_")
+  }
+  
+  de.markers(so, gene_set, exposure, id2 = ref_group, id1 = exp_group, cell, "")
+  colnames(m)[2] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group,")")
+  colnames(m)[3] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",ref_group,")")
+  
+  # Filter for significant genes
+  m_top <- m
+  
+  
+  
+  if(is.null(additional_group)) {
+    condition2 <- paste0(str_to_title(exposure)," (",exp_group," vs. ",ref_group,")")
+    if (!is.null(cell)){
+      title <- paste0("DEGs in ",cell_name," cells \n ",condition2)
+    } else {
+      title <- paste0(cellname,"Cells, \n Individual PseudoBulk DEGs for ",condition2)
+    }
+  }
+  if(!is.null(additional_group)) {
+    condition2 <- paste0(additional_group," ",str_to_title(exposure)," (",exp_group," vs. ",ref_group,")")
+    if (!is.null(cell)){
+      title <- paste0(pathway," DEGs in ",cell_name," cells \n ",condition2)
+    } else {
+      title <- paste0(pathway," ",cellname,"Cells, \n Individual Pseudobulk DEGs for ",condition2)
+    }
+  } 
+  
+  
+  labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+  total_individuals <- ncol(so)  # Total number of cells
+  total_genes <- nrow(m)  # Total number of genes in m_top
+
+  # Assuming 'm' is a matrix of gene expression data, where rows are genes and columns are cells.
+  # Calculate mean expression for each gene in each group (ref_group and exp_group)
+  ref2 <- colnames(m)[3]
+  exp2 <- colnames(m)[2]
+  mean_exp_ref <- rowMeans(m[ref2])  # Mean expression for ref_group
+  mean_exp_exp <- rowMeans(m[exp2])  # Mean expression for exp_group
+  
+  # Combine mean expressions into a data frame
+  m_top2 <- data.frame(
+    Gene = rownames(m),
+    Mean_Expression_Ref = mean_exp_ref,
+    Mean_Expression_Exp = mean_exp_exp,
+    Significance = ifelse(m_top$p_val_adj < 0.05 & m_top$avg_log2FC > 0, "Significant Positive", 
+                          ifelse(m_top$p_val_adj < 0.05 & m_top$avg_log2FC < 0, "Significant Negative", 
+                                 "Non-Significant"))
+  )
+  
+  # Create subtitle with additional information
+  subtitle_text <- paste0("Positive Log2 FC = Greater Expression \n in ", exp_group)
+  caption <- paste0("Significant FDR-P<0.05, N = ", total_individuals, " | Total Genes = ", total_genes)
+  
+  # Reshape the data to make it suitable for ggplot (long format for groups)
+  m_top_long <- data.frame(
+    Gene = rep(rownames(m_top2), 2),
+    Group = rep(c(exp_group, ref_group), each = nrow(m_top2)),
+    Mean_Expression = c(m_top2$Mean_Expression_Exp, m_top2$Mean_Expression_Ref),
+    Significance = rep(m_top2$Significance, 2)
+  )
+  
+  
+  # Scale the Mean_Expression values (e.g., z-score scaling)
+  m_top_long$Scaled_Mean_Expression <- scale(m_top_long$Mean_Expression)
+  
+  p_dot2 <- ggplot(m_top_long, aes(x = Group, y = Gene)) + 
+    # Plot points for each gene's mean expression in both groups (just for background grid, no shapes)
+    geom_point(aes(color = Mean_Expression, size = Mean_Expression), alpha = 0.7, show.legend = TRUE) +  # Keep the legend for size and color
+    
+    # Apply a more granular diverging color scale with fewer breaks in the legend
+    scale_color_gradient2(low = "white", mid = "red1", high = "darkred", 
+                          midpoint = 0.7, 
+                          limits = c(min(m_top_long$Mean_Expression), max(m_top_long$Mean_Expression)),
+                          breaks = seq(min(m_top_long$Mean_Expression), max(m_top_long$Mean_Expression), length.out = 5),  # Reduce the number of breaks
+                          labels = scales::number_format(accuracy = 0.01),  # Round labels to 2 decimal places
+                          name = "% Expression") + 
+    
+    scale_size_continuous(range = c(2, 8), name = "% Expression", guide = guide_legend(title = "% Expression")) +  # Size of points based on mean expression, ensure size legend
+    
+    # Add asterisks (*) for significant genes (both positive and negative)
+    geom_text(data = subset(m_top_long, Significance != "Non-Significant"),
+              aes(label = "*"),
+              size = 4, color = "black", vjust = 0.5) +  # Center the asterisk on the dot
+    
+    labs(
+      title = title,
+      subtitle = subtitle_text,
+      x = "Group",
+      y = "Gene",
+      caption = caption
+    ) + 
+    theme_classic() +
+    theme(
+      plot.title = element_text(size = 10, face = "bold"),
+      plot.subtitle = element_text(size = 8),
+      axis.text = element_text(size = 6),
+      axis.title = element_text(size = 8),
+      legend.title = element_text(size = 8),
+      legend.text = element_text(size = 6),
+      axis.text.y = element_text(size = 6),  # To make the gene names readable
+      axis.title.x = element_text(size = 8),  
+      axis.text.x = element_text(angle = 90, hjust = 1),  # Rotate x-axis text for better readability
+      axis.ticks.x = element_blank()  # Remove x-axis ticks
+    )
+  
+
+  if(!is.null(additional_group)) {
+    if (!is.null(cell)){
+      filename <- paste0(pathway,"_",additional_group,"_DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
+    } else {
+      filename <- paste0(pathway,"_",additional_group,"_Bulk_DEGs_for_",condition,".pdf") 
+    }
+  }
+  if(is.null(additional_group)) {
+    if (!is.null(cell)){
+      filename <- paste0(pathway,"_","DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
+    } else {
+      filename <- paste0(pathway,"_","Pseudobulk_DEGs_for_",condition,".pdf") 
+    }
+  }
+  pdf(fs::path(dir.results,filename),width=5,height=10)
+  plot(p_dot2)
+  dev.off()
+  
+  #Make sure gene nemaes are in printed file
+  deg_results <- m 
+  deg_results$Gene <- rownames(deg_results)
+  
+  
+  
+  # Specify the file name and data
+  if (!is.null(cell)){
+    output_file <- fs::path(dir.results,paste0(pathway,"_","Results_",cell_name,"_cells_for_",condition,".csv"))  
+  } else {
+    output_file <- fs::path(dir.results,paste0(pathway,"_","Pseudobulk_Results_for_",condition,".csv"))
+  }
+  write.csv(deg_results,output_file)
+  
+ 
+  #Save for IPA
+  # Call the function
+  ipa_results <- deg_results %>% 
+    dplyr::select(all_of(c("Gene","avg_log2FC","p_val","p_val_adj"))) %>% 
+    dplyr::rename(ID=Gene,
+                  `Fold Change`=avg_log2FC,
+                  `P-Value`=p_val,
+                  `Adjusted P-Value`=p_val_adj)
+  if (!is.null(cell)){
+    output_file2 <- fs::path(dir.ipa,paste0(pathway,"_","Results_",cell_name,"_cells_for_",condition,".csv"))
+    # output_file2 <- fs::path(dir.results,paste0("Results_",cell_name,"_cells_for_",condition,".csv"))  
+    
+  } else {
+    output_file2 <- fs::path(dir.ipa,paste0(pathway,"_","Pseudobulk_Results_for_",condition,".csv"))
+    # output_file2 <- fs::path(dir.results,paste0("Bulk_Results_for_",condition,".csv"))
+    
+  }
+  write.csv(ipa_results, output_file2)
+  # return(p)
+  return(p_dot2)
+}
+degs_fxn5 <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_group,enrichment,top_gsea,cellname,pathway) {
+  DefaultAssay(so) <- "RNA"
+  
+  #Conidtion names
+  if(is.null(additional_group)) {
+    condition <- paste0(str_to_title(str_replace_all(exposure,"_"," ")),"_",exp_group,"_vs_",ref_group)
+    condition <- str_replace_all(condition," ","_")
+  } 
+  if(!is.null(additional_group)) {
+    condition <- paste0(additional_group,"_",str_to_title(str_replace_all(exposure,"_"," ")),"_",exp_group,"_vs_",ref_group)
+    condition <- str_replace_all(condition," ","_")
+  }
+  #Differential Expression by Group
+  if (!is.null(cell)) {
+    cell_name <- str_replace_all(cell,"/","_")
+  }
+  
+  de.markers(so, gene_set, exposure, id2 = ref_group, id1 = exp_group, cell, "")
+  colnames(m)[2] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group,")")
+  colnames(m)[3] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",ref_group,")")
+  
+  # Filter for significant genes
+  m_top <- m
+  
+  
+  
+  if(is.null(additional_group)) {
+    condition2 <- paste0(str_to_title(exposure)," (",exp_group," vs. ",ref_group,")")
+    if (!is.null(cell)){
+      title <- paste0("DEGs in ",cell_name," cells \n ",condition2)
+    } else {
+      title <- paste0(cellname,"Cells, \n Individual PseudoBulk DEGs for ",condition2)
+    }
+  }
+  if(!is.null(additional_group)) {
+    condition2 <- paste0(additional_group," ",str_to_title(exposure)," (",exp_group," vs. ",ref_group,")")
+    if (!is.null(cell)){
+      title <- paste0(pathway," DEGs in ",cell_name," cells \n ",condition2)
+    } else {
+      title <- paste0(pathway," ",cellname,"Cells, \n Individual Pseudobulk DEGs for ",condition2)
+    }
+  } 
+  
+  
+  labels <- ifelse(rownames(m_top) %in% rownames(top_genes), rownames(m_top), NA)
+  total_individuals <- ncol(so)  # Total number of cells
+  total_genes <- nrow(m)  # Total number of genes in m_top
+  
+  # Assuming 'm' is a matrix of gene expression data, where rows are genes and columns are cells.
+  # Calculate mean expression for each gene in each group (ref_group and exp_group)
+  ref2 <- colnames(m)[3]
+  exp2 <- colnames(m)[2]
+  mean_exp_ref <- rowMeans(m[ref2])  # Mean expression for ref_group
+  mean_exp_exp <- rowMeans(m[exp2])  # Mean expression for exp_group
+  
+  # Combine mean expressions into a data frame
+  m_top2 <- data.frame(
+    Gene = rownames(m),
+    Mean_Expression_Ref = mean_exp_ref,
+    Mean_Expression_Exp = mean_exp_exp,
+    Significance = ifelse(m_top$p_val_adj < 0.05 & m_top$avg_log2FC > 0, "Significant Positive", 
+                          ifelse(m_top$p_val_adj < 0.05 & m_top$avg_log2FC < 0, "Significant Negative", 
+                                 "Non-Significant"))
+  )
+  
+  # Create subtitle with additional information
+  subtitle_text <- paste0("Positive Log2 FC = Greater Expression \n in ", exp_group)
+  caption <- paste0("Significant FDR-P<0.05, N = ", total_individuals, " | Total Genes = ", total_genes)
+  
+  # Reshape the data to make it suitable for ggplot (long format for groups)
+  m_top_long <- data.frame(
+    Gene = rep(rownames(m_top2), 2),
+    Group = rep(c(exp_group, ref_group), each = nrow(m_top2)),
+    Mean_Expression = c(m_top2$Mean_Expression_Exp, m_top2$Mean_Expression_Ref),
+    Significance = rep(m_top2$Significance, 2)
+  )
+  
+  
+  # Scale the Mean_Expression values (e.g., z-score scaling)
+  m_top_long$Scaled_Mean_Expression <- scale(m_top_long$Mean_Expression)
+  
+  p_dot2 <- ggplot(m_top_long, aes(x = Group, y = Gene)) + 
+    # Plot points for each gene's mean expression in both groups (just for background grid, no shapes)
+    geom_point(aes(color = Mean_Expression, size = Mean_Expression), alpha = 0.7, show.legend = TRUE) +  # Keep the legend for size and color
+    
+    # Apply a more granular diverging color scale with fewer breaks in the legend
+    scale_color_gradient2(low = "white", mid = "red1", high = "darkred", 
+                          midpoint = 0.7, 
+                          limits = c(min(m_top_long$Mean_Expression), max(m_top_long$Mean_Expression)),
+                          breaks = seq(min(m_top_long$Mean_Expression), max(m_top_long$Mean_Expression), length.out = 5),  # Reduce the number of breaks
+                          labels = scales::number_format(accuracy = 0.01),  # Round labels to 2 decimal places
+                          name = "% Expression") + 
+    
+    scale_size_continuous(range = c(2, 8), name = "% Expression", guide = guide_legend(title = "% Expression")) +  # Size of points based on mean expression, ensure size legend
+    
+    # Add asterisks (*) for significant genes (both positive and negative)
+    geom_text(data = subset(m_top_long, Significance != "Non-Significant"),
+              aes(label = "*"),
+              size = 4, color = "black", vjust = 0.5) +  # Center the asterisk on the dot
+    
+    labs(
+      title = title,
+      subtitle = subtitle_text,
+      x = "Group",
+      y = "Gene",
+      caption = caption
+    ) + 
+    theme_classic() +
+    theme(
+      plot.title = element_text(size = 10, face = "bold"),
+      plot.subtitle = element_text(size = 8),
+      axis.text = element_text(size = 6),
+      axis.title = element_text(size = 8),
+      legend.title = element_text(size = 8),
+      legend.text = element_text(size = 6),
+      axis.text.y = element_text(size = 6),  # To make the gene names readable
+      axis.title.x = element_text(size = 8),  
+      axis.text.x = element_text(angle = 90, hjust = 1),  # Rotate x-axis text for better readability
+      axis.ticks.x = element_blank()  # Remove x-axis ticks
+    )
+  
+  
+  if(!is.null(additional_group)) {
+    if (!is.null(cell)){
+      filename <- paste0(pathway,"_",additional_group,"_DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
+    } else {
+      filename <- paste0(pathway,"_",additional_group,"_Bulk_DEGs_for_",condition,".pdf") 
+    }
+  }
+  if(is.null(additional_group)) {
+    if (!is.null(cell)){
+      filename <- paste0(pathway,"_","DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
+    } else {
+      filename <- paste0(pathway,"_","Pseudobulk_DEGs_for_",condition,".pdf") 
+    }
+  }
+  pdf(fs::path(dir.results,filename),width=5,height=10)
+  plot(p_dot2)
+  dev.off()
+  
+  #Make sure gene nemaes are in printed file
+  deg_results <- m 
+  deg_results$Gene <- rownames(deg_results)
+  
+  
+  
+  # Specify the file name and data
+  if (!is.null(cell)){
+    output_file <- fs::path(dir.results,paste0(pathway,"_","Results_",cell_name,"_cells_for_",condition,".csv"))  
+  } else {
+    output_file <- fs::path(dir.results,paste0(pathway,"_","Pseudobulk_Results_for_",condition,".csv"))
+  }
+  write.csv(deg_results,output_file)
+  
+  
+  #Save for IPA
+  # Call the function
+  ipa_results <- deg_results %>% 
+    dplyr::select(all_of(c("Gene","avg_log2FC","p_val","p_val_adj"))) %>% 
+    dplyr::rename(ID=Gene,
+                  `Fold Change`=avg_log2FC,
+                  `P-Value`=p_val,
+                  `Adjusted P-Value`=p_val_adj)
+  if (!is.null(cell)){
+    output_file2 <- fs::path(dir.ipa,paste0(pathway,"_","Results_",cell_name,"_cells_for_",condition,".csv"))
+    # output_file2 <- fs::path(dir.results,paste0("Results_",cell_name,"_cells_for_",condition,".csv"))  
+    
+  } else {
+    output_file2 <- fs::path(dir.ipa,paste0(pathway,"_","Pseudobulk_Results_for_",condition,".csv"))
+    # output_file2 <- fs::path(dir.results,paste0("Bulk_Results_for_",condition,".csv"))
+    
+  }
+  write.csv(ipa_results, output_file2)
+  # return(p)
+  return(p_dot2)
 }
 
 degs_ind_fxn2 <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_group,enrichment,top_gsea,cellname) {
@@ -2741,3 +3357,58 @@ ideas_fxn <- function(so, exp_group, ref_group, covariates, var_type, id, method
 #   return(df)
 # }
 # 
+
+dp.formatted <- function(seurat_object, genes, celltype, group.by, m,
+                         colorlow = "#83c5be", colormid = "#f4f1bb", colorhigh = "#d90429")
+{
+  pt.combined <- DotPlot(seurat_object,
+                         features = genes,idents = celltype, group.by = group.by,
+                         scale = F, cols = "RdYlBu"
+  )$data 
+  
+  pt.plot <- pt.combined %>% 
+    ggplot(aes(x=features.plot, y = id, color = avg.exp.scaled, size = pct.exp)) + 
+    geom_point() +
+    theme_bw() +
+    scale_color_gradient2(low = colorlow, mid = colormid, high = colorhigh, midpoint = 2,
+                          guide = guide_colorbar(label.vjust = 0.8, ticks = F, draw.ulim = T, draw.llim = T),
+                          limits = c(0,4)) +
+    scale_size(range = c(0,4), 
+               limits = c(0,100)) +
+    theme(panel.grid = element_blank(),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank(),
+          axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+          legend.text = element_text(size = 8),
+          legend.title = element_text(size = 8, vjust = 0.5),
+          legend.spacing.x = unit(.1, "cm"),
+          legend.direction = "horizontal") +
+    guides(size = guide_legend(label.position = "bottom",
+                               title.position = "top"),
+           color = guide_colorbar(label.position = "bottom",
+                                  title.position = "top")) +
+    labs(color = "Scaled average expression",
+         size = "Expression (%) ") + 
+    scale_y_discrete(limits=rev)
+  
+  pt.table <- m %>%
+    filter(rownames(m) %in% genes) %>%
+    dplyr::mutate(p_val_rounded = round(p_val, 4),
+                  p_val = p_format(p_val_rounded, trailing.zero = T, accuracy = 0.001, digits = 3),
+                  p_val_adj_rounded = round(p_val_adj, 4),
+                  p_val_adj = p_format(p_val_adj_rounded, trailing.zero = T, accuracy = 0.001, digits = 3),
+                  pct.1 = sprintf("%.3f", pct.1),
+                  pct.2 = sprintf("%.3f", pct.2),
+                  avg_log2FC = sprintf("%.3f", avg_log2FC)) %>% 
+    dplyr::select(pct.1, pct.2, avg_log2FC, p_val, p_val_adj) 
+  gg.pt.table <- ggtexttable(pt.table,
+                             cols = c(exp_group, ref_group, "Log2FC", "p-value", "q-value"),
+                             theme = ttheme("blank")) %>%
+    tab_add_hline(at.row = 1:2, row.side = "top", linewidth = 1) %>%
+    tab_add_title("% Expressed in PT Cells")
+  
+  pt.plot_table <- ggarrange(pt.plot, NULL, gg.pt.table,
+                             nrow = 1, widths = c(1,-0.1,1), common.legend = F,
+                             legend = "top")
+  
+}
