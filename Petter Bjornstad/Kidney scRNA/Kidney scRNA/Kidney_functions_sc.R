@@ -1373,16 +1373,16 @@ degs_fxn4 <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_g
   # so <- FindNeighbors(so, dims = 1:10)
   # so <- FindClusters(so, resolution = 0.5)
   
-  # de.markers(so, gene_set, exposure, id2 = ref_group, id1 = exp_group, cell,"")
+  de.markers(so, gene_set, exposure, id2 = ref_group, id1 = exp_group, cell,"")
   # colnames(m)[2] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",exp_group,")")
   # colnames(m)[3] <- paste0(str_to_title(str_replace_all(exposure,"_"," "))," (",ref_group,")")
-  
+
   # dp <- dp.formatted(so,genes=gene_set,group.by=exposure,m=m,celltype=NULL)
   # print(dp)
   
-  # dp <- dp.formatted(so,genes=gene_set,group.by=exposure,m=m,celltype=NULL)
-  # return(dp)
-  # # Create the DotPlot
+  dp <- dp.formatted(so,genes=gene_set,group.by=exposure,m=m,celltype=NULL)
+  
+  # Create the DotPlot
   # p <- DotPlot(object = so, features = gene_set) + theme(axis.text.x = element_text(angle = 45, hjust = 1))
   # Assuming 'm' contains the results from de.markers() with p-values
   # Filter for significant genes (adjusted p-value < 0.05)
@@ -1392,9 +1392,9 @@ degs_fxn4 <- function(so,cell,exposure,gene_set,additional_group,exp_group,ref_g
   # significant_gene_names <- rownames(significant_genes)
   # 
   # Create the DotPlot for the gene set
-  p <- DotPlot(object = so, features = gene_set) +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
-return(p)
+  # p <- DotPlot(object = so, features = gene_set) +
+  #   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# return(p)
   # Add '*' annotations for significant genes
   # plot_new <-p + geom_text(
   #   data = subset(p$data, features.plot %in% significant_gene_names),  # Only annotate significant genes
@@ -1706,25 +1706,25 @@ return(p)
   #                      max.overlaps=60)
   # 
   
-  # if(!is.null(additional_group)) {
-  #   if (!is.null(cell)){
-  #     filename <- paste0(pathway,"_",additional_group,"_DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
-  #   } else {
-  #     filename <- paste0(pathway,"_",additional_group,"_Bulk_DEGs_for_",condition,".pdf") 
-  #   }
-  # }
-  # if(is.null(additional_group)) {
-  #   if (!is.null(cell)){
-  #     filename <- paste0(pathway,"_","DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
-  #   } else {
-  #     filename <- paste0(pathway,"_","Pseudobulk_DEGs_for_",condition,".pdf") 
-  #   }
-  # }
-  # pdf(fs::path(dir.results,filename),width=5,height=10)
-  # # plot(p_dot2)
-  # plot(p)
-  # dev.off()
-  
+  if(!is.null(additional_group)) {
+    if (!is.null(cell)){
+      filename <- paste0(pathway,"_",additional_group,"_DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
+    } else {
+      filename <- paste0(pathway,"_",additional_group,"_Bulk_DEGs_for_",condition,".pdf")
+    }
+  }
+  if(is.null(additional_group)) {
+    if (!is.null(cell)){
+      filename <- paste0(pathway,"_","DEGs_in_",cell_name,"_cells_for_",condition,".pdf")
+    } else {
+      filename <- paste0(pathway,"_","Pseudobulk_DEGs_for_",condition,".pdf")
+    }
+  }
+  pdf(fs::path(dir.results,filename),width=10,height=5)
+  # plot(p_dot2)
+  plot(dp)
+  dev.off()
+  return(dp)
   # #GSEA
   # if (enrichment=="Yes") {
   #   #Gene set enrichment analysis
@@ -3891,9 +3891,14 @@ dp.formatted <- function(seurat_object, genes, celltype, group.by, m,
                          scale = F, cols = "RdYlBu"
   )$data 
   
+  
+  # m <- m %>%
+  #   mutate(significant = ifelse(p_val_adj < 0.05, "*", NA))  # Add '*' for significant genes
+  # 
   pt.plot <- pt.combined %>% 
     ggplot(aes(x=features.plot, y = id, color = avg.exp.scaled, size = pct.exp)) + 
     geom_point() +
+    # geom_text(aes(label = significant), size = 5, color = "black", vjust = -0.5, hjust = 0.5) +  # Add '*' for significant genes
     theme_bw() +
     scale_color_gradient2(low = colorlow, mid = colormid, high = colorhigh, midpoint = 2,
                           guide = guide_colorbar(label.vjust = 0.8, ticks = F, draw.ulim = T, draw.llim = T),
