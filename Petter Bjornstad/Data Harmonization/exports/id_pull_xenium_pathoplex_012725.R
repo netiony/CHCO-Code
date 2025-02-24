@@ -13,8 +13,8 @@ colnames(biopsy_master) <- gsub("/", "_", colnames(biopsy_master))  # Replace sl
 colnames(biopsy_master) <- gsub("\\(", "_", colnames(biopsy_master))  # Replace opening parentheses with underscores
 colnames(biopsy_master) <- gsub("\\)", "", colnames(biopsy_master))  # Remove closing parentheses
 biopsy_master <- biopsy_master %>%
-  rename(Study_ID = "record_id",
-         Visit_ID = "visit") %>%
+  dplyr::rename(record_id =Study_ID ,
+         visit = Visit_ID) %>%
   mutate(visit = case_when(Study == "ATTEMPT" ~ visit,
                            Study == "REMODEL" ~ visit, 
                            Study == "IMPROVE" & visit == "4M" ~ "3_months_post_surgery",
@@ -45,8 +45,8 @@ seq_biopsies <- biopsy_master %>%
   dplyr::select(rh_id, rh2_id, improve_id, 
                 ends_with("_ID", ignore.case = F), -Pathology_report_ID, Biopsy_date, 
                 date_diff_days, date_diff_months, date_diff_years)
-write.csv(seq_biopsies, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Exports/sequential_biopsies.csv",
-          row.names = F, na = "")
+# write.csv(seq_biopsies, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Exports/sequential_biopsies.csv",
+#           row.names = F, na = "")
 
 
 # ID request from Petter of kidney biopsies we have from T2D, OB and HC (RH, RH2, IT2D, CRC) to prioritize for Xenium 5000 & PathoPlex
@@ -59,8 +59,8 @@ xenium_patho_ids <- dat %>%
   filter(Shipped_Y_N =="Yes") %>%
   dplyr::select(record_id, visit, ends_with("_ID", ignore.case = F), -Pathology_report_ID)
 
-write.csv(xenium_patho_ids, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Exports/Xenium_Pathoplex_IDs.csv",
-          row.names = F, na = "")
+# write.csv(xenium_patho_ids, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Exports/Xenium_Pathoplex_IDs.csv",
+#           row.names = F, na = "")
 
 # ID request from Petter of all ATTEMPT + the coenrolled PANDAs with kidney biopsies & scRNA data to prioritize for Xenium 5000 & PathoPlex
 # ATTEMPT is not in the harmonized dataset as of Jan 27 2025, need to pull directly from REDCap
@@ -80,7 +80,7 @@ attempt_biopsy <- attempt_biopsy_ids %>%
   dplyr::select(subject_id, visit, Cryostor_ID) %>%
   left_join(biopsy_master) %>%
   filter(!is.na(record_id)) %>% #filter out 30058 and 30173 who had biopsies as part of PANDA only, not as part of ATTEMPT (email thread with MH and PB)
-  rename(Coenroll_ID__Same_visit_only = "panda_id") %>%
+  dplyr::rename(panda_id= Coenroll_ID__Same_visit_only ) %>%
   arrange(subject_id) %>%
   dplyr::select(record_id, panda_id, visit, ends_with("_ID", ignore.case = F), -Pathology_report_ID)
 
@@ -94,5 +94,5 @@ attempt_biopsy <- attempt_biopsy_ids %>%
 # 
 # combined_subset <- left_join(attempt_biopsy_combined, PANDA_mrn)
 
-write.csv(attempt_biopsy, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Exports/ATTEMPT_biopsy_IDs.csv",
-          row.names = F, na = "")
+# write.csv(attempt_biopsy, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Exports/ATTEMPT_biopsy_IDs.csv",
+#           row.names = F, na = "")
