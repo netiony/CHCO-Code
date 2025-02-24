@@ -34,6 +34,7 @@ def harmonize_data():
     from renal_heiritage import clean_renal_heiritage
     from panther import clean_panther
     from panda import clean_panda
+    from attempt import clean_attempt
     from harmonization_functions import calc_egfr
     # Use individual data functions to import cleaned DFs
     casper = clean_casper()
@@ -45,6 +46,7 @@ def harmonize_data():
     renal_heiritage = clean_renal_heiritage()
     panther = clean_panther()
     panda = clean_panda()
+    attempt = clean_attempt()
     # Merge
     harmonized = pd.concat([casper, coffee], join='outer', ignore_index=True)
     harmonized = pd.concat([harmonized, crocodile],
@@ -61,12 +63,14 @@ def harmonize_data():
                            join='outer', ignore_index=True)
     harmonized = pd.concat([harmonized, panda],
                            join='outer', ignore_index=True)
-
+    harmonized = pd.concat([harmonized, attempt],
+                           join='outer', ignore_index=True)
+                           
     # Fix levels of categorical variables
     harmonized["visit"] = \
         pd.Categorical(harmonized["visit"],
                        categories=['screening', 'baseline', 'pre_surgery',
-                                   '3_months_post_surgery', '12_months_post_surgery',
+                                   '3_months_post_surgery', '4_months_post', '12_months_post_surgery',
                                    'year_1', 'year_2'],
                        ordered=True)
     harmonized["race"].replace(
@@ -105,6 +109,11 @@ def harmonize_data():
     harmonized = pd.concat([harmonized, disease_duration], axis=1)
     harmonized.rename({0: "diabetes_duration"}, axis=1, inplace=True)
     # eGFR
+    harmonized["age"] = pd.to_numeric(harmonized["age"], errors="coerce")
+    harmonized["creatinine_s"] = pd.to_numeric(harmonized["creatinine_s"], errors="coerce")
+    harmonized["cystatin_c_s"] = pd.to_numeric(harmonized["cystatin_c_s"], errors="coerce")
+    harmonized["bun"] = pd.to_numeric(harmonized["bun"], errors="coerce")
+    harmonized["height"] = pd.to_numeric(harmonized["height"], errors="coerce")
     harmonized = calc_egfr(harmonized, age="age",
                            serum_creatinine="creatinine_s", cystatin_c="cystatin_c_s",
                            bun="bun", height="height", sex="sex", male="Male", female="Female", alpha=0.5)
@@ -250,9 +259,13 @@ def harmonize_data():
     panda_mrns = harmonized.loc[harmonized['study'] == 'PANDA', ['mrn', 'record_id']]
     panda_id_map = dict(zip(panda_mrns['mrn'], panda_mrns['record_id']))
     harmonized['panda_id'] = harmonized.apply(lambda row: panda_id_map[row['mrn']] if row['mrn'] in panda_id_map else '', axis=1)
+    attempt_mrns = harmonized.loc[harmonized['study'] == 'attempt', ['mrn', 'record_id']]
+    attempt_id_map = dict(zip(attempt_mrns['mrn'], attempt_mrns['record_id']))
+    harmonized['attempt_id'] = harmonized.apply(lambda row: attempt_id_map[row['mrn']] if row['mrn'] in attempt_id_map else '', axis=1)
+    
     # Sort columns
     id_cols = ["record_id", "casper_id", "coffee_id", "croc_id", "improve_id", 
-                "penguin_id", "rh_id", "rh2_id", "panther_id", "panda_id",
+                "penguin_id", "rh_id", "rh2_id", "panther_id", "panda_id", "attempt_id",
                 "mrn", "co_enroll_id", "study", "dob", "diabetes_dx_date",
                "sex", "race", "ethnicity", "visit", "procedure", "date", "group"]
     other_cols = harmonized.columns.difference(id_cols, sort=False).tolist()

@@ -78,7 +78,7 @@ def clean_renal_heir():
     # Replace missing values
     med.replace(rep, np.nan, inplace=True)
     # SGLT2i
-    med = med[["subject_id", "diabetes_med___1", "diabetes_med_other___1", "addl_hld_meds___2", "diabetes_med_other___2",
+    med = med[["subject_id", "mra_med", "diabetes_med___1", "diabetes_med_other___1", "addl_hld_meds___2", "diabetes_med_other___2",
               "diabetes_med_other___3", "diabetes_med___3", "addl_hld_meds___1", "htn_med_type___1",
               "htn_med_type___2", "htn_med_type___3", "htn_med_type___4", "htn_med_type___5"]]
 
@@ -100,8 +100,11 @@ def clean_renal_heir():
                 "htn_med_type___5": "diuretic"}
     og_names = list(med_list.keys())
     med.rename(med_list, axis=1, inplace=True)
-    med.iloc[:, 1:] = med.iloc[:, 1:].replace(
+    med.iloc[:, 1:2] = med.iloc[:, 1:2].replace(
+        {2: "No", "2": "No", 1: "Yes", "1": "Yes"})
+    med.iloc[:, 2:] = med.iloc[:, 2:].replace(
         {0: "No", "0": "No", 1: "Yes", "1": "Yes"})
+
     med["procedure"] = "medications"
     med["visit"] = "baseline"
     

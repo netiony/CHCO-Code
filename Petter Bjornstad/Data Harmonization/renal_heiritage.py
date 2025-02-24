@@ -74,7 +74,7 @@ def clean_renal_heiritage():
     # Medical History
     # --------------------------------------------------------------------------
 
-    var = ["record_id"] + ["screen_a1c"] + ["insulin_inj"] + ["htn_med_type"] + ["mra_med"] +\
+    var = ["record_id"] + ["mra_med"] + ["screen_a1c"] + ["insulin_inj"] + ["htn_med_type"] +  \
     ["sglt2i_med"] + ["diabetes_med_other"] + ["addl_hld_meds"] + ["meds_weight_type"] + \
     ["uric_acid_med"] + ["diabetes_med"]
     med = pd.DataFrame(proj.export_records(fields=var)) 
@@ -85,7 +85,6 @@ def clean_renal_heiritage():
     med.rename({"screen_a1c": "hba1c",
                 "sglt2i_med": "sglti_timepoint",
                 "diabetes_med_other___3": "glp1_agonist_timepoint",
-                "mra_med": "mra",
                 "htn_med_type___5": "diuretic",
                 "htn_med_type___4": "ca_channel_blocker",
                 "htn_med_type___3": "beta_blocker",
@@ -97,9 +96,9 @@ def clean_renal_heiritage():
                 inplace=True, axis=1)
     med['insulin_med_timepoint'] = med.apply(lambda row: "1" if row['insulin_inj'] == "1" or row['diabetes_med___2'] == "1" else 0, axis=1)
     med['raasi_timepoint'] = med.apply(lambda row: "1" if row['htn_med_type___1'] == "1" or row['htn_med_type___2'] == "1" else 0, axis=1)
-    # Replace 0/1 values with yes/no
-    meds = ["sglti_timepoint", "glp1_agonist_timepoint", "mra", "diuretic", "ca_channel_blocker",\
-    "beta_blocker", "statin", "fibrates", "topiramate", "phentermine", "uric_acid_med", "insulin_med_timepoint", "raasi_timepoint"]
+    # Replace 1 with yes 0 and 2 with no
+    meds = ["sglti_timepoint", "glp1_agonist_timepoint", "diuretic", "ca_channel_blocker",\
+    "beta_blocker", "statin", "fibrates", "topiramate", "phentermine", "uric_acid_med", "insulin_med_timepoint", "raasi_timepoint", "mra_med"]
     med[meds] = med[meds].applymap(lambda x: "Yes" if x == "1" or x is True else ("No" if pd.notna(x) and x != "" else x))
     med["procedure"] = "screening"
     med["visit"] = "baseline"

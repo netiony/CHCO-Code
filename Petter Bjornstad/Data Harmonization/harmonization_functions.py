@@ -40,7 +40,7 @@ def calc_egfr(df, age="age", serum_creatinine="creatinine_s",
     data = df.copy()
     # Format input
     sex = data[sex].copy()
-    sex.replace({male: "M", female: "F", "": np.nan}, inplace=True)
+    sex.replace({male: "M", female: "F", "Other": np.nan, "": np.nan}, inplace=True)
     qcr = np.floor(data[age])
     serum_creatinine = pd.to_numeric(data[serum_creatinine], errors="coerce")
     cystatin_c = pd.to_numeric(data[cystatin_c], errors="coerce")
@@ -101,3 +101,4 @@ def add_id_column(df, study_name):
     id_map = dict(zip(mrns['mrn'], mrns['record_id']))
     df[f'{study_name.lower().replace("-", "")}_id'] = df['mrn'].map(id_map)   
   
+
