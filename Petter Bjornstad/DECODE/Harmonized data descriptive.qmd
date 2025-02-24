@@ -1,0 +1,224 @@
+---
+title: "DECODE-KIDNEY"
+author: "Ye Ji Choi"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    embed-resources: true
+---
+
+Ye Ji and Hailey present the groups characteristics (age, sex, HbA1c, BMI, SBP, DBP, eGFR, UACR), 
+
+including medication use (SGLT2i, GLP1RA, MRA)
+
+Stratify according to NWC, OC, T1D, T2D, and PKD
+
+Indicate which which studies include kidney biopsies, 
+and which we already have scRNAseq data (PB90+ATTEMPT), 
+and others where we have biopsies but haven't performed done tissue interrogation (e.g., PANDA)
+
+```{r echo = F}
+library(dplyr)
+library(arsenal)
+library(ggplot2)
+library(readxl)
+library(purrr)
+```
+
+```{r echo = F}
+# load "decode" df
+load("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/DECODE/Data Clean/decode_harmonized.RData")
+
+# List of studies:
+# PANDA, RH, RH2, CASPER, CROC, 
+# PENGUIN, ATTEMPT, TODAY/TOODAY2,
+# TEEN-LABS, T1-DISCO, REMODEL-T1D, RPC2
+
+decode_baseline <- decode %>%
+  filter((study == "TEEN-LABS" & visit == "Month 1")|visit == "baseline") %>%
+  select(record_id, visit, study, group, age, sex, hba1c, bmi, sbp, dbp, eGFR_CKD_epi, acr_u, sglti_timepoint, glp1_agonist_timepoint, mra_med) %>% # select just these vars because otherwise the next code raises too many issues
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+                   .by = record_id)
+
+# read in biopsy master spreadsheet (updated real time)
+biopsy_master <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/Bjornstad Lab/Biopsy master tracker.xlsx", skip = 2) 
+colnames(biopsy_master) <- gsub(" ", "_", colnames(biopsy_master))  # Replace spaces with underscores
+colnames(biopsy_master) <- gsub("/", "_", colnames(biopsy_master))  # Replace slashes with underscores
+colnames(biopsy_master) <- gsub("\\(", "_", colnames(biopsy_master))  # Replace opening parentheses with underscores
+colnames(biopsy_master) <- gsub("\\)", "", colnames(biopsy_master))  # Remove closing parentheses
+biopsy_master <- biopsy_master %>%
+  rename(record_id=Study_ID,
+         visit=Visit_ID) %>%
+  mutate(visit = case_when(Study == "ATTEMPT" ~ visit,
+                           Study == "REMODEL" ~ visit, 
+                           Study == "IMPROVE" & visit == "4M" ~ "3_months_post_surgery",
+                           visit == "12M" ~ "12_months_post_surgery",
+                           visit == "Follow-up" ~ "follow-up",
+                           T ~ "baseline"),
+         record_id = case_when(startsWith(record_id, "RPC") & !is.na(Coenroll_ID__Same_visit_only) ~ Coenroll_ID__Same_visit_only,
+                               T ~ record_id)) # RH2-60-T and RH2-48-T coenrolled into RPC2 as of 02/03/25 data pull
+
+biopsy_master %>%
+  select(record_id, Study, visit, Shipped_Y_N, scRNA_status) %>%
+  filter(!is.na(record_id)) %>%
+  filter(Shipped_Y_N == "Yes") %>%
+  filter(scRNA_status != "No sample") %>%
+  mutate(sequenced = case_when(scRNA_status == "Complete" ~ "Yes", T~ "No")) %>%
+  summarise(n(), .by = c(Study, visit, sequenced)) %>%
+  arrange(Study, visit, sequenced)
+
+attempt_biopsy_ids <- read.csv("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean/ATTEMPT_record_ids.csv") 
+
+attempt_biopsy_ids %>%
+  summarise(n(), .by = c(visit))
+
+decode_baseline$group <- factor(decode_baseline$group, levels = c("Lean Control",
+                                                                     "Obese Control",
+                                                                     "Type 1 Diabetes",
+                                                                     "Type 2 Diabetes",
+                                                                     "PKD"),
+                                labels = c("NWC", "OBC", "T1D", "T2D", "PKD"))
+```
+
+
+```{r echo = F}
+summary(arsenal::tableby(group ~ study + age + sex + hba1c + bmi + sbp + dbp + eGFR_CKD_epi + kwt(acr_u,"Nmiss", "medianq1q3", "range")  + sglti_timepoint + glp1_agonist_timepoint + mra_med, data = decode_baseline), test = F)
+```
+
+```{r echo = F}
+# summary(arsenal::tableby(study ~ group + age + sex + hba1c + bmi + sbp + dbp + eGFR_CKD_epi + kwt(acr_u,"Nmiss", "medianq1q3", "range") + sglti_timepoint + glp1_agonist_timepoint, data = decode_baseline), test = F)
+```
+
+## visuals
+```{r echo = F, warning=F}
+## ggplots
+decode_baseline %>%
+  ggplot(aes(x = group, y = age, color = group)) + 
+  geom_boxplot(size = 1.1) + 
+  theme_bw() + 
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "none",
+        text = element_text(size = 18)) +
+  scale_color_manual(values=c("NWC" = "#e76f51",
+                              "OBC" = "#f4a261",
+                              "T1D" = "#2a9d8f",
+                              "T2D" = "#264653",
+                              "PKD" = "#e9c46a")) +
+  labs(x = NULL,
+       y = "Age")
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/DECODE/Figures/harmonized_age.jpeg", width = 7, height = 7)
+
+
+decode_baseline %>%
+  ggplot(aes(x = group, y = hba1c, color = group)) + 
+  geom_boxplot(size = 1.1) + 
+  theme_bw() + 
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "none",
+        text = element_text(size = 18)) +
+  scale_color_manual(values=c("NWC" = "#e76f51",
+                              "OBC" = "#f4a261",
+                              "T1D" = "#2a9d8f",
+                              "T2D" = "#264653",
+                              "PKD" = "#e9c46a")) +
+  labs(x = NULL,
+       y = "HbA1c")
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/DECODE/Figures/harmonized_hba1c.jpeg", width = 7, height = 7)
+
+
+decode_baseline %>%
+  ggplot(aes(x = group, y = bmi, color = group)) + 
+  geom_boxplot(size = 1.1) + 
+  theme_bw() + 
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "none",
+        text = element_text(size = 18)) +
+  scale_color_manual(values=c("NWC" = "#e76f51",
+                              "OBC" = "#f4a261",
+                              "T1D" = "#2a9d8f",
+                              "T2D" = "#264653",
+                              "PKD" = "#e9c46a")) +
+  labs(x = NULL,
+       y = "BMI")
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/DECODE/Figures/harmonized_bmi.jpeg", width = 7, height = 7)
+
+
+decode_baseline %>%
+  ggplot(aes(x = group, y = sbp, color = group)) + 
+  geom_boxplot(size = 1.1) + 
+  theme_bw() + 
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "none",
+        text = element_text(size = 18)) +
+  scale_color_manual(values=c("NWC" = "#e76f51",
+                              "OBC" = "#f4a261",
+                              "T1D" = "#2a9d8f",
+                              "T2D" = "#264653",
+                              "PKD" = "#e9c46a")) +
+  labs(x = NULL,
+       y = "SBP")
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/DECODE/Figures/harmonized_sbp.jpeg", width = 7, height = 7)
+
+
+decode_baseline %>%
+  ggplot(aes(x = group, y = dbp, color = group)) + 
+  geom_boxplot(size = 1.1) + 
+  theme_bw() + 
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "none",
+        text = element_text(size = 18)) +
+  scale_color_manual(values=c("NWC" = "#e76f51",
+                              "OBC" = "#f4a261",
+                              "T1D" = "#2a9d8f",
+                              "T2D" = "#264653",
+                              "PKD" = "#e9c46a")) +
+  labs(x = NULL,
+       y = "DBP")
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/DECODE/Figures/harmonized_dbp.jpeg", width = 7, height = 7)
+
+
+decode_baseline %>%
+  ggplot(aes(x = group, y = eGFR_CKD_epi, color = group)) + 
+  geom_boxplot(size = 1.1) + 
+  theme_bw() + 
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "none",
+        text = element_text(size = 18)) +
+  scale_color_manual(values=c("NWC" = "#e76f51",
+                              "OBC" = "#f4a261",
+                              "T1D" = "#2a9d8f",
+                              "T2D" = "#264653",
+                              "PKD" = "#e9c46a")) +
+  labs(x = NULL,
+       y = "eGFR (CKD EPI)")
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/DECODE/Figures/harmonized_egfr_ckdepi.jpeg", width = 7, height = 7)
+
+
+decode_baseline %>%
+  ggplot(aes(x = group, y = log(acr_u), color = group)) + 
+  geom_boxplot(size = 1.1) + 
+  theme_bw() + 
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "none",
+        text = element_text(size = 18)) +
+  scale_color_manual(values=c("NWC" = "#e76f51",
+                              "OBC" = "#f4a261",
+                              "T1D" = "#2a9d8f",
+                              "T2D" = "#264653",
+                              "PKD" = "#e9c46a")) +
+  labs(x = NULL,
+       y = "log(UACR)")
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/DECODE/Figures/harmonized_log_uacr.jpeg", width = 7, height = 7)
+```
