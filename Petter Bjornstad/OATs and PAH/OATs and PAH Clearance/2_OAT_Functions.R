@@ -1600,3 +1600,63 @@ lmm_fxn <- function(ref,exposure,genes) {
   return(p)
 }
 
+#Dot Plot Function ----
+dp.formatted <- function(seurat_object, genes, celltype, group.by, m,
+                         colorlow = "#83c5be", colormid = "#f4f1bb", colorhigh = "#d90429",exp_group,ref_group)
+{
+  pt.combined <- DotPlot(seurat_object,
+                         features = genes,idents = celltype, group.by = group.by,
+                         scale = F, cols = "RdYlBu"
+  )$data 
+  
+  
+  # m <- m %>%
+  #   mutate(significant = ifelse(p_val_adj < 0.05, "*", NA))  # Add '*' for significant genes
+  # 
+  pt.plot <- pt.combined %>% 
+    ggplot(aes(x=features.plot, y = id, color = avg.exp.scaled, size = pct.exp)) + 
+    geom_point() +
+    # geom_text(aes(label = significant), size = 5, color = "black", vjust = -0.5, hjust = 0.5) +  # Add '*' for significant genes
+    theme_bw() +
+    scale_color_gradient2(low = colorlow, mid = colormid, high = colorhigh, midpoint = 2,
+                          guide = guide_colorbar(label.vjust = 0.8, ticks = F, draw.ulim = T, draw.llim = T),
+                          limits = c(0,6)) +
+    scale_size(range = c(0,6), 
+               limits = c(0,100)) +
+    theme(panel.grid = element_blank(),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank(),
+          axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+          legend.text = element_text(size = 8),
+          legend.title = element_text(size = 8, vjust = 0.5),
+          legend.spacing.x = unit(.1, "cm"),
+          legend.direction = "horizontal") +
+    guides(size = guide_legend(label.position = "bottom",
+                               title.position = "top"),
+           color = guide_colorbar(label.position = "bottom",
+                                  title.position = "top")) +
+    labs(color = "Scaled average expression",
+         size = "Expression (%) ") + 
+    scale_y_discrete(limits=rev)
+  
+  pt.table <- m %>%
+    filter(rownames(m) %in% genes) %>%
+    dplyr::mutate(p_val_rounded = round(p_val, 4),
+                  p_val = p_format(p_val_rounded, trailing.zero = T, accuracy = 0.001, digits = 3),
+                  p_val_adj_rounded = round(p_val_adj, 4),
+                  p_val_adj = p_format(p_val_adj_rounded, trailing.zero = T, accuracy = 0.001, digits = 3),
+                  pct.1 = sprintf("%.3f", pct.1),
+                  pct.2 = sprintf("%.3f", pct.2),
+                  avg_log2FC = sprintf("%.3f", avg_log2FC)) %>% 
+    dplyr::select(pct.1, pct.2, avg_log2FC, p_val, p_val_adj) 
+  gg.pt.table <- ggtexttable(pt.table,
+                             cols = c(exp_group, ref_group, "Log2FC", "p-value", "q-value"),
+                             theme = ttheme("blank")) %>%
+    tab_add_hline(at.row = 1:2, row.side = "top", linewidth = 1) %>%
+    tab_add_title(paste0("% Expressed in ",cellname," Cells"))
+  
+  pt.plot_table <- ggarrange(pt.plot, NULL, gg.pt.table,
+                             nrow = 1, widths = c(1,-0.1,1), common.legend = F,
+                             legend = "top")
+  
+}

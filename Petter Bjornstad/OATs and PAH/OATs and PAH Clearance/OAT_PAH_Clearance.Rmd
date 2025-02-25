@@ -666,7 +666,7 @@ length(unique(check3$kit_id))
 # 
 # rm(coenroll,check3)
 
-
+#Remove coenrolled IDs
 so_kpmp_sc <- subset(so_kpmp_sc,kit_id!="KL-0030621")
 so_kpmp_sc <- subset(so_kpmp_sc,kit_id!="KL-0029535")
 check3 <- so_kpmp_sc@meta.data
@@ -703,22 +703,22 @@ sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA))) #101
 # dim(so_kpmp_sc@assays$RNA@counts) #5714 186125
 # sum(grepl("^MT", rownames(so_kpmp_sc@assays$RNA@counts))) #0
 
-# Step 1: Filter to genes expressed in more than 5% of cells
-gene_expression_matrix <- so_kpmp_sc@assays$RNA@layers$counts
-rownames(gene_expression_matrix) <- rownames(so_kpmp_sc@assays$RNA)
-colnames(gene_expression_matrix) <- colnames(so_kpmp_sc@assays$RNA)
-# expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.1
-expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.05
-names(expressed_genes)
-rownames(gene_expression_matrix)[expressed_genes]
-
-so_kpmp_sc <- subset(so_kpmp_sc, features = rownames(gene_expression_matrix)[expressed_genes])
-dim(so_kpmp_sc@assays$RNA@layers$counts) #9289 186125
-dim(so_kpmp_sc@assays$RNA) #9289 186125
-dim(so_kpmp_sc) #9289 186125
-sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA))) #70
-ncol(so_kpmp_sc) #186125 cells
-nrow(so_kpmp_sc) #9289 genes
+# # Step 1: Filter to genes expressed in more than 5% of cells
+# gene_expression_matrix <- so_kpmp_sc@assays$RNA@layers$counts
+# rownames(gene_expression_matrix) <- rownames(so_kpmp_sc@assays$RNA)
+# colnames(gene_expression_matrix) <- colnames(so_kpmp_sc@assays$RNA)
+# # expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.1
+# expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.05
+# names(expressed_genes)
+# rownames(gene_expression_matrix)[expressed_genes]
+# 
+# so_kpmp_sc <- subset(so_kpmp_sc, features = rownames(gene_expression_matrix)[expressed_genes])
+# dim(so_kpmp_sc@assays$RNA@layers$counts) #9289 186125
+# dim(so_kpmp_sc@assays$RNA) #9289 186125
+# dim(so_kpmp_sc) #9289 186125
+# sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA))) #70
+# ncol(so_kpmp_sc) #186125 cells
+# nrow(so_kpmp_sc) #9289 genes
 
 # Step 2: Remove mitochondrial genes (those starting with "MT")
 mito_genes <- grep("^MT-", rownames(so_kpmp_sc@assays$RNA), value = TRUE)
@@ -784,10 +784,70 @@ rm(expressed_genes)
 
 # saveRDS(so_kpmp_sc,fs::path(dir.dat,"Kidney scRNAseq Project","Data","so_kidney_sc_10_mito.rds"))
 
+#Load PAH Data
+#Read in PAH data
+pah <- read.csv("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/harmonized_dataset.csv")
+pah <- pah %>% 
+  dplyr::select(all_of(c("record_id","mrn","kit_id","pah_clear_bsa","pah_clear_abs","visit","procedure"))) %>% 
+  filter(procedure=="clamp") %>% 
+  filter(visit=="baseline")
+#Filter out missing pah clearance variables
+pah <- pah %>%
+  filter(!is.na(pah_clear_abs)) #177with pah and gene expression
+pah <- pah %>% 
+  dplyr::select(all_of(c("record_id","mrn","pah_clear_abs","pah_clear_bsa"))) 
+length(unique(pah$record_id))#177 baseline record_id's with pah data
+length(unique(pah$mrn)) #165 unique mrn ids
+#Filter
+pah <- pah %>% 
+  distinct(mrn, .keep_all=T)
+length(unique(pah$mrn))#165
 
+pah <- pah %>% 
+  dplyr::select(all_of(c("mrn","record_id","pah_clear_abs","pah_clear_bsa")))
+pah <- pah %>% 
+  filter(mrn %in% so_kpmp_sc$mrn) 
+# pah <- unique(pah)
+length(unique(pah$mrn)) #59
+meta2 <- so_kpmp_sc@meta.data
+rownames(meta2) <- rownames(so_kpmp_sc@meta.data)
+meta2 <- meta2 %>% 
+  dplyr::select(-c("pah_clear_abs","pah_clear_bsa"))
+pah <- pah %>% 
+  dplyr::select(-record_id)
+meta2 <- tidylog::left_join(meta2,pah,by=c("mrn"))
+# meta2 <- meta2 %>% 
+#   filter(mrn %in% so_kpmp_sc$mrn) 
+so_kpmp_sc <- AddMetaData(so_kpmp_sc, meta2)
+rm(pah,meta2)
+unique(so_kpmp_sc$mrn[which(is.na(so_kpmp_sc$pah_clear_abs))])
+
+# Subset Seurat object to exclude cells where pah_clear_abs is NA
+so_kpmp_sc_filtered <- subset(so_kpmp_sc, subset = !is.na(pah_clear_abs))
+table(is.na(so_kpmp_sc$pah_clear_abs))
+# Check if the filtering was successful by summarizing the 'pah_clear_abs' values
+table(is.na(so_kpmp_sc_filtered$pah_clear_abs))
+
+
+so_kpmp_sc$celltype <- case_when(grepl("PT-",so_kpmp_sc$celltype_rpca)~"PT",
+                                   grepl("TAL-",so_kpmp_sc$celltype_rpca)~"TAL",
+                                   grepl("EC-",so_kpmp_sc$celltype_rpca)~"EC",
+                                   grepl("POD",so_kpmp_sc$celltype_rpca)~"POD",
+                                   grepl("MAC",so_kpmp_sc$celltype_rpca)~"MAC",
+                                   grepl("MON",so_kpmp_sc$celltype_rpca)~"MON",
+                                   grepl("PC-",so_kpmp_sc$celltype_rpca)~"PC",
+                                   grepl("FIB",so_kpmp_sc$celltype_rpca)~"FIB_MC_VSMC",
+                                   grepl("DTL",so_kpmp_sc$celltype_rpca)~"DTL",
+                                   so_kpmp_sc$celltype_rpca=="DCT"~"DCT",
+                                   so_kpmp_sc$celltype_rpca=="ATL"~"ATL",
+                                   so_kpmp_sc$celltype_rpca=="B"~"B",
+                                   so_kpmp_sc$celltype_rpca=="T"~"T")
+so_kpmp_sc$celltype <- as.character(so_kpmp_sc$celltype)
+rm(GeomSplitViolin)
 ```
 
 # 3. Descriptive Statistics
+## a. Tables 
 ```{r, echo = F,warning=F}
 # #Load metadata for descriptive stats
 # #dat <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc.csv"))
@@ -958,6 +1018,126 @@ p <- ggplot(type2, aes(x = medication, y = pah_clear_abs, fill=medication)) +
 print(p)
 
 ```
+
+## b. Figures 
+```{r, echo=F, warning=F}
+
+# Generate a dot plot of average expression for specified genes, stratified by disease group
+genes_of_interest <- c("SLC22A6", "SLC22A7", "SLC22A8", "SLC22A11", "ABCC2", 
+                        "SLC10A2", "SLC13A2", "SLC13A3", "SLC22A12", "SLC22A2", 
+                        "SLC34A1", "SLC47A1", "SLC47A2", "SLC22A1", "SLC22A4", 
+                        "SLC22A5", "SLC22A13", "SLC29A1", "SLC29A2", "SLC35A1", 
+                        "ABCC4", "ABCG2")
+unique(so_kpmp_sc$KPMP_celltype)
+DotPlot(
+  so_kpmp_sc,
+  features=genes_of_interest,
+  assay = NULL,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  # idents = "celltype",
+  group.by = "KPMP_celltype",
+  # split.by = NULL,
+  cluster.idents = FALSE,
+  scale = TRUE,
+  # scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA
+)
+
+DotPlot(
+  so_kpmp_sc,
+  features = genes_of_interest,
+  assay = NULL,
+  cols = c("lightgrey", "red"),  # Update color scheme to lightgrey to red
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  group.by = "KPMP_celltype",
+  cluster.idents = FALSE,
+  scale = TRUE,
+  scale.min = NA,
+  scale.max = NA
+) + 
+  # Rotate the x-axis text
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  
+  # Change the color scale to red
+  scale_color_gradient(low = "lightpink", high = "darkred")  # Red color gradient
+
+DotPlot(
+  so_kpmp_sc,
+  features = genes_of_interest,
+  assay = NULL,
+  cols = c("lightgrey", "red"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  group.by = "KPMP_celltype",
+  cluster.idents = FALSE,
+  scale = TRUE,
+  scale.min = NA,
+  scale.max = NA
+) + 
+  # Rotate the x-axis text
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  
+  # Custom color scale: grey to yellow to pink to red
+  scale_color_gradientn(
+    colors = c("lightgrey", "yellow", "red", "darkred"),
+    values = c(0, 0.25, 0.5, 1),  # Control how the colors are distributed across the scale
+    limits = c(-2.5, 2.5)  # Set the limits for the color scale (ensure this matches your data range)
+  )
+
+# # Check the subset
+# table(so_kpmp_sc$celltype)  # This will show the count of each cell type in the subset
+# Idents(so_kpmp_sc) <- so_kpmp_sc$celltype
+
+DotPlot(
+  so_kpmp_sc,
+  features = genes_of_interest,
+  assay = NULL,
+  cols = c("lightgrey", "red"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  group.by = "celltype_rpca",
+  cluster.idents = FALSE,
+  scale = TRUE,
+  scale.min = NA,
+  scale.max = NA
+) + 
+  # Rotate the x-axis text
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  
+  # Custom color scale: grey to yellow to pink to red
+  scale_color_gradientn(
+    colors = c("lightgrey", "yellow", "red", "darkred"),
+    values = c(0, 0.25, 0.5, 1),  # Control how the colors are distributed across the scale
+    limits = c(-2.5, 2.5)  # Set the limits for the color scale (ensure this matches your data range)
+  )
+
+hist(so_kpmp_sc$pah_clear_abs)
+so_kpmp_sc$pah_cat <- ifelse(so_kpmp_sc$pah_clear_abs>625,"High","Normal")
+dp_plot <- dp.formatted(so_kpmp_sc, genes_of_interest, KPMP_celltype, group.by="pah_cat", exp_group="High",ref_group="Normal")
+print(dp_plot)
+so_kpmp_sc$pah_cat <- factor(so_kpmp_sc$pah_cat)
+so_kpmp_sc$pah_cat <- relevel(so_kpmp_sc$pah_cat, ref = "Normal")
+
+Idents(so_kpmp_sc) <- so_kpmp_sc$KPMP_celltype
+m <- de.markers(so_kpmp_sc, genes=genes_of_interest, group.by="pah_cat", "High", "Normal", NULL,"pah")
+
+
+dp <- dp.formatted(seurat_object=so_kpmp_sc,genes=genes_of_interest,group.by="pah_cat",m=m,celltype=NULL,exp_group="High",ref_group="Normal")
+
+```
+
 #4. LMEM
 ```{r}
 #Filter to PT cells only
