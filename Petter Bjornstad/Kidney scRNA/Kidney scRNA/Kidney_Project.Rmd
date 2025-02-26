@@ -1,0 +1,521 @@
+---
+title: "Kidney_Project"
+author: "Hailey Hampson"
+date: "2025-02-25"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+# 1. Set up Libraries & Directores
+```{r, include=F}
+library(reprex)
+library(tidyverse)
+library(BiocManager)        
+library(arsenal)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(Seurat)
+library(future)
+library(colorspace)
+library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggpubr)
+library(venn)
+library(rstatix)
+library(table1)
+library(Biobase)
+library(ReactomeGSA)
+library(GSEABase)
+library(msigdbr)
+library(kableExtra)
+library(knitr)
+library(SingleCellExperiment)
+library(fgsea)
+library(EnhancedVolcano)
+library(openxlsx)
+library(BiocManager)
+library(MAST)
+library(ggrepel)
+# library(qpcR)
+library(ggpubr)
+library(openxlsx)
+library(ggplot2)
+library(GGally)
+library(GSEABase)
+library(limma)
+library(reshape2)
+library(data.table)
+library(knitr)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(stringr)
+#library(NMF)
+library(rsvd)
+library(RColorBrewer)
+library(MAST)
+library(devtools)
+# install_github("Sun-lab/ideas",force=T)
+#library(ideas)
+library(foreach)
+library(parallel)
+library(doRNG)
+library(doParallel)
+library(fs)
+# registerDoParallel(cores = 6)
+library(VennDiagram)
+library(janitor)
+# devtools::install_github('immunogenomics/presto')
+library(presto)
+library(knitr)
+library(lme4)
+library(lmerTest)
+#install.packages("glmmTMB")
+# Reinstall glmmTMB from source
+#install.packages("glmmTMB", type = "source")
+library(glmmTMB)
+
+#Set number of cores for parallellization
+#maxCores <- detectCores()
+#numCores <- maxCores-1
+#cl <- makeCluster(numCores)  # Create a cluster with the desired number of cores
+#registerDoParallel(cl) 
+
+#Local file path
+#dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
+#dir.dat2 <- c("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean")
+#dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+#dir.results <- c("/Volumes/Peds Endo/Petter Bjornstad/Kidney Project/Results")
+
+# #Lambda file path
+# dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
+# dir.code <- c("/home/Github_Repo/CHCO-Code/Petter Bjornstad/Kidney scRNA/Kidney scRNA")
+# dir.results <- c(fs::path(dir.dat,"Kidney Project/Results"))
+
+#Mac Studio File Path
+dir.dat <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive")
+dir.results <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Kidney scRNAseq Project/Results")
+dir.ipa <- c("/Users/hhampson/Documents/IPA/Results")
+
+#Load functions
+source("Kidney_functions_sc.R")
+```
+
+#2. A. Quality Control & Preprocessing
+## a. Load Kidney scRNA seq Data
+```{r, include=F}
+#Load KPMP Cell Types 2 (new)
+#Mac Studio
+so_kpmp_sc <- readRDS("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/scRNA/data_raw/PB_90_RPCAFix_Metadata_LR_RM_kpmpV1labelled.rds")
+
+```
+## b. Data Cleaning 
+```{r, include=F}
+#Fix Typos in kit ids
+so_kpmp_sc$kit_id[which(so_kpmp_sc$kit_id=="KI-0014643")] <- "KL-0014643"
+so_kpmp_sc$kit_id[which(so_kpmp_sc$kit_id=="kl-0023998")] <- "KL-0023998"
+
+#Filter data from 90 participants to 81 unique, baseline kidney biopsies
+#Load harmonized data that has been formatted to the 83 partiucipants of interest
+harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney scRNAseq Project","Data","harmonized_data_kidney_sc_all_metadata2.csv"))
+harm_meta_data <- harm_meta_data %>%
+  dplyr::select(-X)
+#Pull metadata from so to merge together
+meta_kidney_sc <-  so_kpmp_sc@meta.data
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+#Merge metadata from 83 participants of interest into so metadata
+meta_kidney_sc <- meta_kidney_sc %>%
+  left_join(harm_meta_data,by="kit_id")
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+#Pull ids from 83 participants of interest to filter so to 
+ids <- harm_meta_data$kit_id
+#Merge metadata back into so
+so_kpmp_sc <- AddMetaData(so_kpmp_sc, meta_kidney_sc)
+#Filter seurat object to only IDs that have the metadata (83 individuals of interest)
+so_kpmp_sc <- subset(so_kpmp_sc, kit_id %in% ids)
+#Check number of unique ids 
+length(unique(so_kpmp_sc$kit_id)) #should be 83
+#Remove metadatasets
+rm(meta_kidney_sc,harm_meta_data)
+#Remove two coenrolled IDs
+so_kpmp_sc <- subset(so_kpmp_sc,kit_id!="KL-0030621")
+so_kpmp_sc <- subset(so_kpmp_sc,kit_id!="KL-0029535")
+#Check unique number of kit ids now (should be 81)
+length(unique(so_kpmp_sc$kit_id)) #81
+#Ensure default assay in seurat object to RNA
+DefaultAssay(so_kpmp_sc) <- "RNA"
+gc()
+
+#Sample-level QC Metrics 
+# o	Number of cells per sample
+# Check the number of cells per sample using dplyr
+qc_dat <- so_kpmp_sc@meta.data %>%
+  group_by(kit_id) %>%
+  summarise(cell_count = n())
+range(qc_dat$cell_count) #80 9607
+hist(qc_dat$cell_count)
+ggplot(data.frame(cell_count = qc_dat$cell_count), aes(x = cell_count)) +
+  geom_histogram(binwidth = 1000, fill = "skyblue", color = "black", alpha = 0.7) +
+  labs(title = "Cell Count per Sample", x = "Cell Count per Biopsy Sample", y = "Frequency")
+mean(qc_dat$cell_count)
+median(qc_dat$cell_count)
+sd(qc_dat$cell_count)
+summary(qc_dat$cell_count)
+# o	Read depth distribution
+# Calculate total read depth (sum of counts) for each cell
+so_kpmp_sc$read_depth <- Matrix::colSums(so_kpmp_sc@assays$RNA@layers$counts)
+ggplot(data.frame(read_depth = so_kpmp_sc$read_depth), aes(x = read_depth)) +
+  geom_histogram(binwidth = 1000, fill = "skyblue", color = "black", alpha = 0.7) +
+  labs(title = "Read Depth Distribution", x = "Read Depth (Total Counts)", y = "Frequency")
+summary(so_kpmp_sc$read_depth)
+
+# o	Gene detection rates
+# Calculate the number of detected genes per cell (non-zero counts)
+so_kpmp_sc$detected_genes <- Matrix::colSums(so_kpmp_sc@assays$RNA@layers$counts > 0)
+
+# Total number of genes in the dataset
+total_genes <- nrow(so_kpmp_sc@assays$RNA@layers$counts)
+
+# Calculate the detection rate as the percentage of detected genes
+so_kpmp_sc$gene_detection_rate <- so_kpmp_sc$detected_genes / total_genes * 100
+hist(so_kpmp_sc$gene_detection_rate)
+ggplot(data.frame(gene_detection_rate = so_kpmp_sc$gene_detection_rate), aes(x = gene_detection_rate)) +
+  geom_histogram(binwidth = 1000, fill = "skyblue", color = "black", alpha = 0.7) +
+  labs(title = "Gene Detection Rate", x = "Percentage of Detected Genes", y = "Frequency")
+summary(so_kpmp_sc$gene_detection_rate)
+
+# o	Batch effect assessment
+
+# •	Cell-level QC 
+# o	Mitochondrial gene percentage
+# Step 1: Identify mitochondrial genes (assuming the gene names start with "MT-")
+mito_genes <- grep("^MT-", rownames(so_kpmp_sc), value = TRUE)
+
+# Step 2: Calculate the total expression for each cell and the expression from mitochondrial genes
+so_kpmp_sc$mito_counts <- Matrix::colSums(so_kpmp_sc@assays$RNA@layers$counts[mito_genes, ])
+
+# Step 3: Calculate the mitochondrial gene percentage for each cell
+so_kpmp_sc$mito_percent <- so_kpmp_sc$mito_counts / Matrix::colSums(so_kpmp_sc@assays$RNA@counts) * 100
+
+# Step 4: Inspect the first few values of the mitochondrial gene percentage
+head(so_kpmp_sc$mito_percent)
+
+
+
+# o	UMI counts
+# o	Gene counts
+# o	Doublet detection
+
+
+
+# •	Data Normalization 
+# o	SCTransform implementation
+# o	Batch correction (Harmony/BBKNN)
+# o	Technical variance removal
+
+
+
+
+
+#Check the total number of cells & genes in the full dataset
+ncol(so_kpmp_sc) #186125 cells
+nrow(so_kpmp_sc) #31332 genes
+
+dim(so_kpmp_sc@assays$RNA@layers$counts) #31332 186125
+sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA))) #101
+
+#Look for GLP1R gene
+rownames(so_kpmp_sc)[grep("GLP1R", rownames(so_kpmp_sc), ignore.case = TRUE)]
+# grep("GLP-1R", rownames(so_kpmp_sc), ignore.case = TRUE)
+# grep("GLP1-R", rownames(so_kpmp_sc), ignore.case = TRUE)
+# grep("GLP1-Receptor", rownames(so_kpmp_sc), ignore.case = TRUE)
+# 
+
+# #Filter out mitochondrial DNA
+# gene_expression_matrix <- so_kpmp_sc@assays$RNA@counts
+#
+# # Filter genes expressed in more than 10% of cells
+# expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.1
+# so_kpmp_sc@assays$RNA@counts <- gene_expression_matrix[expressed_genes,]
+#
+# dim(so_kpmp_sc@assays$RNA@counts) #5759 186125
+# sum(grepl("^MT", rownames(so_kpmp_sc@assays$RNA@counts))) #45
+#
+# ncol(so_kpmp_sc) #186125 cells
+# nrow(so_kpmp_sc) #31332 genes
+#
+# # Remove mitochondrial genes (prefix "MT")
+# so_kpmp_sc@assays$RNA@counts <- so_kpmp_sc@assays$RNA@counts[grep("^MT", rownames(so_kpmp_sc@assays$RNA@counts), invert = TRUE),]
+# ncol(so_kpmp_sc) #186125 cells
+# nrow(so_kpmp_sc) #31332 genes
+# dim(so_kpmp_sc@assays$RNA@counts) #5714 186125
+# sum(grepl("^MT", rownames(so_kpmp_sc@assays$RNA@counts))) #0
+# 
+# Step 1: Filter to genes expressed in more than 5% of cells
+gene_expression_matrix <- so_kpmp_sc@assays$RNA@layers$counts
+rownames(gene_expression_matrix) <- rownames(so_kpmp_sc@assays$RNA)
+colnames(gene_expression_matrix) <- colnames(so_kpmp_sc@assays$RNA)
+# expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.1
+expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.05
+names(expressed_genes)
+rownames(gene_expression_matrix)[expressed_genes]
+so_kpmp_sc <- subset(so_kpmp_sc, features = rownames(gene_expression_matrix)[expressed_genes])
+# dim(so_kpmp_sc@assays$RNA@layers$counts) #9289 186125
+# dim(so_kpmp_sc@assays$RNA) #9289 186125
+# dim(so_kpmp_sc) #9289 186125
+# sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA))) #70
+# ncol(so_kpmp_sc) #186125 cells
+# nrow(so_kpmp_sc) #9289 genes
+
+# Step 2: Remove mitochondrial genes (those starting with "MT")
+mito_genes <- grep("^MT-", rownames(so_kpmp_sc@assays$RNA), value = TRUE)
+so_kpmp_sc <- subset(so_kpmp_sc, features = setdiff(rownames(so_kpmp_sc), mito_genes))
+dim(so_kpmp_sc@assays$RNA@layers$counts) #9276 186125
+dim(so_kpmp_sc@assays$RNA@layers$data) #9276 186125
+dim(so_kpmp_sc@assays$RNA)#5714 186125
+sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA@layers$counts))) #0
+ncol(so_kpmp_sc) #186125 cells
+nrow(so_kpmp_sc) #9276 genes
+
+# # Identify mitochondrial genes
+# mt_genes <- grepl("^MT", rownames(so_kpmp_sc@assays$RNA@counts))
+#
+# # Calculate the percentage of mitochondrial genes per cell
+# mt_percentage <- Matrix::colSums(so_kpmp_sc@assays$RNA@counts[mt_genes, ]) / Matrix::colSums(so_kpmp_sc@assays$RNA@counts)
+#
+# # Filter out cells where the proportion of mitochondrial genes is > 15%
+# cells_to_keep <- mt_percentage <= 0.15
+#
+# # Subset the object to retain only cells with <= 15% mitochondrial genes
+# so_kpmp_sc <- so_kpmp_sc[, cells_to_keep]
+
+# Check dimensions after filtering
+dim(so_kpmp_sc@assays$RNA@layers$counts) #9289 81882
+dim(so_kpmp_sc@assays$RNA)#9289 81882
+dim(so_kpmp_sc)#9289 81882
+
+# Optionally, you can also check how many MT genes remain in the filtered dataset
+sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA@layers$counts)))
+ncol(so_kpmp_sc)  # Number of cells remaining
+
+
+# Step 3: Renormalize the Seurat object after filtering
+so_kpmp_sc <- NormalizeData(so_kpmp_sc)
+
+#Check normalized slot
+dim(so_kpmp_sc@assays$RNA@layers$data) #5714 186125
+sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA@layers$data))) #70
+ncol(so_kpmp_sc) #186125 cells
+nrow(so_kpmp_sc) #5714 genes
+
+#Load in med data to update medication information
+med <- read.xlsx(fs::path(dir.dat,"Kidney scRNAseq Project/Data/Biopsies_w_mrn_Oct3.xlsx"))
+med <- med %>%
+  dplyr::select(all_of(c("record_id","mrn","raasi_1","insulin_1","mfm_1")))
+meta_kidney_sc <-  so_kpmp_sc@meta.data
+med <- med %>%
+  filter(mrn %in% as.character(meta_kidney_sc$mrn)) #95 remain
+med <- med %>%
+  filter(record_id %in% meta_kidney_sc$record_id) #81 remain
+# med$mrn <- as.numeric(med$mrn)
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+med$mrn <- as.numeric(med$mrn)
+meta_kidney_sc <- meta_kidney_sc %>%
+  left_join(med,by=c("mrn","record_id"))
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+
+#Add Med Meta Data to Seurat object
+so_kpmp_sc <- AddMetaData(so_kpmp_sc, meta_kidney_sc)
+rm(gene_expression_matrix,med,meta_kidney_sc)
+rm(expressed_genes)
+# saveRDS(so_kpmp_sc,fs::path(dir.dat,"Kidney scRNAseq Project","Data","so_kidney_sc_10_mito.rds"))
+
+#Pseudobulk by individual
+# Check if 'kit_id' exists in the metadata
+length(unique(so_kpmp_sc$kit_id)) #81 unique kit ids
+
+# #Create PT and TAL pseudobulk cell type variable
+# so_kpmp_sc$celltype <- ifelse(grepl("PT-",so_kpmp_sc$celltype_rpca),"PT",
+#                               ifelse(grepl("TAL-",so_kpmp_sc$celltype_rpca),"TAL",NA))
+# so_kpmp_sc$celltype <- as.character(so_kpmp_sc$celltype)
+#
+# # # Aggregate the expression data by kit_id (or individual)
+# # # This sums the raw counts across all cells within each individual (kit_id)
+# # pseudobulked_data <- AggregateExpression(so_kpmp_sc, group.by = "kit_id")
+# #
+# # # Now pseudobulked_data contains summed counts for each gene by kit_id
+# # # Create a new Seurat object using the pseudobulked data
+# # so_pb <- CreateSeuratObject(counts = pseudobulked_data$RNA)
+# #
+# # # Use GetAssayData to access the raw counts from the RNA assay
+# # # raw_counts <- GetAssayData(so_pb, assay = "RNA", layer = "counts")
+# #
+# # so_pb <- NormalizeData(so_pb)
+# # length(unique(rownames(so_pb))) #9276 individual genes (rownames)
+# # length(unique(colnames(so_pb))) #81 individuals (colnames)
+# #
+# # #Add origional metadata
+# # meta.data <- so_kpmp_sc@meta.data
+# # #Get metadat of interest: age, sex, group, group2, meds,
+# # vars <- c("age","sex","bmi","dexa_fat_kg","dexa_lean_kg","hba1c",
+# #           "sbp","dbp","map","triglycerides","gfr_raw_plasma","eGFR_CKD_epi",
+# #          "erpf_raw_plasma","total_kidney_volume_ml","ht_adj_tkv","raasi_1",
+# #          "mfm_1","insulin_1","medication","group","group2","acr_u","KPMP_celltype","celltype_rpca")
+# # aggregated_metadata <- meta.data %>%
+# #   group_by(kit_id) %>%
+# #   summarise(across(all_of(vars), first))
+# # aggregated_metadata <- as.data.frame(aggregated_metadata)
+# # rownames(aggregated_metadata) <- rownames(so_pb@meta.data)
+# #
+# # #Add Med Meta Data to Seurat object
+# # so_pb <- AddMetaData(so_pb, aggregated_metadata)
+# # # meta <- so_pb@meta.data
+# # rm(aggregated_metadata,pseudobulked_data,meta.data)
+#
+# # Aggregate expression by both 'celltype' and 'kit_id'
+# pseudobulked_data <- AggregateExpression(so_kpmp_sc, group.by = c("celltype", "kit_id"))
+#
+# # Now pseudobulked_data contains summed counts for each gene by both celltype and kit_id
+# # Create a new Seurat object using the pseudobulked data
+# so_pb <- CreateSeuratObject(counts = pseudobulked_data$RNA)
+# ncol(so_pb) #162 individuals/cells
+# nrow(so_pb) #9276 genes
+#
+# # Normalize the data
+# so_pb <- NormalizeData(so_pb)
+#
+# # Check the number of unique genes and individuals (celltypes and kit_ids combined)
+# length(unique(rownames(so_pb)))  # Number of individual genes (rows)
+# length(unique(colnames(so_pb)))  # Number of unique combinations of celltype and kit_id (columns)
+#
+# # Add original metadata
+# meta.data <- so_kpmp_sc@meta.data
+#
+# # Get metadata of interest: age, sex, group, etc.
+# vars <- c("age","sex","bmi","dexa_fat_kg","dexa_lean_kg","hba1c",
+#           "sbp","dbp","map","triglycerides","gfr_raw_plasma","eGFR_CKD_epi",
+#           "erpf_raw_plasma","total_kidney_volume_ml","ht_adj_tkv","raasi_1",
+#           "mfm_1","insulin_1","medication","group","group2","acr_u","KPMP_celltype","celltype_rpca")
+#
+# # Aggregate metadata by both 'celltype' and 'kit_id'
+# aggregated_metadata <- meta.data %>%
+#   filter(!is.na(celltype)) %>%
+#   group_by(celltype, kit_id) %>%
+#   summarise(across(all_of(vars), first))
+#
+# # Convert to a data frame and set the rownames
+# aggregated_metadata <- as.data.frame(aggregated_metadata)
+# rownames(aggregated_metadata) <- paste(aggregated_metadata$celltype, aggregated_metadata$kit_id, sep = "_")
+#
+# # Add the aggregated metadata to the Seurat object
+# so_pb <- AddMetaData(so_pb, aggregated_metadata)
+#
+# # Clean up unnecessary objects
+# rm(aggregated_metadata, pseudobulked_data, meta.data)
+# so_pb_total <- so_pb
+# rm(so_pb)
+
+
+#Create UMAP of single cell
+#Create UMAP by individual? Label cell clusters
+
+#Pseudobulk by individual
+# Check if 'kit_id' exists in the metadata
+length(unique(so_kpmp_sc$kit_id)) #81 unique kit ids
+
+#Check proportion first
+
+#Create PT and TAL pseudobulk cell type variable
+so_kpmp_sc$celltype <- case_when(grepl("PT-",so_kpmp_sc$celltype_rpca)~"PT",
+                                 grepl("TAL-",so_kpmp_sc$celltype_rpca)~"TAL",
+                                 grepl("EC-",so_kpmp_sc$celltype_rpca)~"EC",
+                                 grepl("POD",so_kpmp_sc$celltype_rpca)~"POD",
+                                 grepl("MAC",so_kpmp_sc$celltype_rpca)~"MAC",
+                                 grepl("MON",so_kpmp_sc$celltype_rpca)~"MON",
+                                 grepl("PC-",so_kpmp_sc$celltype_rpca)~"PC",
+                                 grepl("FIB",so_kpmp_sc$celltype_rpca)~"FIB_MC_VSMC",
+                                 grepl("DTL",so_kpmp_sc$celltype_rpca)~"DTL",
+                                 so_kpmp_sc$celltype_rpca=="DCT"~"DCT",
+                                 so_kpmp_sc$celltype_rpca=="ATL"~"ATL",
+                                 so_kpmp_sc$celltype_rpca=="B"~"B",
+                                 so_kpmp_sc$celltype_rpca=="T"~"T")
+so_kpmp_sc$celltype <- as.character(so_kpmp_sc$celltype)
+
+# # Aggregate the expression data by kit_id (or individual)
+# # This sums the raw counts across all cells within each individual (kit_id)
+# pseudobulked_data <- AggregateExpression(so_kpmp_sc, group.by = "kit_id")
+#
+# # Now pseudobulked_data contains summed counts for each gene by kit_id
+# # Create a new Seurat object using the pseudobulked data
+# so_pb <- CreateSeuratObject(counts = pseudobulked_data$RNA)
+#
+# # Use GetAssayData to access the raw counts from the RNA assay
+# # raw_counts <- GetAssayData(so_pb, assay = "RNA", layer = "counts")
+#
+# so_pb <- NormalizeData(so_pb)
+# length(unique(rownames(so_pb))) #9276 individual genes (rownames)
+# length(unique(colnames(so_pb))) #81 individuals (colnames)
+#
+# #Add origional metadata
+# meta.data <- so_kpmp_sc@meta.data
+# #Get metadat of interest: age, sex, group, group2, meds,
+# vars <- c("age","sex","bmi","dexa_fat_kg","dexa_lean_kg","hba1c",
+#           "sbp","dbp","map","triglycerides","gfr_raw_plasma","eGFR_CKD_epi",
+#          "erpf_raw_plasma","total_kidney_volume_ml","ht_adj_tkv","raasi_1",
+#          "mfm_1","insulin_1","medication","group","group2","acr_u","KPMP_celltype","celltype_rpca")
+# aggregated_metadata <- meta.data %>%
+#   group_by(kit_id) %>%
+#   summarise(across(all_of(vars), first))
+# aggregated_metadata <- as.data.frame(aggregated_metadata)
+# rownames(aggregated_metadata) <- rownames(so_pb@meta.data)
+#
+# #Add Med Meta Data to Seurat object
+# so_pb <- AddMetaData(so_pb, aggregated_metadata)
+# # meta <- so_pb@meta.data
+# rm(aggregated_metadata,pseudobulked_data,meta.data)
+# 
+# # Aggregate expression by both 'celltype' and 'kit_id'
+# pseudobulked_data <- AggregateExpression(so_kpmp_sc, group.by = c("celltype", "kit_id"))
+# 
+# # Now pseudobulked_data contains summed counts for each gene by both celltype and kit_id
+# # Create a new Seurat object using the pseudobulked data
+# so_pb <- CreateSeuratObject(counts = pseudobulked_data$RNA)
+# ncol(so_pb) #162 individuals/cells
+# nrow(so_pb) #9276 genes
+# 
+# # Normalize the data
+# so_pb <- NormalizeData(so_pb)
+# 
+# # Check the number of unique genes and individuals (celltypes and kit_ids combined)
+# length(unique(rownames(so_pb)))  # Number of individual genes (rows)
+# length(unique(colnames(so_pb)))  # Number of unique combinations of celltype and kit_id (columns)
+# 
+# # Add original metadata
+# meta.data <- so_kpmp_sc@meta.data
+# 
+# # Get metadata of interest: age, sex, group, etc.
+# vars <- c("age","sex","bmi","dexa_fat_kg","dexa_lean_kg","hba1c",
+#           "sbp","dbp","map","triglycerides","gfr_raw_plasma","eGFR_CKD_epi",
+#           "erpf_raw_plasma","total_kidney_volume_ml","ht_adj_tkv","raasi_1",
+#           "mfm_1","insulin_1","medication","group","group2","acr_u","celltype_rpca")
+# 
+# # Aggregate metadata by both 'celltype' and 'kit_id'
+# aggregated_metadata <- meta.data %>%
+#   filter(!is.na(celltype)) %>%
+#   group_by(celltype, kit_id) %>%
+#   summarise(across(all_of(vars), first))
+# 
+# # Convert to a data frame and set the rownames
+# aggregated_metadata <- as.data.frame(aggregated_metadata)
+# rownames(aggregated_metadata) <- paste(aggregated_metadata$celltype, aggregated_metadata$kit_id, sep = "_")
+# 
+# # Add the aggregated metadata to the Seurat object
+# so_pb <- AddMetaData(so_pb, aggregated_metadata)
+# 
+# # Clean up unnecessary objects
+# rm(aggregated_metadata, pseudobulked_data, meta.data)
+# so_pb_total <- so_pb
+# rm(so_pb)
+```
