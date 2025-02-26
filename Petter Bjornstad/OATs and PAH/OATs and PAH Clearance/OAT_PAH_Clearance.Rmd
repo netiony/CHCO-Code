@@ -1151,75 +1151,111 @@ dp <- dp.formatted(seurat_object=so_kpmp_sc,genes=genes_of_interest,group.by="pa
 
 #4. LMEM
 ```{r}
-#Genes of interest
-oat_genes <- c("SLC22A6", "SLC22A7", "SLC22A8", "SLC22A11", "ABCC2", "SLC10A2", "SLC13A2", "SLC13A3", "SLC22A12", "SLC22A2", "SLC34A1", "SLC47A1", "SLC47A2")
+# #Genes of interest
+# oat_genes <- c("SLC22A6", "SLC22A7", "SLC22A8", "SLC22A11", "ABCC2", "SLC10A2", "SLC13A2", "SLC13A3", "SLC22A12", "SLC22A2", "SLC34A1", "SLC47A1", "SLC47A2")
+# 
+# # First, make sure the correct cluster variable is set in Idents()
+# Idents(so_kpmp_sc) <- "KPMP_celltype"  # or your custom cluster variable
+# 
+# # Fetch the expression data for the genes of interest
+# expression_data <- FetchData(so_kpmp_sc, vars = oat_genes)
+# 
+# # Get the cluster labels
+# clusters <- Idents(so_kpmp_sc)
+# 
+# # Calculate the percentage of cells expressing each gene by cluster
+# percent_expression_by_cluster <- sapply(oat_genes, function(gene) {
+#   # Get expression data for the gene
+#   gene_expr <- expression_data[[gene]]
+#   
+#   # For each cluster, calculate the percentage of cells expressing the gene
+#   tapply(gene_expr > 0, clusters, function(x) mean(x) * 100)  # Percentage of cells expressing the gene
+# })
+# 
+# # Convert to a data frame for easier viewing
+# percent_expression_by_cluster_df <- as.data.frame(percent_expression_by_cluster)
+# colnames(percent_expression_by_cluster_df) <- oat_genes
+# 
+# # View the result
+# percent_expression_by_cluster_df
 
-# First, make sure the correct cluster variable is set in Idents()
-Idents(so_kpmp_sc) <- "KPMP_celltype"  # or your custom cluster variable
 
-# Fetch the expression data for the genes of interest
-expression_data <- FetchData(so_kpmp_sc, vars = oat_genes)
+#Pseudobulk by individual & cell type & perform linear regression 
+# pseudobulked_data <- PseudobulkExpression(so_kpmp_sc, method="average",group.by = c("KPMP_celltype", "kit_id"),return.seurat=T)
+pseudobulked_data <- AggregateExpression(so_kpmp_sc,slot="counts", group.by = c("KPMP_celltype", "kit_id"),return.seurat = T) 
+length(unique(so_kpmp_sc$KPMP_celltype))*length(unique(so_kpmp_sc$kit_id))  #2537 
+ncol(pseudobulked_data) #2220 cell/individuals 
+nrow(pseudobulked_data) #31319
+# pseudobulked_data_sum <- PseudobulkExpression(so_kpmp_sc, method="aggregate",group.by = c("celltype", "kit_id"),return.seurat=T,normalization.metho="LogNormalize")
+# ncol(pseudobulked_data_sum) #992 cell/individuals
+# nrow(pseudobulked_data_sum) #9276
+# length(unique(so_kpmp_sc$KPMP_celltype))*length(unique(so_kpmp_sc$kit_id))
 
-# Get the cluster labels
-clusters <- Idents(so_kpmp_sc)
-
-# Calculate the percentage of cells expressing each gene by cluster
-percent_expression_by_cluster <- sapply(oat_genes, function(gene) {
-  # Get expression data for the gene
-  gene_expr <- expression_data[[gene]]
-  
-  # For each cluster, calculate the percentage of cells expressing the gene
-  tapply(gene_expr > 0, clusters, function(x) mean(x) * 100)  # Percentage of cells expressing the gene
-})
-
-# Convert to a data frame for easier viewing
-percent_expression_by_cluster_df <- as.data.frame(percent_expression_by_cluster)
-colnames(percent_expression_by_cluster_df) <- oat_genes
-
-# View the result
-percent_expression_by_cluster_df
-
-unique(so_kpmp_sc$KPMP_celltype)
-so_subset <- subset(so_kpmp_sc,KPMP_celltype=="aPT")
+# unique(so_kpmp_sc$KPMP_celltype)
+# so_subset <- subset(so_kpmp_sc,KPMP_celltype=="aPT")
 # Extract the gene expression data for all genes
-gene_expression <- as.data.frame(so_subset@assays$RNA@layers$data)
+# gene_expression <- as.data.frame(so_subset@assays$RNA@layers$data)
+gene_expr_matrix <- pseudobulked_data@assays$RNA@layers$data
+rownames(gene_expr_matrix) <- rownames(pseudobulked_data)
+# Extract metadata from the pseudobulked Seurat object
+metadata <- pseudobulked_data@meta.data
+aggregated_metadata <- so_kpmp_sc@meta.data %>%
+  dplyr::group_by(KPMP_celltype, kit_id) %>%
+  dplyr::summarize(across(everything(), ~first(.)))
+aggregated_metadata$orig.ident <- paste(aggregated_metadata$KPMP_celltype,aggregated_metadata$kit_id,sep="_")
 
-# Assign the gene names (row names of Seurat object) as the column names
-rownames(gene_expression) <- rownames(so_subset)
-colnames(gene_expression) <- colnames(so_subset)
-gene_expression <- t(gene_expression)
-gene_expression <- data.frame(gene_expression)
-gene_list <- colnames(gene_expression)
-# #log transform gene expression
-gene_expression <- gene_expression %>%
-  mutate(across(everything(),~log1p(.))) # log1p is log(x + 1)
-gene_expression$cellname <- rownames(gene_expression)
-rownames(gene_expression) <- NULL
+# Transpose the gene expression matrix so that samples are in rows
+# gene_expr_matrix <- t(gene_expr_matrix)
+
+# Check the dimensions of the transposed matrix
+dim(gene_expr_matrix)
+dim(aggregated_metadata)
+dim(metadata)
+
+# Ensure that the column names in both matrices match (the sample names)
+all(colnames(gene_expr_matrix) == rownames(metadata))  # Should return TRUE
+all(colnames(gene_expr_matrix) == rownames(aggregated_metadata))  # Should return TRUE
+
+# Merge the gene expression matrix with the metadata based on the sample names
+merged_data <- tidylog::full_join(metadata,aggregated_metadata,by=c("orig.ident","KPMP_celltype","kit_id"))
+merged_data <- cbind(merged_data, t(gene_expr_matrix))
+
+# # Assign the gene names (row names of Seurat object) as the column names
+# rownames(gene_expression) <- rownames(so_subset)
+# colnames(gene_expression) <- colnames(so_subset)
+# gene_expression <- t(gene_expression)
+# gene_expression <- data.frame(gene_expression)
+# gene_list <- colnames(gene_expression)
+# # #log transform gene expression
+# gene_expression <- gene_expression %>%
+#   mutate(across(everything(),~log1p(.))) # log1p is log(x + 1)
+# gene_expression$cellname <- rownames(gene_expression)
+# rownames(gene_expression) <- NULL
 
 # Extract the metadata, make sure you select relevant columns (e.g., 'predictor1', 'disease_status')
-metadata <- so_subset@meta.data
-metadata <- metadata %>%
-  mutate(across(everything(),~ifelse(.==".",NA,.)))
-metadata$cellname <- rownames(metadata)
-rownames(metadata) <- NULL
+# metadata <- so_subset@meta.data
+# metadata <- metadata %>%
+#   mutate(across(everything(),~ifelse(.==".",NA,.)))
+# metadata$cellname <- rownames(metadata)
+# rownames(metadata) <- NULL
 
 # filter_ids <- unique(data$kit_id[which(data[[x]]==".")])
 
-# Combine the gene expression data and metadata
-# This ensures cells (columns) are aligned properly between the two
-data <- tidylog::full_join(metadata,gene_expression,by="cellname")
-# unique(data$kit_id) #81 participants
-# which(colnames(data) =="cellname")
-unique(data$group)
+# # Combine the gene expression data and metadata
+# # This ensures cells (columns) are aligned properly between the two
+# data <- tidylog::full_join(metadata,gene_expression,by="cellname")
+# # unique(data$kit_id) #81 participants
+# # which(colnames(data) =="cellname")
+# unique(data$group)
 # data$group <- factor(data$group,levels = c("Lean_Control","Obese_Control","Type_1_Diabetes","Type_2_Diabetes"),labels=c("Lean_Control","Obese_Control","Type_1_Diabetes","Type_2_Diabetes"))
 # length(data$hba1c)
 # length(which(data$hba1c==".")) #7457 cells missing hba1c
 # length(unique(data$kit_id[which(data$hba1c==".")])) #3 people missing HbA1c: "KL-0029407" "KL-0030607" "KL-0031456"
-rm(gene_expression,metadata)
-
+# rm(gene_expression,metadata)
+rm(gene_expr_matrix,metadata,pseudobulked_data)
 #Log transform pah clearance
-data <- data %>% 
-  mutate(pah_clear_abs_log=log(pah_clear_abs))
+data <- merged_data %>% 
+  mutate(pah_clear_abs_log=log(pah_clear_abs)) 
 
 # #Groups
 # #1. Type 2 Diabetes
@@ -1227,31 +1263,30 @@ data <- data %>%
 # exp <- "Type_2_Diabetes"
 oat_genes <- c("SLC22A6", "SLC22A7", "SLC22A8", "SLC22A11", "ABCC2", "SLC10A2", "SLC13A2", "SLC13A3", "SLC22A12", "SLC22A2", "SLC34A1", "SLC47A1", "SLC47A2")
 
-gene_list <- oat_genes
+# gene_list <- oat_genes
 genes <- oat_genes
 exposure <- "pah_clear_abs"
-lmm_fxn <- function(ref,exposure,genes) {
-  # data_subgroup <- data 
-  # filter(group=="Type_2_Diabetes" | group=="Obese_Control")
-  # filter(group==ref | group==exp)
-  # data_subgroup$group <- factor(data_subgroup$group)
-  # data_subgroup[[exposure]] <- factor(data_subgroup[[exposure]])
-  # data_subgroup[[exposure]] <-relevel(data_subgroup[[exposure]], ref = ref)
+data_subgroup <- data %>% 
+  filter(KPMP_celltype=="aPT")
+
   full_results <- data.frame()
   # Prepare parallel execution of gene models
   # full_results <- foreach(gene = genes, .combine = rbind, .packages = c("glmmTMB", "dplyr")) %dopar% {
+  for (celltype in unique(data$KPMP_celltype)) {
   for (gene in genes) {
+    data_subroup <- data %>% 
+      filter(KPMP_celltype==celltype)
     # for (gene in gene_list[1:20]) { #tester genes
-    m0 <- as.formula(paste0(exposure," ~ ",gene," + (1 | kit_id)"))
-    model <- lmer(m0,data=data)
+    m0 <- as.formula(paste0(exposure," ~ ",gene,"+group"))
+    model <- lm(m0,data=data_subgroup)
     # Plot residuals vs. fitted values
-    plot(model, which = 1)  # After fitting the mixed-effects model 'model'
-    # Q-Q plot to check normality of residuals
-    qqnorm(residuals(model))
-    qqline(residuals(model))  # Add reference line
+    # plot(model, which = 1)  # After fitting the mixed-effects model 'model'
+    # # Q-Q plot to check normality of residuals
+    # qqnorm(residuals(model))
+    # qqline(residuals(model))  # Add reference line
     
     foldchange=summary(model)$coef[2,1]
-    pval=summary(model)$coef[2,5]
+    pval=summary(model)$coef[2,4]
     # #If doesnt fit, try nb 
     # if(summary(model)$coef$zi[1,4]=="NaN") {
     #   model2 <- glmmTMB(m0, data=data_subgroup,
@@ -1278,13 +1313,14 @@ lmm_fxn <- function(ref,exposure,genes) {
     #   }
     # }
     # Collect results for each gene
-    results <- data.frame(Gene = gene, FoldChange = foldchange, PValue = pval)
+    results <- data.frame(Gene = gene, FoldChange = foldchange, PValue = pval,CellType=celltype)
     # results <- data.frame(Gene = gene, FoldChange = foldchange, PValue = pval,ModelName=model_name)
     # return(results)
     # results <- data.frame(Gene=gene,FoldChange=foldchange,PValue=pval)
     full_results <- rbind(full_results,results)
     # # print(p)
     # return(full_results)
+  }
   }
   #Make volcano plot of all gene results for group
   full_results <- full_results %>% 
@@ -1381,8 +1417,8 @@ lmm_fxn <- function(ref,exposure,genes) {
     theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14))
   
   return(p)
-}
-
+# }
+# 
 
 ```
 
