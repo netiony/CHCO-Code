@@ -1,7 +1,7 @@
 library(redcapAPI)
 library(tidyverse)
 library(Hmisc)
-setwd("/Users/timvigers/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/Vigers/BDC/Janet Snell-Bergeon/CALICO")
+setwd("/home/timvigers/OneDrive/Vigers/BDC/Janet Snell-Bergeon/CALICO")
 # Open REDCap
 unlockREDCap(c(rcon = "CALICO"),
   keyring = "API_KEYs",
@@ -34,9 +34,7 @@ df <- full_join(history, clinic, by = join_by(record_number)) %>%
 # Define variable sets
 # Demographics
 demo_vars <- c(
-  "site", "pcosdx_age", "race___1", "race___2", "race___3", "race___4",
-  "race___5", "race___60", "race___unk", "ethnicity", "insur_type",
-  "pcosdx_irregular_menses", "pcosdx_anxietydx_age", "pcosdx_menarche"
+  "site", "pcosdx_age", "combined_race", "ethnicity", "insur_type"
 )
 # Aim 1 for Melanie
 aim1_vars <- c(
@@ -354,12 +352,12 @@ aim1_vars <- c(
   "pcosdx_obesitydx_age_combined_cat"
 )
 # Region
-df$Region <- df$site
-levels(df$Region) <- c(
-  "West", "Northeast", "Southeast", "Midwest", "West", "Midwest", "Northeast",
-  "Midwest", "Northeast", "Southeast", "West", "Southeast", "Southeast",
-  "Midwest", "Southeast", "Midwest", "Southwest", "Southwest"
-)
+# df$Region <- df$site
+# levels(df$Region) <- c(
+#   "West", "Northeast", "Southeast", "Midwest", "West", "Midwest", "Northeast",
+#   "Midwest", "Northeast", "Southeast", "West", "Southeast", "Southeast",
+#   "Midwest", "Southeast", "Midwest", "Southwest", "Southwest"
+# )
 # Mental health diagnosis variables
 # Conver to numeric
 df$cv_phq9[df$cv_phq9 %in%
@@ -468,7 +466,7 @@ metformin_users <- unique(df$record_number[df$metformin == "Yes"])
 df$metformin_ever <- "Metformin Never"
 df$metformin_ever[df$record_number %in% metformin_users] <- "Metformin Ever"
 df$metformin_ever <- factor(df$metformin_ever,
-  levels = c("Metformin Never", "Metformin Never")
+  levels = c("Metformin Ever", "Metformin Never")
 )
 # Lifestyle medicine means not on Metformin or EC
 df$lifestyle <- df$metformin == "No" & df$ec == "No"
@@ -502,7 +500,7 @@ df$redcap_repeat_instance <- as.numeric(df$redcap_repeat_instance)
 df$pcosdx_age <- as.numeric(df$pcosdx_age)
 # Fix/add labels
 label(df$insur_type) <- "Insurance Type"
-label(df$Region) <- "Region"
+# label(df$Region) <- "Region"
 label(df$ethnicity) <- "Ethnicity"
 label(df$pcosdx_age) <- "Age at time of PCOS diagnosis"
 label(df$age_group) <- "Age Group at Diagnosis"
@@ -535,6 +533,4 @@ l <- label(df)
 df <- droplevels(df)
 label(df) <- as.list(l)
 # Save
-save(df, demo_vars, aim1_vars, nch_chop_vars, larc_vars, ses_vars,
-  file = "./Data_Clean/analysis_data.RData"
-)
+save(df, demo_vars, file = "./Data_Clean/analysis_data.RData")
