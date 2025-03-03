@@ -1,4 +1,4 @@
-#Single Cell RNA Sequencing Quality Control & Pre-Processing Function 
+#Single Cell RNA Sequencing Quality Control & Pre-Processing Function ----
 qc_function <- function(so,cut_low,cut_high,mt_pct,var_pct,cell_type,group_variable) {
   
 #Find the percent of RNA per cell that is mitochondrial RNA
