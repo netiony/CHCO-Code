@@ -1,5 +1,5 @@
 #Single Cell RNA Sequencing Quality Control & Pre-Processing Function ----
-qc_function <- function(so,cut_low,cut_high,mt_pct,var_pct,cell_type,group_variable) {
+qc_function <- function(so,cut_low,cut_high,mt_pct,var_pct) {
   
 #Find the percent of RNA per cell that is mitochondrial RNA
 so[['percent_mt']] <- PercentageFeatureSet(so, pattern = '^MT-')
@@ -30,7 +30,11 @@ so <- FindClusters(so)
 #Perform Uniform Manifold Approximation and Projection (UMAP) - So that you can visualize high dim data on a low dim space (UMAP) using cluster or pca info 
 so <- RunUMAP(so, dims = 1:dims, reduction.key = "UMAP_")
 
-#Visualize
+return(so)
+}
+
+#UMAP Visualization Function ----
+umap_vis <- function(so,cell_type,group_variable) {
 dimplot1 <- DimPlot(so, reduction = "umap",group.by = cell_type,label=T,raster=F) + 
   ggtitle(paste0("UMAP by ",str_to_title(cell_type)))
 
@@ -38,9 +42,8 @@ dimplot2 <- DimPlot(so, reduction = "umap",group.by = group_variable,label=T,ras
   ggtitle(paste0("UMAP by ",str_to_title(group_variable)))
 
 #Print out all visualizations
-print(elbow_plot/dimplot1/dimplot2)
+print(dimplot1/dimplot2)
 }
-
 
 
 
