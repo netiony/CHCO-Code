@@ -38,7 +38,7 @@ umap_vis <- function(so,cell_type,group_variable) {
 dimplot1 <- DimPlot(so, reduction = "umap",group.by = cell_type,label=T,raster=F) + 
   ggtitle(paste0("UMAP by ",str_to_title(cell_type)))
 
-dimplot2 <- DimPlot(so, reduction = "umap",group.by = group_variable,label=T,raster=F) + 
+dimplot2 <- DimPlot(so, reduction = "umap",group.by = group_variable,label=F,raster=F) + 
   ggtitle(paste0("UMAP by ",str_to_title(group_variable)))
 
 #Print out all visualizations

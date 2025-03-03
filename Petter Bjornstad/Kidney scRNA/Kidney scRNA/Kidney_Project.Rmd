@@ -109,139 +109,206 @@ dir.ipa <- c("/Users/hhampson/Documents/IPA/Results")
 
 #Load functions
 source("Kidney_functions_sc.R")
+source("/Users/hhampson/CHCO-Code/Petter Bjornstad/Data Processing and Analysis/Standard_Functions.R")
 ```
 
 # 2. Quality Control & Preprocessing
 ## a. Load Kidney scRNA seq Data
 ```{r, include=F}
-#Load KPMP Cell Types 2 (new)
-#Mac Studio
+#Load PB90 with new KPMP Cell Types
+#Mac Studio pathway
 so_kpmp_sc <- readRDS("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/scRNA/data_raw/PB_90_RPCAFix_Metadata_LR_RM_kpmpV1labelled.rds")
 
 ```
-## b. Data Cleaning 
+
+## b. Data Cleaning, QC & Preprocessing
 ```{r, echo=F}
-#Fix Typos in kit ids
+#Fix Typos in kit ids in PB90
 so_kpmp_sc$kit_id[which(so_kpmp_sc$kit_id=="KI-0014643")] <- "KL-0014643"
 so_kpmp_sc$kit_id[which(so_kpmp_sc$kit_id=="kl-0023998")] <- "KL-0023998"
 
-#Filter data from 90 participants to 81 unique, baseline kidney biopsies
-#Load harmonized data that has been formatted to the 83 partiucipants of interest
-harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney scRNAseq Project","Data","harmonized_data_kidney_sc_all_metadata2.csv"))
-harm_meta_data <- harm_meta_data %>%
+#Load harmonized data that has been filtered from 90 to the 83 participants that have baseline single cell data
+harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney scRNAseq Project","Data","harmonized_data_kidney_sc_all_metadata2.csv"))%>%
   dplyr::select(-X)
-#Pull metadata from so to merge together
+
+#Select metadata from seurat object to facilitate merge of new metadata into seurat object
 meta_kidney_sc <-  so_kpmp_sc@meta.data
 rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
-#Merge metadata from 83 participants of interest into so metadata
+
+#Merge metadata from 83 participants at baseline into seurat object metadata
 meta_kidney_sc <- meta_kidney_sc %>%
   left_join(harm_meta_data,by="kit_id")
 rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
-#Pull ids from 83 participants of interest to filter so to 
+
+#Pull ids from 83 participants at baseline to filter seurat object to these participants only 
 ids <- harm_meta_data$kit_id
-#Merge metadata back into so
+
+#Merge metadata back into seurat object
 so_kpmp_sc <- AddMetaData(so_kpmp_sc, meta_kidney_sc)
-#Filter seurat object to only IDs that have the metadata (83 individuals of interest)
+
+#Check number of unique ids
+length(unique(so_kpmp_sc$kit_id)) #should be 90
+
+#Filter seurat object to only IDs that have the metadata & sc data (83 individuals at baseline)
 so_kpmp_sc <- subset(so_kpmp_sc, kit_id %in% ids)
-#Check number of unique ids 
+
+#Check number of unique ids after filtering
 length(unique(so_kpmp_sc$kit_id)) #should be 83
+
 #Remove metadatasets
 rm(meta_kidney_sc,harm_meta_data)
+
 #Remove two coenrolled IDs
 so_kpmp_sc <- subset(so_kpmp_sc,kit_id!="KL-0030621")
 so_kpmp_sc <- subset(so_kpmp_sc,kit_id!="KL-0029535")
 #Check unique number of kit ids now (should be 81)
-length(unique(so_kpmp_sc$kit_id)) #81
+length(unique(so_kpmp_sc$kit_id)) #Should be 81
+
+#Load in most up to date medication data to update medication information
+med <- read.xlsx(fs::path(dir.dat,"Kidney scRNAseq Project/Data/Biopsies_w_mrn_Oct3.xlsx"))
+#Select Metformin, RASSI, Insulin data
+med <- med %>%
+  dplyr::select(all_of(c("record_id","mrn","raasi_1","insulin_1","mfm_1")))
+#Pull seurat object metadata to help harmoinize in new metadata
+meta_kidney_sc <-  so_kpmp_sc@meta.data
+#Filter to only those with a unique identifier id in the seurat object metadata
+med <- med %>%
+  filter(mrn %in% as.character(meta_kidney_sc$mrn)) 
+length(unique(med$mrn)) #95 total rows remain, 81 unique individual ids
+#Filter to only those that have a unique record id in the seurat object
+med <- med %>%
+  filter(record_id %in% meta_kidney_sc$record_id) 
+length(unique(med$mrn)) #81 remain
+length(unique(med$record_id)) #81
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+med$mrn <- as.numeric(med$mrn) #Make numeric to merge
+#Merge med data with seurat metadata
+meta_kidney_sc <- meta_kidney_sc %>%
+  left_join(med,by=c("mrn","record_id"))
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+length(unique(meta_kidney_sc$mrn)) #81 remain
+length(unique(meta_kidney_sc$record_id)) #81
+
+#Add Med Meta Data to Seurat object
+so_kpmp_sc <- AddMetaData(so_kpmp_sc, meta_kidney_sc)
+#Remove med metadatset
+rm(med,meta_kidney_sc)
+
+#Create medication & disease status groups of interest
+so_kpmp_sc@meta.data <- so_kpmp_sc@meta.data %>%
+  mutate(glp1_sglt2=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>%
+  mutate(sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>%
+  mutate(glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>%
+  mutate(no_med=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+
+#Define 4 exposure groups:
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
+invisible(gc())
+so_kpmp_sc@meta.data <- so_kpmp_sc@meta.data %>%
+  mutate(medication = case_when(glp1_sglt2 == "Yes" ~ "glp1_sglt2",
+                                sglt2 == "Yes" ~ "sglt2",
+                                glp1 == "Yes" ~ "glp1",
+                                no_med == "Yes" ~ "no_med"))
+so_kpmp_sc@meta.data$medication <- factor(so_kpmp_sc@meta.data$medication, levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
+
 #Ensure default assay in seurat object to RNA
 DefaultAssay(so_kpmp_sc) <- "RNA"
-gc()
+invisible(gc())
 
-#Sample-level QC Metrics 
-# o	Number of cells per sample
-# Check the number of cells per sample using dplyr
-qc_dat <- so_kpmp_sc@meta.data %>%
-  group_by(kit_id) %>%
-  summarise(cell_count = n())
-range(qc_dat$cell_count) #80 9607
-hist(qc_dat$cell_count)
-ggplot(data.frame(cell_count = qc_dat$cell_count), aes(x = cell_count)) +
-  geom_histogram(binwidth = 1000, fill = "skyblue", color = "black", alpha = 0.7) +
-  labs(title = "Cell Count per Sample", x = "Cell Count per Biopsy Sample", y = "Frequency")
-mean(qc_dat$cell_count)
-median(qc_dat$cell_count)
-sd(qc_dat$cell_count)
-summary(qc_dat$cell_count)
-# o	Read depth distribution
-# Calculate total read depth (sum of counts) for each cell
-so_kpmp_sc$read_depth <- Matrix::colSums(so_kpmp_sc@assays$RNA@layers$counts)
-ggplot(data.frame(read_depth = so_kpmp_sc$read_depth), aes(x = read_depth)) +
-  geom_histogram(binwidth = 1000, fill = "skyblue", color = "black", alpha = 0.7) +
-  labs(title = "Read Depth Distribution", x = "Read Depth (Total Counts)", y = "Frequency")
-summary(so_kpmp_sc$read_depth)
+#Perform Quality Control & Preprocessing Steps
+so_kpmp_sc <- qc_function(so=so_kpmp_sc,cut_low=200,cut_high=5000,mt_pct=0.5,var_pct=0.75) 
 
-# o	Gene detection rates
-# Calculate the number of detected genes per cell (non-zero counts)
-so_kpmp_sc$detected_genes <- Matrix::colSums(so_kpmp_sc@assays$RNA@layers$counts > 0)
+#Visualize data
+umap <- umap_vis(so=so_kpmp_sc,cell_type="KPMP_celltype",group_variable="group") 
+print(umap)
 
-# Total number of genes in the dataset
-total_genes <- nrow(so_kpmp_sc@assays$RNA@layers$counts)
-
-# Calculate the detection rate as the percentage of detected genes
-so_kpmp_sc$gene_detection_rate <- so_kpmp_sc$detected_genes / total_genes * 100
-hist(so_kpmp_sc$gene_detection_rate)
-summary(so_kpmp_sc$gene_detection_rate)
-
-# o	Batch effect assessment
-
-# •	Cell-level QC
-# o	Mitochondrial gene percentage
-# Step 1: Identify mitochondrial genes (assuming the gene names start with "MT-")
-mito_genes <- grep("^MT-", rownames(so_kpmp_sc), value = TRUE)
-
-# Step 2: Calculate the total expression for each cell and the expression from mitochondrial genes
-# Step 2: Access the counts matrix
-counts_matrix <- so_kpmp_sc@assays$RNA@layers$counts
-rownames(counts_matrix) <- rownames(so_kpmp_sc)
-colnames(counts_matrix) <- colnames(so_kpmp_sc)
-so_kpmp_sc$mito_counts <- Matrix::colSums(counts_matrix[mito_genes,])
-
-# Step 3: Calculate the mitochondrial gene percentage for each cell
-so_kpmp_sc$mito_percent <- so_kpmp_sc$mito_counts / Matrix::colSums(counts_matrix) * 100
-
-# Step 4: Inspect the first few values of the mitochondrial gene percentage
-hist(so_kpmp_sc$mito_percent)
-summary(so_kpmp_sc$mito_percent)
-
-
-# o	UMI counts
-# Access the raw UMI counts matrix
-umi_counts <- so_kpmp_sc@assays$RNA@layers$counts
-# Calculate total UMI counts for each cell
-total_umi_per_cell <- Matrix::colSums(umi_counts)
-# Add total UMI counts for each cell to the metadata
-so_kpmp_sc$total_umi_counts <- total_umi_per_cell
-
-hist(so_kpmp_sc$total_umi_counts)
-# Histogram of total UMI counts per cell
-ggplot(data = data.frame(umi_counts = so_kpmp_sc$total_umi_counts), aes(x = umi_counts)) +
-  geom_histogram(binwidth = 1000, fill = "lightblue", color = "black") +
-  theme_minimal() +
-  labs(title = "Distribution of Total UMI Counts per Cell",
-       x = "Total UMI Counts",
-       y = "Frequency") +
-  theme(text = element_text(size = 12))
-
-
-# o	Gene counts
-# Access the raw UMI count matrix from the Seurat object (assumes the object is named 'so_kpmp_sc')
-raw_counts <- so_kpmp_sc@assays$RNA@layers$counts
-
-# Calculate the total count for each gene (sum across cells)
-gene_counts <- Matrix::rowSums(raw_counts)
-
-# Optionally, add it to the Seurat object metadata (to track it later)
-so_kpmp_sc$gene_counts <- gene_counts
-hist(so_kpmp_sc$gene_counts)
+# 
+# #Sample-level QC Metrics 
+# # o	Number of cells per sample
+# # Check the number of cells per sample using dplyr
+# qc_dat <- so_kpmp_sc@meta.data %>%
+#   group_by(kit_id) %>%
+#   summarise(cell_count = n())
+# range(qc_dat$cell_count) #80 9607
+# hist(qc_dat$cell_count)
+# ggplot(data.frame(cell_count = qc_dat$cell_count), aes(x = cell_count)) +
+#   geom_histogram(binwidth = 1000, fill = "skyblue", color = "black", alpha = 0.7) +
+#   labs(title = "Cell Count per Sample", x = "Cell Count per Biopsy Sample", y = "Frequency")
+# mean(qc_dat$cell_count)
+# median(qc_dat$cell_count)
+# sd(qc_dat$cell_count)
+# summary(qc_dat$cell_count)
+# # o	Read depth distribution
+# # Calculate total read depth (sum of counts) for each cell
+# so_kpmp_sc$read_depth <- Matrix::colSums(so_kpmp_sc@assays$RNA@layers$counts)
+# ggplot(data.frame(read_depth = so_kpmp_sc$read_depth), aes(x = read_depth)) +
+#   geom_histogram(binwidth = 1000, fill = "skyblue", color = "black", alpha = 0.7) +
+#   labs(title = "Read Depth Distribution", x = "Read Depth (Total Counts)", y = "Frequency")
+# summary(so_kpmp_sc$read_depth)
+# 
+# # o	Gene detection rates
+# # Calculate the number of detected genes per cell (non-zero counts)
+# so_kpmp_sc$detected_genes <- Matrix::colSums(so_kpmp_sc@assays$RNA@layers$counts > 0)
+# 
+# # Total number of genes in the dataset
+# total_genes <- nrow(so_kpmp_sc@assays$RNA@layers$counts)
+# 
+# # Calculate the detection rate as the percentage of detected genes
+# so_kpmp_sc$gene_detection_rate <- so_kpmp_sc$detected_genes / total_genes * 100
+# hist(so_kpmp_sc$gene_detection_rate)
+# summary(so_kpmp_sc$gene_detection_rate)
+# 
+# # o	Batch effect assessment
+# 
+# # •	Cell-level QC
+# # o	Mitochondrial gene percentage
+# # Step 1: Identify mitochondrial genes (assuming the gene names start with "MT-")
+# mito_genes <- grep("^MT-", rownames(so_kpmp_sc), value = TRUE)
+# 
+# # Step 2: Calculate the total expression for each cell and the expression from mitochondrial genes
+# # Step 2: Access the counts matrix
+# counts_matrix <- so_kpmp_sc@assays$RNA@layers$counts
+# rownames(counts_matrix) <- rownames(so_kpmp_sc)
+# colnames(counts_matrix) <- colnames(so_kpmp_sc)
+# so_kpmp_sc$mito_counts <- Matrix::colSums(counts_matrix[mito_genes,])
+# 
+# # Step 3: Calculate the mitochondrial gene percentage for each cell
+# so_kpmp_sc$mito_percent <- so_kpmp_sc$mito_counts / Matrix::colSums(counts_matrix) * 100
+# 
+# # Step 4: Inspect the first few values of the mitochondrial gene percentage
+# hist(so_kpmp_sc$mito_percent)
+# summary(so_kpmp_sc$mito_percent)
+# 
+# 
+# # o	UMI counts
+# # Access the raw UMI counts matrix
+# umi_counts <- so_kpmp_sc@assays$RNA@layers$counts
+# # Calculate total UMI counts for each cell
+# total_umi_per_cell <- Matrix::colSums(umi_counts)
+# # Add total UMI counts for each cell to the metadata
+# so_kpmp_sc$total_umi_counts <- total_umi_per_cell
+# 
+# hist(so_kpmp_sc$total_umi_counts)
+# # Histogram of total UMI counts per cell
+# ggplot(data = data.frame(umi_counts = so_kpmp_sc$total_umi_counts), aes(x = umi_counts)) +
+#   geom_histogram(binwidth = 1000, fill = "lightblue", color = "black") +
+#   theme_minimal() +
+#   labs(title = "Distribution of Total UMI Counts per Cell",
+#        x = "Total UMI Counts",
+#        y = "Frequency") +
+#   theme(text = element_text(size = 12))
+# 
+# 
+# # o	Gene counts
+# # Access the raw UMI count matrix from the Seurat object (assumes the object is named 'so_kpmp_sc')
+# raw_counts <- so_kpmp_sc@assays$RNA@layers$counts
+# 
+# # Calculate the total count for each gene (sum across cells)
+# gene_counts <- Matrix::rowSums(raw_counts)
+# 
+# # Optionally, add it to the Seurat object metadata (to track it later)
+# so_kpmp_sc$gene_counts <- gene_counts
+# hist(so_kpmp_sc$gene_counts)
 
 # o	Doublet detection
 # # Assuming 'so_kpmp_sc' is your Seurat object
@@ -274,52 +341,52 @@ hist(so_kpmp_sc$gene_counts)
 # # Filter out doublets (you can choose the threshold based on your dataset)
 # so_kpmp_sc_filtered <- subset(so_kpmp_sc, subset = DF.classifications_0.075_200 == "Singlet")
 
-
+# 
+# # # 
+# # Step 1: Filter to genes expressed in more than 5% of cells
+# gene_expression_matrix <- so_kpmp_sc@assays$RNA@layers$counts
+# rownames(gene_expression_matrix) <- rownames(so_kpmp_sc@assays$RNA)
+# colnames(gene_expression_matrix) <- colnames(so_kpmp_sc@assays$RNA)
+# # expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.1
+# expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.05
+# names(expressed_genes)
+# rownames(gene_expression_matrix)[expressed_genes]
+# so_kpmp_sc <- subset(so_kpmp_sc, features = rownames(gene_expression_matrix)[expressed_genes])
+# # dim(so_kpmp_sc@assays$RNA@layers$counts) #9289 186125
+# # dim(so_kpmp_sc@assays$RNA) #9289 186125
+# # dim(so_kpmp_sc) #9289 186125
+# # sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA))) #70
+# # ncol(so_kpmp_sc) #186125 cells
+# # nrow(so_kpmp_sc) #9289 genes
 # # 
-# Step 1: Filter to genes expressed in more than 5% of cells
-gene_expression_matrix <- so_kpmp_sc@assays$RNA@layers$counts
-rownames(gene_expression_matrix) <- rownames(so_kpmp_sc@assays$RNA)
-colnames(gene_expression_matrix) <- colnames(so_kpmp_sc@assays$RNA)
-# expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.1
-expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.05
-names(expressed_genes)
-rownames(gene_expression_matrix)[expressed_genes]
-so_kpmp_sc <- subset(so_kpmp_sc, features = rownames(gene_expression_matrix)[expressed_genes])
-# dim(so_kpmp_sc@assays$RNA@layers$counts) #9289 186125
-# dim(so_kpmp_sc@assays$RNA) #9289 186125
-# dim(so_kpmp_sc) #9289 186125
-# sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA))) #70
+# # Step 2: Remove mitochondrial genes (those starting with "MT")
+# mito_genes <- grep("^MT-", rownames(so_kpmp_sc@assays$RNA), value = TRUE)
+# so_kpmp_sc <- subset(so_kpmp_sc, features = setdiff(rownames(so_kpmp_sc), mito_genes))
+# dim(so_kpmp_sc@assays$RNA@layers$counts) #9276 186125
+# dim(so_kpmp_sc@assays$RNA@layers$data) #9276 186125
+# dim(so_kpmp_sc@assays$RNA)#5714 186125
+# sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA@layers$counts))) #0
 # ncol(so_kpmp_sc) #186125 cells
-# nrow(so_kpmp_sc) #9289 genes
+# nrow(so_kpmp_sc) #9276 genes
+# # 
 # 
-# Step 2: Remove mitochondrial genes (those starting with "MT")
-mito_genes <- grep("^MT-", rownames(so_kpmp_sc@assays$RNA), value = TRUE)
-so_kpmp_sc <- subset(so_kpmp_sc, features = setdiff(rownames(so_kpmp_sc), mito_genes))
-dim(so_kpmp_sc@assays$RNA@layers$counts) #9276 186125
-dim(so_kpmp_sc@assays$RNA@layers$data) #9276 186125
-dim(so_kpmp_sc@assays$RNA)#5714 186125
-sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA@layers$counts))) #0
-ncol(so_kpmp_sc) #186125 cells
-nrow(so_kpmp_sc) #9276 genes
+# # 
+# # # Check dimensions after filtering
+# # dim(so_kpmp_sc@assays$RNA@layers$counts) #9289 81882
+# # dim(so_kpmp_sc@assays$RNA)#9289 81882
+# # dim(so_kpmp_sc)#9289 81882
+# # 
+# # # Optionally, you can also check how many MT genes remain in the filtered dataset
+# # sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA@layers$counts)))
+# # ncol(so_kpmp_sc)  # Number of cells remaining
+# # 
+# # # •	Data Normalization 
+# # Step 3: Renormalize the Seurat object after filtering
+# so_kpmp_sc <- NormalizeData(so_kpmp_sc)
+# so_kpmp_sc <- ScaleData(so_kpmp_sc)
+# # o	SCTransform implementation
+# # so_kpmp_sc <- SCTransform(so_kpmp_sc, assay = "RNA", vars.to.regress = c("nCount_RNA", "percent.mt"), verbose = TRUE)
 # 
-
-# 
-# # Check dimensions after filtering
-# dim(so_kpmp_sc@assays$RNA@layers$counts) #9289 81882
-# dim(so_kpmp_sc@assays$RNA)#9289 81882
-# dim(so_kpmp_sc)#9289 81882
-# 
-# # Optionally, you can also check how many MT genes remain in the filtered dataset
-# sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA@layers$counts)))
-# ncol(so_kpmp_sc)  # Number of cells remaining
-# 
-# # •	Data Normalization 
-# Step 3: Renormalize the Seurat object after filtering
-so_kpmp_sc <- NormalizeData(so_kpmp_sc)
-so_kpmp_sc <- ScaleData(so_kpmp_sc)
-# o	SCTransform implementation
-# so_kpmp_sc <- SCTransform(so_kpmp_sc, assay = "RNA", vars.to.regress = c("nCount_RNA", "percent.mt"), verbose = TRUE)
-
 
 # o	Batch correction (Harmony/BBKNN)
 # o	Technical variance removal
@@ -330,44 +397,7 @@ so_kpmp_sc <- ScaleData(so_kpmp_sc)
 # ncol(so_kpmp_sc) #186125 cells
 # nrow(so_kpmp_sc) #5714 genes
 # 
-#Load in med data to update medication information
-med <- read.xlsx(fs::path(dir.dat,"Kidney scRNAseq Project/Data/Biopsies_w_mrn_Oct3.xlsx"))
-med <- med %>%
-  dplyr::select(all_of(c("record_id","mrn","raasi_1","insulin_1","mfm_1")))
-meta_kidney_sc <-  so_kpmp_sc@meta.data
-med <- med %>%
-  filter(mrn %in% as.character(meta_kidney_sc$mrn)) #95 remain
-med <- med %>%
-  filter(record_id %in% meta_kidney_sc$record_id) #81 remain
-# med$mrn <- as.numeric(med$mrn)
-rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
-med$mrn <- as.numeric(med$mrn)
-meta_kidney_sc <- meta_kidney_sc %>%
-  left_join(med,by=c("mrn","record_id"))
-rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
 
-#Add Med Meta Data to Seurat object
-so_kpmp_sc <- AddMetaData(so_kpmp_sc, meta_kidney_sc)
-rm(gene_expression_matrix,med,meta_kidney_sc)
-rm(expressed_genes,qc_dat,raw_counts,counts_matrix,umi_counts)
-
-
-#Create medication & disease status groups of interest
-so_kpmp_sc@meta.data <- so_kpmp_sc@meta.data %>%
-  mutate(glp1_sglt2=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>%
-  mutate(sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>%
-  mutate(glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>%
-  mutate(no_med=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
-
-#Define 4 exposure groups:
-#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
-gc()
-so_kpmp_sc@meta.data <- so_kpmp_sc@meta.data %>%
-  mutate(medication = case_when(glp1_sglt2 == "Yes" ~ "glp1_sglt2",
-                                sglt2 == "Yes" ~ "sglt2",
-                                glp1 == "Yes" ~ "glp1",
-                                no_med == "Yes" ~ "no_med"))
-so_kpmp_sc@meta.data$medication <- factor(so_kpmp_sc@meta.data$medication, levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
 ```
 # 3. Comparitive Data Analysis
 ```{r}
