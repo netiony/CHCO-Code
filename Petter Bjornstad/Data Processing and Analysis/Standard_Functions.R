@@ -1,20 +1,46 @@
 #Single Cell RNA Sequencing Quality Control & Pre-Processing Function 
-qc_function <- function(so,cut_low,cut_high,dims,mt_pct) {
-so <- subset(so, subset = nFeature_RNA > cut_low & nFeature_RNA < cut_high) # implementing this based on the responses from Dylan and Matteo
+qc_function <- function(so,cut_low,cut_high,mt_pct,var_pct,cell_type,group_variable) {
+  
+#Find the percent of RNA per cell that is mitochondrial RNA
+so[['percent_mt']] <- PercentageFeatureSet(so, pattern = '^MT-')
+
+#Filter out cells with fewer than "cut_low" genes, cells with "cut_high" detected genes, and cells where < mt_pct% of the expressed genes are mitochondrial genes
+so <- subset(so, subset = nFeature_RNA > cut_low & nFeature_RNA < cut_high & percent_mt<mt_pct)  
+
+# Normalize the adjusted counts (considered adjusted counts after SoupX processing)
 so <- NormalizeData(so)
+
+#Scale the adjusted counts (subtract the mean gene expression of the gene across all cells from the gene adjusted count value, then divide by SD of the gene across all cells) - each gene should have mean of 0, SD of 1
 so <- ScaleData(so, features = VariableFeatures(so))
+
+#Perform PCA to reduce the complexity of the data & capture the most important sources of variation
 so <- RunPCA(so, features = VariableFeatures(so))
-ElbowPlot(so)
+#Get the standard deviation for each Principle component
+pca_results <- so[["pca"]]@stdev  # Standard deviation for each PC
+#Calculate the proportion of variation explained by each PC
+var_explained <- pca_results^2 / sum(pca_results^2)  # Proportion of variance explained
+# Choose the number of PCs for "var_pct"% cummulative variance explained
+cumulative_var_explained <- cumsum(var_explained)
+dims <- which(cumulative_var_explained >= var_pct)[1]  # Select the number of PCs explaining 90% of variance
+elbow_plot <- ElbowPlot(so) + ggtitle(label=paste0(dims, " Principle Components explain, ",var_pct*100,"% of Cummulative Variance"))
+#Compute the nearest neighbors of each cell based on PCA
 so <- FindNeighbors(so, dims = 1:dims)
+#Clusters cells that are similar to each other based on their gene expression profiles using nearest neighbors information 
 so <- FindClusters(so)
+#Perform Uniform Manifold Approximation and Projection (UMAP) - So that you can visualize high dim data on a low dim space (UMAP) using cluster or pca info 
 so <- RunUMAP(so, dims = 1:dims, reduction.key = "UMAP_")
+
+#Visualize
+dimplot1 <- DimPlot(so, reduction = "umap",group.by = cell_type,label=T,raster=F) + 
+  ggtitle(paste0("UMAP by ",str_to_title(cell_type)))
+
+dimplot2 <- DimPlot(so, reduction = "umap",group.by = group_variable,label=T,raster=F) + 
+  ggtitle(paste0("UMAP by ",str_to_title(group_variable)))
+
+#Print out all visualizations
+print(elbow_plot/dimplot1/dimplot2)
 }
 
-so <- subset(so, subset = nFeature_RNA > 200 & nFeature_RNA < 5000) # implementing this based on the responses from Dylan and Matteo
-so <- NormalizeData(so)
-so <- ScaleData(so, features = VariableFeatures(so))
-so <- RunPCA(so, features = VariableFeatures(so))
-ElbowPlot(so)
-so <- FindNeighbors(so, dims = 1:10)
-so <- FindClusters(so)
-so <- RunUMAP(so, dims = 1:30, reduction.key = "UMAP_")
+
+
+
