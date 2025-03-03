@@ -1,11 +1,22 @@
 #Single Cell RNA Sequencing Quality Control & Pre-Processing Function ----
-qc_function <- function(so,cut_low,cut_high,mt_pct,var_pct) {
+qc_function <- function(so,cut_low,cut_high,mt_pct,var_pct,gene_pct) {
   
 #Find the percent of RNA per cell that is mitochondrial RNA
 so[['percent_mt']] <- PercentageFeatureSet(so, pattern = '^MT-')
 
 #Filter out cells with fewer than "cut_low" genes, cells with "cut_high" detected genes, and cells where < mt_pct% of the expressed genes are mitochondrial genes
 so <- subset(so, subset = nFeature_RNA > cut_low & nFeature_RNA < cut_high & percent_mt<mt_pct)  
+
+#Filter out rare genes expressed in less than "gene_pct" of cells
+expr_matrix <- as.matrix(GetAssayData(so, layer = "counts"))
+# Calculate the proportion of cells expressing each gene
+num_cells_per_gene <- rowSums(expr_matrix > 0)  # Count nonzero cells per gene
+total_cells <- ncol(expr_matrix)  # Total number of cells
+gene_proportion <- num_cells_per_gene / total_cells  # Fraction of cells expressing each gene
+remove(expr_matrix)
+# Keep genes expressed in at "gene_pct" of cells
+genes_to_keep <- names(gene_proportion[gene_proportion >= gene_pct])
+so <- subset(so, features = genes_to_keep)
 
 # Normalize the adjusted counts (considered adjusted counts after SoupX processing)
 so <- NormalizeData(so)
@@ -30,7 +41,8 @@ so <- FindClusters(so)
 #Perform Uniform Manifold Approximation and Projection (UMAP) - So that you can visualize high dim data on a low dim space (UMAP) using cluster or pca info 
 so <- RunUMAP(so, dims = 1:dims, reduction.key = "UMAP_")
 
-return(so)
+# return(so)
+return(list(so = so, elbow_plot = elbow_plot))
 }
 
 #UMAP Visualization Function ----
@@ -44,6 +56,4 @@ dimplot2 <- DimPlot(so, reduction = "umap",group.by = group_variable,label=F,ras
 #Print out all visualizations
 print(dimplot1/dimplot2)
 }
-
-
 
