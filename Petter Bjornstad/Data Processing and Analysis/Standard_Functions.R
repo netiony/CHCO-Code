@@ -57,5 +57,77 @@ dimplot2 <- DimPlot(so, reduction = "umap",group.by = group_variable,label=F,ras
 print(dimplot1/dimplot2)
 }
 
+#Gene Expression Extraction Function ----
+#Extract gene expression matrix to perform linear mixed effect models, etc. 
+##a. All cell types ----
+ext_gene_fxn <- function(so) {
+  for (celltype in so_filtered$KPMP_celltype) {
+    so_celltype <- subset(so_filtered,KPMP_celltype %in% celltype)
+    
+    # Extract the gene expression data for all genes
+    # gene_expression <- as.data.frame(so_celltype@assays$RNA@layers$counts)
+    gene_expression <- as.data.frame(GetAssayData(so_filtered, layer = "data"))
+    
+    #Assign gene names as rownames, cell names as colnames
+    # rownames(gene_expression) <- rownames(so_celltype) #Gene Names
+    # colnames(gene_expression) <- colnames(so_celltype) #Cell Names
+    #Transpose gene expression dataset to merge with metadata
+    gene_expression <- t(gene_expression)
+    gene_expression <- data.frame(gene_expression) #Make a dataframe again after transposing
+    #Set gene list
+    gene_list <- colnames(gene_expression)
+    gene_expression$cellname <- rownames(gene_expression) 
+    rownames(gene_expression) <- NULL
+    
+    # Extract the metadata
+    metadata <- so_celltype@meta.data
+    # metadata <- metadata %>%
+    #   mutate(across(everything(),~ifelse(.==".",NA,.)))
+    metadata$cellname <- rownames(metadata)
+    rownames(metadata) <- NULL
+    
+    # Combine the gene expression data and metadata
+    data <- tidylog::full_join(metadata,gene_expression,by="cellname")
+    rm(metadata,gene_expression)
+    
+    N <- length(unique(data$kit_id))
+  }
+}
+##b. By Specific Cell Type ----
+#Must change the cell type variable in the function if using other datasets where celltype variable isnt called KPMP_celltype
+ext_gene_fxn2 <- function(so,celltype) {
+# for (celltype in so_filtered$KPMP_celltype) {
+  so_celltype <- subset(so,KPMP_celltype %in% celltype)
+  
+  # Extract the gene expression data for all genes
+  gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
+  
+  #Assign gene names as rownames, cell names as colnames
+  # rownames(gene_expression) <- rownames(so_celltype) #Gene Names
+  # colnames(gene_expression) <- colnames(so_celltype) #Cell Names
+  #Transpose gene expression dataset to merge with metadata
+  gene_expression <- t(gene_expression)
+  gene_expression <- data.frame(gene_expression) #Make a dataframe again after transposing
+  #Set gene list
+  gene_list <- colnames(gene_expression)
+  gene_expression$cellname <- rownames(gene_expression) 
+  rownames(gene_expression) <- NULL
+  
+  # Extract the metadata
+  metadata <- so_celltype@meta.data
+  # metadata <- metadata %>%
+  #   mutate(across(everything(),~ifelse(.==".",NA,.)))
+  metadata$cellname <- rownames(metadata)
+  rownames(metadata) <- NULL
+  
+  # Combine the gene expression data and metadata
+  data <- tidylog::full_join(metadata,gene_expression,by="cellname")
+  rm(metadata,gene_expression)
+  
+  # N <- length(unique(data$kit_id))
+  return(list(data=data, gene_list=gene_list))
+# }
+}
+
 #Linear Mixed-Effects Model Function ----
-lmm_function <- function()
+# lmm_function <- function()
