@@ -57,3 +57,5 @@ dimplot2 <- DimPlot(so, reduction = "umap",group.by = group_variable,label=F,ras
 print(dimplot1/dimplot2)
 }
 
+#Linear Mixed-Effects Model Function ----
+lmm_function <- function()
