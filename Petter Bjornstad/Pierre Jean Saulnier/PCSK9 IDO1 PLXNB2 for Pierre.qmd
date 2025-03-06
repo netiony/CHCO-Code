@@ -1,0 +1,557 @@
+---
+title: "PCSK9, IDO1, PLXNB2 for Pierre"
+author: "Ye Ji Choi"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    embed-resources: true
+---
+
+```{r, include = F}
+library(dplyr)
+library(tidyr)
+library(jsonlite)
+library(reticulate)
+library(Seurat)
+library(glmmTMB)
+library(arsenal)
+library(purrr)
+```
+
+```{r include = F}
+reticulate::use_python("/mmfs1/gscratch/scrubbed/yejichoi/mypy/bin/python", required = T)
+reticulate::repl_python()
+reticulate::py_config()
+# set up Kopah connection
+## Load boto3 and pandas
+boto3 <- reticulate::import("boto3")
+pd <- reticulate::import("pandas")
+
+## Create an S3 client
+keys <- fromJSON("/mmfs1/home/yejichoi/keys.json")
+session <- boto3$session$Session(
+  aws_access_key_id = keys$MY_ACCESS_KEY,
+  aws_secret_access_key = keys$MY_SECRET_KEY
+)
+
+## Create an S3 client with the session
+s3 <- session$client("s3", endpoint_url = "https://s3.kopah.uw.edu")
+```
+
+```{r echo = F, include=F}
+# read PB90 Seurat file
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("scrna", "Kidney transcriptomics/Single cell RNA seq/PB_90_RPCAFix_Metadata_LR_RM_kpmpV1labelled.rds", temp_file)
+so90 <- readRDS(temp_file)
+
+temp_file <- tempfile(fileext = ".csv")
+s3$download_file("harmonized.dataset", "harmonized_dataset.csv", temp_file)
+harm_dat <- read.csv(temp_file)
+
+dat <- harm_dat %>%
+  dplyr::mutate(across(where(is.character), ~ na_if(., ""))) %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+                   .by = record_id) %>%
+  mutate(kit_id = gsub("^K.*-", "KL-", kit_id),
+         albuminuria_yn = case_when(acr_u < 30 ~ "No", acr_u >= 30 ~ "Yes"),
+         group_t2ob = case_when(group == "Lean Control" ~ "LC",
+                                group == "Type 2 Diabetes" | group == "Obese Control" ~ "T2D/OB"),
+         group_sglt2i = case_when(group == "Type 2 Diabetes" & epic_ever_sglt2i_1 == "Yes" ~ "T2D(+)",
+                                  group == "Type 2 Diabetes" & epic_ever_sglt2i_1 == "No" ~ "T2D(-)",
+                                  group == "Obese Control" & epic_ever_sglt2i_1 == "Yes" ~ "OB(+)",
+                                  group == "Obese Control" & epic_ever_sglt2i_1 == "No" ~ "OB(-)",
+                                  T ~ "LC"),
+         group_t2ob_sglt2i = case_when(epic_ever_sglt2i_1 == "Yes" ~ "T2D/OB(+)",
+                                       group != "Lean Control" & epic_ever_sglt2i_1 == "No" ~ "T2D/OB(-)",
+                                       T~ "LC"),
+         group_t2d = case_when(group == "Type 2 Diabetes" ~ "T2D", T ~ "Non-T2D")) %>%
+  dplyr::select(-c(cryostor_id)) %>%
+  filter(!is.na(kit_id))
+
+so90_meta <- so90@meta.data %>%
+  dplyr::mutate(kit_id = gsub("(?i)^k.*-", "KL-", kit_id))
+so90_meta <- left_join(so90_meta, dat, by = c("kit_id", "record_id"))
+rownames(so90_meta) <- so90_meta$barcode
+so90 <- AddMetaData(so90, so90_meta)
+so90 <- subset(so90, record_id != "CRC-55") ## remove control with IgAN
+```
+
+```{r echo = F}
+markers <- c("PCSK9", "IDO1", "PLXNB2")
+```
+
+
+# Descriptive Table
+
+```{r echo = F, results='asis'}
+so90@meta.data <- so90@meta.data %>%
+  mutate(renal_function = case_when(group %in% c("Type_1_Diabetes", "Type_2_Diabetes") & 
+                                      eGFR_CKD_epi >= 60 & eGFR_CKD_epi <= 120 | acr_u < 30 ~ "Early Stage",
+                                    group %in% c("Type_1_Diabetes", "Type_2_Diabetes") & 
+                                      (eGFR_CKD_epi >= 30 & eGFR_CKD_epi < 60 | acr_u >= 30) ~ "Advanced Stage"),
+         group_diab = case_when(group %in% c("Type_1_Diabetes", "Type_2_Diabetes") ~ "Diabetes",
+                                group == "Lean_Control" ~ "HC"),
+         noglp1_sglt2i = case_when((group == "Type_2_Diabetes" & glp1_agonist_timepoint != "Yes") & 
+                                     sglt2i_timepoint == "Yes" ~ "SGLT2i+",
+                                   (group == "Type_2_Diabetes" & glp1_agonist_timepoint != "Yes") & 
+                                     sglt2i_timepoint == "No" ~ "SGLT2i-"),
+         nosglt2i_glp1 = case_when((group == "Type_2_Diabetes" & sglt2i_timepoint != "Yes") & 
+                                     glp1_agonist_timepoint == "Yes" ~ "GLP1RA+",
+                                   (group == "Type_2_Diabetes" & sglt2i_timepoint != "Yes") & 
+                                     glp1_agonist_timepoint == "No" ~ "GLP1RA-"))
+
+desc_dat <- so90@meta.data %>%
+  distinct(kit_id, .keep_all = T) %>%
+  filter(group != "Obese_Control") %>%
+  mutate(eGFR_CKD_epi = case_when(eGFR_CKD_epi == "." ~ NA, T ~ eGFR_CKD_epi),
+         eGFR_CKD_epi = as.numeric(eGFR_CKD_epi))
+tab <- arsenal::tableby(group ~ age + sex + bmi + eGFR_CKD_epi + kwt(acr_u, "Nmiss", "medianq1q3", "range") + renal_function + glp1_agonist_timepoint + sglt2i_timepoint + noglp1_sglt2i + nosglt2i_glp1 , desc_dat)
+summary(tab, test = F, total = F)
+```
+
+
+# Overall scRNA analysis (All cell types)
+
+```{r echo = F}
+FeaturePlot(so90, reduction = "umap.harmony", features = markers, cols = c("lightgray", "blue"), raster = F)
+FeaturePlot(so90, reduction = "umap.harmony", features = "PLXNB2", cols = c("lightgray", "blue"), raster = F)
+
+DimPlot(so90, reduction = "umap.harmony", group.by = "celltype_harmony", raster = F, alpha = 0.2, label = T)
+```
+
+## Impact of chronic hyperglycemia
+
+### Comparison of T1D/T2D vs. HC
+
+```{r echo = F}
+# T1D + T2D vs. HC
+DimPlot(so90, reduction = "umap.harmony", group.by = "group_diab", raster = F, alpha = 0.2)
+```
+
+
+Group 1: Diabetes (T1D + T2D)
+
+Group 2: Healthy Controls (No obese controls)
+
+* +: higher expression in diabetes group than HC
+ 
+* -: lower expression in diabetes group than HC
+
+
+```{r echo = F}
+FindMarkers(subset(so90, features = markers), group.by = "group_diab", ident.1 = "Diabetes", ident.2 = "HC", features = markers, 
+            logfc.threshold = 0, min.pct = 0.05)
+```
+
+## Impact of renal function loss
+
+### Patients with diabetes only (T1D + T2D): normoalbuminuric normal GFR and normal albuminuria ([G1 and G2= ie GFR 60 to 120] AND A1[=ACR<30 mg/g] ) vs advanced stage (G3 [=GFR 30 to 59] AND/OR A2/A3 [=ACR >=30 mg/g]) 
+
+```{r echo = F}
+DimPlot(so90, reduction = "umap.harmony", group.by = "renal_function", raster = F, alpha = 0.2)
+```
+
+
+Group 1: Advanced stage (patients with T1D or T2D, G3 [=GFR 30 to 59] AND/OR A2/A3 [=ACR >=30 mg/g])
+
+Group 2: Early stage (patients with T1D or T2D, [G1 and G2= ie GFR 60 to 120] AND/OR A1[=ACR<30 mg/g])
+
+* +: higher expression in advanced stage group than early stage
+
+* -: lower expression in advanced stage group than early stage
+
+
+```{r echo = F}
+FindMarkers(subset(so90, features = markers), group.by = "renal_function", ident.1 = "Advanced Stage", ident.2 = "Early Stage", features = markers, 
+            logfc.threshold = 0, min.pct = 0.05)
+```
+
+## Impact of drugs  of chronic hyperglycemia
+
+### Patients with T2D only: drugs vs. no drugs
+
+#### within those with no GLP1RA exposure : SGLt2i+ vs  SGLt2i-
+
+```{r echo = F}
+# at visit drug use
+DimPlot(subset(so90, group == "Type_2_Diabetes"), reduction = "umap.harmony", group.by = "noglp1_sglt2i", raster = F, alpha = 0.2)
+```
+
+Group 1: SGLT2i+ in no GLP1RA exposure with T2D
+
+Group 2: SGLT2i- in no GLP1RA exposure with T2D
+
+
+* +: higher expression in SGLT2i+ than SGLT2i-
+
+* -: lower expression in SGLT2i+ than SGLT2i-
+
+
+```{r echo = F}
+FindMarkers(subset(so90, features = markers), group.by = "noglp1_sglt2i", ident.1 = "SGLT2i+", ident.2 = "SGLT2i-", features = markers, 
+            logfc.threshold = 0, min.pct = 0.05)
+```
+
+#### within those with no SGLt2i exposure : GLP1RA+ vs  GLP1RA-
+
+```{r echo = F}
+# at visit drug use
+DimPlot(subset(so90, group == "Type_2_Diabetes"), reduction = "umap.harmony", group.by = "nosglt2i_glp1", raster = F, alpha = 0.2)
+```
+
+Group 1: GLP1RA+ in no SGLT2i exposure with T2D
+
+Group 2: GLP1RA- in no SGLT2i exposure with T2D
+
+* +: higher expression in GLP1RA+ than GLP1RA-
+
+* -: lower expression in GLP1RA+ than GLP1RA-
+
+
+```{r echo = F}
+FindMarkers(subset(so90, features = markers), group.by = "nosglt2i_glp1", ident.1 = "GLP1RA+", ident.2 = "GLP1RA-", features = markers, 
+            logfc.threshold = 0, min.pct = 0.05)
+```
+
+# PC cells
+
+```{r echo = F, include = F}
+so90$celltype_pc <- ifelse(grepl("^PC-\\d+$", so90$celltype_harmony),
+                                 "PC", as.character(so90$celltype_harmony))
+so90_pc <- subset(so90, celltype_pc == "PC")
+so90_pc <- NormalizeData(so90_pc)
+so90_pc <- ScaleData(so90_pc)
+```
+
+```{r echo = F}
+FeaturePlot(so90_pc, reduction = "umap.harmony", features = markers, cols = c("lightgray", "blue"), raster = F)
+FeaturePlot(so90_pc, reduction = "umap.harmony", features = "PLXNB2", cols = c("lightgray", "blue"), raster = F)
+
+DimPlot(so90_pc, reduction = "umap.harmony", group.by = "celltype_harmony", raster = F, alpha = 0.2, label = T)
+```
+
+## Impact of chronic hyperglycemia
+
+### Comparison of T1D/T2D vs. HC
+
+```{r echo = F}
+# T1D + T2D vs. HC
+DimPlot(so90_pc, reduction = "umap.harmony", group.by = "group_diab", raster = F, alpha = 0.2)
+```
+
+
+Group 1: Diabetes (T1D + T2D)
+
+Group 2: Healthy Controls (No obese controls)
+
+* +: higher expression in diabetes group than HC
+ 
+* -: lower expression in diabetes group than HC
+
+
+```{r echo = F}
+FindMarkers(subset(so90_pc, features = markers), group.by = "group_diab", ident.1 = "Diabetes", ident.2 = "HC", features = markers, 
+            logfc.threshold = 0, min.pct = 0.05)
+```
+
+## Impact of renal function loss
+
+### Patients with diabetes only (T1D + T2D): normoalbuminuric normal GFR and normal albuminuria ([G1 and G2= ie GFR 60 to 120] AND A1[=ACR<30 mg/g] ) vs advanced stage (G3 [=GFR 30 to 59] AND/OR A2/A3 [=ACR >=30 mg/g]) 
+
+```{r echo = F}
+DimPlot(so90_pc, reduction = "umap.harmony", group.by = "renal_function", raster = F, alpha = 0.2)
+```
+
+
+Group 1: Advanced stage (patients with T1D or T2D, G3 [=GFR 30 to 59] AND/OR A2/A3 [=ACR >=30 mg/g])
+
+Group 2: Early stage (patients with T1D or T2D, [G1 and G2= ie GFR 60 to 120] AND/OR A1[=ACR<30 mg/g])
+
+* +: higher expression in advanced stage group than early stage
+
+* -: lower expression in advanced stage group than early stage
+
+
+```{r echo = F}
+FindMarkers(subset(so90_pc, features = markers), group.by = "renal_function", ident.1 = "Advanced Stage", ident.2 = "Early Stage", features = markers, 
+            logfc.threshold = 0, min.pct = 0.05)
+```
+
+## Impact of drugs  of chronic hyperglycemia
+
+### Patients with T2D only: drugs vs. no drugs
+
+#### within those with no GLP1RA exposure : SGLt2i+ vs  SGLt2i-
+
+```{r echo = F}
+# at visit drug use
+DimPlot(subset(so90_pc, group == "Type_2_Diabetes"), reduction = "umap.harmony", group.by = "noglp1_sglt2i", raster = F, alpha = 0.2)
+```
+
+Group 1: SGLT2i+ in no GLP1RA exposure with T2D
+
+Group 2: SGLT2i- in no GLP1RA exposure with T2D
+
+
+* +: higher expression in SGLT2i+ than SGLT2i-
+
+* -: lower expression in SGLT2i+ than SGLT2i-
+
+
+```{r echo = F}
+FindMarkers(subset(so90_pc, features = markers), group.by = "noglp1_sglt2i", ident.1 = "SGLT2i+", ident.2 = "SGLT2i-", features = markers, 
+            logfc.threshold = 0, min.pct = 0.05)
+```
+
+#### within those with no SGLt2i exposure : GLP1RA+ vs  GLP1RA-
+
+```{r echo = F}
+# at visit drug use
+DimPlot(subset(so90_pc, group == "Type_2_Diabetes"), reduction = "umap.harmony", group.by = "nosglt2i_glp1", raster = F, alpha = 0.2)
+```
+
+Group 1: GLP1RA+ in no SGLT2i exposure with T2D
+
+Group 2: GLP1RA- in no SGLT2i exposure with T2D
+
+* +: higher expression in GLP1RA+ than GLP1RA-
+
+* -: lower expression in GLP1RA+ than GLP1RA-
+
+
+```{r echo = F}
+FindMarkers(subset(so90_pc, features = markers), group.by = "nosglt2i_glp1", ident.1 = "GLP1RA+", ident.2 = "GLP1RA-", features = markers, 
+            logfc.threshold = 0, min.pct = 0.05)
+```
+
+# TAL cells
+
+```{r echo = F, include = F}
+so90$celltype_tal <- ifelse(grepl("TAL-", so90$celltype_harmony),
+                                 "TAL", as.character(so90$celltype_harmony))
+so90_tal <- subset(so90, celltype_tal == "TAL")
+so90_tal <- NormalizeData(so90_tal)
+so90_tal <- ScaleData(so90_tal)
+```
+
+```{r echo = F}
+FeaturePlot(so90_tal, reduction = "umap.harmony", features = markers, cols = c("lightgray", "blue"), raster = F)
+FeaturePlot(so90_tal, reduction = "umap.harmony", features = "PLXNB2", cols = c("lightgray", "blue"), raster = F)
+
+DimPlot(so90_tal, reduction = "umap.harmony", group.by = "celltype_harmony", raster = F, alpha = 0.2, label = T)
+```
+
+## Impact of chronic hyperglycemia
+
+### Comparison of T1D/T2D vs. HC
+
+```{r echo = F}
+# T1D + T2D vs. HC
+DimPlot(so90_tal, reduction = "umap.harmony", group.by = "group_diab", raster = F, alpha = 0.2)
+```
+
+
+Group 1: Diabetes (T1D + T2D)
+
+Group 2: Healthy Controls (No obese controls)
+
+* +: higher expression in diabetes group than HC
+ 
+* -: lower expression in diabetes group than HC
+
+
+```{r echo = F}
+FindMarkers(subset(so90_tal, features = markers), group.by = "group_diab", ident.1 = "Diabetes", ident.2 = "HC", features = markers, 
+            logfc.threshold = 0, min.pct = 0.05)
+```
+
+## Impact of renal function loss
+
+### Patients with diabetes only (T1D + T2D): normoalbuminuric normal GFR and normal albuminuria ([G1 and G2= ie GFR 60 to 120] AND A1[=ACR<30 mg/g] ) vs advanced stage (G3 [=GFR 30 to 59] AND/OR A2/A3 [=ACR >=30 mg/g]) 
+
+```{r echo = F}
+DimPlot(so90_tal, reduction = "umap.harmony", group.by = "renal_function", raster = F, alpha = 0.2)
+```
+
+
+Group 1: Advanced stage (patients with T1D or T2D, G3 [=GFR 30 to 59] AND/OR A2/A3 [=ACR >=30 mg/g])
+
+Group 2: Early stage (patients with T1D or T2D, [G1 and G2= ie GFR 60 to 120] AND/OR A1[=ACR<30 mg/g])
+
+* +: higher expression in advanced stage group than early stage
+
+* -: lower expression in advanced stage group than early stage
+
+
+```{r echo = F}
+FindMarkers(subset(so90_tal, features = markers), group.by = "renal_function", ident.1 = "Advanced Stage", ident.2 = "Early Stage", features = markers, 
+            logfc.threshold = 0, min.pct = 0.05)
+```
+
+## Impact of drugs  of chronic hyperglycemia
+
+### Patients with T2D only: drugs vs. no drugs
+
+#### within those with no GLP1RA exposure : SGLt2i+ vs  SGLt2i-
+
+```{r echo = F}
+# at visit drug use
+DimPlot(subset(so90_tal, group == "Type_2_Diabetes"), reduction = "umap.harmony", group.by = "noglp1_sglt2i", raster = F, alpha = 0.2)
+```
+
+Group 1: SGLT2i+ in no GLP1RA exposure with T2D
+
+Group 2: SGLT2i- in no GLP1RA exposure with T2D
+
+
+* +: higher expression in SGLT2i+ than SGLT2i-
+
+* -: lower expression in SGLT2i+ than SGLT2i-
+
+
+```{r echo = F}
+FindMarkers(subset(so90_tal, features = markers), group.by = "noglp1_sglt2i", ident.1 = "SGLT2i+", ident.2 = "SGLT2i-", features = markers, 
+            logfc.threshold = 0, min.pct = 0.05)
+```
+
+#### within those with no SGLt2i exposure : GLP1RA+ vs  GLP1RA-
+
+```{r echo = F}
+# at visit drug use
+DimPlot(subset(so90_tal, group == "Type_2_Diabetes"), reduction = "umap.harmony", group.by = "nosglt2i_glp1", raster = F, alpha = 0.2)
+```
+
+Group 1: GLP1RA+ in no SGLT2i exposure with T2D
+
+Group 2: GLP1RA- in no SGLT2i exposure with T2D
+
+* +: higher expression in GLP1RA+ than GLP1RA-
+
+* -: lower expression in GLP1RA+ than GLP1RA-
+
+
+```{r echo = F}
+FindMarkers(subset(so90_tal, features = markers), group.by = "nosglt2i_glp1", ident.1 = "GLP1RA+", ident.2 = "GLP1RA-", features = markers, 
+            logfc.threshold = 0, min.pct = 0.05)
+```
+
+# PT cells
+
+```{r echo = F, include = F}
+so90$celltype_pt <- ifelse(grepl("PT-", so90$celltype_harmony),
+                                 "PT", as.character(so90$celltype_harmony))
+so90_pt <- subset(so90, celltype_pt == "PT")
+so90_pt <- NormalizeData(so90_pt)
+so90_pt <- ScaleData(so90_pt)
+```
+
+```{r echo = F}
+FeaturePlot(so90_pt, reduction = "umap.harmony", features = markers, cols = c("lightgray", "blue"), raster = F)
+FeaturePlot(so90_pt, reduction = "umap.harmony", features = "PLXNB2", cols = c("lightgray", "blue"), raster = F)
+
+DimPlot(so90_pt, reduction = "umap.harmony", group.by = "celltype_harmony", raster = F, alpha = 0.2, label = T)
+```
+
+## Impact of chronic hyperglycemia
+
+### Comparison of T1D/T2D vs. HC
+
+```{r echo = F}
+# T1D + T2D vs. HC
+DimPlot(so90_pt, reduction = "umap.harmony", group.by = "group_diab", raster = F, alpha = 0.2)
+```
+
+
+Group 1: Diabetes (T1D + T2D)
+
+Group 2: Healthy Controls (No obese controls)
+
+* +: higher expression in diabetes group than HC
+ 
+* -: lower expression in diabetes group than HC
+
+
+```{r echo = F}
+FindMarkers(subset(so90_pt, features = markers), group.by = "group_diab", ident.1 = "Diabetes", ident.2 = "HC", features = markers, 
+            logfc.threshold = 0, min.pct = 0.05)
+```
+
+## Impact of renal function loss
+
+### Patients with diabetes only (T1D + T2D): normoalbuminuric normal GFR and normal albuminuria ([G1 and G2= ie GFR 60 to 120] AND A1[=ACR<30 mg/g] ) vs advanced stage (G3 [=GFR 30 to 59] AND/OR A2/A3 [=ACR >=30 mg/g]) 
+
+```{r echo = F}
+DimPlot(so90_pt, reduction = "umap.harmony", group.by = "renal_function", raster = F, alpha = 0.2)
+```
+
+
+Group 1: Advanced stage (patients with T1D or T2D, G3 [=GFR 30 to 59] AND/OR A2/A3 [=ACR >=30 mg/g])
+
+Group 2: Early stage (patients with T1D or T2D, [G1 and G2= ie GFR 60 to 120] AND/OR A1[=ACR<30 mg/g])
+
+* +: higher expression in advanced stage group than early stage
+
+* -: lower expression in advanced stage group than early stage
+
+
+```{r echo = F}
+FindMarkers(subset(so90_pt, features = markers), group.by = "renal_function", ident.1 = "Advanced Stage", ident.2 = "Early Stage", features = markers, 
+            logfc.threshold = 0, min.pct = 0.05)
+```
+
+## Impact of drugs  of chronic hyperglycemia
+
+### Patients with T2D only: drugs vs. no drugs
+
+#### within those with no GLP1RA exposure : SGLt2i+ vs  SGLt2i-
+
+```{r echo = F}
+# at visit drug use
+DimPlot(subset(so90_pt, group == "Type_2_Diabetes"), reduction = "umap.harmony", group.by = "noglp1_sglt2i", raster = F, alpha = 0.2)
+```
+
+Group 1: SGLT2i+ in no GLP1RA exposure with T2D
+
+Group 2: SGLT2i- in no GLP1RA exposure with T2D
+
+
+* +: higher expression in SGLT2i+ than SGLT2i-
+
+* -: lower expression in SGLT2i+ than SGLT2i-
+
+
+```{r echo = F}
+FindMarkers(subset(so90_pt, features = markers), group.by = "noglp1_sglt2i", ident.1 = "SGLT2i+", ident.2 = "SGLT2i-", features = markers, 
+            logfc.threshold = 0, min.pct = 0.05)
+```
+
+#### within those with no SGLt2i exposure : GLP1RA+ vs  GLP1RA-
+
+```{r echo = F}
+# at visit drug use
+DimPlot(subset(so90_pt, group == "Type_2_Diabetes"), reduction = "umap.harmony", group.by = "nosglt2i_glp1", raster = F, alpha = 0.2)
+```
+
+Group 1: GLP1RA+ in no SGLT2i exposure with T2D
+
+Group 2: GLP1RA- in no SGLT2i exposure with T2D
+
+* +: higher expression in GLP1RA+ than GLP1RA-
+
+* -: lower expression in GLP1RA+ than GLP1RA-
+
+
+```{r echo = F}
+FindMarkers(subset(so90_pt, features = markers), group.by = "nosglt2i_glp1", ident.1 = "GLP1RA+", ident.2 = "GLP1RA-", features = markers, 
+            logfc.threshold = 0, min.pct = 0.05)
+```
+
+
+```{r echo = F, eval = F}
+s3$upload_file("/mmfs1/gscratch/scrubbed/yejichoi/Bjornstad/CHCO-Code/Petter Bjornstad/Pierre Jean Saulnier/PCSK9 IDO1 PLXNB2 for Pierre.html", "test", 'PCSK9 IDO1 PLXNB2 for Pierre.html')
+```

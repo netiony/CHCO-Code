@@ -11,10 +11,480 @@ format:
     theme: default
     page-layout: full
     embed-resources: true
-editor: visual
 ---
 
 ```{r, include = F}
 library(dplyr)
 library(tidyr)
+library(jsonlite)
+library(reticulate)
+library(Seurat)
+library(glmmTMB)
+```
+
+```{r, include = F}
+reticulate::use_python("/mmfs1/gscratch/scrubbed/yejichoi/mypy/bin/python", required = T)
+reticulate::repl_python()
+reticulate::py_config()
+```
+
+```{python}
+# import boto3
+# import json
+# from io import BytesIO
+# import pandas as pd
+# 
+# # retrieve access/secret key
+# path = '/mmfs1/home/yejichoi/keys.json'
+# with open(path, "r") as file:
+#     key = json.load(file)
+# access_key = key['MY_ACCESS_KEY']
+# secret_key = key['MY_SECRET_KEY']
+# 
+# s3 = boto3.resource(
+#     "s3",
+#     endpoint_url="https://s3.kopah.uw.edu",  # Kopah S3 endpoint
+#     aws_access_key_id = access_key,
+#     aws_secret_access_key = secret_key
+# )
+# 
+# for bucket in s3.buckets.all():
+#     print(bucket.name)
+
+```
+
+```{r, include = F}
+# set up Kopah connection
+## Load boto3 and pandas
+boto3 <- reticulate::import("boto3")
+pd <- reticulate::import("pandas")
+
+## Create an S3 client
+keys <- fromJSON("/mmfs1/home/yejichoi/keys.json")
+session <- boto3$session$Session(
+  aws_access_key_id = keys$MY_ACCESS_KEY,
+  aws_secret_access_key = keys$MY_SECRET_KEY
+)
+
+## Create an S3 client with the session
+s3 <- session$client("s3", endpoint_url = "https://s3.kopah.uw.edu")
+```
+
+```{r, include = F}
+# read file
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("scrna", "Kidney transcriptomics/Single cell RNA seq/PB_90_RPCAFix_Metadata_LR_RM_kpmpV1labelled.rds", temp_file)
+so <- readRDS(temp_file)
+
+temp_file <- tempfile(fileext = ".csv")
+s3$download_file("harmonized.dataset", "harmonized_dataset.csv", temp_file)
+harm_dat <- read.csv(temp_file)
+```
+
+```{r, include = F}
+so <- NormalizeData(so)
+so <- ScaleData(so)
+so <- RunPCA(so, features = VariableFeatures(object = so))
+so <- FindNeighbors(so, dims = 1:30)
+so <- FindClusters(so)
+so <- RunUMAP(so, dims = 1:30, reduction.key = "UMAP_")
+```
+
+# Overall
+
+```{r, echo = F}
+DimPlot(so, reduction = "umap", group.by = "group", alpha = 0.2, raster = F)
+DimPlot(so, reduction = "umap", group.by = "sglt2i_ever", raster = F, alpha = 0.2)
+DimPlot(so, reduction = "umap", group.by = "sglt2i_timepoint", raster = F, alpha = 0.2)
+DimPlot(so, reduction = "umap", group.by = "LR_Cluster_harmony", alpha = 0.2, raster = F, label = T)
+FeaturePlot(so, reduction = "umap", features = "RIPK3", cols = c("lightgray", "blue"), raster = F)
+```
+
+# TAL
+
+```{r echo = F, include = F}
+so$celltype_tal <- ifelse(grepl("TAL", so$LR_Cluster_harmony),
+                                 "TAL", as.character(so$LR_Cluster_harmony))
+so_tal <- subset(so, celltype_tal == "TAL")
+so_tal <- NormalizeData(so_tal)
+so_tal <- ScaleData(so_tal)
+ElbowPlot(so_tal)
+so_tal <- RunPCA(so_tal, ncomponents = 10, features = VariableFeatures(object = so_tal))
+so_tal <- FindNeighbors(so_tal)
+so_tal <- FindClusters(so_tal)
+so_tal <- RunUMAP(so_tal, dims = 1:30, reduction.key = "UMAP_")
+```
+
+```{r, include = F}
+expr_matrix <- as.matrix(GetAssayData(so_tal, layer = "data"))
+expr_df <- as.data.frame(as.table(as.matrix(expr_matrix)))
+colnames(expr_df) <- c("Gene", "Cell", "Expression")
+
+sc_data <- data.frame(Gene = expr_df$Gene,
+                      Cell = expr_df$Cell,
+                      sglt2i_ever = so_tal@meta.data$sglt2i_ever,
+                      sglt2i_timepoint = so_tal@meta.data$sglt2i_timepoint,
+                      Subject = so_tal@meta.data$record_id,
+                      Expression = as.vector(expr_df$Expression))
+remove(expr_df)
+remove(expr_matrix)
+```
+
+```{r echo = F}
+DimPlot(so_tal, reduction = "umap", group.by = "sglt2i_ever", raster = F, alpha = 0.2)
+DimPlot(so_tal, reduction = "umap", group.by = "sglt2i_timepoint", raster = F, alpha = 0.2)
+FeaturePlot(so_tal, reduction = "umap", features = "RIPK3", cols = c("lightgray", "blue"), raster = F)
+```
+
+## DEGs with SGLT2i in TAL
+
+### SGLT2i (ever)
+
+```{r echo = F}
+FindMarkers(so_tal, group.by = "sglt2i_ever", ident.1 = "Yes", ident.2 = "No", features = "RIPK3", 
+            logfc.threshold = 0, min.pct = 0)
+```
+
+### SGLT2i (at visit)
+
+```{r echo = F}
+FindMarkers(so_tal, group.by = "sglt2i_timepoint", ident.1 = "Yes", ident.2 = "No", features = "RIPK3", 
+            logfc.threshold = 0, min.pct = 0)
+```
+
+```{r, include = F}
+sc_dat_ripk3 <- subset(sc_data, Gene == "RIPK3")
+remove(sc_data)
+```
+
+### SGLT2i (ever, subject random effects)
+
+```{r echo = F}
+sc_dat_ripk3_ever <- sc_dat_ripk3 %>%
+  filter(sglt2i_ever %in% c("Yes", "No"))
+mod_ever <- glmmTMB(Expression ~ sglt2i_ever + (1 | Subject), 
+            data = sc_dat_ripk3_ever, family = gaussian, ziformula = ~ 1)
+summary(mod_ever)
+```
+
+### SGLT2i (at visit, subject random effects)
+
+```{r echo = F}
+sc_dat_ripk3_timepoint <- sc_dat_ripk3 %>%
+  filter(sglt2i_timepoint %in% c("Yes", "No"))
+mod_timepoint <- glmmTMB(Expression ~ sglt2i_timepoint + (1 | Subject), 
+            data = sc_dat_ripk3_timepoint, family = gaussian, ziformula = ~ 1)
+summary(mod_timepoint)
+```
+
+# Immune
+
+```{r echo = F, include = F}
+so$celltype_immune <- ifelse(grepl("Immune", so$LR_Cluster_harmony),
+                                 "Immune", as.character(so$LR_Cluster_harmony))
+so_immune <- subset(so, celltype_immune == "Immune")
+so_immune <- NormalizeData(so_immune)
+so_immune <- ScaleData(so_immune)
+ElbowPlot(so_immune)
+so_immune <- RunPCA(so_immune, ncomponents = 10, features = VariableFeatures(object = so_immune))
+so_immune <- FindNeighbors(so_immune)
+so_immune <- FindClusters(so_immune)
+so_immune <- RunUMAP(so_immune, dims = 1:30, reduction.key = "UMAP_")
+```
+
+```{r, include = F}
+expr_matrix <- as.matrix(GetAssayData(so_immune, layer = "data"))
+expr_df <- as.data.frame(as.table(as.matrix(expr_matrix)))
+colnames(expr_df) <- c("Gene", "Cell", "Expression")
+
+sc_data <- data.frame(Gene = expr_df$Gene,
+                      Cell = expr_df$Cell,
+                      sglt2i_ever = so_immune@meta.data$sglt2i_ever,
+                      sglt2i_timepoint = so_immune@meta.data$sglt2i_timepoint,
+                      Subject = so_immune@meta.data$record_id,
+                      Expression = as.vector(expr_df$Expression))
+remove(expr_df)
+remove(expr_matrix)
+```
+
+```{r echo = F}
+DimPlot(so_immune, reduction = "umap", group.by = "sglt2i_ever", raster = F, alpha = 0.2)
+DimPlot(so_immune, reduction = "umap", group.by = "sglt2i_timepoint", raster = F, alpha = 0.2)
+FeaturePlot(so_immune, reduction = "umap", features = "RIPK3", cols = c("lightgray", "blue"), raster = F)
+```
+
+## DEGs with SGLT2i in Immune cells
+
+### SGLT2i (ever)
+
+```{r echo = F}
+FindMarkers(so_immune, group.by = "sglt2i_ever", ident.1 = "Yes", ident.2 = "No", features = "RIPK3", 
+            logfc.threshold = 0, min.pct = 0)
+```
+
+### SGLT2i (at visit)
+
+```{r echo = F}
+FindMarkers(so_immune, group.by = "sglt2i_timepoint", ident.1 = "Yes", ident.2 = "No", features = "RIPK3", 
+            logfc.threshold = 0, min.pct = 0)
+```
+
+```{r echo = F}
+sc_dat_ripk3 <- subset(sc_data, Gene == "RIPK3")
+remove(sc_data)
+```
+
+### SGLT2i (ever, subject random effects)
+
+```{r echo = F}
+sc_dat_ripk3_ever <- sc_dat_ripk3 %>%
+  filter(sglt2i_ever %in% c("Yes", "No"))
+mod_ever <- glmmTMB(Expression ~ sglt2i_ever + (1 | Subject), 
+            data = sc_dat_ripk3_ever, family = gaussian, ziformula = ~ 1)
+summary(mod_ever)
+```
+
+### SGLT2i (at visit, subject random effects)
+
+```{r echo = F}
+sc_dat_ripk3_timepoint <- sc_dat_ripk3 %>%
+  filter(sglt2i_timepoint %in% c("Yes", "No"))
+mod_timepoint <- glmmTMB(Expression ~ sglt2i_timepoint + (1 | Subject), 
+            data = sc_dat_ripk3_timepoint, family = gaussian, ziformula = ~ 1)
+summary(mod_timepoint)
+```
+
+# PC
+
+```{r echo = F, include = F}
+so$celltype_pc <- ifelse(grepl("PC", so$LR_Cluster_harmony),
+                                 "PC", as.character(so$LR_Cluster_harmony))
+so_pc <- subset(so, celltype_pc == "PC")
+so_pc <- NormalizeData(so_pc)
+so_pc <- ScaleData(so_pc)
+ElbowPlot(so_pc)
+so_pc <- RunPCA(so_pc, ncomponents = 10, features = VariableFeatures(object = so_pc))
+so_pc <- FindNeighbors(so_pc)
+so_pc <- FindClusters(so_pc)
+so_pc <- RunUMAP(so_pc, dims = 1:30, reduction.key = "UMAP_")
+```
+
+```{r echo = F}
+expr_matrix <- as.matrix(GetAssayData(so_pc, layer = "data"))
+expr_df <- as.data.frame(as.table(as.matrix(expr_matrix)))
+colnames(expr_df) <- c("Gene", "Cell", "Expression")
+
+sc_data <- data.frame(Gene = expr_df$Gene,
+                      Cell = expr_df$Cell,
+                      sglt2i_ever = so_pc@meta.data$sglt2i_ever,
+                      sglt2i_timepoint = so_pc@meta.data$sglt2i_timepoint,
+                      Subject = so_pc@meta.data$record_id,
+                      Expression = as.vector(expr_df$Expression))
+remove(expr_df)
+remove(expr_matrix)
+```
+
+```{r echo = F}
+DimPlot(so_pc, reduction = "umap", group.by = "sglt2i_ever", raster = F, alpha = 0.2)
+DimPlot(so_pc, reduction = "umap", group.by = "sglt2i_timepoint", raster = F, alpha = 0.2)
+FeaturePlot(so_pc, reduction = "umap", features = "RIPK3", cols = c("lightgray", "blue"), raster = F)
+```
+
+## DEGs with SGLT2i in PC cells
+
+### SGLT2i (ever)
+
+```{r echo = F}
+FindMarkers(so_pc, group.by = "sglt2i_ever", ident.1 = "Yes", ident.2 = "No", features = "RIPK3", 
+            logfc.threshold = 0, min.pct = 0)
+```
+
+### SGLT2i (at visit)
+
+```{r echo = F}
+FindMarkers(so_pc, group.by = "sglt2i_timepoint", ident.1 = "Yes", ident.2 = "No", features = "RIPK3", 
+            logfc.threshold = 0, min.pct = 0)
+```
+
+```{r echo = F}
+sc_dat_ripk3 <- subset(sc_data, Gene == "RIPK3")
+remove(sc_data)
+```
+
+### SGLT2i (ever, subject random effects)
+
+```{r echo = F}
+sc_dat_ripk3_ever <- sc_dat_ripk3 %>%
+  filter(sglt2i_ever %in% c("Yes", "No"))
+mod_ever <- glmmTMB(Expression ~ sglt2i_ever + (1 | Subject), 
+            data = sc_dat_ripk3_ever, family = gaussian, ziformula = ~ 1)
+summary(mod_ever)
+```
+
+### SGLT2i (at visit, subject random effects)
+
+```{r echo = F}
+sc_dat_ripk3_timepoint <- sc_dat_ripk3 %>%
+  filter(sglt2i_timepoint %in% c("Yes", "No"))
+mod_timepoint <- glmmTMB(Expression ~ sglt2i_timepoint + (1 | Subject), 
+            data = sc_dat_ripk3_timepoint, family = gaussian, ziformula = ~ 1)
+summary(mod_timepoint)
+```
+
+# CNT
+
+```{r echo = F, include = F}
+so$celltype_cnt <- ifelse(grepl("CNT", so$LR_Cluster_harmony),
+                                 "CNT", as.character(so$LR_Cluster_harmony))
+so_cnt <- subset(so, celltype_cnt == "CNT")
+so_cnt <- NormalizeData(so_cnt)
+so_cnt <- ScaleData(so_cnt)
+ElbowPlot(so_cnt)
+so_cnt <- RunPCA(so_cnt, ncomponents = 10, features = VariableFeatures(object = so_cnt))
+so_cnt <- FindNeighbors(so_cnt)
+so_cnt <- FindClusters(so_cnt)
+so_cnt <- RunUMAP(so_cnt, dims = 1:30, reduction.key = "UMAP_")
+```
+
+```{r echo = F}
+expr_matrix <- as.matrix(GetAssayData(so_cnt, layer = "data"))
+expr_df <- as.data.frame(as.table(as.matrix(expr_matrix)))
+colnames(expr_df) <- c("Gene", "Cell", "Expression")
+
+sc_data <- data.frame(Gene = expr_df$Gene,
+                      Cell = expr_df$Cell,
+                      sglt2i_ever = so_cnt@meta.data$sglt2i_ever,
+                      sglt2i_timepoint = so_cnt@meta.data$sglt2i_timepoint,
+                      Subject = so_cnt@meta.data$record_id,
+                      Expression = as.vector(expr_df$Expression))
+remove(expr_df)
+remove(expr_matrix)
+```
+
+```{r echo = F}
+DimPlot(so_cnt, reduction = "umap", group.by = "sglt2i_ever", raster = F, alpha = 0.2)
+DimPlot(so_cnt, reduction = "umap", group.by = "sglt2i_timepoint", raster = F, alpha = 0.2)
+FeaturePlot(so_cnt, reduction = "umap", features = "RIPK3", cols = c("lightgray", "blue"), raster = F)
+```
+
+## DEGs with SGLT2i in CNT cells
+
+### SGLT2i (ever)
+
+```{r echo = F}
+FindMarkers(so_cnt, group.by = "sglt2i_ever", ident.1 = "Yes", ident.2 = "No", features = "RIPK3", 
+            logfc.threshold = 0, min.pct = 0)
+```
+
+### SGLT2i (at visit)
+
+```{r echo = F}
+FindMarkers(so_cnt, group.by = "sglt2i_timepoint", ident.1 = "Yes", ident.2 = "No", features = "RIPK3", 
+            logfc.threshold = 0, min.pct = 0)
+```
+
+```{r echo = F}
+sc_dat_ripk3 <- subset(sc_data, Gene == "RIPK3")
+remove(sc_data)
+```
+
+### SGLT2i (ever, subject random effects)
+
+```{r echo = F}
+sc_dat_ripk3_ever <- sc_dat_ripk3 %>%
+  filter(sglt2i_ever %in% c("Yes", "No"))
+mod_ever <- glmmTMB(Expression ~ sglt2i_ever + (1 | Subject), 
+            data = sc_dat_ripk3_ever, family = gaussian, ziformula = ~ 1)
+# summary(mod_ever)
+```
+
+### SGLT2i (at visit, subject random effects)
+
+```{r echo = F}
+sc_dat_ripk3_timepoint <- sc_dat_ripk3 %>%
+  filter(sglt2i_timepoint %in% c("Yes", "No"))
+mod_timepoint <- glmmTMB(Expression ~ sglt2i_timepoint + (1 | Subject), 
+            data = sc_dat_ripk3_timepoint, family = gaussian, ziformula = ~ 1)
+summary(mod_timepoint)
+```
+
+# DCT
+
+```{r echo = F, include = F}
+so$celltype_dct <- ifelse(grepl("DCT", so$LR_Cluster_harmony),
+                                 "DCT", as.character(so$LR_Cluster_harmony))
+so_dct <- subset(so, celltype_dct == "DCT")
+so_dct <- NormalizeData(so_dct)
+so_dct <- ScaleData(so_dct)
+ElbowPlot(so_dct)
+so_dct <- RunPCA(so_dct, ncomponents = 10, features = VariableFeatures(object = so_dct))
+so_dct <- FindNeighbors(so_dct)
+so_dct <- FindClusters(so_dct)
+so_dct <- RunUMAP(so_dct, dims = 1:30, reduction.key = "UMAP_")
+```
+
+```{r echo = F}
+expr_matrix <- as.matrix(GetAssayData(so_dct, layer = "data"))
+expr_df <- as.data.frame(as.table(as.matrix(expr_matrix)))
+colnames(expr_df) <- c("Gene", "Cell", "Expression")
+
+sc_data <- data.frame(Gene = expr_df$Gene,
+                      Cell = expr_df$Cell,
+                      sglt2i_ever = so_dct@meta.data$sglt2i_ever,
+                      sglt2i_timepoint = so_dct@meta.data$sglt2i_timepoint,
+                      Subject = so_dct@meta.data$record_id,
+                      Expression = as.vector(expr_df$Expression))
+remove(expr_df)
+remove(expr_matrix)
+```
+
+```{r echo = F}
+DimPlot(so_dct, reduction = "umap", group.by = "sglt2i_ever", raster = F, alpha = 0.2)
+DimPlot(so_dct, reduction = "umap", group.by = "sglt2i_timepoint", raster = F, alpha = 0.2)
+FeaturePlot(so_dct, reduction = "umap", features = "RIPK3", cols = c("lightgray", "blue"), raster = F)
+```
+
+## DEGs with SGLT2i in DCT cells
+
+### SGLT2i (ever)
+
+```{r echo = F}
+FindMarkers(so_dct, group.by = "sglt2i_ever", ident.1 = "Yes", ident.2 = "No", features = "RIPK3", 
+            logfc.threshold = 0, min.pct = 0)
+```
+
+### SGLT2i (at visit)
+
+```{r echo = F}
+FindMarkers(so_dct, group.by = "sglt2i_timepoint", ident.1 = "Yes", ident.2 = "No", features = "RIPK3", 
+            logfc.threshold = 0, min.pct = 0)
+```
+
+```{r echo = F}
+sc_dat_ripk3 <- subset(sc_data, Gene == "RIPK3")
+remove(sc_data)
+```
+
+### SGLT2i (ever, subject random effects)
+
+```{r echo = F}
+sc_dat_ripk3_ever <- sc_dat_ripk3 %>%
+  filter(sglt2i_ever %in% c("Yes", "No"))
+mod_ever <- glmmTMB(Expression ~ sglt2i_ever + (1 | Subject), 
+            data = sc_dat_ripk3_ever, family = gaussian, ziformula = ~ 1)
+summary(mod_ever)
+```
+
+### SGLT2i (at visit, subject random effects)
+
+```{r echo = F}
+sc_dat_ripk3_timepoint <- sc_dat_ripk3 %>%
+  filter(sglt2i_timepoint %in% c("Yes", "No"))
+mod_timepoint <- glmmTMB(Expression ~ sglt2i_timepoint + (1 | Subject), 
+            data = sc_dat_ripk3_timepoint, family = gaussian, ziformula = ~ 1)
+summary(mod_timepoint)
+```
+
+```{r echo = F, eval = F}
+s3$upload_file("/mmfs1/gscratch/scrubbed/yejichoi/Bjornstad/CHCO-Code/Petter Bjornstad/Eun Young/RIPK3_scrna_analysis.html", "test", 'RIPK3_scrna_analysis.html')
 ```
