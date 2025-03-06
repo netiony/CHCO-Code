@@ -123,7 +123,7 @@ so_kpmp_sc <- readRDS("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostati
 ```
 
 ## b. Data Cleaning, QC & Preprocessing
-```{r, echo=F, warning=F, fig.width=15, fig.height=10}
+```{r, echo=F, warning=F, fig.width=15, fig.height=15}
 #Fix Typos in kit ids in PB90
 so_kpmp_sc$kit_id[which(so_kpmp_sc$kit_id=="KI-0014643")] <- "KL-0014643"
 so_kpmp_sc$kit_id[which(so_kpmp_sc$kit_id=="kl-0023998")] <- "KL-0023998"
@@ -222,7 +222,7 @@ cell_total1 <- ncol(so_kpmp_sc) #186125
 #Number of Genes before filtering: 
 gene_total1 <- nrow(so_kpmp_sc) #31332
 #Apply qc function
-so_object <- qc_function(so=so_kpmp_sc,cut_low=200,cut_high=5000,mt_pct=0.5,var_pct=0.75,gene_pct=0.05) 
+so_object <- qc_function(so=so_kpmp_sc,var_pct=0.75,gene_pct=0.05)
 so_filtered <- so_object$so
 print(so_object$elbow_plot)
 
@@ -237,6 +237,18 @@ umap_vis(so=so_filtered ,cell_type="KPMP_celltype",group_variable="group")
 
 #Remove unfiltered seurat object
 rm(so_object,so_kpmp_sc)
+
+#UMAP for healthy controls and type 2 no med only 
+so_filtered2 <- subset(so_filtered,group=="Type_2_Diabetes" | group=="Lean_Control")
+so_filtered2 <- subset(so_filtered2,medication=="no_med")
+#Visualize filtered seurat object on umaps by cell type and diabetes group
+umap_vis(so=so_filtered2,cell_type="KPMP_celltype",group_variable="group") 
+#Number of Cells after filtering: 
+cell_total2 <- ncol(so_filtered2) #46718
+#Number of Genes after filtering: 
+gene_total2 <- nrow(so_filtered2) #9289
+
+
 # 
 # #Sample-level QC Metrics 
 # # o	Number of cells per sample
@@ -416,172 +428,176 @@ rm(so_object,so_kpmp_sc)
 ```
 # 3. Comparitive Data Analysis
 ```{r}
-#For each KPMP cell type
-for (celltype in so_filtered$KPMP_celltype) {
-  data_object <- ext_gene_fxn2(so=so_filtered,celltype="PT-S1/S2")
-  data <- data_object$data
-  gene_list <- data_object$gene_list
-  # N = length(unique(data$kit_id)) 
-  
-  #Compare Health Controls to Type 2 Diabetes on no meds
-  data_subset <- data %>%
-    filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
-    filter(medication=="no_med")
-  N1 = length(unique(data_subset$kit_id))
-  
-  # #Visualize the groups
-  # data_subset_ag <-  data_subset %>%
-  #   group_by(kit_id) %>%
-  #   summarise(across(c(group, medication), first)) %>%  # Use first() or another summary function
-  #   ungroup()
-  # table(data_subset_ag$group,data_subset_ag$medication)
-  data_subset$group <- factor(data_subset$group)
-  
-  #Filter out genes that are not expressed in the subset population
+#PT Cells
+so_filtered$celltype_new <- ifelse(grepl("PT",so_filtered$KPMP_celltype),"PT",
+                         ifelse(grepl("TAL",so_filtered$KPMP_celltype),"TAL",
+                                ifelse(grepl("POD",so_filtered$KPMP_celltype),"POD",
+                                       ifelse(grepl("EC",so_filtered$KPMP_celltype),"EC",NA))))
+data_object <- ext_gene_fxn2(so=so_filtered,celltype="PT")
+data <- data_object$data
+gene_list <- data_object$gene_list
+# N = length(unique(data$kit_id)) 
+
+#Compare Health Controls to Type 2 Diabetes on no meds
+data_subset <- data %>%
+  filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
+  filter(medication=="no_med")
+# N1 = length(unique(data_subset$kit_id))
+
+# #Visualize the groups
+# data_subset_ag <-  data_subset %>%
+#   group_by(kit_id) %>%
+#   summarise(across(c(group, medication), first)) %>%  # Use first() or another summary function
+#   ungroup()
+# table(data_subset_ag$group,data_subset_ag$medication)
+data_subset$group <- factor(data_subset$group)
+
+full_results <- data.frame()
+
+#Prepare parallel execution
+# full_results <- foreach(gene = gene_list[1:48], .combine = rbind, .packages = c("lme4","lmerTest", "dplyr")) %dopar% {
   # for (gene in gene_list) {
-  #   data_subset1 <- data_subset %>% 
-  #     filter(sum(data_subset[[gene]])>0)
-  # }
-  
-  
-  #Prepare parallel execution
-  full_results <- foreach(gene = gene_list[1:48], .combine = rbind, .packages = c("lme4","lmerTest", "dplyr")) %dopar% {
-    # for (gene in gene_list) {
-    for (gene in gene_list[1:20]) { #tester genes
-      m0 <- as.formula(paste0(gene," ~ group + (1 | kit_id)"))
-      model <- lmer(m0,data=data_subset)
-      #Adjust for key covariates
-      m1 <- as.formula(paste0(gene," ~ group + age + sex + bmi + (1 | kit_id)"))
-      model1 <- lmer(m1,data=data_subset)
-      
-      
-      beta <- round(summary(model)$coef[2,1],3)
-      pval <-round(summary(model)$coef[2,5],5)
-      beta1 <- round(summary(model1)$coef[2,1],3)
-      pval1 <-round(summary(model1)$coef[2,5],5)
-      # }
-      # Collect results for each gene
-      # results <- data.frame(Gene=gene,Beta=beta1,PValue=pval1)
-      # return(results)
-      results <- data.frame(Gene=gene,Beta=beta1,PValue=pval1)
-      full_results <- rbind(full_results,results)
-      # # print(p)
-      # return(full_results)
-    }
-    #Make volcano plot of all gene results for group
-    full_results <- full_results %>%
-      mutate(fdr=p.adjust(PValue,method="fdr"))
+  for (gene in gene_list) { #tester genes
+    # m0 <- as.formula(paste0(gene," ~ group + (1 | kit_id)"))
+    # model <- lmer(m0,data=data_subset)
+    #Adjust for key covariates
+    m1 <- as.formula(paste0(gene," ~ group + age + sex + bmi + (1 | kit_id)"))
+    model1 <- lmer(m1,data=data_subset)
+    
+    
+    # beta <- round(summary(model)$coef[2,1],3)
+    # pval <-round(summary(model)$coef[2,5],5)
+    beta1 <- round(summary(model1)$coef[2,1],3)
+    pval1 <-round(summary(model1)$coef[2,5],5)
+    # }
+    # Collect results for each gene
+    # results <- data.frame(Gene=gene,Beta=beta1,PValue=pval1)
+    # return(results)
+    results <- data.frame(Gene=gene,Beta=beta1,PValue=pval1)
+    full_results <- rbind(full_results,results)
+    # # print(p)
+    # return(full_results)
   }
-  
-  
-  # #log transform gene expression
-  # gene_expression <- gene_expression %>%
-  #   mutate(across(everything(),~log1p(.))) # log1p is log(x + 1)
-  # gene_expression$cellname <- rownames(gene_expression)
-  # rownames(gene_expression) <- NULL
-  
-  
-  unique(data$group)
-  data$group <- factor(data$group,levels = c("Lean_Control","Obese_Control","Type_1_Diabetes","Type_2_Diabetes"),labels=c("Lean_Control","Obese_Control","Type_1_Diabetes","Type_2_Diabetes"))
-  # length(data$hba1c)
-  # length(which(data$hba1c==".")) #7457 cells missing hba1c
-  # length(unique(data$kit_id[which(data$hba1c==".")])) #3 people missing HbA1c: "KL-0029407" "KL-0030607" "KL-0031456"
-  rm(gene_expression,metadata)
-  
-  #1. Medications among Type 2 Diabetes
-  #Filter to Type_2_Diabetes only since no other participants are on these main meds
-  length(unique(data$kit_id)) #81 partiucipants before filtering
-  data_diab <- data %>%
-    filter(group=="Type_2_Diabetes")  #32 participants with Typd 2
-  length(unique(data_diab$kit_id)) #32
-  #levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
-  #1. SLGT2i+/GLP-1ra+ vs. GLP1
-  data_subgroup <- data_diab %>%
-    filter(group2=="glp1_sglt2" | group2=="glp1")
-  length(unique(data_subgroup$kit_id)) #11
-  data_subgroup$medication <- factor(data_subgroup$medication)
-  all_genes <- rownames(data_subgroup)
-  data_subgroup <- data %>%
-    # filter(group=="Type_2_Diabetes" | group=="Obese_Control")
-    filter(group==ref | group==exp)
-  data_subgroup$group <- factor(data_subgroup$group)
-  data_subgroup$group <-relevel(data_subgroup$group, ref = ref)
-  # full_results <- data.frame()
-  # Prepare parallel execution of gene models
-  full_results <- foreach(gene = gene_list[1:48], .combine = rbind, .packages = c("glmmTMB", "dplyr")) %dopar% {
-    # for (gene in gene_list) {
-    # for (gene in gene_list[1:20]) { #tester genes
-    m0 <- as.formula(paste0(gene," ~ group + (1 | kit_id)"))
-    model <- glmmTMB(m0,data=data_subgroup,family = nbinom2,  # Negative Binomial with a log link
-                     ziformula = ~ 1)
-    #If doesnt fit, try nb
-    if(summary(model)$coef$zi[1,4]=="NaN") {
+  # #Make volcano plot of all gene results for group
+  full_results <- full_results %>%
+    mutate(fdr=p.adjust(PValue,method="fdr"))
+# }
+
+
+
+#EC
+#TAL
+#Podocytes
+
+
+
+# #log transform gene expression
+# gene_expression <- gene_expression %>%
+#   mutate(across(everything(),~log1p(.))) # log1p is log(x + 1)
+# gene_expression$cellname <- rownames(gene_expression)
+# rownames(gene_expression) <- NULL
+
+
+unique(data$group)
+data$group <- factor(data$group,levels = c("Lean_Control","Obese_Control","Type_1_Diabetes","Type_2_Diabetes"),labels=c("Lean_Control","Obese_Control","Type_1_Diabetes","Type_2_Diabetes"))
+# length(data$hba1c)
+# length(which(data$hba1c==".")) #7457 cells missing hba1c
+# length(unique(data$kit_id[which(data$hba1c==".")])) #3 people missing HbA1c: "KL-0029407" "KL-0030607" "KL-0031456"
+rm(gene_expression,metadata)
+
+#1. Medications among Type 2 Diabetes
+#Filter to Type_2_Diabetes only since no other participants are on these main meds
+length(unique(data$kit_id)) #81 partiucipants before filtering
+data_diab <- data %>%
+  filter(group=="Type_2_Diabetes")  #32 participants with Typd 2
+length(unique(data_diab$kit_id)) #32
+#levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
+#1. SLGT2i+/GLP-1ra+ vs. GLP1
+data_subgroup <- data_diab %>%
+  filter(group2=="glp1_sglt2" | group2=="glp1")
+length(unique(data_subgroup$kit_id)) #11
+data_subgroup$medication <- factor(data_subgroup$medication)
+all_genes <- rownames(data_subgroup)
+data_subgroup <- data %>%
+  # filter(group=="Type_2_Diabetes" | group=="Obese_Control")
+  filter(group==ref | group==exp)
+data_subgroup$group <- factor(data_subgroup$group)
+data_subgroup$group <-relevel(data_subgroup$group, ref = ref)
+# full_results <- data.frame()
+# Prepare parallel execution of gene models
+full_results <- foreach(gene = gene_list[1:48], .combine = rbind, .packages = c("glmmTMB", "dplyr")) %dopar% {
+  # for (gene in gene_list) {
+  # for (gene in gene_list[1:20]) { #tester genes
+  m0 <- as.formula(paste0(gene," ~ group + (1 | kit_id)"))
+  model <- glmmTMB(m0,data=data_subgroup,family = nbinom2,  # Negative Binomial with a log link
+                   ziformula = ~ 1)
+  #If doesnt fit, try nb
+  if(summary(model)$coef$zi[1,4]=="NaN") {
+    model2 <- glmmTMB(m0, data=data_subgroup,
+                      family = nbinom2)
+    foldchange <- round(exp(summary(model2)$coef$cond[2,1]) - 1,5)
+    pval <- summary(model2)$coef$cond[2,4]
+    model_name <- "Negative Binomial"
+  }
+  if(summary(model)$coef$zi[1,4]!="NaN") {
+    #Check if zero inflation component is non-significant, if non-sig, run nb
+    if(summary(model)$coef$zi[1,4]>=0.05) {
       model2 <- glmmTMB(m0, data=data_subgroup,
                         family = nbinom2)
       foldchange <- round(exp(summary(model2)$coef$cond[2,1]) - 1,5)
       pval <- summary(model2)$coef$cond[2,4]
       model_name <- "Negative Binomial"
     }
-    if(summary(model)$coef$zi[1,4]!="NaN") {
-      #Check if zero inflation component is non-significant, if non-sig, run nb
-      if(summary(model)$coef$zi[1,4]>=0.05) {
-        model2 <- glmmTMB(m0, data=data_subgroup,
-                          family = nbinom2)
-        foldchange <- round(exp(summary(model2)$coef$cond[2,1]) - 1,5)
-        pval <- summary(model2)$coef$cond[2,4]
-        model_name <- "Negative Binomial"
-      }
-      #If sig, pull estimates from zinb
-      if(summary(model)$coef$zi[1,4]<0.05) {
-        # foldchange <- round(exp(summary(model)$coef$cond[2,1]) - 1,5)
-        foldchange <- round(exp(summary(model)$coef$cond[2,1]) - 1,5)
-        pval <- summary(model)$coef$cond[2,4]
-        model_name <- "Zero-Inflated Negative Binomial"
-      }
+    #If sig, pull estimates from zinb
+    if(summary(model)$coef$zi[1,4]<0.05) {
+      # foldchange <- round(exp(summary(model)$coef$cond[2,1]) - 1,5)
+      foldchange <- round(exp(summary(model)$coef$cond[2,1]) - 1,5)
+      pval <- summary(model)$coef$cond[2,4]
+      model_name <- "Zero-Inflated Negative Binomial"
     }
-    # Collect results for each gene
-    results <- data.frame(Gene = gene, FoldChange = foldchange, PValue = pval,ModelName=model_name)
-    return(results)
-    # results <- data.frame(Gene=gene,FoldChange=foldchange,PValue=pval)
-    # full_results <- rbind(full_results,results)
-    # # print(p)
-    # # return(full_results)
   }
-  #Make volcano plot of all gene results for group
-  full_results <- full_results %>%
-    mutate(fdr=p.adjust(PValue,method="fdr"))
-  
-  m_top <- full_results
-  
-  # Transform PValue into -log10(p-value) for the y-axis
-  m_top$logPValue <- -log10(m_top$PValue)
-  
-  # Calculate the log2 of the fold change (logFC)
-  m_top$logFC <- log2(m_top$FoldChange)
-  
-  # Create a new column for significance based on the p-value cutoff and FC cutoff
-  m_top$Significance <- ifelse(m_top$fdr<0.05, "Significant", "Not Significant")
-  
-  # Create a new column to combine both significance and direction (positive or negative)
-  m_top$Color <- ifelse(m_top$Significance == "Significant" & m_top$logFC > 0, "Positive Significant",
-                        ifelse(m_top$Significance == "Significant" & m_top$logFC < 0, "Negative Significant",
-                               "Non-Significant"))
-  
-  # Select the genes that are significant to label
-  m_top$Label <- ifelse(m_top$Significance == "Significant", as.character(m_top$Gene), NA)
-  
-  # Plot
-  p <- ggplot(m_top, aes(x = logFC, y = logPValue, color = Color)) +
-    geom_point(aes(shape = Color), size = 3, alpha = 0.7) +  # Set alpha for transparency
-    scale_color_manual(values = c("Positive Significant" = "red", "Negative Significant" = "blue", "Non-Significant" = "gray")) +  # Custom color scale
-    scale_shape_manual(values = c("Positive Significant" = 19, "Negative Significant" = 19, "Non-Significant" = 1)) +  # Same shape for all but Non-Sig
-    geom_text(aes(label = Label), size = 3, color = "black", vjust = 1, hjust = 1) +  # Add labels for significant genes in black
-    labs(x = "log2 Fold Change", y = "-log10(p-value)", title = "Volcano Plot") +
-    theme_minimal() +
-    theme(legend.position = "top") +
-    theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14))
-  
-  # Print the plot
-  print(p)
-  ```
-  
+  # Collect results for each gene
+  results <- data.frame(Gene = gene, FoldChange = foldchange, PValue = pval,ModelName=model_name)
+  return(results)
+  # results <- data.frame(Gene=gene,FoldChange=foldchange,PValue=pval)
+  # full_results <- rbind(full_results,results)
+  # # print(p)
+  # # return(full_results)
+}
+#Make volcano plot of all gene results for group
+full_results <- full_results %>%
+  mutate(fdr=p.adjust(PValue,method="fdr"))
+
+m_top <- full_results
+
+# Transform PValue into -log10(p-value) for the y-axis
+m_top$logPValue <- -log10(m_top$PValue)
+
+# Calculate the log2 of the fold change (logFC)
+m_top$logFC <- log2(m_top$FoldChange)
+
+# Create a new column for significance based on the p-value cutoff and FC cutoff
+m_top$Significance <- ifelse(m_top$fdr<0.05, "Significant", "Not Significant")
+
+# Create a new column to combine both significance and direction (positive or negative)
+m_top$Color <- ifelse(m_top$Significance == "Significant" & m_top$logFC > 0, "Positive Significant",
+                      ifelse(m_top$Significance == "Significant" & m_top$logFC < 0, "Negative Significant",
+                             "Non-Significant"))
+
+# Select the genes that are significant to label
+m_top$Label <- ifelse(m_top$Significance == "Significant", as.character(m_top$Gene), NA)
+
+# Plot
+p <- ggplot(m_top, aes(x = logFC, y = logPValue, color = Color)) +
+  geom_point(aes(shape = Color), size = 3, alpha = 0.7) +  # Set alpha for transparency
+  scale_color_manual(values = c("Positive Significant" = "red", "Negative Significant" = "blue", "Non-Significant" = "gray")) +  # Custom color scale
+  scale_shape_manual(values = c("Positive Significant" = 19, "Negative Significant" = 19, "Non-Significant" = 1)) +  # Same shape for all but Non-Sig
+  geom_text(aes(label = Label), size = 3, color = "black", vjust = 1, hjust = 1) +  # Add labels for significant genes in black
+  labs(x = "log2 Fold Change", y = "-log10(p-value)", title = "Volcano Plot") +
+  theme_minimal() +
+  theme(legend.position = "top") +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14))
+
+# Print the plot
+print(p)
+```
