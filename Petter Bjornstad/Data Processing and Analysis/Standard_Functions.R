@@ -51,7 +51,7 @@ return(list(so = so, elbow_plot = elbow_plot))
 }
 
 #Single Nuc RNA Sequencing Quality Control & Pre-Processing Function ----
-qc_function_sn <- function(so,var_pct,gene_pct) {
+qc_function_sn <- function(so,var_pct) {
   # qc_function <- function(so,cut_low,cut_high,mt_pct,var_pct,gene_pct) {
   
   #Find the percent of RNA per cell that is mitochondrial RNA
@@ -60,20 +60,20 @@ qc_function_sn <- function(so,var_pct,gene_pct) {
   #Filter out cells with fewer than "cut_low" genes, cells with "cut_high" detected genes, and cells where < mt_pct% of the expressed genes are mitochondrial genes
   # so <- subset(so, subset = nFeature_RNA > cut_low & nFeature_RNA < cut_high & percent_mt<mt_pct)  
   
-  #Filter out rare genes expressed in less than "gene_pct" of cells
-  expr_matrix <- as.matrix(GetAssayData(so, layer = "counts"))
-  # Calculate the proportion of cells expressing each gene
-  num_cells_per_gene <- rowSums(expr_matrix > 0)  # Count nonzero cells per gene
-  total_cells <- ncol(expr_matrix)  # Total number of cells
-  gene_proportion <- num_cells_per_gene / total_cells  # Fraction of cells expressing each gene
-  remove(expr_matrix)
-  # Keep genes expressed in at least "gene_pct" of cells
-  genes_to_keep <- names(gene_proportion[gene_proportion >= gene_pct])
-  so <- subset(so, features = genes_to_keep)
+  # #Filter out rare genes expressed in less than "gene_pct" of cells
+  # expr_matrix <- as.matrix(GetAssayData(so, layer = "data"))
+  # # Calculate the proportion of cells expressing each gene
+  # num_cells_per_gene <- rowSums(expr_matrix > 0)  # Count nonzero cells per gene
+  # total_cells <- ncol(expr_matrix)  # Total number of cells
+  # gene_proportion <- num_cells_per_gene / total_cells  # Fraction of cells expressing each gene
+  # remove(expr_matrix)
+  # # Keep genes expressed in at least "gene_pct" of cells
+  # genes_to_keep <- names(gene_proportion[gene_proportion >= gene_pct])
+  # so <- subset(so, features = genes_to_keep)
   
   #Remove Mitochondrial Genes
   mito_genes <- grep("^MT-", rownames(so), value = TRUE)
-  so <- subset(so, features = setdiff(rownames(so@assays$RNA@counts), mito_genes))
+  so <- subset(so, features = setdiff(rownames(so@assays$RNA@data), mito_genes))
   
   # Normalize the adjusted counts (considered adjusted counts after SoupX processing)
   so <- NormalizeData(so)
@@ -156,7 +156,7 @@ ext_gene_fxn <- function(so) {
 ext_gene_fxn2 <- function(so,celltype) {
 # for (celltype in so_filtered$KPMP_celltype) {
   # so_celltype <- subset(so,KPMP_celltype %in% celltype)
-  so_celltype <- subset(so,celltype_new %in% celltype)
+  so_celltype <- subset(so,celltype2 %in% celltype)
   
   
   # Extract the gene expression data for all genes
