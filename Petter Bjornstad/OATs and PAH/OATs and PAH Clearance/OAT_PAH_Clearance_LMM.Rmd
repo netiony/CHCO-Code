@@ -1,0 +1,1946 @@
+---
+title: "OAT scRNA & PAH Clearance"
+author: "Hailey Hampson"
+date: "2024-09-24"
+output: html_document
+--- 
+
+#1. Load Libraries & Directories
+```{r, include=F}
+library(reprex)
+library(tidyverse)
+library(BiocManager)        
+library(arsenal)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(Seurat)
+library(future)
+library(colorspace)
+library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggpubr)
+library(venn)
+library(rstatix)
+library(table1)
+library(Biobase)
+library(ReactomeGSA)
+library(GSEABase)
+library(msigdbr)
+library(kableExtra)
+library(knitr)
+library(SingleCellExperiment)
+library(fgsea)
+library(EnhancedVolcano)
+library(openxlsx)
+library(BiocManager)
+library(MAST)
+library(ggrepel)
+# library(qpcR)
+library(ggpubr)
+library(openxlsx)
+library(ggplot2)
+library(GGally)
+library(GSEABase)
+library(limma)
+library(reshape2)
+library(data.table)
+library(knitr)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(stringr)
+#library(NMF)
+library(rsvd)
+library(RColorBrewer)
+library(MAST)
+library(devtools)
+# install_github("Sun-lab/ideas",force=T)
+#library(ideas)
+library(foreach)
+library(doRNG)
+library(doParallel)
+library(fs)
+registerDoParallel(cores = 6)
+library(VennDiagram)
+library(janitor)
+devtools::install_github('immunogenomics/presto')
+library(presto)
+library(knitr)
+library(lme4)
+library(lmerTest)
+# install.packages("glmmTMB", type = "source")
+# library(glmmTMB)
+
+# #Local file path
+# dir.dat <- c("/Users/hhampson/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Biostatistics Core Shared Drive")
+# dir.dat2 <- c("/Users/hhampson/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Biostatistics Core Shared Drive/scRNA/data_clean")
+# dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+# dir.results <- c("/Volumes/Peds Endo/Petter Bjornstad/Kidney Project/Results")
+
+# #Lambda file path
+#  dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
+#  dir.code <- c("/home/Github_Repo/CHCO-Code/Petter Bjornstad/Kidney scRNA/Kidney scRNA")
+#  dir.results <- c(fs::path(dir.dat,"Kidney Project/Results"))
+
+#Mac Studio File Path
+dir.dat <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive")
+dir.results <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/OATs and PAH Clearance/Results")
+dir.ipa <- c("/Users/hhampson/Documents/IPA/Results")
+
+#Load functions
+source("2_OAT_Functions.R")
+```
+
+#2. Load Data & Format
+## a. Format Data - Old KPMP 
+```{r, include=F}
+#Local
+# dir.dat <- c("/Users/hhampson/Dropbox/Bjornstad data")
+# so_kidney_sc <- readRDS(fs::path(dir.dat,"Kidney scRNA","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
+# load("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/PB90_clinical_metadata.RData")
+# so_kidney_sc <- AddMetaData(so_kidney_sc, so_meta_combined)
+# rm(so_meta_combined)
+# gc()
+
+#Load PAH Data
+#Read in PAH data
+# pah <- read.csv("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/harmonized_dataset.csv")
+pah <- read.csv("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/harmonized_dataset.csv")
+pah <- pah %>% 
+  dplyr::select(all_of(c("record_id","mrn","kit_id","pah_clear_bsa","pah_clear_abs","visit","procedure"))) %>% 
+  filter(procedure=="clamp") %>% 
+  filter(visit=="baseline")
+#Filter out missing pah clearance variables
+pah <- pah %>%
+  filter(!is.na(pah_clear_abs)) #177with pah and gene expression
+pah <- pah %>% 
+  dplyr::select(all_of(c("record_id","mrn","pah_clear_abs","pah_clear_bsa"))) 
+length(unique(pah$record_id))#177 baseline record_id's with pah data
+length(unique(pah$mrn)) #165 unique mrn ids
+#Filter
+pah <- pah %>% 
+  distinct(mrn, .keep_all=T)
+length(unique(pah$mrn))#165
+
+so_kidney_sc <- readRDS(fs::path(dir.dat,"scRNA","data_raw","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
+so_kidney_sc$kit_id[which(so_kidney_sc$kit_id=="KI-0014643")] <- "KL-0014643"
+so_kidney_sc$kit_id[which(so_kidney_sc$kit_id=="kl-0023998")] <- "KL-0023998"
+#check2 <- so_kidney_sc@meta.data
+
+#harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc.csv")) #small meta set
+#harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc_all_metadata.csv")) #all metadata vars
+harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney scRNAseq Project","Data","harmonized_data_kidney_sc_all_metadata2.csv"))
+#Get coenrolled IDs
+coenroll <- read.csv(fs::path(dir.dat,"Renal HERITAGE/Data_Cleaned/coenrolled_ids.csv"))
+
+#Which IDs are coenrolled 
+coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$rh_id!="")]
+coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$rh_id!="" & coenroll$improve_id!="")]
+
+#"KL-0014634" "KL-0014629" "KL-0014628" coenrolled IDs
+#"KL-0014634" "KL-0014629" "KL-0014628" having missing meta data 
+
+#KL-0014628: IT_10/RH-66-T KL-0014628 KL-0019101
+#KL-0014629: IT_09/RH-65-T
+#KL-0014634: IT_07/RH-59-T
+#check <- harm_meta_data %>%
+#  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group")))
+
+#Partipant 30051 (kit id KL-0027474 at 4m has sc, but at baseline no sc has kit id KL-0027474 metadata)
+#missing <- c("KL-0014628", "KL-0014629", "KL-0014634", "KL-0019059", "KL-0019092", "KL-0019101", "KL-0022159", "KL-0024005", "KL-0027470", #"KL-0027478")
+#Check these ids in metadat
+#check <- harm_meta_data %>%
+#filter(kit_id %in% missing)
+
+#IDs missing group information  
+#Filter out attempt participants
+harm_meta_data <- harm_meta_data %>% 
+  dplyr::select(-X)
+#Create Medication Groups
+harm_meta_data <- harm_meta_data %>%
+  mutate(glp1_sglt2=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
+  mutate(sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
+  mutate(glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
+  mutate(no_med=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+#mutate(=ifelse(group!="Type 2 Diabetes" &  epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+
+#Define 4 exposure groups: 
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
+gc()
+harm_meta_data <- harm_meta_data %>% 
+  mutate(medication = case_when(glp1_sglt2 == "Yes" ~ "glp1_sglt2",
+                                sglt2 == "Yes" ~ "sglt2",
+                                glp1 == "Yes" ~ "glp1",
+                                no_med == "Yes" ~ "no_med"))
+harm_meta_data$medication <- factor(harm_meta_data$medication, levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
+
+#Define a T2D+OB group
+harm_meta_data <- harm_meta_data %>%
+  mutate(group2 = ifelse((group=="Type 2 Diabetes" | group=="Obese Control"),"T2D + OB",group))
+gc()
+
+#Check unique IDs in metadata and pah data
+length(unique(harm_meta_data$record_id)) #83
+length(unique(harm_meta_data$kit_id)) #83
+length(unique(harm_meta_data$mrn)) #81 unique mrns
+
+meta_kidney_sc <-  so_kidney_sc@meta.data 
+rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+
+#Check for pah clearance
+length(unique(meta_kidney_sc$kit_id)) #90
+meta_kidney_sc <- meta_kidney_sc %>%
+  #dplyr::mutate(RNAlater_ID = SampleID) %>%
+  left_join(harm_meta_data,by="kit_id")
+
+# #Filter seurat object to only IDs that have the metadata (83 individuals of interest)
+# so_kidney_sc <- AddMetaData(so_kidney_sc, meta_kidney_sc)
+# rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+#Check to see if all ids still have metadata
+#check4 <- meta_kidney_sc %>%
+#  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+#check4 <- check4 %>%
+#  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","KPMP_celltype")))
+
+#rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+ids <- harm_meta_data$kit_id
+# rm(harm_meta_data)
+
+#Filter seurat object to only IDs that have the metadata (83 individuals of interest)
+so_kidney_sc <- AddMetaData(so_kidney_sc, meta_kidney_sc)
+#check5 <- so_kidney_sc@meta.data %>%
+#  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+#check5 <- check5 %>%
+#  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","KPMP_celltype")))
+so_kidney_sc <- subset(so_kidney_sc, kit_id %in% ids)
+length(unique(so_kidney_sc$kit_id)) #83
+#check6 <- so_kidney_sc@meta.data %>%
+#  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+#check6 <- check6 %>%
+#  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","KPMP_celltype")))
+#unique(so_kidney_sc$group)
+#unique(so_kidney_sc$KPMP_celltype)
+rm(meta_kidney_sc,harm_meta_data)
+
+#Switch default assay in seurat object to RNA
+DefaultAssay(so_kidney_sc) <- "RNA"
+gc()
+
+check3 <- so_kidney_sc@meta.data
+check3 <- check3 %>%
+  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group","celltype_rpca","medication")))
+# rm(check3)
+unique(so_kidney_sc$co_enroll_id) 
+#"RH-66-T" "RH-65-T" "RH-59-T" "IT2D-08" "RH-98-T" "RH-99-T" "RH-16-T" "RH-23-T" "RH-19-O" "RH-96-T" "RH-67-T"
+#"RH-99-T" "RH-16-T" "RH-23-T" "RH-19-O" "RH-96-T" "RH-67-T" IDs coenrolled in RH and RH2 as a baseline and followup - filter out their RH2 study visit?
+#RH-67-T/RH2-19 kit id for second visit to filter out: KL-0030621
+#RH-23/RH2-14 kit id for second visit to filter out: KL-0029535
+
+# #Check if coenrolled IDs have multiple biopsies
+# co1 <- coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$rh_id!="")] #Coenrolled in RH&RH2
+# co2 <- coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$rh_id!="" & coenroll$improve_id!="")] #Coenrolled in Improve/RH/RH2
+# co3 <- coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$improve_id!="")] #Coenrolled in Improve/RH2
+# co4 <- coenroll$rh_id[which(coenroll$rh_id!="" & coenroll$improve_id!="")] #Coenroleld in Improve/RH
+# co5 <- coenroll$crc_id[which(coenroll$crc_id!="" & coenroll$panda_id!="")] #Coenrolled in Crocodile and panda
+# co6 <- coenroll$panda_id[which(coenroll$panda_id!="" & coenroll$crc_id!="")]
+# unique(so_kidney_sc$record_id[which(so_kidney_sc$record_id %in% co1)]) #"RH-68-T" "RH-23-T" "RH-60-T" "RH-67-T" "RH-93-T"
+# unique(so_kidney_sc$record_id[which(so_kidney_sc$record_id %in% co2)]) #"RH-60-T"
+# unique(so_kidney_sc$record_id[which(so_kidney_sc$record_id %in% co3)]) #"RH-60-T"
+# unique(so_kidney_sc$record_id[which(so_kidney_sc$record_id %in% co4)]) #"RH-66-T" "RH-65-T" "RH-59-T" "RH-60-T"
+# unique(so_kidney_sc$record_id[which(so_kidney_sc$record_id %in% co5)]) #"CRC-21" "CRC-04" "CRC-09" "CRC-24" "CRC-18" "CRC-07" "CRC-38" "CRC-32" "CRC-36" "CRC-44" "CRC-43" "CRC-16" "CRC-42" "CRC-31" "CRC-48" "CRC-59"
+# unique(so_kidney_sc$record_id[which(so_kidney_sc$record_id %in% co6)]) #"CRC-21" "CRC-04" "CRC-09" "CRC-24" "CRC-18" "CRC-07" "CRC-38" "CRC-32" "CRC-36" "CRC-44" "CRC-43" "CRC-16" "CRC-42" "CRC-31" "CRC-48" "CRC-59"
+# 
+# rm(coenroll,check3)
+
+#Remove coenrolled/repeated measures
+so_kidney_sc <- subset(so_kidney_sc,kit_id!="KL-0030621")
+so_kidney_sc <- subset(so_kidney_sc,kit_id!="KL-0029535")
+check3 <- so_kidney_sc@meta.data
+check3 <- check3 %>%
+  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group","celltype_rpca","medication")))
+length(unique(check3$kit_id)) #81
+rm(check3)
+# rm(coenroll)
+#Check IDs and see if in the PAH dataset for those 81 
+length(unique(so_kidney_sc$kit_id))
+length(unique(so_kidney_sc$mrn))
+length(unique(so_kidney_sc$record_id))
+length(unique(pah$mrn))
+length(unique(pah$record_id))
+
+length(unique(so_kidney_sc$record_id[which(so_kidney_sc$record_id %in% pah$record_id)]))
+unique(so_kidney_sc$kit_id[which(!so_kidney_sc$mrn %in% pah$mrn)])
+unique(so_kidney_sc$record_id[which(!so_kidney_sc$mrn %in% pah$mrn)]) #59 
+pah <- pah %>% 
+  dplyr::select(all_of(c("mrn","record_id","pah_clear_abs","pah_clear_bsa")))
+pah <- pah %>% 
+  filter(mrn %in% so_kidney_sc$mrn) 
+# pah <- unique(pah)
+length(unique(pah$mrn)) #59
+meta2 <- so_kidney_sc@meta.data
+rownames(meta2) <- rownames(so_kidney_sc@meta.data)
+meta2 <- meta2 %>% 
+  dplyr::select(-c("pah_clear_abs","pah_clear_bsa"))
+pah <- pah %>% 
+  dplyr::select(-record_id)
+meta2 <- tidylog::left_join(meta2,pah,by=c("mrn"))
+# meta2 <- meta2 %>% 
+#   filter(mrn %in% so_kidney_sc$mrn) 
+so_kidney_sc <- AddMetaData(so_kidney_sc, meta2)
+
+
+#Check the total number of cells & genes in the full dataset
+ncol(so_kidney_sc) #186125 cells
+nrow(so_kidney_sc) #31332 genes
+
+dim(so_kidney_sc@assays$RNA@counts) #31332 186125
+sum(grepl("^MT-", rownames(so_kidney_sc@assays$RNA@counts))) #101
+
+# #Filter out mitochondrial DNA
+# gene_expression_matrix <- so_kidney_sc@assays$RNA@counts
+# 
+# # Filter genes expressed in more than 10% of cells
+# expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.1
+# so_kidney_sc@assays$RNA@counts <- gene_expression_matrix[expressed_genes,]
+# 
+# dim(so_kidney_sc@assays$RNA@counts) #5759 186125 
+# sum(grepl("^MT", rownames(so_kidney_sc@assays$RNA@counts))) #45
+# 
+# ncol(so_kidney_sc) #186125 cells
+# nrow(so_kidney_sc) #31332 genes
+# 
+# # Remove mitochondrial genes (prefix "MT")
+# so_kidney_sc@assays$RNA@counts <- so_kidney_sc@assays$RNA@counts[grep("^MT", rownames(so_kidney_sc@assays$RNA@counts), invert = TRUE),]
+# ncol(so_kidney_sc) #186125 cells
+# nrow(so_kidney_sc) #31332 genes
+# dim(so_kidney_sc@assays$RNA@counts) #5714 186125
+# sum(grepl("^MT", rownames(so_kidney_sc@assays$RNA@counts))) #0
+
+# # Step 1: Filter to genes expressed in more than 5% of cells
+# gene_expression_matrix <- so_kidney_sc@assays$RNA@counts
+# # expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.1
+# expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.05
+# 
+# so_kidney_sc <- subset(so_kidney_sc, features = rownames(gene_expression_matrix)[expressed_genes])
+# dim(so_kidney_sc@assays$RNA@counts) #9289 186125
+# dim(so_kidney_sc@assays$RNA) #9289 186125
+# dim(so_kidney_sc) #9289 186125
+# sum(grepl("^MT-", rownames(so_kidney_sc@assays$RNA@counts))) #70
+# ncol(so_kidney_sc) #186125 cells
+# nrow(so_kidney_sc) #9289 genes
+
+# expr_matrix <- as.matrix(GetAssayData(so_kpmp_sc, layer = "data"))
+# # Calculate the proportion of cells expressing each gene
+# num_cells_per_gene <- rowSums(expr_matrix > 0)  # Count nonzero cells per gene
+# total_cells <- ncol(expr_matrix)  # Total number of cells
+# gene_proportion <- num_cells_per_gene / total_cells  # Fraction of cells expressing each gene
+# length(gene_proportion) # 30715
+# # Keep genes expressed in at least 1% of cells
+# genes_to_keep <- names(gene_proportion[gene_proportion >= 0.1])
+# length(genes_to_keep)
+# remove(expr_matrix)
+# attempt_so <- subset(attempt_so, features = genes_to_keep)
+
+# Step 2: Remove mitochondrial genes (those starting with "MT")
+mito_genes <- grep("^MT-", rownames(so_kidney_sc), value = TRUE)
+#keep_ids <- unique(rownames(so_kidney_sc)[which(!rownames(so_kidney_sc) %in% mito_genes)])
+# so_kidney_sc <- subset(so_kidney_sc, features = setdiff(rownames(so_kidney_sc), mito_genes))
+# so_kidney_sc <- subset(so_kidney_sc,kit_id!="KL-0029535")
+#so_kidney_sc$Gene <- rownames(so_kidney_sc)
+#so_kidney_sc <- subset(so_kidney_sc, Gene %in% keep_ids)
+so_kidney_sc <- subset(so_kidney_sc, features = setdiff(rownames(so_kidney_sc@assays$RNA@counts), mito_genes))
+#so_kidney_sc <- subset(so_kidney_sc, features = setdiff(rownames(so_kidney_sc@assays$RNA@counts), mito_genes))
+# so_kidney_sc <- subset(so_kidney_sc, !rownames(so_kidney_sc) %in% mito_genes)
+# grep("^MT-", rownames(so_kidney_sc@assays$RNA@counts), value = TRUE)
+dim(so_kidney_sc@assays$RNA@counts) #9276 186125
+dim(so_kidney_sc@assays$RNA@data) #9276 186125
+dim(so_kidney_sc@assays$RNA)#9276 186125
+sum(grepl("^MT-", rownames(so_kidney_sc@assays$RNA@counts))) #0
+ncol(so_kidney_sc) #186125 cells
+nrow(so_kidney_sc) #9276 genes
+
+# # Identify mitochondrial genes
+# mt_genes <- grepl("^MT", rownames(so_kidney_sc@assays$RNA@counts))
+# 
+# # Calculate the percentage of mitochondrial genes per cell
+# mt_percentage <- Matrix::colSums(so_kidney_sc@assays$RNA@counts[mt_genes, ]) / Matrix::colSums(so_kidney_sc@assays$RNA@counts)
+# 
+# # Filter out cells where the proportion of mitochondrial genes is > 15%
+# cells_to_keep <- mt_percentage <= 0.15
+# 
+# # Subset the object to retain only cells with <= 15% mitochondrial genes
+# so_kidney_sc <- so_kidney_sc[, cells_to_keep]
+
+# Check dimensions after filtering
+dim(so_kidney_sc@assays$RNA@counts) #31319 131621
+dim(so_kidney_sc@assays$RNA)#31319 131621
+dim(so_kidney_sc)#31319 131621
+
+# Optionally, you can also check how many MT genes remain in the filtered dataset
+sum(grepl("^MT-", rownames(so_kidney_sc@assays$RNA@counts)))
+ncol(so_kidney_sc)  # Number of cells remaining
+
+
+# Step 3: Renormalize the Seurat object after filtering
+so_kidney_sc <- NormalizeData(so_kidney_sc)
+
+#Check normalized slot
+dim(so_kidney_sc@assays$RNA@data) #5714 186125
+sum(grepl("^MT-", rownames(so_kidney_sc@assays$RNA@data))) #70
+ncol(so_kidney_sc) #186125 cells
+nrow(so_kidney_sc) #5714 genes
+
+#Load in med data to update medication information
+med <- read.xlsx(fs::path(dir.dat,"Kidney scRNAseq Project/Data/Biopsies_w_mrn_Oct3.xlsx"))
+med <- med %>% 
+  dplyr::select(all_of(c("record_id","mrn","raasi_1","insulin_1","mfm_1")))
+meta_kidney_sc <-  so_kidney_sc@meta.data
+med <- med %>% 
+  filter(mrn %in% as.character(meta_kidney_sc$mrn)) #95 remain
+med <- med %>%  
+  filter(record_id %in% meta_kidney_sc$record_id) #81 remain
+# med$mrn <- as.numeric(med$mrn)
+rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+med$mrn <- as.numeric(med$mrn)
+meta_kidney_sc <- meta_kidney_sc %>%
+  left_join(med,by=c("mrn","record_id"))
+rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+
+#Add Med Meta Data to Seurat object
+so_kidney_sc <- AddMetaData(so_kidney_sc, meta_kidney_sc)
+rm(gene_expression_matrix,med,meta_kidney_sc)
+# saveRDS(so_kidney_sc,fs::path(dir.dat,"Kidney scRNAseq Project","Data","so_kidney_sc_10_mito.rds"))
+
+check3 <- so_kidney_sc@meta.data
+check3 <- check3 %>%
+  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group","group2","medication","pah_clear_bsa","pah_clear_abs")))
+unique(check3$kit_id[which(is.na(check3$pah_clear_abs))])
+unique(check3$kit_id[which(is.na(check3$pah_clear_bsa))])
+#Remove kidney ids without pah clearance
+ids2 <- ids[which(!ids %in% unique(check3$kit_id[which(is.na(check3$pah_clear_abs))]))] #69 individuals have pah data
+#Filter to only those 69 ids
+so_kidney_sc <- subset(so_kidney_sc, kit_id %in% ids2)
+rm(check3)
+
+#only 59 unique participants with single cell and pah clearance
+length(unique(so_kidney_sc$kit_id))
+
+#Create PT and TAL pseudobulk cell type variable
+so_kidney_sc$celltype <- case_when(grepl("PT-",so_kidney_sc$celltype_rpca)~"PT",
+                                   grepl("TAL-",so_kidney_sc$celltype_rpca)~"TAL",
+                                   grepl("EC-",so_kidney_sc$celltype_rpca)~"EC",
+                                   grepl("POD",so_kidney_sc$celltype_rpca)~"POD",
+                                   grepl("MAC",so_kidney_sc$celltype_rpca)~"MAC",
+                                   grepl("MON",so_kidney_sc$celltype_rpca)~"MON",
+                                   grepl("PC-",so_kidney_sc$celltype_rpca)~"PC",
+                                   grepl("FIB",so_kidney_sc$celltype_rpca)~"FIB_MC_VSMC",
+                                   grepl("DTL",so_kidney_sc$celltype_rpca)~"DTL",
+                                   so_kidney_sc$celltype_rpca=="DCT"~"DCT",
+                                   so_kidney_sc$celltype_rpca=="ATL"~"ATL",
+                                   so_kidney_sc$celltype_rpca=="B"~"B",
+                                   so_kidney_sc$celltype_rpca=="T"~"T")
+so_kidney_sc$celltype <- as.character(so_kidney_sc$celltype)
+
+rm(meta2,pah,coenroll,GeomSplitViolin)
+```
+
+```{r, include=F}
+#Local
+# dir.dat <- c("/Users/hhampson/Dropbox/Bjornstad data")
+# so_kidney_sc <- readRDS(fs::path(dir.dat,"Kidney scRNA","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
+# load("/Volumes/Peds Endo/Petter Bjornstad/Data Harmonization/Data Exports/PB90_clinical_metadata.RData")
+# so_kidney_sc <- AddMetaData(so_kidney_sc, so_meta_combined)
+# rm(so_meta_combined)
+# gc()
+
+#Lambda
+so_kidney_sc <- readRDS(fs::path(dir.dat,"scRNA","data_raw","PB_90samples_Harmony_rpca_Fadhl_PhilApproved_091024.RDS"))
+so_kidney_sc$kit_id[which(so_kidney_sc$kit_id=="KI-0014643")] <- "KL-0014643"
+so_kidney_sc$kit_id[which(so_kidney_sc$kit_id=="kl-0023998")] <- "KL-0023998"
+#check2 <- so_kidney_sc@meta.data
+
+#harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc.csv")) #small meta set
+# harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc_all_metadata2.csv")) #all metadata vars
+harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney scRNAseq Project","Data","harmonized_data_kidney_sc_all_metadata2.csv"))
+#Find pah clearance abs and bsa new
+harm_data <- read.csv("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/harmonized_dataset.csv")
+pah <- harm_data %>% 
+  dplyr::select(all_of(c("mrn","kit_id","cryostor_id","rnalater_id","pah_clear_bsa","pah_clear_abs","visit","procedure")))
+unique(so_kidney_sc$kit_id)
+# unique(so_kidney_sc$mrn) 
+
+#"KL-0014634" "KL-0014629" "KL-0014628" coenrolled IDs
+#"KL-0014634" "KL-0014629" "KL-0014628" having missing meta data 
+
+#KL-0014628: IT_10/RH-66-T KL-0014628 KL-0019101
+#KL-0014629: IT_09/RH-65-T
+#KL-0014634: IT_07/RH-59-T
+#check <- harm_meta_data %>%
+#  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group")))
+
+#Partipant 30051 (kit id KL-0027474 at 4m has sc, but at baseline no sc has kit id KL-0027474 metadata)
+#missing <- c("KL-0014628", "KL-0014629", "KL-0014634", "KL-0019059", "KL-0019092", "KL-0019101", "KL-0022159", "KL-0024005", "KL-0027470", #"KL-0027478")
+#Check these ids in metadat
+#check <- harm_meta_data %>%
+#filter(kit_id %in% missing)
+
+#IDs missing group information  
+#Filter out attempt participants
+harm_meta_data <- harm_meta_data %>% 
+  dplyr::select(-X)
+#Create Medication Groups
+harm_meta_data <- harm_meta_data %>%
+  mutate(glp1_sglt2=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
+  mutate(sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
+  mutate(glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
+  mutate(no_med=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+#mutate(=ifelse(group!="Type 2 Diabetes" &  epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+
+#Define 4 exposure groups: 
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
+gc()
+harm_meta_data <- harm_meta_data %>% 
+  mutate(medication = case_when(glp1_sglt2 == "Yes" ~ "glp1_sglt2",
+                                sglt2 == "Yes" ~ "sglt2",
+                                glp1 == "Yes" ~ "glp1",
+                                no_med == "Yes" ~ "no_med"))
+harm_meta_data$medication <- factor(harm_meta_data$medication, levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
+
+#Define a T2D+OB group
+harm_meta_data <- harm_meta_data %>%
+  mutate(group2 = ifelse((group=="Type 2 Diabetes" | group=="Obese Control"),"T2D + OB",group))
+gc()
+meta_kidney_sc <-  so_kidney_sc@meta.data 
+rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+meta_kidney_sc <- meta_kidney_sc %>%
+  #dplyr::mutate(RNAlater_ID = SampleID) %>%
+  left_join(harm_meta_data,by="kit_id")
+rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+#Check to see if all ids still have metadata
+#check4 <- meta_kidney_sc %>%
+#  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+#check4 <- check4 %>%
+#  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","group2")))
+
+#rownames(meta_kidney_sc) <- rownames(so_kidney_sc@meta.data)
+ids <- harm_meta_data$kit_id
+#Filter seurat object to only IDs that have the metadata (83 individuals of interest)
+so_kidney_sc <- AddMetaData(so_kidney_sc, meta_kidney_sc)
+#check5 <- so_kidney_sc@meta.data %>%
+#  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+#check5 <- check5 %>%
+#  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","group2")))
+so_kidney_sc <- subset(so_kidney_sc, kit_id %in% ids)
+#check6 <- so_kidney_sc@meta.data %>%
+#  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+#check6 <- check6 %>%
+#  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","group2")))
+#unique(so_kidney_sc$group)
+#unique(so_kidney_sc$group2)
+rm(meta_kidney_sc,harm_meta_data)
+
+#Switch default assay in seurat object to RNA
+DefaultAssay(so_kidney_sc) <- "RNA"
+gc()
+
+check3 <- so_kidney_sc@meta.data
+check3 <- check3 %>%
+  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group","group2","medication","pah_clear_bsa","pah_clear_abs")))
+unique(check3$kit_id[which(is.na(check3$pah_clear_abs))])
+unique(check3$kit_id[which(is.na(check3$pah_clear_bsa))])
+
+#Remove kidney ids without pah clearance
+ids2 <- ids[which(!ids %in% unique(check3$kit_id[which(is.na(check3$pah_clear_abs))]))] #69 individuals have pah data
+#Filter to only those 69 ids
+so_kidney_sc <- subset(so_kidney_sc, kit_id %in% ids2)
+rm(check3)
+#FIlter to oat genes only
+
+```
+
+## b. Format Data - New KPMP
+```{r, include=F}
+#Load KPMP Cell Types 2 (new)
+#Mac Studio
+so_kpmp_sc <- readRDS("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/scRNA/data_raw/PB_90_RPCAFix_Metadata_LR_RM_kpmpV1labelled.rds")
+
+so_kpmp_sc$kit_id[which(so_kpmp_sc$kit_id=="KI-0014643")] <- "KL-0014643"
+so_kpmp_sc$kit_id[which(so_kpmp_sc$kit_id=="kl-0023998")] <- "KL-0023998"
+#check2 <- so_kpmp_sc@meta.data
+
+#harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc.csv")) #small meta set
+#harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc_all_metadata.csv")) #all metadata vars
+harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney scRNAseq Project","Data","harmonized_data_kidney_sc_all_metadata2.csv"))
+#Get coenrolled IDs
+coenroll <- read.csv(fs::path(dir.dat,"Renal HERITAGE/Data_Cleaned/coenrolled_ids.csv"))
+
+#Which IDs are coenrolled 
+coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$rh_id!="")]
+coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$rh_id!="" & coenroll$improve_id!="")]
+
+#"KL-0014634" "KL-0014629" "KL-0014628" coenrolled IDs
+#"KL-0014634" "KL-0014629" "KL-0014628" having missing meta data 
+
+#KL-0014628: IT_10/RH-66-T KL-0014628 KL-0019101
+#KL-0014629: IT_09/RH-65-T
+#KL-0014634: IT_07/RH-59-T
+#check <- harm_meta_data %>%
+#  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group")))
+
+#Partipant 30051 (kit id KL-0027474 at 4m has sc, but at baseline no sc has kit id KL-0027474 metadata)
+#missing <- c("KL-0014628", "KL-0014629", "KL-0014634", "KL-0019059", "KL-0019092", "KL-0019101", "KL-0022159", "KL-0024005", "KL-0027470", #"KL-0027478")
+#Check these ids in metadat
+#check <- harm_meta_data %>%
+#filter(kit_id %in% missing)
+
+#IDs missing group information  
+#Filter out attempt participants
+harm_meta_data <- harm_meta_data %>% 
+  dplyr::select(-X)
+#Create Medication Groups
+harm_meta_data <- harm_meta_data %>%
+  mutate(glp1_sglt2=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
+  mutate(sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
+  mutate(glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
+  mutate(no_med=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+#mutate(=ifelse(group!="Type 2 Diabetes" &  epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+
+#Define 4 exposure groups: 
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
+gc()
+harm_meta_data <- harm_meta_data %>% 
+  mutate(medication = case_when(glp1_sglt2 == "Yes" ~ "glp1_sglt2",
+                                sglt2 == "Yes" ~ "sglt2",
+                                glp1 == "Yes" ~ "glp1",
+                                no_med == "Yes" ~ "no_med"))
+harm_meta_data$medication <- factor(harm_meta_data$medication, levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
+#Define a T2D+OB group
+harm_meta_data <- harm_meta_data %>%
+  mutate(group2 = ifelse((group=="Type 2 Diabetes" | group=="Obese Control"),"T2D + OB",group))
+gc()
+meta_kidney_sc <-  so_kpmp_sc@meta.data 
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+meta_kidney_sc <- meta_kidney_sc %>%
+  #dplyr::mutate(RNAlater_ID = SampleID) %>%
+  left_join(harm_meta_data,by="kit_id")
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+#Check to see if all ids still have metadata
+#check4 <- meta_kidney_sc %>%
+#  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+#check4 <- check4 %>%
+#  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","KPMP_celltype")))
+
+#rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+ids <- harm_meta_data$kit_id
+#Filter seurat object to only IDs that have the metadata (83 individuals of interest)
+so_kpmp_sc <- AddMetaData(so_kpmp_sc, meta_kidney_sc)
+#check5 <- so_kpmp_sc@meta.data %>%
+#  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+#check5 <- check5 %>%
+#  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","KPMP_celltype")))
+so_kpmp_sc <- subset(so_kpmp_sc, kit_id %in% ids)
+#check6 <- so_kpmp_sc@meta.data %>%
+#  filter(kit_id=="KL-0014628" | kit_id=="KL-0014629" | kit_id=="KL-0014634")
+#check6 <- check6 %>%
+#  dplyr::select(all_of(c("kit_id","record_id.x","record_id.y","co_enroll_id","group","KPMP_celltype")))
+#unique(so_kpmp_sc$group)
+#unique(so_kpmp_sc$KPMP_celltype)
+rm(meta_kidney_sc,harm_meta_data)
+
+#Switch default assay in seurat object to RNA
+DefaultAssay(so_kpmp_sc) <- "RNA"
+gc()
+
+check3 <- so_kpmp_sc@meta.data
+check3 <- check3 %>%
+  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group","KPMP_celltype","medication")))
+# rm(check3)
+unique(so_kpmp_sc$co_enroll_id) 
+length(unique(check3$kit_id))
+#"RH-66-T" "RH-65-T" "RH-59-T" "IT2D-08" "RH-98-T" "RH-99-T" "RH-16-T" "RH-23-T" "RH-19-O" "RH-96-T" "RH-67-T"
+#"RH-99-T" "RH-16-T" "RH-23-T" "RH-19-O" "RH-96-T" "RH-67-T" IDs coenrolled in RH and RH2 as a baseline and followup - filter out their RH2 study visit?
+#RH-67-T/RH2-19 kit id for second visit to filter out: KL-0030621
+#RH-23/RH2-14 kit id for second visit to filter out: KL-0029535
+
+# #Check if coenrolled IDs have multiple biopsies
+# co1 <- coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$rh_id!="")] #Coenrolled in RH&RH2
+# co2 <- coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$rh_id!="" & coenroll$improve_id!="")] #Coenrolled in Improve/RH/RH2
+# co3 <- coenroll$rh_id[which(coenroll$rh2_id!="" & coenroll$improve_id!="")] #Coenrolled in Improve/RH2
+# co4 <- coenroll$rh_id[which(coenroll$rh_id!="" & coenroll$improve_id!="")] #Coenroleld in Improve/RH
+# co5 <- coenroll$crc_id[which(coenroll$crc_id!="" & coenroll$panda_id!="")] #Coenrolled in Crocodile and panda
+# co6 <- coenroll$panda_id[which(coenroll$panda_id!="" & coenroll$crc_id!="")]
+# unique(so_kpmp_sc$record_id[which(so_kpmp_sc$record_id %in% co1)]) #"RH-68-T" "RH-23-T" "RH-60-T" "RH-67-T" "RH-93-T"
+# unique(so_kpmp_sc$record_id[which(so_kpmp_sc$record_id %in% co2)]) #"RH-60-T"
+# unique(so_kpmp_sc$record_id[which(so_kpmp_sc$record_id %in% co3)]) #"RH-60-T"
+# unique(so_kpmp_sc$record_id[which(so_kpmp_sc$record_id %in% co4)]) #"RH-66-T" "RH-65-T" "RH-59-T" "RH-60-T"
+# unique(so_kpmp_sc$record_id[which(so_kpmp_sc$record_id %in% co5)]) #"CRC-21" "CRC-04" "CRC-09" "CRC-24" "CRC-18" "CRC-07" "CRC-38" "CRC-32" "CRC-36" "CRC-44" "CRC-43" "CRC-16" "CRC-42" "CRC-31" "CRC-48" "CRC-59"
+# unique(so_kpmp_sc$record_id[which(so_kpmp_sc$record_id %in% co6)]) #"CRC-21" "CRC-04" "CRC-09" "CRC-24" "CRC-18" "CRC-07" "CRC-38" "CRC-32" "CRC-36" "CRC-44" "CRC-43" "CRC-16" "CRC-42" "CRC-31" "CRC-48" "CRC-59"
+# 
+# rm(coenroll,check3)
+
+#Remove coenrolled IDs
+so_kpmp_sc <- subset(so_kpmp_sc,kit_id!="KL-0030621")
+so_kpmp_sc <- subset(so_kpmp_sc,kit_id!="KL-0029535")
+check3 <- so_kpmp_sc@meta.data
+check3 <- check3 %>%
+  dplyr::select(all_of(c("kit_id","record_id","co_enroll_id","group","KPMP_celltype","medication")))
+length(unique(check3$kit_id)) #81
+rm(check3)
+rm(coenroll)
+
+#Check the total number of cells & genes in the full dataset
+ncol(so_kpmp_sc) #186125 cells
+nrow(so_kpmp_sc) #31332 genes
+
+dim(so_kpmp_sc@assays$RNA@layers$counts) #31332 186125
+sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA))) #101
+
+# #Filter out mitochondrial DNA
+# gene_expression_matrix <- so_kpmp_sc@assays$RNA@counts
+# 
+# # Filter genes expressed in more than 10% of cells
+# expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.1
+# so_kpmp_sc@assays$RNA@counts <- gene_expression_matrix[expressed_genes,]
+# 
+# dim(so_kpmp_sc@assays$RNA@counts) #5759 186125 
+# sum(grepl("^MT", rownames(so_kpmp_sc@assays$RNA@counts))) #45
+# 
+# ncol(so_kpmp_sc) #186125 cells
+# nrow(so_kpmp_sc) #31332 genes
+# 
+# # Remove mitochondrial genes (prefix "MT")
+# so_kpmp_sc@assays$RNA@counts <- so_kpmp_sc@assays$RNA@counts[grep("^MT", rownames(so_kpmp_sc@assays$RNA@counts), invert = TRUE),]
+# ncol(so_kpmp_sc) #186125 cells
+# nrow(so_kpmp_sc) #31332 genes
+# dim(so_kpmp_sc@assays$RNA@counts) #5714 186125
+# sum(grepl("^MT", rownames(so_kpmp_sc@assays$RNA@counts))) #0
+
+# # Step 1: Filter to genes expressed in more than 5% of cells
+# gene_expression_matrix <- so_kpmp_sc@assays$RNA@layers$counts
+# rownames(gene_expression_matrix) <- rownames(so_kpmp_sc@assays$RNA)
+# colnames(gene_expression_matrix) <- colnames(so_kpmp_sc@assays$RNA)
+# # expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.1
+# expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.05
+# names(expressed_genes)
+# rownames(gene_expression_matrix)[expressed_genes]
+# 
+# so_kpmp_sc <- subset(so_kpmp_sc, features = rownames(gene_expression_matrix)[expressed_genes])
+# dim(so_kpmp_sc@assays$RNA@layers$counts) #9289 186125
+# dim(so_kpmp_sc@assays$RNA) #9289 186125
+# dim(so_kpmp_sc) #9289 186125
+# sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA))) #70
+# ncol(so_kpmp_sc) #186125 cells
+# nrow(so_kpmp_sc) #9289 genes
+
+# expr_matrix <- as.matrix(GetAssayData(so_kpmp_sc, layer = "data"))
+# # Calculate the proportion of cells expressing each gene
+# num_cells_per_gene <- rowSums(expr_matrix > 0)  # Count nonzero cells per gene
+# total_cells <- ncol(expr_matrix)  # Total number of cells
+# gene_proportion <- num_cells_per_gene / total_cells  # Fraction of cells expressing each gene
+# length(gene_proportion) # 30715
+# # Keep genes expressed in at least 1% of cells
+# genes_to_keep <- names(gene_proportion[gene_proportion >= 0.1])
+# length(genes_to_keep)
+# remove(expr_matrix)
+# attempt_so <- subset(attempt_so, features = genes_to_keep)
+
+# Step 2: Remove mitochondrial genes (those starting with "MT")
+mito_genes <- grep("^MT-", rownames(so_kpmp_sc@assays$RNA), value = TRUE)
+so_kpmp_sc <- subset(so_kpmp_sc, features = setdiff(rownames(so_kpmp_sc), mito_genes))
+dim(so_kpmp_sc@assays$RNA@layers$counts) #9276 186125
+dim(so_kpmp_sc@assays$RNA@layers$data) #9276 186125
+dim(so_kpmp_sc@assays$RNA)#5714 186125
+sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA@layers$counts))) #0
+ncol(so_kpmp_sc) #186125 cells
+nrow(so_kpmp_sc) #9276 genes
+
+# # Identify mitochondrial genes
+# mt_genes <- grepl("^MT", rownames(so_kpmp_sc@assays$RNA@counts))
+# 
+# # Calculate the percentage of mitochondrial genes per cell
+# mt_percentage <- Matrix::colSums(so_kpmp_sc@assays$RNA@counts[mt_genes, ]) / Matrix::colSums(so_kpmp_sc@assays$RNA@counts)
+# 
+# # Filter out cells where the proportion of mitochondrial genes is > 15%
+# cells_to_keep <- mt_percentage <= 0.15
+# 
+# # Subset the object to retain only cells with <= 15% mitochondrial genes
+# so_kpmp_sc <- so_kpmp_sc[, cells_to_keep]
+
+# Check dimensions after filtering
+dim(so_kpmp_sc@assays$RNA@layers$counts) #9289 81882
+dim(so_kpmp_sc@assays$RNA)#9289 81882
+dim(so_kpmp_sc)#9289 81882
+
+# Optionally, you can also check how many MT genes remain in the filtered dataset
+sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA@layers$counts)))
+ncol(so_kpmp_sc)  # Number of cells remaining
+
+
+# Step 3: Renormalize the Seurat object after filtering
+so_kpmp_sc <- NormalizeData(so_kpmp_sc)
+
+#Check normalized slot
+dim(so_kpmp_sc@assays$RNA@layers$data) #5714 186125
+sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA@layers$data))) #70
+ncol(so_kpmp_sc) #186125 cells
+nrow(so_kpmp_sc) #5714 genes
+
+#Load in med data to update medication information
+med <- read.xlsx(fs::path(dir.dat,"Kidney scRNAseq Project/Data/Biopsies_w_mrn_Oct3.xlsx"))
+med <- med %>% 
+  dplyr::select(all_of(c("record_id","mrn","raasi_1","insulin_1","mfm_1")))
+meta_kidney_sc <-  so_kpmp_sc@meta.data
+med <- med %>% 
+  filter(mrn %in% as.character(meta_kidney_sc$mrn)) #95 remain
+med <- med %>%  
+  filter(record_id %in% meta_kidney_sc$record_id) #81 remain
+# med$mrn <- as.numeric(med$mrn)
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+med$mrn <- as.numeric(med$mrn)
+meta_kidney_sc <- meta_kidney_sc %>%
+  left_join(med,by=c("mrn","record_id"))
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+
+#Add Med Meta Data to Seurat object
+so_kpmp_sc <- AddMetaData(so_kpmp_sc, meta_kidney_sc)
+rm(gene_expression_matrix,med,meta_kidney_sc)
+rm(expressed_genes)
+
+# saveRDS(so_kpmp_sc,fs::path(dir.dat,"Kidney scRNAseq Project","Data","so_kidney_sc_10_mito.rds"))
+
+length(unique(so_kpmp_sc$mrn)) #81
+unique(so_kpmp_sc$mrn)
+
+
+
+#Load PAH Data
+#Read in PAH data
+pah <- read.csv("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/harmonized_dataset.csv")
+pah <- pah %>% 
+  dplyr::select(all_of(c("record_id","mrn","kit_id","pah_clear_bsa","pah_clear_abs","visit","procedure"))) %>% 
+  filter(procedure=="clamp") %>% 
+  filter(visit=="baseline")
+#Filter out missing pah clearance variables
+pah <- pah %>%
+  filter(!is.na(pah_clear_abs)) #177with pah and gene expression
+pah <- pah %>% 
+  dplyr::select(all_of(c("record_id","mrn","pah_clear_abs","pah_clear_bsa"))) 
+length(unique(pah$record_id))#177 baseline record_id's with pah data
+length(unique(pah$mrn)) #165 unique mrn ids
+#Filter
+pah <- pah %>% 
+  distinct(mrn, .keep_all=T)
+length(unique(pah$mrn))#165
+
+a <- unique(so_kpmp_sc$mrn)[which(unique(so_kpmp_sc$mrn) %in% unique(pah$mrn))] #59 
+#These 59 ids have pah clearance, no missing data
+
+pah <- pah %>% 
+  dplyr::select(all_of(c("mrn","record_id","pah_clear_abs","pah_clear_bsa")))
+pah <- pah %>% 
+  filter(mrn %in% so_kpmp_sc$mrn) 
+# pah <- unique(pah)
+length(unique(pah$mrn)) #59
+b <- unique(so_kpmp_sc$mrn)[which(unique(so_kpmp_sc$mrn) %in% unique(pah$mrn))] #59 
+a %in% b
+meta2 <- so_kpmp_sc@meta.data
+rownames(meta2) <- rownames(so_kpmp_sc@meta.data)
+meta2 <- meta2 %>% 
+  dplyr::select(-c("pah_clear_abs","pah_clear_bsa"))
+pah <- pah %>% 
+  dplyr::select(-record_id)
+meta2 <- tidylog::left_join(meta2,pah,by=c("mrn"))
+length(unique(meta2$mrn))
+# meta2 <- meta2 %>% 
+#   filter(mrn %in% so_kpmp_sc$mrn) 
+so_kpmp_sc <- AddMetaData(so_kpmp_sc, meta2)
+rm(pah,meta2)
+unique(so_kpmp_sc$mrn[which(is.na(so_kpmp_sc$pah_clear_abs))])
+
+# Subset Seurat object to exclude cells where pah_clear_abs is NA
+so_kpmp_sc <- subset(so_kpmp_sc, subset = mrn %in% b)
+table(so_kpmp_sc$pah_clear_abs)
+# Check if the filtering was successful by summarizing the 'pah_clear_abs' values
+table(is.na(so_kpmp_sc$pah_clear_abs))
+
+length(unique(so_kpmp_sc$mrn)) #59
+so_kpmp_sc$celltype <- case_when(grepl("PT-",so_kpmp_sc$celltype_rpca)~"PT",
+                                 grepl("TAL-",so_kpmp_sc$celltype_rpca)~"TAL",
+                                 grepl("EC-",so_kpmp_sc$celltype_rpca)~"EC",
+                                 grepl("POD",so_kpmp_sc$celltype_rpca)~"POD",
+                                 grepl("MAC",so_kpmp_sc$celltype_rpca)~"MAC",
+                                 grepl("MON",so_kpmp_sc$celltype_rpca)~"MON",
+                                 grepl("PC-",so_kpmp_sc$celltype_rpca)~"PC",
+                                 grepl("FIB",so_kpmp_sc$celltype_rpca)~"FIB_MC_VSMC",
+                                 grepl("DTL",so_kpmp_sc$celltype_rpca)~"DTL",
+                                 so_kpmp_sc$celltype_rpca=="DCT"~"DCT",
+                                 so_kpmp_sc$celltype_rpca=="ATL"~"ATL",
+                                 so_kpmp_sc$celltype_rpca=="B"~"B",
+                                 so_kpmp_sc$celltype_rpca=="T"~"T")
+so_kpmp_sc$celltype <- as.character(so_kpmp_sc$celltype)
+rm(GeomSplitViolin)
+```
+
+# 3. Descriptive Statistics
+## a. Tables 
+```{r, echo = F,warning=F}
+# #Load metadata for descriptive stats
+# #dat <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc.csv"))
+# dat <- read.csv(fs::path(dir.dat,"Kidney Project","Data","harmonized_data_kidney_sc_all_metadata.csv")) #all metadata vars
+# dat <- dat %>% 
+#   dplyr::select(-X)
+# 
+# #Filter to individuals with pah clerance data 
+# dat <- dat %>%
+#   filter(kit_id %in% unique(so_kpmp_sc$kit_id))
+dat <- so_kpmp_sc@meta.data 
+
+# Function to select the first non-NA value for each variable in a group
+first_non_na <- function(x) {
+  x[!is.na(x)][1]  # Get the first non-NA value
+}
+
+dat <- dat %>% 
+  group_by(kit_id) %>% 
+  summarise(across(everything(), first_non_na)) %>%
+  ungroup()
+
+#Create Medication Groups
+dat <- dat %>%
+  mutate(glp1_sglt2=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>% 
+  mutate(sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>% 
+  mutate(glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>% 
+  mutate(no_med=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+#mutate(=ifelse(group!="Type 2 Diabetes" &  epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+
+#Define 4 exposure groups: 
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
+gc()
+dat <- dat %>% 
+  mutate(medication = case_when(glp1_sglt2 == "Yes" ~ "glp1_sglt2",
+                                sglt2 == "Yes" ~ "sglt2",
+                                glp1 == "Yes" ~ "glp1",
+                                no_med == "Yes" ~ "no_med"))
+dat$medication <- factor(dat$medication, levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
+
+#Define a T2D+OB group
+dat <- dat %>%
+  mutate(group2 = ifelse((group=="Type 2 Diabetes" | group=="Obese Control"),"T2D + OB",group))
+#check <- dat %>%
+#  dplyr::select(all_of(c("kit_id","group","group2")))
+
+#Number of Individuals Per Study 
+harm_summary1 <- dat %>%
+  group_by(study) %>%
+  summarize(n=n())
+
+#Number of Individuals Per Disease Group
+harm_summary2 <- dat %>%
+  group_by(group) %>%
+  summarize(n=n())
+
+#Number of Individuals Per Medication Group
+harm_summary3 <- dat %>%
+  group_by(medication) %>%
+  summarize(n=n())
+
+#Number of Individuals per med group & disease group
+harm_summary4 <- dat %>%
+  group_by(group,medication) %>%
+  summarize(n=n())
+
+harm_summary5 <- dat %>%
+  group_by(study,group,medication) %>%
+  summarize(n=n())
+
+#Note: 83 participants have sc and metadata
+#Covars of interest: 
+#UACR, SBP/DBP (MAP), GFR, RPF, BMI, Fat Mass, Lean Mass, HbA1C, TKV/htTKV
+label(dat$age)      <- "Age (y)"
+label(dat$sex)      <- "Sex"
+label(dat$hba1c) <- "HbA1c (%)"
+dat$medication <- case_when(dat$medication=="no_med"~"No Medication",
+                            dat$medication=="sglt2"~"Exclusive SLGT2i",
+                            dat$medication=="glp1"~"Exclusive GLP-1ra",
+                            dat$medication=="glp1_sglt2"~"GLP-1ra + SGLT2i")
+#dat$medication <- factor(dat$medication)
+label(dat$medication) <- "Medication Status"
+label(dat$ace_inhibitor) <- "ACE Inhibitor (Yes vs. No)"
+label(dat$angiotensin_receptor_blocker) <- "Angiotensin Receptor Blocker (Yes vs. No)"
+label(dat$sbp) <- "Systolic Blood Pressure (mmHg)"
+label(dat$dbp) <- "Diastolic Blood Pressure (mmHg)"
+label(dat$map) <- "Mean Arterial Pressure (mmHg)"
+label(dat$erpf_raw_plasma) <- "Estimated Renal Plasma Flow (mL/min)"
+label(dat$bmi) <- "Body Mass Index (kg/m²)"
+label(dat$dexa_fat_kg) <- "DEXA Fat Mass (kg)" 
+label(dat$dexa_lean_kg) <- "DEXA Lean Mass (kg)"
+label(dat$total_kidney_volume_ml) <- "Total Kidney Volume (mL)"
+label(dat$ht_adj_tkv) <- "Height-Adjusted Total Kidney Volume (mL/m)"
+label(dat$gfr_raw_plasma) <- "Glomerular Filtration Rate (mL/min)"
+label(dat$eGFR_CKD_epi) <- "Estimated Glomerular Filtration Rate (mL/min/1.73 m²)"
+label(dat$race_ethnicity)    <- "Race/Ethnicity"
+label(dat$triglycerides) <-  "Triglycerides (mg/dL)"
+label(dat$pah_clear_abs) <- "Absolute PAH Clearance (Plasma) (mL/min)"
+label(dat$pah_clear_bsa) <- "BSA Normalized PAH Clearance (Plasma) (ml/min/1.73m2)"
+label(dat$group) <- "Disease Status"
+label(dat$group2) <- "Disease Status"
+label(dat$metformin_timepoint) <- "Metformin (Yes vs. No)"
+label(dat$mfm_1) <- "Metformin (Yes vs. No)"
+label(dat$insulin_med_timepoint) <- NULL
+label(dat$insulin_injections_timepoint) <- NULL
+label(dat$insulin_1) <- "Insulin (Yes vs. No)"
+label(dat$acr_u) <- "Urine Albumin-Creatinine Ratio (mg/g)"
+#race_ethnicity
+#Table 1. Descriptive Statistics by Disease Status ----
+table1::table1(~ age + sex + bmi + map + 
+                 triglycerides + acr_u+ pah_clear_abs + group2 +
+                 medication + mfm_1+ insulin_1 | group, data=dat, render.missing = NULL) 
+
+table1(~ age + sex + bmi + race_ethnicity + map + 
+         triglycerides + pah_clear_abs + group +
+         medication | study, data=dat,overall=F)
+table1(~ pah_clear_abs+dexa_fat_kg + dexa_lean_kg + hba1c +
+         sbp + dbp + map + 
+         triglycerides  | group, data=dat)
+table1(~  gfr_raw_plasma +  
+         erpf_raw_plasma+ total_kidney_volume_ml + ht_adj_tkv+
+         ace_inhibitor + angiotensin_receptor_blocker+ 
+         + medication | group, data=dat)
+table1(~ age + sex + bmi + dexa_fat_kg + dexa_lean_kg + hba1c +
+         sbp + dbp + map + 
+         triglycerides + gfr_raw_plasma + eGFR_CKD_epi + 
+         erpf_raw_plasma+ total_kidney_volume_ml + ht_adj_tkv+
+         ace_inhibitor + angiotensin_receptor_blocker+ 
+         + medication | group, data=dat)
+#Table 1. Descriptive Statistics by Disease Status with T2D and OB Combined ----
+table1(~ age + sex + bmi + dexa_fat_kg + dexa_lean_kg + hba1c +
+         sbp + dbp + map + 
+         triglycerides + gfr_raw_plasma + eGFR_CKD_epi + 
+         erpf_raw_plasma+ total_kidney_volume_ml + ht_adj_tkv+
+         ace_inhibitor + angiotensin_receptor_blocker+
+         + medication | group2, data=dat)
+
+
+#Visualize pah clearance on plots
+p <- ggplot(dat, aes(x = group, y = pah_clear_abs, fill=group)) +
+  geom_bar(stat="identity",position="dodge")+
+  labs(x = "Disease Status", y = "PAH Clearance",fill="Disease Status") +
+  theme_minimal() 
+print(p)
+
+p <- ggplot(dat, aes(x = group, y = pah_clear_abs, fill = group)) +
+  geom_violin(trim = FALSE, alpha = 0.6) +  # Violin plot with full density
+  geom_jitter(width = 0.2, alpha = 0.5) +  # Adds individual points for better visibility
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3, color = "black", fill = "white") +  # Add means
+  labs(x = "Disease Status", y = "PAH Clearance", fill = "Disease Status") +
+  theme_minimal()
+
+print(p)
+
+
+p <- ggplot(dat, aes(x = group, y = pah_clear_abs, fill=medication)) +
+  geom_bar(stat="identity",position="dodge")+
+  labs(x = "Disease Status", y = "PAH Clearance",fill="Medication") +
+  theme_minimal() 
+print(p)
+
+type2 <- dat%>%
+  filter(group=="Type 2 Diabetes")
+p <- ggplot(type2, aes(x = medication, y = pah_clear_abs, fill=medication)) +
+  geom_bar(stat="identity",position="dodge")+
+  labs(x = "Medication", y = "PAH Clearance",fill="Medication") +
+  theme_minimal() 
+print(p)
+
+
+ggplot(dat, aes(x = pah_clear_abs,y = erpf_raw_plasma))+
+  geom_point()+
+  geom_smooth(method="lm")+
+  theme_classic()
+
+```
+
+## b. Figures 
+```{r, echo=F, warning=F}
+
+# Generate a dot plot of average expression for specified genes, stratified by disease group
+genes_of_interest <- c("SLC22A6", "SLC22A7", "SLC22A8", "SLC22A11", "ABCC2", 
+                       "SLC10A2", "SLC13A2", "SLC13A3", "SLC22A12", "SLC22A2", 
+                       "SLC34A1", "SLC47A1", "SLC47A2", "SLC22A1", "SLC22A4", 
+                       "SLC22A5", "SLC22A13", "SLC29A1", "SLC29A2", "SLC35A1", 
+                       "ABCC4", "ABCG2")
+unique(so_kpmp_sc$KPMP_celltype)
+DotPlot(
+  so_kpmp_sc,
+  features=genes_of_interest,
+  assay = NULL,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  # idents = "celltype",
+  group.by = "KPMP_celltype",
+  # split.by = NULL,
+  cluster.idents = FALSE,
+  scale = TRUE,
+  # scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA
+)
+
+DotPlot(
+  so_kpmp_sc,
+  features = genes_of_interest,
+  assay = NULL,
+  cols = c("lightgrey", "red"),  # Update color scheme to lightgrey to red
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  group.by = "KPMP_celltype",
+  cluster.idents = FALSE,
+  scale = TRUE,
+  scale.min = NA,
+  scale.max = NA
+) + 
+  # Rotate the x-axis text
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  
+  # Change the color scale to red
+  scale_color_gradient(low = "lightpink", high = "darkred")  # Red color gradient
+
+DotPlot(
+  so_kpmp_sc,
+  features = genes_of_interest,
+  assay = NULL,
+  cols = c("lightgrey", "red"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  group.by = "KPMP_celltype",
+  cluster.idents = FALSE,
+  scale = TRUE,
+  scale.min = NA,
+  scale.max = NA
+) + 
+  # Rotate the x-axis text
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  
+  # Custom color scale: grey to yellow to pink to red
+  scale_color_gradientn(
+    colors = c("lightgrey", "yellow", "red", "darkred"),
+    values = c(0, 0.25, 0.5, 1),  # Control how the colors are distributed across the scale
+    limits = c(-2.5, 2.5)  # Set the limits for the color scale (ensure this matches your data range)
+  )
+
+# # Check the subset
+# table(so_kpmp_sc$celltype)  # This will show the count of each cell type in the subset
+# Idents(so_kpmp_sc) <- so_kpmp_sc$celltype
+
+DotPlot(
+  so_kpmp_sc,
+  features = genes_of_interest,
+  assay = NULL,
+  cols = c("lightgrey", "red"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  group.by = "celltype_rpca",
+  cluster.idents = FALSE,
+  scale = TRUE,
+  scale.min = NA,
+  scale.max = NA
+) + 
+  # Rotate the x-axis text
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  
+  # Custom color scale: grey to yellow to pink to red
+  scale_color_gradientn(
+    colors = c("lightgrey", "yellow", "red", "darkred"),
+    values = c(0, 0.25, 0.5, 1),  # Control how the colors are distributed across the scale
+    limits = c(-2.5, 2.5)  # Set the limits for the color scale (ensure this matches your data range)
+  )
+
+hist(so_kpmp_sc$pah_clear_abs)
+so_kpmp_sc$pah_cat <- ifelse(so_kpmp_sc$pah_clear_abs>625,"High","Normal")
+dp_plot <- dp.formatted(so_kpmp_sc, genes_of_interest, KPMP_celltype, group.by="pah_cat", exp_group="High",ref_group="Normal")
+print(dp_plot)
+so_kpmp_sc$pah_cat <- factor(so_kpmp_sc$pah_cat)
+so_kpmp_sc$pah_cat <- relevel(so_kpmp_sc$pah_cat, ref = "Normal")
+
+Idents(so_kpmp_sc) <- so_kpmp_sc$KPMP_celltype
+m <- de.markers(so_kpmp_sc, genes=genes_of_interest, group.by="pah_cat", "High", "Normal", NULL,"pah")
+
+
+dp <- dp.formatted(seurat_object=so_kpmp_sc,genes=genes_of_interest,group.by="pah_cat",m=m,celltype=NULL,exp_group="High",ref_group="Normal")
+
+```
+
+#4. LMEM
+```{r}
+
+#Notes
+#Look at all PAH variables
+#Scale pah variables
+#Just look in PT cells, pseudobulk PT and also in PT1,2,3,4,5
+#Adjust for Sex in addition 
+#Normalize after aggregation
+#Double checking which genes are on which membranes
+#Mixture model with all genes from apical side vs. all on basolateral 
+
+# #Genes of interest
+# oat_genes <- c("SLC22A6", "SLC22A7", "SLC22A8", "SLC22A11", "ABCC2", "SLC10A2", "SLC13A2", "SLC13A3", "SLC22A12", "SLC22A2", "SLC34A1", "SLC47A1", "SLC47A2")
+
+oat_genes1 <- c(
+  "SLC22A6", "SLC22A7", "SLC22A8", "SLC22A11", "ABCC2", "SLC10A2",
+  "SLC13A2", "SLC13A3", "SLC22A12", "SLC22A2", "SLC34A1", "SLC47A1",
+  "SLC47A2", "SLC22A15", "SLC22A5", "SLC22A23", "SLC22A2", "SLC22A3",
+  "SLC22A18", "SLC22A17", "SLC22A13", "SLC22A14", "SLC22A4", "SLC22A1",
+  "SLC22A18AS", "SLC22A24", "SLC22A9", "SLC22A10", "SLC22A16",
+  "SLC22A25"
+)
+oat_genes2 <- c(
+  "SLC22A6", "SLC22A7", "SLC22A8", "SLCO4C1","SLC13A3","SLC22A2","SLC47A1","SLC47A2","ABCG2","ABCC2","ABCC4","SLC22A11","SLC22A12","SLC13A2"
+)
+# Find unique elements in oat_genes1 and oat_genes2
+oat_genes <- union(oat_genes1,oat_genes2)
+
+so_PT <- subset(so_kpmp_sc,KPMP_celltype=="aPT" | KPMP_celltype=="PT-S1/S2"| KPMP_celltype=="PT-S3")
+# so_PT <- subset(so_PT,group!="Obese_Control")
+nrow(so_PT)
+Cells <- ncol(so_PT) #20935 cells 
+# expr_matrix <- as.matrix(GetAssayData(so_PT, layer = "data"))
+# # Calculate the proportion of cells expressing each gene
+# num_cells_per_gene <- rowSums(expr_matrix > 0)  # Count nonzero cells per gene
+# total_cells <- ncol(expr_matrix)  # Total number of cells
+# gene_proportion <- (num_cells_per_gene / total_cells)*100  # Fraction of cells expressing each gene
+# length(gene_proportion) # 31319
+# oat_gene_proportions <- gene_proportion[oat_genes]
+# length(oat_gene_proportions)
+# #Filter out rare oat genes expressed in less than 5% of PT cells
+# # Keep genes expressed in at least 5% of cells
+# genes_to_keep <- names(oat_gene_proportions[oat_gene_proportions >= 0.05])
+# length(genes_to_keep)
+# # attempt_so <- subset(attempt_so, features = genes_to_keep)
+# 
+# 
+# 
+#PT1/2
+so_PT1 <- subset(so_kpmp_sc,KPMP_celltype=="PT-S1/S2")
+expr_matrix1 <- as.matrix(GetAssayData(so_PT1, layer = "data"))
+# Calculate the proportion of cells expressing each gene
+num_cells_per_gene1 <- rowSums(expr_matrix1 > 0)  # Count nonzero cells per gene
+total_cells1 <- ncol(expr_matrix1)  # Total number of cells
+gene_proportion1 <- (num_cells_per_gene1 / total_cells1)*100  # Fraction of cells expressing each gene
+length(gene_proportion1) # 31319
+oat_gene_proportions1 <- gene_proportion1[oat_genes]
+length(oat_gene_proportions1) #31
+#Filter out rare oat genes expressed in less than 5% of PT cells
+# Keep genes expressed in at least 5% of cells
+genes_to_keep1 <- names(oat_gene_proportions1[oat_gene_proportions1 >= 5])
+length(genes_to_keep1) #28
+pts12_omit <- names(oat_gene_proportions1)[which(!names(oat_gene_proportions1) %in% genes_to_keep1)] # "SLC22A31" "SLC22A16" "SLC22A25" dropped for PT-S1/S2 cells
+
+#PT3
+so_PT2 <- subset(so_kpmp_sc,KPMP_celltype=="PT-S3")
+expr_matrix2 <- as.matrix(GetAssayData(so_PT2, layer = "data"))
+# Calculate the proportion of cells expressing each gene
+num_cells_per_gene2 <- rowSums(expr_matrix2 > 0)  # Count nonzero cells per gene
+total_cells2 <- ncol(expr_matrix2)  # Total number of cells
+gene_proportion2 <- (num_cells_per_gene2 / total_cells2)*100  # Fraction of cells expressing each gene
+length(gene_proportion2) # 31319
+oat_gene_proportions2 <- gene_proportion2[oat_genes]
+length(oat_gene_proportions2) #31
+#Filter out rare oat genes expressed in less than 5% of PT cells
+# Keep genes expressed in at least 5% of cells
+genes_to_keep2 <- names(oat_gene_proportions2[oat_gene_proportions2 >= 5])
+length(genes_to_keep2) #29
+pts3_omit <- names(oat_gene_proportions2)[which(!names(oat_gene_proportions2) %in% genes_to_keep2)] # "SLC22A31" "SLC22A16" dropped for PT-S3 cells
+
+#aPT
+so_PT3 <- subset(so_kpmp_sc,KPMP_celltype=="aPT")
+expr_matrix3 <- as.matrix(GetAssayData(so_PT3, layer = "data"))
+# Calculate the proportion of cells expressing each gene
+num_cells_per_gene3 <- rowSums(expr_matrix3 > 0)  # Count nonzero cells per gene
+total_cells3 <- ncol(expr_matrix3)  # Total number of cells
+gene_proportion3 <- (num_cells_per_gene3 / total_cells3)*100  # Fraction of cells expressing each gene
+length(gene_proportion3) # 31319
+oat_gene_proportions3 <- gene_proportion3[oat_genes]
+length(oat_gene_proportions3) #31
+#Filter out rare oat genes expressed in less than 5% of PT cells
+# Keep genes expressed in at least 5% of cells
+genes_to_keep3 <- names(oat_gene_proportions3[oat_gene_proportions3 >= 5])
+length(genes_to_keep3) #29
+pta_omit <- names(oat_gene_proportions3)[which(!names(oat_gene_proportions3) %in% genes_to_keep3)] # "SLC22A31" "SLC22A16"  dropped for PT-S3 cells
+
+
+# 
+# oat_gene_props <- rbind(oat_gene_proportions1,oat_gene_proportions2)
+# oat_gene_props <- rbind(oat_gene_props,oat_gene_proportions3)
+# rownames(oat_gene_props) <- c("PT-S1/S2","PT-S3","aPT")
+# oat_gene_props <- data.frame(oat_gene_props)
+# # write.csv(oat_gene_props,fs::path(dir.results,"OAT_Gene_Percent_Expression_by_PT_Celltype.csv"))
+
+#Pseudobulk by individual & cell type & perform linear regression 
+# pseudobulked_data <- PseudobulkExpression(so_kpmp_sc, method="average",group.by = c("KPMP_celltype", "kit_id"),return.seurat=T)
+pseudobulked_data <- AggregateExpression(so_PT,slot="data", group.by = c("KPMP_celltype", "kit_id"),return.seurat = T)
+# pseudobulked_data <- NormalizeData(pseudobulked_data)
+pseudobulked_data2 <- AggregateExpression(so_PT,slot="data", group.by = c("kit_id"),return.seurat = T)
+
+
+
+# length(unique(so_kpmp_sc$KPMP_celltype))*length(unique(so_kpmp_sc$kit_id))  #2537 
+# ncol(pseudobulked_data) #2220 cell/individuals 
+# nrow(pseudobulked_data) #31319
+# pseudobulked_data_sum <- PseudobulkExpression(so_kpmp_sc, method="aggregate",group.by = c("celltype", "kit_id"),return.seurat=T,normalization.metho="LogNormalize")
+# ncol(pseudobulked_data_sum) #992 cell/individuals
+# nrow(pseudobulked_data_sum) #9276
+# length(unique(so_kpmp_sc$KPMP_celltype))*length(unique(so_kpmp_sc$kit_id))
+
+# unique(so_kpmp_sc$KPMP_celltype)
+# so_subset <- subset(so_kpmp_sc,KPMP_celltype=="aPT")
+# Extract the gene expression data for all genes
+# gene_expression <- as.data.frame(so_subset@assays$RNA@layers$data)
+gene_expr_matrix <- pseudobulked_data@assays$RNA@layers$data
+rownames(gene_expr_matrix) <- rownames(pseudobulked_data)
+# Extract metadata from the pseudobulked Seurat object
+metadata <- pseudobulked_data@meta.data
+aggregated_metadata <- so_PT@meta.data %>%
+  dplyr::group_by(KPMP_celltype, kit_id) %>%
+  dplyr::summarize(across(everything(), ~first(.)))
+aggregated_metadata$orig.ident <- paste(aggregated_metadata$KPMP_celltype,aggregated_metadata$kit_id,sep="_")
+
+# Transpose the gene expression matrix so that samples are in rows
+# gene_expr_matrix <- t(gene_expr_matrix)
+
+# Check the dimensions of the transposed matrix
+dim(gene_expr_matrix)
+dim(aggregated_metadata)
+dim(metadata)
+
+# Ensure that the column names in both matrices match (the sample names)
+all(colnames(gene_expr_matrix) == rownames(metadata))  # Should return TRUE
+all(colnames(gene_expr_matrix) == rownames(aggregated_metadata))  # Should return TRUE
+
+# Merge the gene expression matrix with the metadata based on the sample names
+merged_data <- tidylog::full_join(metadata,aggregated_metadata,by=c("orig.ident","KPMP_celltype","kit_id"))
+merged_data <- cbind(merged_data, t(gene_expr_matrix))
+
+#For PT total
+gene_expr_matrix2 <- pseudobulked_data2@assays$RNA@layers$data
+rownames(gene_expr_matrix2) <- rownames(pseudobulked_data2)
+# Extract metadata from the pseudobulked Seurat object
+metadata2 <- pseudobulked_data2@meta.data
+aggregated_metadata2 <- so_PT@meta.data %>%
+  dplyr::group_by(kit_id) %>%
+  dplyr::summarize(across(everything(), ~first(.)))
+aggregated_metadata2$orig.ident <- paste(aggregated_metadata2$kit_id)
+
+# Transpose the gene expression matrix so that samples are in rows
+# gene_expr_matrix <- t(gene_expr_matrix)
+
+# Check the dimensions of the transposed matrix
+dim(gene_expr_matrix2)
+dim(aggregated_metadata2)
+dim(metadata2)
+
+# Ensure that the column names in both matrices match (the sample names)
+all(colnames(gene_expr_matrix2) == rownames(metadata2))  # Should return TRUE
+all(colnames(gene_expr_matrix2) == rownames(aggregated_metadata2))  # Should return TRUE
+
+# Merge the gene expression matrix with the metadata based on the sample names
+merged_data2 <- tidylog::full_join(metadata2,aggregated_metadata2,by=c("orig.ident","kit_id"))
+merged_data2 <- cbind(merged_data2, t(gene_expr_matrix2))
+
+# # Assign the gene names (row names of Seurat object) as the column names
+# rownames(gene_expression) <- rownames(so_subset)
+# colnames(gene_expression) <- colnames(so_subset)
+# gene_expression <- t(gene_expression)
+# gene_expression <- data.frame(gene_expression)
+# gene_list <- colnames(gene_expression)
+# # #log transform gene expression
+# gene_expression <- gene_expression %>%
+#   mutate(across(everything(),~log1p(.))) # log1p is log(x + 1)
+# gene_expression$cellname <- rownames(gene_expression)
+# rownames(gene_expression) <- NULL
+
+# Extract the metadata, make sure you select relevant columns (e.g., 'predictor1', 'disease_status')
+# metadata <- so_subset@meta.data
+# metadata <- metadata %>%
+#   mutate(across(everything(),~ifelse(.==".",NA,.)))
+# metadata$cellname <- rownames(metadata)
+# rownames(metadata) <- NULL
+
+# filter_ids <- unique(data$kit_id[which(data[[x]]==".")])
+
+# # Combine the gene expression data and metadata
+# # This ensures cells (columns) are aligned properly between the two
+# data <- tidylog::full_join(metadata,gene_expression,by="cellname")
+# # unique(data$kit_id) #81 participants
+# # which(colnames(data) =="cellname")
+# unique(data$group)
+# data$group <- factor(data$group,levels = c("Lean_Control","Obese_Control","Type_1_Diabetes","Type_2_Diabetes"),labels=c("Lean_Control","Obese_Control","Type_1_Diabetes","Type_2_Diabetes"))
+# length(data$hba1c)
+# length(which(data$hba1c==".")) #7457 cells missing hba1c
+# length(unique(data$kit_id[which(data$hba1c==".")])) #3 people missing HbA1c: "KL-0029407" "KL-0030607" "KL-0031456"
+# rm(gene_expression,metadata)
+rm(gene_expr_matrix,metadata,pseudobulked_data)
+rm(gene_expr_matrix2,metadata2,pseudobulked_data2)
+#Log transform pah clearance
+# data <- merged_data %>%
+#   mutate(pah_clear_abs_log=log(pah_clear_abs))
+
+data <- merged_data %>% 
+  dplyr::select(all_of(c("kit_id","KPMP_celltype","age","sex","height","weight","medication","group","pah_clear_abs","pah_clear_bsa",oat_genes))) 
+# dplyr::select(-c("SLC22A31"))
+
+data <- data %>% 
+  mutate(across(all_of(oat_genes),~scale(.)))
+data <- data %>% 
+  mutate(pah_clear_abs_scaled=scale(pah_clear_abs),
+         pah_clear_bsa_scaled=scale(pah_clear_bsa))
+
+#PT total
+data2 <- merged_data2 %>% 
+  dplyr::select(all_of(c("kit_id","age","sex","height","weight","medication","group","pah_clear_abs","pah_clear_bsa",oat_genes))) 
+# dplyr::select(-c("SLC22A31"))
+
+data2 <- data2 %>% 
+  mutate(across(all_of(oat_genes),~scale(.)))
+data2 <- data2 %>%
+  mutate(
+    pah_clear_abs_scaled = (pah_clear_abs - mean(pah_clear_abs, na.rm = TRUE)) / sd(pah_clear_abs, na.rm = TRUE),
+    pah_clear_bsa_scaled = (pah_clear_bsa - mean(pah_clear_bsa, na.rm = TRUE)) / sd(pah_clear_bsa, na.rm = TRUE)
+  )
+
+
+# #Groups
+# #1. Type 2 Diabetes
+#Zero inflated negative binomial mixed model/negative binomail mixed model
+# exp <- "Type_2_Diabetes"
+# oat_genes <- c("SLC22A6", "SLC22A7", "SLC22A8", "SLC22A11", "ABCC2", "SLC10A2", "SLC13A2", "SLC13A3", "SLC22A12", "SLC22A2", "SLC34A1", "SLC47A1", "SLC47A2")
+
+#Change oat names
+#Remove adaptive
+# # gene_list <- oat_genes
+# genes <- oat_genes
+pah_exposures <- c("pah_clear_abs_scaled","pah_clear_bsa_scaled")
+# data_subgroup <- data %>% 
+#   filter(KPMP_celltype=="aPT")
+basolateral_oat <- c("SLC22A6","SLC22A7","SLC22A8","SLCO4C1","SLC13A3" ,"SLC22A2")
+# basolateral_oat <- c("SLC22A6", "SLC22A7", "SLC22A8", "SLC22A11", "ABCC2", "SLC10A2", "SLC13A2", 
+#                      "SLC13A3", "SLC22A12", "SLC22A2", "SLC34A1", "SLC47A1", "SLC47A2", "SLC22A15", 
+#                      "SLC22A5", "SLC22A23", "SLC22A2", "SLC22A3", "SLC22A18", "SLC22A17", "SLC22A13", 
+#                      "SLC22A14", "SLC22A4", "SLC22A1")
+
+# apical_oat <- c("SLC22A18AS", "SLC22A24", "SLC22A9", "SLC22A10", "SLC22A25")
+apical_oat <- c("SLC47A1","SLC47A2","ABCG2","ABCC2","ABCC4","SLC22A11","SLC22A12","SLC13A2")
+
+
+# data2 <- data %>% 
+#   dplyr::select(all_of(c("age","sex","medication","group","pah_clear_abs","pah_clear_abs_scaled",oat_genes)))
+# oat_genes <- oat_genes[-c(28,30)]
+# data <- merged_data
+# pdf(fs::path(dir.results,"gene_expression_plots_abs_adj_03_10.pdf"), width = 20, height = 10)  # You can adjust the width and height
+full_results <- data.frame()
+# Prepare parallel execution of gene models
+# full_results <- foreach(gene = genes, .combine = rbind, .packages = c("glmmTMB", "dplyr")) %dopar% {
+for (celltype in unique(data$KPMP_celltype)) {
+  for (exposure in pah_exposures) {
+    for (gene in oat_genes) {
+      data_subgroup <- data[which(data$KPMP_celltype==celltype),]
+      # for (gene in gene_list[1:20]) { #tester genes
+      
+      # if(sum(data_subgroup[[gene]])>0) {
+      # m0 <- as.formula(paste0(exposure," ~ ",gene,"+group+age+sex+medication"))
+      m0 <- as.formula(paste0(exposure," ~ ",gene,"+group+height+weight+sex"))
+      # m0 <- as.formula(paste0(exposure," ~ ",gene,"+group"))
+      model <- lm(m0,data=data_subgroup)
+      
+      # #Interaction term
+      # m1 <- as.formula(paste0(exposure," ~ ",gene,"*group+height+weight+sex"))
+      # model1 <- lm(m1,data=data_subgroup)
+      # summary(model1)
+      if (gene %in% apical_oat) {
+        membrane="Apical Transporter"
+      } 
+      if (gene %in% basolateral_oat) {
+        membrane="Basolateral Transporter"
+      } else {
+        membrane="Unknown Membrane"
+      }
+      N = length(unique(data_subgroup$kit_id))
+      # # Plot residuals vs. fitted values
+      # # plot(model, which = 1)  # After fitting the mixed-effects model 'model'
+      # # # Q-Q plot to check normality of residuals
+      # # qqnorm(residuals(model))
+      # # qqline(residuals(model))  # Add reference line
+      # resout <- lm(m0,data=data_subgroup)
+      # # resout <- lm(Sodium ~ Calories, data = BrendonSmall)
+      # car::qqPlot(resout, main = "Q-Q Plot of Residuals from Linear Regression")
+      # 
+      # # Extract the residuals
+      # residout <- resid(resout)
+      # 
+      # 
+      # library(moments)
+      # moments::skewness(residout)
+      # moments::kurtosis(residout)
+      # 
+      # library(rcompanion) 
+      # # draw plot 
+      # plotNormalHistogram(scale(residout), 
+      #                     prob = FALSE, 
+      #                     main = "Normal Distribution overlay on Histogram", 
+      #                     length = 100) 
+      
+      foldchange=summary(model)$coef[2,1]
+      pval=summary(model)$coef[2,4]
+      se=summary(model)$coef[2,2]
+      lower_CI = foldchange - 1.96 * se
+      upper_CI = foldchange + 1.96 * se
+      
+      # foldchange1=summary(model1)$coef[2,1]
+      # pval1=summary(model1)$coef[2,4]
+      
+      # # Collect results for each gene
+      if (!gene %in% genes_to_keep1 & celltype=="PT-S1/2") {
+        foldchange <- NA
+        # foldchange1 <- NA
+        se <- NA
+        pval <- NA
+        # pval1 <- NA
+        lower_CI <- NA
+        upper_CI <- NA
+      }
+      if (!gene %in% genes_to_keep2 & celltype=="PT-S3") {
+        foldchange <- NA
+        # foldchange1 <- NA
+        se <- NA
+        pval <- NA
+        # pval1 <- NA
+        lower_CI <- NA
+        upper_CI <- NA
+      }
+      if (!gene %in% genes_to_keep3 & celltype=="aPT") {
+        foldchange <- NA
+        # foldchange1 <- NA
+        se <- NA
+        pval <- NA
+        # pval1 <- NA
+        lower_CI <- NA
+        upper_CI <- NA
+      }
+      # 
+      # # Basic scatterplot with ggplot2
+      # p1 <- ggplot(data_subgroup, aes(x = .data[[gene]], y = .data[[exposure]])) +
+      #   geom_point(color = "purple") +  # Add scatter points with blue color
+      #   geom_smooth(method=lm)+
+      #   labs(title = paste0("Scatterplot of Average", gene," Expression vs. ",exposure,"\n adjusting for age, disease status & medication in ",celltype," cells (",membrane,")"),
+      #        subtitle = paste0("Beta = ",round(foldchange,3),", Pvalue = ",round(pval,5)),
+      #        x = paste0(gene),
+      #        y = paste0(exposure))+
+      #   theme_minimal()  # Optional: for a cleaner look
+      # 
+      # p2 <- ggplot(data_subgroup, aes(x = .data[[gene]], y = .data[[exposure]], color = group)) +
+      #   geom_point() +  # Scatter points, colored by 'group'
+      #   geom_smooth(method = "lm",se=F, aes(color = group)) +  # Linear regression trend line for each group
+      #   labs(title = paste0("Scatterplot of Average", gene," Expression vs. ",exposure,"\n by disease status and adjusting for age and medications in ",celltype," cells"),
+      #        subtitle = paste0("Beta = ",round(foldchange1,3),", Pvalue = ",round(pval1,5)),
+      #        x = paste0(gene),
+      #        y = paste0(exposure))+
+      #   theme_minimal()  # Cleaner theme
+      # 
+      # print(p1 + p2)
+      # } else {
+      #   foldchange <- NA
+      #   # foldchange1 <- NA
+      #   se <- NA
+      #   pval <- NA   
+      #   # pval1 <- NA 
+      #   lower_CI <- NA
+      #   upper_CI <- NA
+      #   N <- NA
+      #   membrane <- NA
+      # }
+      results <- data.frame(Gene = gene, Exposure = exposure, Beta = foldchange,SE=se, LowerCI=lower_CI,UpperCI=upper_CI,PValue = pval,Membrane=membrane,N=N,Celltype=celltype)
+      # results <- data.frame(Gene = gene, Exposure = exposure, Beta = foldchange,SE=se, LowerCI=lower_CI,UpperCI=upper_CI,PValue = pval,Beta_Int = foldchange1,PValue_Int=pval1,Membrane=membrane,N=N)
+      # # results <- data.frame(Gene = gene, Beta = foldchange, PValue = pval,ModelName=model_name)
+      # # return(results)
+      # results <- data.frame(Gene=gene,Beta=foldchange,PValue=pval)
+      full_results <- rbind(full_results,results)
+      # # # print(p)
+      # # return(full_results)
+    }
+  }
+}
+# dev.off()
+# # #Make volcano plot of all gene results for group
+full_results <- full_results %>%
+  mutate(sig=ifelse(PValue<0.05,"*","")) 
+# mutate(sig_int=ifelse(PValue_Int<0.05,"*","")) 
+
+# write.csv(full_results,fs::path(dir.results,"OAT_Gene_Exp_pah_clear_adj_03_10.csv"))
+# Create the gene symbol list
+# oat_genes <- c("SLC22A6", "SLC22A7", "SLC22A8", "SLC22A11", "ABCC2", "SLC10A2", "SLC13A2", 
+#                "SLC13A3", "SLC22A12", "SLC22A2", "SLC34A1", "SLC47A1", "SLC47A2", "SLC22A15", 
+#                "SLC22A5", "SLC22A23", "SLC22A2", "SLC22A3", "SLC22A18", "SLC22A17", "SLC22A13", 
+#                "SLC22A14", "SLC22A4", "SLC22A1", "SLC22A18AS", "SLC22A24", "SLC22A9", "SLC22A10", 
+#                "SLC22A25")
+oat_genes
+
+# Corresponding gene names
+gene_names <- c("OAT1", "OAT2", "OAT3", "OATP4C1", "NaDC3", "OCT2","MATE1","MATE2-K",
+                "ABCG2/BCRP","MRP2","MRP4","OAT4","URAT1","NaDC1")
+
+# Create the data frame
+# gene_df <- data.frame(Gene = oat_genes, GeneName = gene_names)
+# full_results <- tidylog::left_join(full_results,gene_df,by="Gene")
+# full_results <- distinct(full_results)
+full_results <- full_results %>% 
+  na.omit
+
+#Visualize results on coefficient plot
+# Create the plot with standard error bars and sort by Beta size
+plot <- ggplot(full_results, aes(x = Beta, y = Gene)) +
+  geom_errorbarh(aes(xmin = LowerCI, xmax = UpperCI), height = 0.2,alpha=0.8) + # Standard error bars
+  geom_point(aes(color = sig)) + # Optional: color points based on PValue
+  geom_vline(xintercept = 0, linetype = "dotted", color = "darkgray") + # Add a dotted line at Beta = 0
+  # facet_wrap(Celltype ~ Membrane, scales = "free_y") + # Facet by CellType and Membrane
+    facet_grid(Celltype ~ Membrane + Exposure, scales = "free_y") + # Facet by CellType and Membrane
+  # facet_wrap(~ Membrane, scales = "free_y") + # Facet by CellType and Membrane
+  theme_minimal() + # Use a minimal theme
+  labs(x = "Beta", y = "Gene", title = "OAT Expression vs. PAH Clearance, adj. group, height, weight & sex") + 
+  theme(strip.text = element_text(size = 12)) # Customize facet labels if needed
+
+
+# Create the coefficient plot# Create the coefficient plotUpperCI
+ggplot(full_results, aes(x = Beta, y = Gene)) +
+  geom_point(aes(color = PValue)) + # Optional: color points based on PValue
+  geom_vline(xintercept = 0, linetype = "dotted", color = "red") + # Add a dotted line at Beta = 0
+  facet_wrap(CellType ~ Membrane, scales = "free_y") + # Facet by CellType and Membrane
+  theme_minimal() + # Use a minimal theme
+  labs(x = "Beta", y = "Gene", title = "OAT Expression vs. PAH Clearance, adj. group, height, weight & sex") + 
+  theme(strip.text = element_text(size = 12)) # Customize facet labels if needed
+
+# Create the plot with standard error bars, sorted by Beta size, and the desired facet layout
+plot <- ggplot(full_results, aes(x = Beta, y = GeneName)) +
+  geom_errorbarh(aes(xmin = LowerCI, xmax = UpperCI), height = 0.2, alpha = 0.8) + # Standard error bars
+  geom_point(aes(color = sig)) +  # Optional: color points based on PValue
+  geom_vline(xintercept = 0, linetype = "dotted", color = "darkgray") + # Add a dotted line at Beta = 0
+  facet_grid(Membrane ~ CellType, scales = "free_y",space="free_y") +  # 2 rows (Membrane), 3 columns (CellType)
+  theme_bw() +  # Use a minimal theme
+  labs(x = "Beta", y = "Gene", title = paste0("Average Gene Expression vs. Absolute PAH Clearance in Proximal Tubule Cells"),
+       subtitle="(Adjusting for age, sex, disease status and medications)") + 
+  theme(strip.text = element_text(size = 12),
+        plot.title=element_text(size = 12))   # Customize facet labels if needed
+# theme(
+#   strip.text.y = element_text(angle = 0), # Keep the Membrane labels horizontal
+#   strip.background = element_blank()  # Optional: Remove background color from strip text
+# ) 
+pdf(fs::path(dir.results,"Coefficient_plot_03_10.pdf"),width=15,height=15)
+plot(plot)
+dev.off()
+
+ggplot(data, aes(x=SLC22A10,y=pah_clear_bsa_scaled))+
+  geom_point()+
+  geom_smooth(method="lm")
+
+#Pseudobulk all pt cells
+full_results <- data.frame()
+# for (celltype in unique(data2$KPMP_celltype)) {
+# celltype="SchwannCells"
+for (gene in oat_genes[-28]) {
+  data2_subgroup <- data2
+  # data2_subgroup <- data2[which(data2$KPMP_celltype==celltype),]
+  # for (gene in gene_list[1:20]) { #tester genes
+  
+  if(sum(data2_subgroup[[gene]])>0) {
+    # m0 <- as.formula(paste0("pah_clear_abs_scaled ~ ",gene,"+group+age+sex+medication"))
+    # model <- lm(pah_clear_abs_scaled ~ data2_subgroup[[gene]] +group+age+sex+medication,data=data2_subgroup)
+    model <- lm(pah_clear_abs_scaled ~ data2_subgroup[[gene]] + group,data=data2_subgroup)
+    # model <- lm(m0,data2=data2_subgroup)
+    # model <- lm(pah_clear_abs_scaled ~ SLC22A25 +group+age+sex+medication,data=data2_subgroup)
+    
+    #Interaction term
+    m1 <- as.formula(paste0(exposure," ~ ",gene,"*group+age+sex+medication"))
+    model1 <- lm(m1,data2=data2_subgroup)
+    # summary(model)
+    if (gene %in% apical_oat) {
+      membrane="Apical Transporter"
+    } else {
+      membrane="Basolateral Transporter"
+    }
+    N = length(unique(data2_subgroup$kit_id))
+    # # Plot residuals vs. fitted values
+    # # plot(model, which = 1)  # After fitting the mixed-effects model 'model'
+    # # # Q-Q plot to check normality of residuals
+    # # qqnorm(residuals(model))
+    # # qqline(residuals(model))  # Add reference line
+    # resout <- lm(m0,data2=data2_subgroup)
+    # # resout <- lm(Sodium ~ Calories, data2 = BrendonSmall)
+    # car::qqPlot(resout, main = "Q-Q Plot of Residuals from Linear Regression")
+    # 
+    # # Extract the residuals
+    # residout <- resid(resout)
+    # 
+    # 
+    # library(moments)
+    # moments::skewness(residout)
+    # moments::kurtosis(residout)
+    # 
+    # library(rcompanion) 
+    # # draw plot 
+    # plotNormalHistogram(scale(residout), 
+    #                     prob = FALSE, 
+    #                     main = "Normal Distribution overlay on Histogram", 
+    #                     length = 100) 
+    
+    foldchange=summary(model)$coef[2,1]
+    pval=summary(model)$coef[2,4]
+    se=summary(model)$coef[2,2]
+    lower_CI = foldchange - 1.96 * se
+    upper_CI = foldchange + 1.96 * se
+    
+    foldchange1=summary(model1)$coef[2,1]
+    pval1=summary(model1)$coef[2,4]
+    
+    # # Collect results for each gene
+    # if (!gene %in% genes_to_keep1 & celltype=="PT-S1/2") {
+    #   foldchange <- NA
+    #   foldchange1 <- NA
+    #   se <- NA
+    #   pval <- NA
+    #   pval1 <- NA
+    #   lower_CI <- NA
+    #   upper_CI <- NA
+    # } 
+    # if (!gene %in% genes_to_keep2 & celltype=="PT-S3") {
+    #   foldchange <- NA
+    #   foldchange1 <- NA
+    #   se <- NA
+    #   pval <- NA
+    #   pval1 <- NA
+    #   lower_CI <- NA
+    #   upper_CI <- NA
+    # }
+    # if (!gene %in% genes_to_keep3 & celltype=="aPT") {
+    #   foldchange <- NA
+    #   foldchange1 <- NA
+    #   se <- NA
+    #   pval <- NA   
+    #   pval1 <- NA 
+    #   lower_CI <- NA
+    #   upper_CI <- NA
+    # }
+    
+    # # Basic scatterplot with ggplot2
+    # p1 <- ggplot(data2_subgroup, aes(x = .data2[[gene]], y = .data2[[exposure]])) +
+    #   geom_point(color = "purple") +  # Add scatter points with blue color
+    #   geom_smooth(method=lm)+
+    #   labs(title = paste0("Scatterplot of Average", gene," Expression vs. ",exposure,"\n adjusting for age, disease status & medication in ",celltype," cells (",membrane,")"),
+    #        subtitle = paste0("Beta = ",round(foldchange,3),", Pvalue = ",round(pval,5)),
+    #        x = paste0(gene),
+    #        y = paste0(exposure))+
+    #   theme_minimal()  # Optional: for a cleaner look
+    # 
+    # p2 <- ggplot(data2_subgroup, aes(x = .data2[[gene]], y = .data2[[exposure]], color = group)) +
+    #   geom_point() +  # Scatter points, colored by 'group'
+    #   geom_smooth(method = "lm",se=F, aes(color = group)) +  # Linear regression trend line for each group
+    #   labs(title = paste0("Scatterplot of Average", gene," Expression vs. ",exposure,"\n by disease status and adjusting for age and medications in ",celltype," cells"),
+    #        subtitle = paste0("Beta = ",round(foldchange1,3),", Pvalue = ",round(pval1,5)),
+    #        x = paste0(gene),
+    #        y = paste0(exposure))+
+    #   theme_minimal()  # Cleaner theme
+    # 
+    # print(p1 + p2)
+  } else {
+    foldchange <- NA
+    foldchange1 <- NA
+    se <- NA
+    pval <- NA
+    pval1 <- NA
+    lower_CI <- NA
+    upper_CI <- NA
+    N <- NA
+    membrane <- NA
+  }
+  results <- data.frame(Gene = gene, Beta = foldchange,SE=se, LowerCI=lower_CI,UpperCI=upper_CI,PValue = pval,Beta_Int = foldchange1,PValue_Int=pval1,Membrane=membrane,N=N)
+  # # results <- data2.frame(Gene = gene, Beta = foldchange, PValue = pval,ModelName=model_name)
+  # # return(results)
+  # results <- data2.frame(Gene=gene,Beta=foldchange,PValue=pval)
+  full_results <- rbind(full_results,results)
+  # # # print(p)
+  # # return(full_results)
+}
+# }
+
+full_results <- full_results %>%
+  mutate(sig=ifelse(PValue<0.05,"*",""))
+
+# write.csv(full_results,fs::path(dir.results,"OAT_Gene_Exp_pah_clear_abs_adj_02_28.csv"))
+# Create the gene symbol list
+oat_genes <- c("SLC22A6", "SLC22A7", "SLC22A8", "SLC22A11", "ABCC2", "SLC10A2", "SLC13A2", 
+               "SLC13A3", "SLC22A12", "SLC22A2", "SLC34A1", "SLC47A1", "SLC47A2", "SLC22A15", 
+               "SLC22A5", "SLC22A23", "SLC22A2", "SLC22A3", "SLC22A18", "SLC22A17", "SLC22A13", 
+               "SLC22A14", "SLC22A4", "SLC22A1", "SLC22A18AS", "SLC22A24", "SLC22A9", "SLC22A10", 
+               "SLC22A25")
+
+# Corresponding gene names
+gene_names <- c("OAT1", "OAT2", "OAT3", "OAT4", "MRP2", "NTCP", "OAT5", "OAT6", "OAT7", "OAT8",
+                "NaPi-IIa", "MATE1", "MATE2", "OAT10", "OAT11", "OAT12", "OAT13", "OAT14", "OAT15",
+                "OAT16", "OAT17", "OAT18", "OAT19", "OAT20", "OAT21", "OAT22", "OAT23", "OAT24", 
+                "OAT25")
+
+# Create the data frame
+gene_df <- data.frame(Gene = oat_genes, GeneName = gene_names)
+full_results <- tidylog::left_join(full_results,gene_df,by="Gene")
+full_results <- distinct(full_results)
+full_results <- full_results %>% 
+  na.omit
+
+#Visualize results on coefficient plot
+# Create the plot with standard error bars and sort by Beta size
+ggplot(full_results, aes(x = Beta, y = Gene)) +
+  geom_errorbarh(aes(xmin = LowerCI, xmax = UpperCI), height = 0.2,alpha=0.8) + # Standard error bars
+  geom_point(aes(color = sig)) + # Optional: color points based on PValue
+  geom_vline(xintercept = 0, linetype = "dotted", color = "darkgray") + # Add a dotted line at Beta = 0
+  # facet_wrap(CellType ~ Membrane, scales = "free_y",ncol = 5, nrow = 1) + # Facet by CellType and Membrane
+  facet_wrap(~ Membrane, scales = "free_y") + # Facet by CellType and Membrane
+  theme_minimal() + # Use a minimal theme
+  labs(x = "Beta", y = "Gene", title = "Coefficient Plot") + 
+  theme(strip.text = element_text(size = 12)) # Customize facet labels if needed
+
+
+# Create the coefficient plot# Create the coefficient plotUpperCI
+ggplot(full_results, aes(x = Beta, y = Gene)) +
+  geom_point(aes(color = PValue)) + # Optional: color points based on PValue
+  geom_vline(xintercept = 0, linetype = "dotted", color = "red") + # Add a dotted line at Beta = 0
+  facet_wrap(CellType ~ Membrane, scales = "free_y") + # Facet by CellType and Membrane
+  theme_minimal() + # Use a minimal theme
+  labs(x = "Beta", y = "Gene", title = "Coefficient Plot") + 
+  theme(strip.text = element_text(size = 12)) # Customize facet labels if needed
+
+# Create the plot with standard error bars, sorted by Beta size, and the desired facet layout
+plot <- ggplot(full_results, aes(x = Beta, y = GeneName)) +
+  geom_errorbarh(aes(xmin = LowerCI, xmax = UpperCI), height = 0.2, alpha = 0.8) + # Standard error bars
+  geom_point(aes(color = sig)) +  # Optional: color points based on PValue
+  geom_vline(xintercept = 0, linetype = "dotted", color = "darkgray") + # Add a dotted line at Beta = 0
+  facet_grid(Membrane ~ CellType, scales = "free_y",space="free_y") +  # 2 rows (Membrane), 3 columns (CellType)
+  theme_bw() +  # Use a minimal theme
+  labs(x = "Beta", y = "Gene", title = paste0("Average Gene Expression vs. Absolute PAH Clearance in Proximal Tubule Cells"),
+       subtitle="(Adjusting for age, sex, disease status and medications)") + 
+  theme(strip.text = element_text(size = 12),
+        plot.title=element_text(size = 12))   # Customize facet labels if needed
+# theme(
+#   strip.text.y = element_text(angle = 0), # Keep the Membrane labels horizontal
+#   strip.background = element_blank()  # Optional: Remove background color from strip text
+# ) 
+pdf(fs::path(dir.results,"Coefficient_plot_abs_pah_adj.pdf"),width=12,height=7)
+plot(plot)
+dev.off()
+```
+
+
+```{r}
+#------------------------------------------------------------------------------------------------------------------------
+#1. Medications among Type 2 Diabetes
+#Filter to Type_2_Diabetes only since no other participants are on these main meds
+length(unique(data$kit_id)) #81 partiucipants before filtering
+data_diab <- data %>%
+  filter(group=="Type_2_Diabetes")  #32 participants with Typd 2
+length(unique(data_diab$kit_id)) #32
+#levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
+#1. SLGT2i+/GLP-1ra+ vs. GLP1
+data_subgroup <- data_diab %>%
+  filter(group2=="glp1_sglt2" | group2=="glp1")
+length(unique(data_subgroup$kit_id)) #11
+data_subgroup$medication <- factor(data_subgroup$medication)
+all_genes <- rownames(data_subgroup)
+data_subgroup <- data %>%
+  # filter(group=="Type_2_Diabetes" | group=="Obese_Control")
+  filter(group==ref | group==exp)
+data_subgroup$group <- factor(data_subgroup$group)
+data_subgroup$group <-relevel(data_subgroup$group, ref = ref)
+# full_results <- data.frame()
+# Prepare parallel execution of gene models
+full_results <- foreach(gene = gene_list[1:48], .combine = rbind, .packages = c("glmmTMB", "dplyr")) %dopar% {
+  # for (gene in gene_list) {
+  # for (gene in gene_list[1:20]) { #tester genes
+  m0 <- as.formula(paste0(gene," ~ group + (1 | kit_id)"))
+  model <- glmmTMB(m0,data=data_subgroup,family = nbinom2,  # Negative Binomial with a log link
+                   ziformula = ~ 1)
+  #If doesnt fit, try nb
+  if(summary(model)$coef$zi[1,4]=="NaN") {
+    model2 <- glmmTMB(m0, data=data_subgroup,
+                      family = nbinom2)
+    foldchange <- round(exp(summary(model2)$coef$cond[2,1]) - 1,5)
+    pval <- summary(model2)$coef$cond[2,4]
+    model_name <- "Negative Binomial"
+  }
+  if(summary(model)$coef$zi[1,4]!="NaN") {
+    #Check if zero inflation component is non-significant, if non-sig, run nb
+    if(summary(model)$coef$zi[1,4]>=0.05) {
+      model2 <- glmmTMB(m0, data=data_subgroup,
+                        family = nbinom2)
+      foldchange <- round(exp(summary(model2)$coef$cond[2,1]) - 1,5)
+      pval <- summary(model2)$coef$cond[2,4]
+      model_name <- "Negative Binomial"
+    }
+    #If sig, pull estimates from zinb
+    if(summary(model)$coef$zi[1,4]<0.05) {
+      # foldchange <- round(exp(summary(model)$coef$cond[2,1]) - 1,5)
+      foldchange <- round(exp(summary(model)$coef$cond[2,1]) - 1,5)
+      pval <- summary(model)$coef$cond[2,4]
+      model_name <- "Zero-Inflated Negative Binomial"
+    }
+  }
+  # Collect results for each gene
+  results <- data.frame(Gene = gene, FoldChange = foldchange, PValue = pval,ModelName=model_name)
+  return(results)
+  # results <- data.frame(Gene=gene,FoldChange=foldchange,PValue=pval)
+  # full_results <- rbind(full_results,results)
+  # # print(p)
+  # # return(full_results)
+}
+#Make volcano plot of all gene results for group
+full_results <- full_results %>%
+  mutate(fdr=p.adjust(PValue,method="fdr"))
+
+m_top <- full_results
+
+# Transform PValue into -log10(p-value) for the y-axis
+m_top$logPValue <- -log10(m_top$PValue)
+
+# Calculate the log2 of the fold change (logFC)
+m_top$logFC <- log2(m_top$FoldChange)
+
+# Create a new column for significance based on the p-value cutoff and FC cutoff
+m_top$Significance <- ifelse(m_top$fdr<0.05, "Significant", "Not Significant")
+
+# Create a new column to combine both significance and direction (positive or negative)
+m_top$Color <- ifelse(m_top$Significance == "Significant" & m_top$logFC > 0, "Positive Significant",
+                      ifelse(m_top$Significance == "Significant" & m_top$logFC < 0, "Negative Significant",
+                             "Non-Significant"))
+
+# Select the genes that are significant to label
+m_top$Label <- ifelse(m_top$Significance == "Significant", as.character(m_top$Gene), NA)
+
+# Plot
+p <- ggplot(m_top, aes(x = logFC, y = logPValue, color = Color)) +
+  geom_point(aes(shape = Color), size = 3, alpha = 0.7) +  # Set alpha for transparency
+  scale_color_manual(values = c("Positive Significant" = "red", "Negative Significant" = "blue", "Non-Significant" = "gray")) +  # Custom color scale
+  scale_shape_manual(values = c("Positive Significant" = 19, "Negative Significant" = 19, "Non-Significant" = 1)) +  # Same shape for all but Non-Sig
+  geom_text(aes(label = Label), size = 3, color = "black", vjust = 1, hjust = 1) +  # Add labels for significant genes in black
+  labs(x = "log2 Fold Change", y = "-log10(p-value)", title = "Volcano Plot") +
+  theme_minimal() +
+  theme(legend.position = "top") +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14))
+
+# Print the plot
+print(p)
+
+```
