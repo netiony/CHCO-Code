@@ -533,4 +533,4 @@ l <- label(df)
 df <- droplevels(df)
 label(df) <- as.list(l)
 # Save
-save(df, demo_vars, file = "./Data_Clean/analysis_data.RData")
+save(df, demo_vars, ses_vars, file = "./Data_Clean/analysis_data.RData")
