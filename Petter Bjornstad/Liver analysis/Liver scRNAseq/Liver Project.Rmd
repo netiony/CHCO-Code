@@ -63,7 +63,8 @@ library(foreach)
 library(doRNG)
 library(doParallel)
 library(fs)
-registerDoParallel(cores = 6)
+library(future)
+# registerDoParallel(cores = 6)
 library(VennDiagram)
 #install.packages("survival")
 library(survival)
@@ -222,20 +223,38 @@ dim(so_liver_sn) #36601 130124
 # sum(grepl("^MT-", rownames(so_liver_sn@assays$RNA@counts))) #13
 # ncol(so_liver_sn) #130124 cells
 # nrow(so_liver_sn) # 36601 genes
-#Filter out rare genes expressed in less than "gene_pct" of cells
-expr_matrix <- as.matrix(GetAssayData(so_liver_sn, layer = "counts"))
-expr_matrix <- as.matrix(GetAssayData(so_liver_sn, assay = "RNA", layer = "counts"))
-expr_matrix <- so_liver_sn@assays$RNA@counts
-# Calculate the proportion of cells expressing each gene
-num_cells_per_gene <- rowSums(expr_matrix > 0)  # Count nonzero cells per gene
-total_cells <- ncol(expr_matrix)  # Total number of cells
-gene_proportion <- num_cells_per_gene / total_cells  # Fraction of cells expressing each gene
-remove(expr_matrix)
-# Keep genes expressed in at least "gene_pct" of cells
-genes_to_keep <- names(gene_proportion[gene_proportion >= 0.05])
-so_liver_sn <- subset(so_liver_sn, features = genes_to_keep)
-ncol(so_liver_sn) #130124 cells
-nrow(so_liver_sn) # 4502 genes
+ncol(so_liver_sn) #130124 nuclei 
+nrow(so_liver_sn) # 36601 genes
+#Code for filtering by count
+# Create a matrix of the expression data (e.g., counts or scaled data) from the Seurat object
+expression_data <- GetAssayData(so_liver_sn, assay = "RNA", layer = "counts")
+# Calculate the number of nuclei each gene is expressed in (i.e., count non-zero entries per gene)
+gene_expression_counts <- rowSums(expression_data > 0)
+# Filter out genes that are expressed in less than 10 nuclei
+filtered_genes <- names(which(gene_expression_counts >= 10))
+length(filtered_genes) #28977 genes remain of 36601
+rare_genes <- names(which(gene_expression_counts < 10))
+length(rare_genes) #7624
+
+# Subset the Seurat object to keep only genes that are expressed in at least 10 nuclei
+so_liver_sn <- subset(so_liver_sn, features = filtered_genes)
+
+#YE JI's filtering code for percent expression 
+# #Filter out rare genes expressed in less than "gene_pct" of cells
+# expr_matrix <- as.matrix(GetAssayData(so_liver_sn, layer = "counts"))
+# expr_matrix <- as.matrix(GetAssayData(so_liver_sn, assay = "RNA", layer = "counts"))
+# expr_matrix <- so_liver_sn@assays$RNA@counts
+# # Calculate the proportion of cells expressing each gene
+# num_cells_per_gene <- rowSums(expr_matrix > 0)  # Count nonzero cells per gene
+# total_cells <- ncol(expr_matrix)  # Total number of cells
+# gene_proportion <- num_cells_per_gene / total_cells  # Fraction of cells expressing each gene
+# remove(expr_matrix)
+# # Keep genes expressed in at least "gene_pct" of cells
+# genes_to_keep <- names(gene_proportion[gene_proportion >= 0.05])
+# so_liver_sn <- subset(so_liver_sn, features = genes_to_keep)
+ncol(so_liver_sn) #130,124 nuclei 
+nrow(so_liver_sn) # 28,977 genes
+
 # Step 2: Remove mitochondrial genes (those starting with "MT")
 mito_genes <- grep("^MT-", rownames(so_liver_sn), value = TRUE)
 #keep_ids <- unique(rownames(so_liver_sn)[which(!rownames(so_liver_sn) %in% mito_genes)])
@@ -252,7 +271,7 @@ dim(so_liver_sn@assays$RNA@data) #9276 186125
 dim(so_liver_sn@assays$RNA)#9276 186125
 sum(grepl("^MT-", rownames(so_liver_sn@assays$RNA@counts))) #0
 ncol(so_liver_sn) #130124 cells
-nrow(so_liver_sn) #4489 genes
+nrow(so_liver_sn) #28,964 genes
 
 # # Identify mitochondrial genes
 # mt_genes <- grepl("^MT", rownames(so_liver_sn@assays$RNA@counts))
@@ -294,31 +313,32 @@ so_liver_sn <- ScaleData(so_liver_sn, features = VariableFeatures(so_liver_sn))
 # mem.maxVSize(64000000000)
 
 # PCA
-# so_liver_sn <- FindVariableFeatures(object = so_liver_sn)
-# so_liver_sn <- RunPCA(so_liver_sn, features = VariableFeatures(object = so_liver_sn),assay="RNA")
-# ElbowPlot(so_liver_sn)
-# 
-# # # Find neighbors and clusters (again using integrated data)
-# so_liver_sn <- FindNeighbors(so_liver_sn, assay = "RNA", dims = 1:20)
-# so_liver_sn <- FindClusters(so_liver_sn, resolution = 0.5)
-# 
-# # Perform UMAP and tSNE
-# # so_liver_sc <- RunUMAP(so_liver_sc, dims = 1:15)
-# DimPlot(so_liver_sn, reduction = "umap", raster = F) 
-# DimPlot(so_liver_sn, reduction = "umap", group.by = "celltype", raster = FALSE)
-# DimPlot(so_liver_sn, reduction = "umap", group.by = "celltype",raster = FALSE, label = TRUE, label.size = 4)+
-#   ggtitle("UMAP Plot with Cell Type Labels")
-# 
-# so_liver_sn$steatosis_cat <- factor(so_liver_sn$steatosis_cat)
-# DimPlot(so_liver_sn, reduction = "umap",group.by = "steatosis_cat",label=F,raster=F) + 
-#   ggtitle(paste0("UMAP by Steatosis Category"))
-# 
-# so_liver_sn$fibrosis_cat <- factor(so_liver_sn$fibrosis_cat)
-# DimPlot(so_liver_sn, reduction = "umap",group.by = "fibrosis_cat",label=F,raster=F) + 
-#   ggtitle(paste0("UMAP by Fibrosis Category"))
+so_liver_sn <- FindVariableFeatures(object = so_liver_sn)
+so_liver_sn <- RunPCA(so_liver_sn, features = VariableFeatures(object = so_liver_sn),assay="RNA")
+ElbowPlot(so_liver_sn)
+
+# # Find neighbors and clusters (again using integrated data)
+so_liver_sn <- FindNeighbors(so_liver_sn, assay = "RNA", dims = 1:20)
+so_liver_sn <- FindClusters(so_liver_sn, resolution = 0.5)
+
+# Perform UMAP and tSNE
+# so_liver_sc <- RunUMAP(so_liver_sc, dims = 1:15)
+DimPlot(so_liver_sn, reduction = "umap", raster = F)
+DimPlot(so_liver_sn, reduction = "umap", group.by = "celltype", raster = FALSE)
+DimPlot(so_liver_sn, reduction = "umap", group.by = "celltype",raster = FALSE, label = TRUE, label.size = 4)+
+  ggtitle("UMAP Plot with Cell Type Labels")
+
+so_liver_sn$steatosis_cat <- factor(so_liver_sn$steatosis_cat)
+DimPlot(so_liver_sn, reduction = "umap",group.by = "steatosis_cat",label=F,raster=F) +
+  ggtitle(paste0("UMAP by Steatosis Category"))
+
+so_liver_sn$fibrosis_cat <- factor(so_liver_sn$fibrosis_cat)
+DimPlot(so_liver_sn, reduction = "umap",group.by = "fibrosis_cat",label=F,raster=F) +
+  ggtitle(paste0("UMAP by Fibrosis Category"))
+rm(expression_data)
 ```
 
-##b. scRNA & MetaData 
+## b. scRNA & MetaData 
 ```{r, include=F}
 invisible(gc())
 so_liver_sc <- readRDS(fs::path(dir.dat,"scRNA","data_raw","PB_Liver_7SingleCellDatasets.RDS"))
@@ -377,7 +397,7 @@ DefaultAssay(so_liver_sc) <- "RNA"
 invisible(gc())
 
 
-dim(so_liver_sc) #36601 130124
+dim(so_liver_sc) #23697  7383
 
 # # Step 1: Filter to genes expressed in more than 5% of cells
 # gene_expression_matrix <- so_liver_sc@assays$RNA@counts
@@ -389,19 +409,36 @@ dim(so_liver_sc) #36601 130124
 # dim(so_liver_sc@assays$RNA) #4502 130124
 # dim(so_liver_sc) #4502 130124
 # sum(grepl("^MT-", rownames(so_liver_sc@assays$RNA@counts))) #13
-# ncol(so_liver_sc) #30124 cells
-# nrow(so_liver_sc) #4502 genes
-expr_matrix <- so_liver_sc@assays$RNA@counts
-# Calculate the proportion of cells expressing each gene
-num_cells_per_gene <- rowSums(expr_matrix > 0)  # Count nonzero cells per gene
-total_cells <- ncol(expr_matrix)  # Total number of cells
-gene_proportion <- num_cells_per_gene / total_cells  # Fraction of cells expressing each gene
-remove(expr_matrix)
-# Keep genes expressed in at least "gene_pct" of cells
-genes_to_keep <- names(gene_proportion[gene_proportion >= 0.05])
-so_liver_sc <- subset(so_liver_sc, features = genes_to_keep)
-ncol(so_liver_sc) #130124 cells
-nrow(so_liver_sc) # 4502 genes
+ncol(so_liver_sc) #7383 cells
+nrow(so_liver_sc) #23697 genes
+# so_liver_sc <- t(so_liver_sc)
+
+#Code for filtering by count
+# Create a matrix of the expression data (e.g., counts or scaled data) from the Seurat object
+expression_data <- GetAssayData(so_liver_sc, assay = "RNA", layer = "counts")
+# Calculate the number of nuclei each gene is expressed in (i.e., count non-zero entries per gene)
+gene_expression_counts <- rowSums(expression_data > 0)
+# Filter out genes that are expressed in less than 10 nuclei
+filtered_genes <- names(which(gene_expression_counts >= 5))
+length(filtered_genes) #20194 genes remain of 36601
+rare_genes <- names(which(gene_expression_counts < 5))
+length(rare_genes) #7624
+
+# Subset the Seurat object to keep only genes that are expressed in at least 10 nuclei
+so_liver_sc <- subset(so_liver_sc, features = filtered_genes)
+
+#YE JI's filtering code 
+# expr_matrix <- so_liver_sc@assays$RNA@counts
+# # Calculate the proportion of cells expressing each gene
+# num_cells_per_gene <- rowSums(expr_matrix > 0)  # Count nonzero cells per gene
+# total_cells <- ncol(expr_matrix)  # Total number of cells
+# gene_proportion <- num_cells_per_gene / total_cells  # Fraction of cells expressing each gene
+# remove(expr_matrix)
+# # Keep genes expressed in at least "gene_pct" of cells
+# genes_to_keep <- names(gene_proportion[gene_proportion >= 0.05])
+# so_liver_sc <- subset(so_liver_sc, features = genes_to_keep)
+# ncol(so_liver_sc) #130124 cells
+# nrow(so_liver_sc) # 4502 genes
 
 # Step 2: Remove mitochondrial genes (those starting with "MT")
 mito_genes <- grep("^MT-", rownames(so_liver_sc), value = TRUE)
@@ -418,8 +455,8 @@ dim(so_liver_sc@assays$RNA@counts) #9276 186125
 dim(so_liver_sc@assays$RNA@data) #9276 186125
 dim(so_liver_sc@assays$RNA)#9276 186125
 sum(grepl("^MT-", rownames(so_liver_sc@assays$RNA@counts))) #0
-ncol(so_liver_sc) #130124 cells
-nrow(so_liver_sc) #4489 genes
+ncol(so_liver_sc) #7383 cells remain
+nrow(so_liver_sc) #21,822 genes remain
 
 # # Identify mitochondrial genes
 # mt_genes <- grepl("^MT", rownames(so_liver_sc@assays$RNA@counts))
@@ -447,13 +484,13 @@ ncol(so_liver_sc)  # Number of cells remaining
 so_liver_sc <- NormalizeData(so_liver_sc)
 so_liver_sc <- ScaleData(so_liver_sc)
 
-#Check normalized slot
-dim(so_liver_sc@assays$RNA@data) #5714 186125
-sum(grepl("^MT", rownames(so_liver_sc@assays$RNA@data))) #70
-ncol(so_liver_sc) #186125 cells
-nrow(so_liver_sc) #5714 genes
+# #Check normalized slot
+# dim(so_liver_sc@assays$RNA@data) #5714 186125
+# sum(grepl("^MT", rownames(so_liver_sc@assays$RNA@data))) #70
+# ncol(so_liver_sc) #186125 cells
+# nrow(so_liver_sc) #5714 genes
 
-rm(gene_expression_matrix)
+rm(expression_data)
 
 # PCA
 so_liver_sc <- FindVariableFeatures(object = so_liver_sc)
@@ -478,6 +515,85 @@ DimPlot(so_liver_sc, reduction = "umap",group.by = "steatosis_cat",label=F,raste
 so_liver_sc$fibrosis_cat <- factor(so_liver_sc$fibrosis_cat)
 DimPlot(so_liver_sc, reduction = "umap",group.by = "fibrosis_cat",label=F,raster=F) +
   ggtitle(paste0("UMAP by Fibrosis Category"))
+
+```
+
+## c. Integration of Single Nuc and Single Cell
+```{r}
+#Integration of sc and sn
+gc()
+num_cores <- detectCores()
+num_cores
+plan("multisession", workers = 24)
+# Increase the maximum size for globals (e.g., 50 GB)
+options(future.globals.maxSize = 100 * 1024^3)  # 50 GB
+gc()
+so_liver_sc <- FindVariableFeatures(so_liver_sc, selection.method = "vst", nfeatures = 2000)
+gc()
+so_liver_sn <- FindVariableFeatures(so_liver_sn, selection.method = "vst", nfeatures = 2000)
+gc()
+
+so_liver_sn$orig.ident <- so_liver_sn$Kit_Lot
+so_liver_sc$orig.ident <- so_liver_sc$Kit_Lot
+
+#-----------------------
+# 4. Integration
+#-----------------------
+# Identify integration anchors using the top 20 principal components (PCs)
+gc()
+anchors <- FindIntegrationAnchors(object.list = list(so_liver_sc, so_liver_sn), dims = 1:20,verbose=T)
+
+
+
+gc()
+# Computing 2000 integration features
+# Scaling features for provided objects
+# Finding all pairwise anchors
+# Running CCA
+# Merging objects
+# Finding neighborhoods
+# Finding anchors
+# 	Found 19518 anchors
+# Filtering anchors
+# 	Retained 935 anchors
+# Integrate data; this creates a new 'integrated' assay in the resulting object
+combined <- IntegrateData(anchorset = anchors, dims = 1:20)
+gc()
+#-----------------------
+# 5. Downstream Analysis
+#-----------------------
+DefaultAssay(combined) <- "integrated"
+# Scale the integrated data
+combined <- ScaleData(combined)
+# Run PCA
+combined <- RunPCA(combined, npcs = 30)
+# Run UMAP for visualization
+combined <- RunUMAP(combined, dims = 1:20)
+# Optionally, cluster cells
+combined <- FindNeighbors(combined, dims = 1:20)
+combined <- FindClusters(combined, resolution = 0.5)
+# Visualize UMAP results
+DimPlot(combined, reduction = "umap", group.by = "orig.ident", raster = F, label = T)
+
+# View metadata
+head(combined@meta.data)
+
+# Check the number of cells per sample
+table(combined$orig.ident)
+
+# Check the number of cells per cluster
+table(Idents(combined))
+
+DefaultAssay(combined) <- "integrated"
+
+DimPlot(combined, reduction = "umap", group.by = "Kit_Lot", label = TRUE, repel = TRUE)
+
+cluster_markers <- FindAllMarkers(combined, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+head(cluster_markers)
+
+FeaturePlot(combined, features = c("Gene1", "Gene2"), min.cutoff = "q10", max.cutoff = "q90")
+VlnPlot(combined, features = c("Gene1", "Gene2"), group.by = "seurat_clusters", pt.size = 0)
+DotPlot(combined, features = c("Gene1", "Gene2"), group.by = "seurat_clusters")
 
 ```
 
