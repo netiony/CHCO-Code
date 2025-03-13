@@ -1,0 +1,1096 @@
+---
+title: "TODAY study - proteomics, hypertension, OSA, echo, PWV"
+author: "Laura Pyle"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(SomaDataIO)
+library(limma)
+library(dplyr)
+library(caret)
+library(purrr)
+library(multtest)
+library(openxlsx)
+library(tableone)
+library(EnhancedVolcano)
+library(knitr)
+library(survival)
+library(broom)
+library(psych)
+library(corrplot)
+library(pander)
+library(tableone)
+library(polycor)
+library(piercer)
+library(RColorBrewer)
+library(data.table)
+library(gtools)
+library(Hmisc)
+
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+
+knitr::opts_chunk$set(echo = FALSE)
+if(Sys.info()["sysname"] == "Windows"){
+  home_dir = "E:/Petter Bjornstad/TODAY subaward"
+} else if (Sys.info()["sysname"] == "Linux"){
+  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/"
+} else if (Sys.info()["sysname"] == "Darwin"){
+ home_dir = "/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward"
+ #home_dir = "/Users/pylell/Documents/Downtime/TODAY"
+  }
+knitr::opts_knit$set(root.dir = home_dir)
+
+#source("/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/correlation_function.R")
+
+```
+
+```{r, include=FALSE}
+corr_plot_modified_nodict <- function(data, X, Y, cor_method = "pearson", adj_var = NULL, 
+                               method = "color", insig = "pch", coef_col = NULL,
+                               pch = 4, pch.col = "black", pch.cex = 0) {
+  
+  n_cols = length(Y)
+  M <- cor(y = subset(data, select = Y),
+           x = subset(data, select = X),
+           use = "pairwise.complete.obs",
+           method = cor_method)
+  
+  if (!is.na(adj_var)){
+    x_vars <- rep(X, times = length(Y))
+    x_coord <- rep(seq(1,length(Y)), each = length(X))
+    y_vars <- rep(Y, each = length(X))
+    y_coord <- rep(seq(length(X),1), times = length(Y))
+    lm_extracted <- data.frame(yName = character(0),
+                               xName = character(0),
+                               x = numeric(0),
+                               y = numeric(0),
+                               adj_var = character(0),
+                               adj_x_coef = numeric(0),
+                               adj_x_pval = numeric(0))
+    for (i in 1:length(x_vars)) {
+      if(x_vars[i] != y_vars[i]) {
+        lm_formula <- as.formula(paste0(y_vars[i], "~", x_vars[i], "+", adj_var))
+        lm_model <- lm(lm_formula, data = data)
+        lm_summary <- summary(lm_model)
+        lm_coef <- lm_summary$coefficient[x_vars[i], "Estimate"]
+        lm_p_val <- lm_summary$coefficient[x_vars[i], "Pr(>|t|)"]
+        lm_extracted <- rbind(lm_extracted,
+                              data.frame(
+                                yName = y_vars[i],
+                                xName = x_vars[i],
+                                x = x_coord[i],
+                                y = y_coord[i],
+                                adj_var = adj_var,
+                                adj_x_coef = lm_coef,
+                                adj_x_pval = lm_p_val))
+      }
+    }
+  }
+  
+  correlation_p_value <- correlation_p_value_matrix(data, relevant_vars = c(Y, X), n_cols = n_cols, cor_method = cor_method)
+  
+  corrplot(M,
+           p.mat = correlation_p_value,
+           method = method,
+           tl.col = "black",
+           tl.srt = 45,
+           tl.cex = 1.2,
+           insig = insig,
+           addCoef.col = coef_col,
+           addgrid.col = 'lightgray',
+           number.digits = 2,
+           pch.col = pch.col, 
+           pch = pch,
+           pch.cex = pch.cex)$corrPos -> p1
+  p1_sub <- subset(p1, p.value <= 0.05)
+  p1_sub2 <- subset(p1, p.value <= 0.05 & abs(corr) >= 0.7)
+  
+  if (nrow(p1) > 0) {
+    graphics::text(p1$x, p1$y, sprintf("%.2f", p1$corr), adj = c(0.5, 0), cex=1.2)
+    if (nrow(p1_sub > 0)) {
+      graphics::text(p1_sub$x, p1_sub$y, stars.pval(p1_sub$p.value), adj = c(0.5, 2), cex=1.2)
+    }
+  }
+  if (nrow(p1_sub2) > 0) {
+    graphics::text(p1_sub2$x, p1_sub2$y, sprintf("%.2f", p1_sub2$corr), col = "white", adj = c(0.5, 0), cex=1.2)
+    graphics::text(p1_sub2$x, p1_sub2$y, stars.pval(p1_sub2$p.value), col = "white", adj = c(0.5, 2), cex=1.2)
+  }
+  if (!is.na(adj_var)) {
+    lm_extracted <- subset(lm_extracted, adj_x_pval <= 0.05)
+    if (nrow(lm_extracted) > 0){
+      graphics::rect(xleft = lm_extracted$x-.45, 
+                     ybottom = lm_extracted$y-.45,
+                     xright = lm_extracted$x+.45,
+                     ytop = lm_extracted$y+.45)
+    }
+  }
+}
+
+
+correlation_p_value_matrix <- function(data, relevant_vars, n_cols, cor_method = "pearson") {
+  # Filter relevant variables for the correlation matrix
+  dat_correlation <- data %>%
+    dplyr::select(all_of(relevant_vars))
+  
+  # Compute p-values 
+  res2 <- Hmisc::rcorr(as.matrix(dat_correlation),
+                       type = cor_method)
+  corr_pval <- as.data.frame(res2$P) %>%
+    dplyr::select(all_of(relevant_vars[1:n_cols]))
+  corr_pval = corr_pval[(n_cols + 1):nrow(corr_pval),]
+  return(as.matrix(corr_pval))
+}
+```
+
+```{r, include=FALSE}
+setwd(home_dir)
+# load urine and plasma data
+load("./Metabolomic data/urine.Rdata")
+load("./Metabolomic data/plasma.Rdata")
+urine$Date.Drawn <- as.Date(urine$Date.Drawn,format = "%m/%d/%Y")
+plasma$Date.Drawn <- as.Date(plasma$Date.Drawn,format = "%m/%d/%Y")
+
+# load comorbidity data
+load("./Clinical data/comorb.Rdata")
+
+# load baseline risk factors
+load("./Clinical data/TODAY/baserisk.Rdata")
+
+# take only the baseline samples
+# can we just take the earliest or is it possible someone would have a follow-up sample but not baseline?
+# probably can take the first and then check the years to make sure compatible with TODAY
+urine_base <- urine %>% arrange(releaseid,Date.Drawn) %>% group_by(releaseid) %>% filter(row_number()==1)
+plasma_base <- plasma %>% arrange(releaseid,Date.Drawn) %>% group_by(releaseid) %>% filter(row_number()==1)
+
+# merge in comorb data
+urine_base <- merge(urine_base, comorb, by="releaseid",all.x=T, all.y=F)
+plasma_base <- merge(plasma_base, comorb, by="releaseid",all.x=T, all.y=F)
+
+# merge in baseline risk factors
+urine_base <- merge(urine_base, baserisk, by="releaseid",all.x=T, all.y=F)
+plasma_base <- merge(plasma_base, baserisk, by="releaseid",all.x=T, all.y=F)
+
+# note that plasma adenine has no variability
+# for the later analyses (i.e., after adenine, definitely want to check for low variability)
+# for the rest of these adenine analyses, will focus on urine results only
+
+# create tertiles of adenine
+urine_base <- urine_base %>%
+  mutate(adenine_tertiles = ntile(`Adenine.in.nM/mM.Creatinine`, 3)) %>%
+  mutate(adenine_tertiles = if_else(adenine_tertiles == 1, 'Low', if_else(adenine_tertiles == 3, 'High', "Medium"))) %>%
+  arrange(`Adenine.in.nM/mM.Creatinine`)
+urine_base$adenine_tertiles <- as.factor(urine_base$adenine_tertiles)
+urine_base$adenine_tertiles_num <- ifelse(urine_base$adenine_tertiles=="High",1,
+                                          ifelse(urine_base$adenine_tertiles=="Low",0,NA))
+#urine_base$adenine_tertiles <- ifelse(urine_base$adenine_tertiles=="Medium",NA,urine_base$adenine_tertiles)
+urine_base$adenine_tertiles <- factor(urine_base$adenine_tertiles, levels = c("Low", "Medium", "High"))
+
+# TODAY ECHO
+today_echo <- read.csv("./Clinical data/TODAY/echo.csv")
+today_echo$TIMEPOINT <- "1"
+# TODAY2 ECHO
+today2_echo <- read.csv("./Clinical data/TODAY2/echo.csv")
+today2_echo$TIMEPOINT <- "2"
+drop_cols <- c("DOPPLERQC","MMODEQC","OVERALLQC","PLAXQC","SAXQC","APICALQC","mmodeqc")
+today2_echo <- today2_echo %>% select(-one_of(drop_cols))
+# combine echo datasets - need to calculate deltas, but there are some variables that exist in timepoint 2 but not 1
+echo <- bind_rows(today2_echo, today_echo)
+echo$TIMEPOINT <- as.factor(echo$TIMEPOINT)
+# make a wide dataset and calculate deltas
+echonames <- colnames(echo)
+echonames <- echonames[-1]
+echonames <- echonames[-1]
+echo_wide <- reshape(data=echo, direction="wide", idvar = "releaseid", timevar = "TIMEPOINT")
+echo_wide$delta_days <- echo_wide$days.2 - echo_wide$days.1
+echo_wide$delta_ascend2d <-  echo_wide$ascend2d.2 -  echo_wide$ascend2d.1   
+echo_wide$delta_diasto2d <-   echo_wide$diasto2d.2 -  echo_wide$diasto2d.1 
+echo_wide$delta_systol2d <-    echo_wide$systol2d.2 -  echo_wide$systol2d.1
+echo_wide$delta_laarea2d <-    echo_wide$laarea2d.2 -  echo_wide$laarea2d.1
+echo_wide$delta_diavol2d <-    echo_wide$diavol2d.2 -  echo_wide$diavol2d.1
+echo_wide$delta_lvedv2d2ch <-  echo_wide$lvedv2d2ch.2 -  echo_wide$lvedv2d2ch.1
+echo_wide$delta_lvef2d2ch  <-  echo_wide$lvef2d2ch.2 -  echo_wide$lvef2d2ch.1
+echo_wide$delta_lvef2d4ch <-  echo_wide$lvef2d4ch.2 -  echo_wide$lvef2d4ch.1 
+echo_wide$delta_lvesv2d2ch  <- echo_wide$lvesv2d2ch.2 -  echo_wide$lvesv2d2ch.1
+echo_wide$delta_lvesv2d4ch   <- echo_wide$lvesv2d4ch.2 -  echo_wide$lvesv2d4ch.1
+echo_wide$delta_lve    <-   echo_wide$lve.2 -  echo_wide$lve.1    
+echo_wide$delta_lvem   <-   echo_wide$lvem.2 -  echo_wide$lvem.1    
+echo_wide$delta_lvratio  <- echo_wide$lvratio.2 -  echo_wide$lvratio.1   
+echo_wide$delta_lvsepe    <- echo_wide$lvsepe.2 -  echo_wide$lvsepe.1  
+echo_wide$delta_lvsepem     <- echo_wide$lvsepem.2 -  echo_wide$lvsepem.1
+echo_wide$delta_lvsepratio  <- echo_wide$lvsepratio.2 -  echo_wide$lvsepratio.1
+echo_wide$delta_lvtrie   <- echo_wide$lvtrie.2 -  echo_wide$lvtrie.1   
+echo_wide$delta_lvtriem    <-  echo_wide$lvtriem.2 -  echo_wide$lvtriem.1
+echo_wide$delta_lvtriratio   <- echo_wide$lvtriratio.2 -  echo_wide$lvtriratio.1
+echo_wide$delta_peakvelo   <- echo_wide$peakvelo.2 -  echo_wide$peakvelo.1
+echo_wide$delta_rvsystol    <- echo_wide$rvsystol.2 -  echo_wide$rvsystol.1
+echo_wide$delta_aortroot   <- echo_wide$aortroot.2 -  echo_wide$aortroot.1 
+echo_wide$delta_ladimen     <- echo_wide$ladimen.2 -  echo_wide$ladimen.1
+echo_wide$delta_mmodehr  <- echo_wide$mmodehr.2 -  echo_wide$mmodehr.1   
+echo_wide$delta_ivsdias  <- echo_wide$ivsdias.2 -  echo_wide$ivsdias.1   
+echo_wide$delta_ivssyst  <- echo_wide$ivssyst.2 -  echo_wide$ivssyst.1   
+echo_wide$delta_lvindex  <- echo_wide$lvindex.2 -  echo_wide$lvindex.1   
+echo_wide$delta_lvoutput  <- echo_wide$lvoutput.2 -  echo_wide$lvoutput.1  
+echo_wide$delta_lveject  <-   echo_wide$lveject.2 -  echo_wide$lveject.1 
+echo_wide$delta_diavolmm   <- echo_wide$diavolmm.2 -  echo_wide$diavolmm.1 
+echo_wide$delta_sysvolmm   <- echo_wide$sysvolmm.2 -  echo_wide$sysvolmm.1
+echo_wide$delta_pctshort   <-  echo_wide$pctshort.2 -  echo_wide$pctshort.1
+echo_wide$delta_lvdiast    <-  echo_wide$lvdiast.2 -  echo_wide$lvdiast.1
+echo_wide$delta_lvsystol  <- echo_wide$lvsystol.2 -  echo_wide$lvsystol.1  
+echo_wide$delta_lvmass  <- echo_wide$lvmass.2 -  echo_wide$lvmass.1    
+echo_wide$delta_walldias  <- echo_wide$walldias.2 -  echo_wide$walldias.1  
+echo_wide$delta_wallsyst  <- echo_wide$wallsyst.2 -  echo_wide$wallsyst.1  
+echo_wide$delta_lvstroke   <-  echo_wide$lvstroke.2 -  echo_wide$lvstroke.1
+echo_wide$delta_tapse  <-  echo_wide$tapse.2 -  echo_wide$tapse.1
+echo_wide$delta_walthick  <- echo_wide$walthick.2 -  echo_wide$walthick.1  
+echo_wide$delta_lvmassht   <- echo_wide$lvmassht.2 -  echo_wide$lvmassht.1 
+echo_wide$delta_ladiamht   <-  echo_wide$ladiamht.2 -  echo_wide$ladiamht.1
+echo_wide$delta_lvdiasht   <- echo_wide$lvdiasht.2 -  echo_wide$lvdiasht.1 
+echo_wide$delta_lvbsa  <- echo_wide$lvbsa.2 -  echo_wide$lvbsa.1
+
+# TODAY2 PWV
+pwv <- read.csv("./Clinical data/TODAY2/pwv.csv")
+pwv$releaseid <- pwv$RELEASEID
+pwv$RELEASEID <- NULL
+# make a wide dataset and calculate deltas
+pwvnames <- colnames(pwv)
+pwvnames <- pwvnames[-1]
+pwvnames <- pwvnames[-1]
+pwv_wide <- reshape(data=pwv, direction="wide", idvar = "releaseid", timevar = "TIMEPOINT")
+pwv_wide$delta_days <- pwv_wide$DAYS.PWV2 - pwv_wide$DAYS.PWV1
+pwv_wide$delta_sdnn <- pwv_wide$SDNN.PWV2 - pwv_wide$SDNN.PWV1
+pwv_wide$delta_pnn50 <- pwv_wide$PNN50.PWV2 - pwv_wide$PNN50.PWV1
+pwv_wide$delta_rmssd <- pwv_wide$RMSSD.PWV2 - pwv_wide$RMSSD.PWV1
+pwv_wide$delta_sdann <- pwv_wide$SDANN.PWV2 - pwv_wide$SDANN.PWV1
+pwv_wide$delta_sdnn_index <- pwv_wide$SDNN_INDEX.PWV2 - pwv_wide$SDNN_INDEX.PWV1
+pwv_wide$delta_lf_power_normalized <- pwv_wide$LF_POWER_NORMALISED.PWV2 - pwv_wide$LF_POWER_NORMALISED.PWV1
+pwv_wide$delta_hf_power_normalized <- pwv_wide$HF_POWER_NORMALISED.PWV2 - pwv_wide$HF_POWER_NORMALISED.PWV1
+pwv_wide$delta_lf_hf_ratio <- pwv_wide$LF_HF_RATIO.PWV2 - pwv_wide$LF_HF_RATIO.PWV1
+pwv_wide$delta_pwvf <- pwv_wide$PWVF.PWV2 - pwv_wide$PWVF.PWV1
+pwv_wide$delta_pwvr <- pwv_wide$PWVR.PWV2 - pwv_wide$PWVR.PWV1
+pwv_wide$delta_pwvfft <- pwv_wide$PWVFFT.PWV2 - pwv_wide$PWVFFT.PWV1
+pwv_wide$delta_pwvd <- pwv_wide$PWVD.PWV2 - pwv_wide$PWVD.PWV1
+pwv_wide$delta_aix <- pwv_wide$AIX.PWV2 - pwv_wide$AIX.PWV1
+pwv_wide$delta_c_sbp <- pwv_wide$C_SBP.PWV2 - pwv_wide$C_SBP.PWV1
+pwv_wide$delta_c_dbp <- pwv_wide$C_DBP.PWV2 - pwv_wide$C_DBP.PWV1
+pwv_wide$delta_brachd <- pwv_wide$BRACHD.PWV2 - pwv_wide$BRACHD.PWV1
+pwv_wide$delta_map_pm <- pwv_wide$MAP_PM.PWV2 - pwv_wide$MAP_PM.PWV1
+pwv_wide$delta_hr_pm <- pwv_wide$HR_PM.PWV2 - pwv_wide$HR_PM.PWV1
+pwv_wide$delta_ci <- pwv_wide$CI.PWV2 - pwv_wide$CI.PWV1
+pwv_wide$delta_lvdpdt <- pwv_wide$LVDPDT.PWV2 - pwv_wide$LVDPDT.PWV1
+pwv_wide$delta_lv_ctx <- pwv_wide$LV_CTX.PWV2 - pwv_wide$LV_CTX.PWV1
+pwv_wide$delta_svc <- pwv_wide$SVC.PWV2 - pwv_wide$SVC.PWV1
+pwv_wide$delta_svr <- pwv_wide$SVR.PWV2 - pwv_wide$SVR.PWV1
+
+# with echo data - TODAY
+today_echo <- left_join(urine_base,today_echo,by="releaseid")
+# with echo data - TODAY2
+today2_echo <- left_join(urine_base,today2_echo,by="releaseid")
+
+# with echo data - deltas
+echo_deltas <- echo_wide %>% select(starts_with("delta"))
+echo_deltas <- cbind(echo_wide$releaseid, echo_deltas)
+echo_deltas <- echo_deltas %>% filter(!is.na(delta_days))
+names(echo_deltas)[1] <- "releaseid"
+
+echo_deltas <- left_join(urine_base,echo_deltas,by="releaseid")
+
+# with pwv data - time point 1
+pwv_v1 <- pwv %>% filter(TIMEPOINT=="PWV1")
+# remove markers with >=80% missing 
+#pwv_v1 <- pwv_v1 %>% dplyr::select(where(~mean(is.na(.)) < 0.8))
+pwv_v1 <- left_join(urine_base,pwv_v1,by="releaseid")
+
+# with pwv data - time point 2
+pwv_v2 <- pwv %>% filter(TIMEPOINT=="PWV2")
+#pwv_v2 <- pwv_v2 %>% dplyr::select(where(~mean(is.na(.)) < 0.8))
+pwv_v2 <- left_join(urine_base,pwv_v2,by="releaseid")
+
+# with pwv data - deltas
+pwv_deltas <- pwv_wide %>% select(starts_with("delta"))
+pwv_deltas <- cbind(pwv_wide$releaseid, pwv_deltas)
+pwv_deltas <- pwv_deltas %>% filter(!is.na(delta_days))
+names(pwv_deltas)[1] <- "releaseid"
+#pwv_deltas <- pwv_deltas %>% dplyr::select(where(~mean(is.na(.)) < 0.8))
+pwv_deltas <- left_join(urine_base,pwv_deltas,by="releaseid")
+
+label(today_echo$ascend2d) = "2D aorta ascending"
+```
+
+# Results
+
+## Echocardiogram
+
+### Summary statistics - TODAY
+
+```{r, include=FALSE}
+echonames <- colnames(today_echo)
+echonames <- echonames[-1]
+echonames <- echonames[13:length(echonames)]
+t <- CreateTableOne(vars=echonames,data=today_echo)
+t <- print(t, nonnormal = echonames, missing=T)
+```
+
+```{r, include=TRUE, comment=""}
+kable(t)
+```
+
+### Summary statistics - TODAY2
+
+```{r, include=FALSE}
+echonames <- colnames(today2_echo)
+echonames <- echonames[-1]
+echonames <- echonames[13:length(echonames)]
+t <- CreateTableOne(vars=echonames,data=today2_echo)
+t <- print(t, nonnormal = echonames, missing=T)
+```
+
+```{r, include=TRUE, comment=""}
+kable(t)
+```
+
+### Correlation between TODAY echo and baseline urine adenine
+
+```{r, include=TRUE}
+ # Correlations
+today_echo_corr <- today_echo %>% select(-c(releaseid, days, TIMEPOINT))
+today_echo_corr <- today_echo_corr %>% select("Adenine.in.nM/mM.Creatinine",
+                                              "ascend2d","diasto2d","systol2d","laarea2d","diavol2d","lve","lvem","lvratio","diavolmm","sysvolmm",
+                                              "lvdiast","lvsystol","lvmass","lvstroke","lvmassht","lvbsa","lveject","pctshort","lvindex","lvoutput",
+                                               "wallsyst","walldias","lvdiasht","peakvelo","rvsystol","aortroot","ladimen","mmodehr","ivsdias","ivssyst",
+                                                "walthick","ladiamht","tapse")
+today_echo_corr <- today_echo_corr %>% dplyr::rename("2D ascending aorta dimensions" = ascend2d,
+                                                      "2D aortic root end diastolic dimension" = diasto2d,
+                                                      "2D aortic root end systolic dimension" = systol2d,
+                                                      "2D four chamber LA area" = laarea2d,
+                                                      "2D four chamber LV end diastolic volume" = diavol2d,
+                                                      "LV mitral valve lateral peak E" = lve,
+                                                      "LV lateral Em" = lvem,
+                                                      "LV lateral E/Em ratio" = lvratio,
+                                                      "MMODE LV end diastolic volume" = diavolmm,
+                                                      "MMODE LV end systolic volume" = sysvolmm,
+                                                      "MMODE LV internal dimension diastole" = lvdiast,
+                                                      "MMODE LV internal dimension systole" = lvsystol,
+                                                      "MMODE LV mass" = lvmass,
+                                                      "MMODE LV stroke volume" = lvstroke,
+                                                      "LV mass indexed to height" = lvmassht,
+                                                      "LV size indexed to body surface area" = lvbsa,
+                                                      "MMODE LV ejection fraction" = lveject,
+                                                      "MMODE percent fractional shortening" = pctshort,
+                                                      "MMODE LV mass index" = lvindex,
+                                                      "MMODE LV cardiac output" = lvoutput,
+                                                      "MMODE LV posterior wall systole" = wallsyst,
+                                                      "MMODE LV posterior wall diastole" = walldias,
+                                                      "LV internal dimension diastole indexed to height" = lvdiasht,
+                                                      "Doppler tricuspid valve peak velocity" = peakvelo,
+                                                      "Doppler tricuspid valve RV systolic pressure" = rvsystol,
+                                                      "MMODE aorta and LA-aortic root" = aortroot,
+                                                      "MMODE aorta and LA-LA internal dimension" = ladimen,
+                                                      "MMODE heart rate" = mmodehr,
+                                                      "MMODE interventricular septum thickness in diastole" = ivsdias,
+                                                      "MMODE interventricular septum thickness in systole" = ivssyst,
+                                                      "Relative wall thickness" = walthick,
+                                                      "LA diameter indexed to height" = ladiamht,
+                                                      "MMODE tricuspid annular plane systolic excursion" = tapse)
+  M <- corr.test(data.matrix(today_echo_corr), normal = F, method = "spearman")
+  r <- data.frame(round(M$r, 3))
+#  r <- r %>% filter(rownames(r)=="CENTRAL_AHI")
+#  r <- r %>% select(-releaseid)
+  p <- data.frame(round(M$p, 3))
+#  p <- p %>% filter(rownames(p)=="CENTRAL_AHI")
+#  p <- p %>% select(-releaseid)
+  emphasize.strong.cells(which(M$p <= 0.05, arr.ind = TRUE))
+  cat("\n")
+  pander(r, caption = "Coefficients")
+  cat("\n")
+  pander(p, caption = "P-values")
+  cat("\n")
+
+#png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/today_echo_corr1.png", res = 170)
+p <- corr_plot_modified_nodict(data=today_echo_corr, 
+                   Y=c("Adenine.in.nM/mM.Creatinine"), 
+                 X=c("2D ascending aorta dimensions","2D aortic root end diastolic dimension", "2D aortic root end systolic dimension",
+                                                      "2D four chamber LA area" ,
+                                                      "2D four chamber LV end diastolic volume" ,
+                                                      "MMODE LV end diastolic volume" ,
+                                                      "MMODE LV end systolic volume" ,
+                                                      "MMODE LV internal dimension diastole" ,
+                                                      "MMODE LV internal dimension systole" ,
+                                                      "MMODE LV mass" ,
+                                                      "MMODE LV stroke volume" ,
+                                                      "LV mass indexed to height" ,
+                                                      "LV size indexed to body surface area" 
+                                                      ),
+                 cor_method="spearman", adj_var = NA)
+#dev.off()
+p
+
+#png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/today_echo_corr2.png", res = 170)
+p <- corr_plot_modified_nodict(data=today_echo_corr, 
+                   Y=c("Adenine.in.nM/mM.Creatinine"), 
+                 X=c("MMODE LV ejection fraction" ,
+                                                      "MMODE percent fractional shortening" ,
+                                                      "MMODE LV mass index" ,
+                                                      "MMODE LV cardiac output" ,
+                                                      "MMODE LV posterior wall systole" ,
+                                                      "MMODE LV posterior wall diastole" ,
+                                                      "LV internal dimension diastole indexed to height"),
+                 cor_method="spearman", adj_var = NA)
+#dev.off()
+p
+
+#png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/today_echo_corr3.png", res = 170)
+p <- corr_plot_modified_nodict(data=today_echo_corr, 
+                   Y=c("Adenine.in.nM/mM.Creatinine"), 
+                 X=c("Doppler tricuspid valve peak velocity" ,"Doppler tricuspid valve RV systolic pressure" ),cor_method="spearman", adj_var = NA)
+#dev.off()
+p
+
+#png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/today_echo_corr4.png", res = 170)
+p <- corr_plot_modified_nodict(data=today_echo_corr, 
+                   Y=c("Adenine.in.nM/mM.Creatinine"), 
+                 X=c(               "MMODE aorta and LA-aortic root" ,
+                                                      "MMODE aorta and LA-LA internal dimension"),
+                 cor_method="spearman", adj_var = NA)
+#dev.off()
+p
+
+#png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/today_echo_corr5.png", res = 170)
+p <- corr_plot_modified_nodict(data=today_echo_corr, 
+                   Y=c("Adenine.in.nM/mM.Creatinine"), 
+                 X=c(                                  "MMODE heart rate" ,
+                                                      "MMODE interventricular septum thickness in diastole" ,
+                                                      "MMODE interventricular septum thickness in systole" ,
+                                                      "Relative wall thickness" ,
+                                                      "LA diameter indexed to height" ),
+                 cor_method="spearman", adj_var = NA)
+dev.off()
+p
+
+#png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/today_echo_corr6.png", res = 170)
+p <- corr_plot_modified_nodict(data=today_echo_corr, 
+                   Y=c("Adenine.in.nM/mM.Creatinine"), 
+                 X=c("MMODE tricuspid annular plane systolic excursion"),
+                 cor_method="spearman", adj_var = NA)
+#dev.off()
+p
+
+#png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/today_echo_corr7.png", res = 170)
+p <- corr_plot_modified_nodict(data=today_echo_corr, 
+                   Y=c("Adenine.in.nM/mM.Creatinine"), 
+                 X=c("LV mitral valve lateral peak E",
+                     "LV lateral Em",
+                     "LV lateral E/Em ratio"),
+                 cor_method="spearman", adj_var = NA)
+#dev.off()
+p
+```
+
+### Correlation between TODAY2 echo and baseline proteins
+
+```{r, include=TRUE}
+ # Correlations
+today2_echo_corr <- today2_echo %>% select(-c(releaseid, days, TIMEPOINT))
+  M <- corr.test(data.matrix(today2_echo_corr), normal = F, method = "spearman")
+  r <- data.frame(round(M$r, 3))
+#  r <- r %>% filter(rownames(r)=="CENTRAL_AHI")
+#  r <- r %>% select(-releaseid)
+#  p <- data.frame(round(M$p, 3))
+#  p <- p %>% filter(rownames(p)=="CENTRAL_AHI")
+#  p <- p %>% select(-releaseid)
+  emphasize.strong.cells(which(M$p <= 0.05, arr.ind = TRUE))
+  cat("\n")
+  pander(r, caption = "Coefficients")
+  cat("\n")
+```
+
+```{r, include=TRUE}
+ # Correlations
+today2_echo_corr <- today2_echo %>% select(-c(releaseid, days, TIMEPOINT))
+today2_echo_corr <- today2_echo_corr %>% select("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF",
+                                              "ascend2d","diasto2d","systol2d","laarea2d","diavol2d","lvedv2d2ch","lvef2d2ch","lvef2d4ch",
+                                              "lvesv2d2ch","lvesv2d4ch",
+                                              "lve","lvem","lvratio","lvsepe","lvsepem","lvsepratio","lvtrie","lvtriem","lvtriratio",
+                                              "peakvelo","rvsystol","aortroot","ladimen","mmodehr","ivsdias","ivssyst",
+                                              "lvindex","lvoutput","lveject","diavolmm","sysvolmm","pctshort",
+                                              "lvdiast","lvsystol","lvmass", "wallsyst","walldias","lvstroke","tapse",
+                                              "walthick","lvmassht")
+today2_echo_corr <- today2_echo_corr %>% dplyr::rename("2D ascending aorta dimensions" = ascend2d,
+                                                      "2D aortic root end diastolic dimension" = diasto2d,
+                                                      "2D aortic root end systolic dimension" = systol2d,
+                                                      "2D four chamber LA area" = laarea2d,
+                                                      "2D four chamber LV end diastolic volume" = diavol2d,
+                                                      "2D two chamber LV end diastolic volume" = lvedv2d2ch,
+                                                      "2D two chamber LV ejection fraction" = lvef2d2ch,
+                                                      "2D four chamber LV ejection fraction" = lvef2d4ch,
+                                                      "2D two chamber LV end systolic volume"  = lvesv2d2ch,
+                                                      "2D four chamber LV end systolic volume" = lvesv2d4ch,
+                                                      "LV mitral valve lateral peak E" = lve,
+                                                      "LV lateral Em" = lvem,
+                                                      "LV lateral E/Em ratio" = lvratio,
+                                                      "LV mitral valve septal peak E" = lvsepe,
+                                                      "LV septal Em" = lvsepem,
+                                                      "LV septal E/Em ratio" = lvsepratio,
+                                                      "LV mitral valve tricuspid peak E" = lvtrie,
+                                                      "LV tricuspid Em" = lvtriem,
+                                                      "LV tricuspid E/Em ratio" = lvtriratio,
+                                                      "Doppler tricuspid valve peak velocity" = peakvelo,
+                                                      "Doppler tricuspid valve RV systolic pressure" = rvsystol,
+                                                      "MMODE aorta and LA-aortic root" = aortroot,
+                                                      "MMODE aorta and LA-LA internal dimension" = ladimen,
+                                                      "MMODE heart rate" = mmodehr,
+                                                      "MMODE interventricular septum thickness in diastole" = ivsdias,
+                                                      "MMODE interventricular septum thickness in systole" = ivssyst,
+                                                      "MMODE LV mass index" = lvindex,
+                                                      "MMODE LV cardiac output" = lvoutput,
+                                                      "MMODE LV ejection fraction" = lveject,
+                                                      "MMODE LV end diastolic volume" = diavolmm,
+                                                      "MMODE LV end systolic volume" = sysvolmm,
+                                                      "MMODE percent fractional shortening" = pctshort,
+                                                      "MMODE LV internal dimension diastole" = lvdiast,
+                                                      "MMODE LV internal dimension systole" = lvsystol,
+                                                      "MMODE LV mass" = lvmass,
+                                                      "MMODE LV posterior wall diastole" = walldias,
+                                                      "MMODE LV posterior wall systole" = wallsyst,
+                                                      "MMODE LV stroke volume" = lvstroke,
+                                                      "MMODE tricuspid annular plane systolic excursion" = tapse,
+                                                      "Relative wall thickness" = walthick,
+                                                      "LV mass indexed to height" = lvmassht
+                                                      )
+  M <- corr.test(data.matrix(today2_echo_corr), normal = F, method = "spearman")
+  r <- data.frame(round(M$r, 3))
+#  r <- r %>% filter(rownames(r)=="CENTRAL_AHI")
+#  r <- r %>% select(-releaseid)
+#  p <- data.frame(round(M$p, 3))
+#  p <- p %>% filter(rownames(p)=="CENTRAL_AHI")
+#  p <- p %>% select(-releaseid)
+  emphasize.strong.cells(which(M$p <= 0.05, arr.ind = TRUE))
+  cat("\n")
+  pander(r, caption = "Coefficients")
+  cat("\n")
+
+# Ventricular dimensions and volume measurements
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/today2_echo_corr1.png", res = 170)
+corr_plot_modified_nodict(data=today2_echo_corr, 
+                   Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                   X=c("2D ascending aorta dimensions","2D aortic root end diastolic dimension",
+                                                      "2D aortic root end systolic dimension",
+                                                      "2D four chamber LA area",
+                                                      "2D four chamber LV end diastolic volume" ,
+                                                      "MMODE LV end diastolic volume",
+                                                      "MMODE LV end systolic volume",
+                                                      "MMODE LV internal dimension diastole",
+                                                      "MMODE LV internal dimension systole",
+                                                      "MMODE LV mass" ,
+                                                      "MMODE LV stroke volume",
+                                                      "LV mass indexed to height",
+                                                      "2D two chamber LV end diastolic volume",
+                                                      "2D two chamber LV end systolic volume",
+                                                      "2D four chamber LV end systolic volume"),
+                  cor_method="spearman", adj_var = NA)
+dev.off()
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/today2_echo_corr2.png", res = 170)
+corr_plot_modified_nodict(data=today2_echo_corr, 
+                   Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                 X=c( "MMODE LV ejection fraction" ,
+                                                      "MMODE percent fractional shortening" ,
+                                                      "MMODE LV mass index" ,
+                                                      "MMODE LV cardiac output" ,
+                                                      "MMODE LV posterior wall systole" ,
+                                                      "MMODE LV posterior wall diastole" ,
+                                                      "2D two chamber LV ejection fraction" ,
+                                                      "2D four chamber LV ejection fraction"
+                                                      ),
+                 cor_method="spearman", adj_var = NA)
+dev.off()
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/today2_echo_corr3.png", res = 170)
+corr_plot_modified_nodict(data=today2_echo_corr, 
+                   Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                 X=c("Doppler tricuspid valve peak velocity" ,"Doppler tricuspid valve RV systolic pressure" ),cor_method="spearman", adj_var = NA)
+dev.off()
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/today2_echo_corr4.png", res = 170)
+corr_plot_modified_nodict(data=today2_echo_corr, 
+                   Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                 X=c(               "MMODE aorta and LA-aortic root" ,
+                                                      "MMODE aorta and LA-LA internal dimension"),
+                 cor_method="spearman", adj_var = NA)
+dev.off()
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/today2_echo_corr5.png", res = 170)
+corr_plot_modified_nodict(data=today2_echo_corr, 
+                   Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                 X=c("MMODE heart rate",
+                     "MMODE interventricular septum thickness in diastole",
+                     "MMODE interventricular septum thickness in systole",
+                     "Relative wall thickness"),
+                 cor_method="spearman", adj_var = NA)
+dev.off()
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/today2_echo_corr6.png", res = 170)
+corr_plot_modified_nodict(data=today2_echo_corr, 
+                   Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                 X=c("MMODE tricuspid annular plane systolic excursion"),
+                 cor_method="spearman", adj_var = NA)
+dev.off()
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/today2_echo_corr7.png", res = 170)
+corr_plot_modified_nodict(data=today2_echo_corr, 
+                   Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                 X=c(  "LV mitral valve lateral peak E",
+                                                      "LV lateral Em",
+                                                      "LV lateral E/Em ratio",
+                                                      "LV mitral valve septal peak E",
+                                                      "LV septal Em" ,
+                                                      "LV septal E/Em ratio",
+                                                      "LV mitral valve tricuspid peak E",
+                                                      "LV tricuspid Em",
+                                                      "LV tricuspid E/Em ratio"),
+                 cor_method="spearman", adj_var = NA)
+dev.off()
+
+```
+
+### Correlation between change in echo and baseline proteins
+
+```{r, include=TRUE}
+ # Correlations
+echo_deltas_corr <- echo_deltas %>% select(-c(releaseid))
+echo_deltas_corr <- echo_deltas_corr %>% select("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF",
+                                              "delta_ascend2d","delta_diasto2d","delta_systol2d","delta_laarea2d","delta_diavol2d",
+                                              "delta_lve","delta_lvem","delta_lvratio","delta_diavolmm","delta_sysvolmm",
+                                              "delta_lvdiast","delta_lvsystol","delta_lvmass","delta_lvstroke","delta_lvmassht",
+                                              "delta_lveject","delta_pctshort","delta_lvindex","delta_lvoutput",
+                                               "delta_wallsyst","delta_walldias","delta_peakvelo","delta_rvsystol",
+                                              "delta_aortroot","delta_ladimen","delta_mmodehr","delta_ivsdias","delta_ivssyst",
+                                                "delta_walthick","delta_tapse")
+echo_deltas_corr <- echo_deltas_corr %>% dplyr::rename("2D ascending aorta dimensions" = delta_ascend2d,
+                                                      "2D aortic root end diastolic dimension" = delta_diasto2d,
+                                                      "2D aortic root end systolic dimension" = delta_systol2d,
+                                                      "2D four chamber LA area" = delta_laarea2d,
+                                                      "2D four chamber LV end diastolic volume" = delta_diavol2d,
+                                                      "LV mitral valve lateral peak E" = delta_lve,
+                                                      "LV lateral Em" = delta_lvem,
+                                                      "LV lateral E/Em ratio" = delta_lvratio,
+                                                      "MMODE LV end diastolic volume" = delta_diavolmm,
+                                                      "MMODE LV end systolic volume" = delta_sysvolmm,
+                                                      "MMODE LV internal dimension diastole" = delta_lvdiast,
+                                                      "MMODE LV internal dimension systole" = delta_lvsystol,
+                                                      "MMODE LV mass" = delta_lvmass,
+                                                      "MMODE LV stroke volume" = delta_lvstroke,
+                                                      "LV mass indexed to height" = delta_lvmassht,
+                                                      "MMODE LV ejection fraction" = delta_lveject,
+                                                      "MMODE percent fractional shortening" = delta_pctshort,
+                                                      "MMODE LV mass index" = delta_lvindex,
+                                                      "MMODE LV cardiac output" = delta_lvoutput,
+                                                      "MMODE LV posterior wall systole" = delta_wallsyst,
+                                                      "MMODE LV posterior wall diastole" = delta_walldias,
+                                                      "Doppler tricuspid valve peak velocity" = delta_peakvelo,
+                                                      "Doppler tricuspid valve RV systolic pressure" = delta_rvsystol,
+                                                      "MMODE aorta and LA-aortic root" = delta_aortroot,
+                                                      "MMODE aorta and LA-LA internal dimension" = delta_ladimen,
+                                                      "MMODE heart rate" = delta_mmodehr,
+                                                      "MMODE interventricular septum thickness in diastole" = delta_ivsdias,
+                                                      "MMODE interventricular septum thickness in systole" = delta_ivssyst,
+                                                      "Relative wall thickness" = delta_walthick,
+                                                      "MMODE tricuspid annular plane systolic excursion" = delta_tapse)
+  M <- corr.test(data.matrix(echo_deltas_corr), normal = F, method = "spearman")
+  r <- data.frame(round(M$r, 3))
+  emphasize.strong.cells(which(M$p <= 0.05, arr.ind = TRUE))
+  cat("\n")
+  pander(r, caption = "Coefficients")
+  cat("\n")
+  
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/delta_echo_corr1.png", res = 170)
+corr_plot_modified_nodict(data=echo_deltas_corr, 
+                   Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                 X=c("2D ascending aorta dimensions","2D aortic root end diastolic dimension", "2D aortic root end systolic dimension",
+                                                      "2D four chamber LA area" ,
+                                                      "2D four chamber LV end diastolic volume" ,
+                                                      "MMODE LV end diastolic volume" ,
+                                                      "MMODE LV end systolic volume" ,
+                                                      "MMODE LV internal dimension diastole" ,
+                                                      "MMODE LV internal dimension systole" ,
+                                                      "MMODE LV mass" ,
+                                                      "MMODE LV stroke volume" ,
+                                                      "LV mass indexed to height"  
+                                                      ),
+                 cor_method="spearman", adj_var = NA)
+dev.off()
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/delta_echo_corr2.png", res = 170)
+corr_plot_modified_nodict(data=echo_deltas_corr, 
+                   Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                 X=c("MMODE LV ejection fraction" ,
+                                                      "MMODE percent fractional shortening" ,
+                                                      "MMODE LV mass index" ,
+                                                      "MMODE LV cardiac output" ,
+                                                      "MMODE LV posterior wall systole" ,
+                                                      "MMODE LV posterior wall diastole" ),
+                 cor_method="spearman", adj_var = NA)
+dev.off()
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/delta_echo_corr3.png", res = 170)
+corr_plot_modified_nodict(data=echo_deltas_corr, 
+                   Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                 X=c("Doppler tricuspid valve peak velocity" ,"Doppler tricuspid valve RV systolic pressure" ),cor_method="spearman", adj_var = NA)
+dev.off()
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/delta_echo_corr4.png", res = 170)
+corr_plot_modified_nodict(data=echo_deltas_corr, 
+                   Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                 X=c(               "MMODE aorta and LA-aortic root" ,
+                                                      "MMODE aorta and LA-LA internal dimension"),
+                 cor_method="spearman", adj_var = NA)
+dev.off()
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/delta_echo_corr5.png", res = 170)
+corr_plot_modified_nodict(data=echo_deltas_corr, 
+                   Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                 X=c(                                  "MMODE heart rate" ,
+                                                      "MMODE interventricular septum thickness in diastole" ,
+                                                      "MMODE interventricular septum thickness in systole" ,
+                                                      "Relative wall thickness" ),
+                 cor_method="spearman", adj_var = NA)
+dev.off()
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/delta_echo_corr6.png", res = 170)
+corr_plot_modified_nodict(data=echo_deltas_corr, 
+                   Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                 X=c("MMODE tricuspid annular plane systolic excursion"),
+                 cor_method="spearman", adj_var = NA)
+dev.off()
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/delta_echo_corr7.png", res = 170)
+corr_plot_modified_nodict(data=echo_deltas_corr, 
+                   Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                 X=c("LV mitral valve lateral peak E",
+                     "LV lateral Em",
+                     "LV lateral E/Em ratio"),
+                 cor_method="spearman", adj_var = NA)
+dev.off()  
+```
+
+## PWV
+
+### Summary statistics 
+
+```{r, include=FALSE}
+pwvnames <- colnames(pwv)
+pwvnames <- pwvnames[!(pwvnames %in% c("releaseid","TIMEPOINT"))]
+t <- CreateTableOne(vars=pwvnames,data=pwv,strata = "TIMEPOINT")
+t <- print(t, nonnormal = pwvnames, missing=T)
+
+pwv_v1 <- pwv_v1 %>% dplyr::rename("Standard deviation of R-R interval" = SDNN,
+                                                     "Percent of consecutive NN intervals differing by more than 50ms" = PNN50,
+                                                     "Root-mean-square of the difference of successive NN intervals" = RMSSD,
+                                                     "Standard deviation of the means for each R-R segment" = SDANN,
+                                                     "Mean of the standard deviations for each R-R segment" = SDNN_INDEX,
+                                                     "Percentage of low frequency power (0.04 – 0.4Hz)" = LF_POWER_NORMALISED,
+                                                     "Percentage of high frequency power" = HF_POWER_NORMALISED,
+                                                     "Ratio of low frequency power to high frequency power" = LF_HF_RATIO,
+                                                     "Pulse wave velocity - carotid femoral" = PWVF,
+                                                     "Pulse wave velocity - carotid radial" = PWVR,
+                                                     "Pulse wave velocity - femoral to foot" = PWVFFT,
+                                                     "Pulse wave velocity - distal" = PWVD,
+                                                     "Augmentation Index mean" = AIX,
+                                                     "Central systolic pressure mean" = C_SBP,
+                                                     "Central diastolic pressure mean" = C_DBP,
+                                                     "Mean MAP measured by oscillometry" = MAP_PM,
+                                                     "Measured HR" = HR_PM,
+                                                     "Mean cardiac output indexed to BSA" = CI,
+                                                     "Mean maximal rate of rise of LV pressure" = LVDPDT,
+                                                     "Mean LV dp/dt max/pressure" = LV_CTX,
+                                                     "Brachial artery distensibility" = BRACHD,
+                                                     "Mean compliance of the systemic vascular system" = SVC,
+                                                     "Mean resistance of the systemic vascular system" = SVR)
+
+pwv_v2 <- pwv_v2 %>% dplyr::rename("Standard deviation of R-R interval" = SDNN,
+                                                     "Percent of consecutive NN intervals differing by more than 50ms" = PNN50,
+                                                     "Root-mean-square of the difference of successive NN intervals" = RMSSD,
+                                                     "Standard deviation of the means for each R-R segment" = SDANN,
+                                                     "Mean of the standard deviations for each R-R segment" = SDNN_INDEX,
+                                                     "Percentage of low frequency power (0.04 – 0.4Hz)" = LF_POWER_NORMALISED,
+                                                     "Percentage of high frequency power" = HF_POWER_NORMALISED,
+                                                     "Ratio of low frequency power to high frequency power" = LF_HF_RATIO,
+                                                     "Pulse wave velocity - carotid femoral" = PWVF,
+                                                     "Pulse wave velocity - carotid radial" = PWVR,
+                                                     "Pulse wave velocity - femoral to foot" = PWVFFT,
+                                                     "Pulse wave velocity - distal" = PWVD,
+                                                     "Augmentation Index mean" = AIX,
+                                                     "Central systolic pressure mean" = C_SBP,
+                                                     "Central diastolic pressure mean" = C_DBP,
+                                                     "Mean MAP measured by oscillometry" = MAP_PM,
+                                                     "Measured HR" = HR_PM,
+                                                     "Mean cardiac output indexed to BSA" = CI,
+                                                     "Mean maximal rate of rise of LV pressure" = LVDPDT,
+                                                     "Mean LV dp/dt max/pressure" = LV_CTX,
+                                                     "Brachial artery distensibility" = BRACHD,
+                                                     "Mean compliance of the systemic vascular system" = SVC,
+                                                     "Mean resistance of the systemic vascular system" = SVR)
+
+pwv_deltas <- pwv_deltas %>% dplyr::rename("Standard deviation of R-R interval" = delta_sdnn,
+                                                     "Percent of consecutive NN intervals differing by more than 50ms" = delta_pnn50,
+                                                     "Root-mean-square of the difference of successive NN intervals" = delta_rmssd,
+                                                     "Standard deviation of the means for each R-R segment" = delta_sdann,
+                                                     "Mean of the standard deviations for each R-R segment" = delta_sdnn_index,
+                                                     "Percentage of low frequency power (0.04 – 0.4Hz)" = delta_lf_power_normalized,
+                                                     "Percentage of high frequency power" = delta_hf_power_normalized,
+                                                     "Ratio of low frequency power to high frequency power" = delta_lf_hf_ratio,
+                                                     "Pulse wave velocity - carotid femoral" = delta_pwvf,
+                                                     "Pulse wave velocity - carotid radial" = delta_pwvr,
+                                                     "Pulse wave velocity - femoral to foot" = delta_pwvfft,
+                                                     "Pulse wave velocity - distal" = delta_pwvd,
+                                                     "Augmentation Index mean" = delta_aix,
+                                                     "Central systolic pressure mean" = delta_c_sbp,
+                                                     "Central diastolic pressure mean" = delta_c_dbp,
+                                                     "Mean MAP measured by oscillometry" = delta_map_pm,
+                                                     "Measured HR" = delta_hr_pm,
+                                                     "Mean cardiac output indexed to BSA" = delta_ci,
+                                                     "Mean maximal rate of rise of LV pressure" = delta_lvdpdt,
+                                                     "Mean LV dp/dt max/pressure" = delta_lv_ctx,
+                                                     "Brachial artery distensibility" = delta_brachd,
+                                                     "Mean compliance of the systemic vascular system" = delta_svc,
+                                                     "Mean resistance of the systemic vascular system" = delta_svr)
+
+
+```
+
+```{r, include=TRUE, comment=""}
+kable(t)
+```
+
+### Correlation between PWV time 1 and baseline proteins
+
+```{r, include=TRUE}
+ # Correlations
+pwv_v1_corr <- pwv_v1 %>% select(-c(releaseid,TIMEPOINT,`Standard deviation of the means for each R-R segment`))
+  M <- corr.test(data.matrix(pwv_v1_corr), normal = F, method = "spearman")
+  r <- data.frame(round(M$r, 3))
+#  r <- r %>% filter(rownames(r)=="CENTRAL_AHI")
+#  r <- r %>% select(-releaseid)
+#  p <- data.frame(round(M$p, 3))
+#  p <- p %>% filter(rownames(p)=="CENTRAL_AHI")
+#  p <- p %>% select(-releaseid)
+  emphasize.strong.cells(which(M$p <= 0.05, arr.ind = TRUE))
+  cat("\n")
+  pander(r, caption = "Coefficients")
+  cat("\n")
+  
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/pwv_v1_corr1.png", res = 170)
+corr_plot_modified_nodict(data=pwv_v1_corr, 
+                          Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                          X=c("Standard deviation of R-R interval",
+                              "Percent of consecutive NN intervals differing by more than 50ms",
+                              "Root-mean-square of the difference of successive NN intervals",
+                              "Mean of the standard deviations for each R-R segment"
+                          ),
+                          cor_method="spearman", adj_var = NA)
+dev.off()  
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/pwv_v1_corr2.png", res = 170)
+corr_plot_modified_nodict(data=pwv_v1_corr, 
+                          Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                          X=c("Percentage of low frequency power (0.04 – 0.4Hz)",
+                              "Percentage of high frequency power",
+                              "Ratio of low frequency power to high frequency power"
+                          ),
+                          cor_method="spearman", adj_var = NA)
+dev.off()   
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/pwv_v1_corr3.png", res = 170)
+corr_plot_modified_nodict(data=pwv_v1_corr, 
+                          Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                          X=c("Pulse wave velocity - carotid femoral",
+                              "Pulse wave velocity - carotid radial",
+                              "Pulse wave velocity - femoral to foot",
+                              "Pulse wave velocity - distal",
+                              "Augmentation Index mean"
+                          ),
+                          cor_method="spearman", adj_var = NA)
+dev.off()    
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/pwv_v1_corr4.png", res = 170)
+corr_plot_modified_nodict(data=pwv_v1_corr, 
+                          Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                          X=c("Central systolic pressure mean",
+                              "Central diastolic pressure mean",
+                              "Mean MAP measured by oscillometry",
+                              "Measured HR",
+                              "Mean cardiac output indexed to BSA",
+                              "Mean maximal rate of rise of LV pressure",
+                              "Mean LV dp/dt max/pressure"
+                          ),
+                          cor_method="spearman", adj_var = NA)
+dev.off()   
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/pwv_v1_corr5.png", res = 170)
+corr_plot_modified_nodict(data=pwv_v1_corr, 
+                          Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                          X=c("Brachial artery distensibility",
+                              "Mean compliance of the systemic vascular system",
+                              "Mean resistance of the systemic vascular system"
+                          ),
+                          cor_method="spearman", adj_var = NA)
+dev.off() 
+```
+
+### Correlation between PWV time 2 and baseline proteins
+
+```{r, include=TRUE}
+ # Correlations
+pwv_v2_corr <- pwv_v2 %>% select(-c(releaseid,TIMEPOINT))
+M <- corr.test(data.matrix(pwv_v2_corr), normal = F, method = "spearman")
+  r <- data.frame(round(M$r, 3))
+#  r <- r %>% filter(rownames(r)=="CENTRAL_AHI")
+#  r <- r %>% select(-releaseid)
+#  p <- data.frame(round(M$p, 3))
+#  p <- p %>% filter(rownames(p)=="CENTRAL_AHI")
+#  p <- p %>% select(-releaseid)
+  emphasize.strong.cells(which(M$p <= 0.05, arr.ind = TRUE))
+  cat("\n")
+  pander(r, caption = "Coefficients")
+  cat("\n")
+  
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/pwv_v2_corr1.png", res = 170)
+corr_plot_modified_nodict(data=pwv_v2_corr, 
+                          Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                          X=c("Standard deviation of R-R interval",
+                              "Percent of consecutive NN intervals differing by more than 50ms",
+                              "Root-mean-square of the difference of successive NN intervals",
+                              "Standard deviation of the means for each R-R segment",
+                              "Mean of the standard deviations for each R-R segment"
+                          ),
+                          cor_method="spearman", adj_var = NA)
+dev.off()  
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/pwv_v2_corr2.png", res = 170)
+corr_plot_modified_nodict(data=pwv_v2_corr, 
+                          Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                          X=c("Percentage of low frequency power (0.04 – 0.4Hz)",
+                              "Percentage of high frequency power",
+                              "Ratio of low frequency power to high frequency power"
+                          ),
+                          cor_method="spearman", adj_var = NA)
+dev.off()   
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/pwv_v2_corr3.png", res = 170)
+corr_plot_modified_nodict(data=pwv_v2_corr, 
+                          Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                          X=c("Pulse wave velocity - carotid femoral",
+                              "Pulse wave velocity - carotid radial",
+                              "Pulse wave velocity - femoral to foot",
+                              "Pulse wave velocity - distal",
+                              "Augmentation Index mean"
+                          ),
+                          cor_method="spearman", adj_var = NA)
+dev.off()    
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/pwv_v2_corr4.png", res = 170)
+corr_plot_modified_nodict(data=pwv_v2_corr, 
+                          Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                          X=c("Central systolic pressure mean",
+                              "Central diastolic pressure mean",
+                              "Mean MAP measured by oscillometry",
+                              "Measured HR",
+                              "Mean cardiac output indexed to BSA",
+                              "Mean maximal rate of rise of LV pressure",
+                              "Mean LV dp/dt max/pressure"
+                          ),
+                          cor_method="spearman", adj_var = NA)
+dev.off()   
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/pwv_v2_corr5.png", res = 170)
+corr_plot_modified_nodict(data=pwv_v2_corr, 
+                          Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                          X=c("Brachial artery distensibility",
+                              "Mean compliance of the systemic vascular system",
+                              "Mean resistance of the systemic vascular system"
+                          ),
+                          cor_method="spearman", adj_var = NA)
+dev.off() 
+```
+
+### Correlation between change in PWV and baseline proteins
+
+```{r, include=TRUE}
+ # Correlations
+pwv_deltas_corr <- pwv_deltas %>% select(-c(releaseid,`Standard deviation of the means for each R-R segment`))
+M <- corr.test(data.matrix(pwv_v2_corr), normal = F, method = "spearman")
+  r <- data.frame(round(M$r, 3))
+#  r <- r %>% filter(rownames(r)=="CENTRAL_AHI")
+#  r <- r %>% select(-releaseid)
+#  p <- data.frame(round(M$p, 3))
+#  p <- p %>% filter(rownames(p)=="CENTRAL_AHI")
+#  p <- p %>% select(-releaseid)
+  emphasize.strong.cells(which(M$p <= 0.05, arr.ind = TRUE))
+  cat("\n")
+  pander(r, caption = "Coefficients")
+  cat("\n")
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/pwv_deltas_corr1.png", res = 170)
+corr_plot_modified_nodict(data=pwv_deltas_corr, 
+                          Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                          X=c("Standard deviation of R-R interval",
+                              "Percent of consecutive NN intervals differing by more than 50ms",
+                              "Root-mean-square of the difference of successive NN intervals",
+                              "Mean of the standard deviations for each R-R segment"
+                          ),
+                          cor_method="spearman", adj_var = NA)
+dev.off()  
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/pwv_deltas_corr2.png", res = 170)
+corr_plot_modified_nodict(data=pwv_deltas_corr, 
+                          Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                          X=c("Percentage of low frequency power (0.04 – 0.4Hz)",
+                              "Percentage of high frequency power",
+                              "Ratio of low frequency power to high frequency power"
+                          ),
+                          cor_method="spearman", adj_var = NA)
+dev.off()   
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/pwv_deltas_corr3.png", res = 170)
+corr_plot_modified_nodict(data=pwv_deltas_corr, 
+                          Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                          X=c("Pulse wave velocity - carotid femoral",
+                              "Pulse wave velocity - carotid radial",
+                              "Pulse wave velocity - femoral to foot",
+                              "Pulse wave velocity - distal",
+                              "Augmentation Index mean"
+                          ),
+                          cor_method="spearman", adj_var = NA)
+dev.off()    
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/pwv_deltas_corr4.png", res = 170)
+corr_plot_modified_nodict(data=pwv_deltas_corr, 
+                          Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                          X=c("Central systolic pressure mean",
+                              "Central diastolic pressure mean",
+                              "Mean MAP measured by oscillometry",
+                              "Measured HR",
+                              "Mean cardiac output indexed to BSA",
+                              "Mean maximal rate of rise of LV pressure",
+                              "Mean LV dp/dt max/pressure"
+                          ),
+                          cor_method="spearman", adj_var = NA)
+dev.off()   
+
+png(height = 3000, width = 2500, file = "/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/TODAY proteomics metabolomics/Proteomics analyses/pwv_deltas_corr5.png", res = 170)
+corr_plot_modified_nodict(data=pwv_deltas_corr, 
+                          Y=c("WFKN2","PSB3","Myosin light chain 1","H6ST3","TLR5","SEZ6L","PSPC1","LSAMP","PSA","Nr-CAM","SCG3","PEDF"), 
+                          X=c("Brachial artery distensibility",
+                              "Mean compliance of the systemic vascular system",
+                              "Mean resistance of the systemic vascular system"
+                          ),
+                          cor_method="spearman", adj_var = NA)
+dev.off() 
+```
