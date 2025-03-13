@@ -1,0 +1,131 @@
+---
+title: "ATTEMPT emmeans visualization"
+author: "Ye Ji Choi"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    embed-resources: true
+---
+
+```{r echo = F}
+library(dplyr)
+library(ggplot2)
+```
+
+```{r echo = F}
+# read mixed model results dataframe (rendered in Hyak)
+model_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/ATTEMPT_scrna_mm_model_combined.rds")
+
+# read emmeans dataframe (rendered in Hyak)
+emmeans_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/ATTEMPT_scrna_mm_emmeans_combined.rds")
+```
+
+```{r echo = F}
+# keep converged model results only
+model_filtered <- model_df %>%
+  filter(!is.na(PValue)) %>%
+  arrange(PValue)
+emmeans_filtered <- emmeans_df %>%
+  filter(!is.na(SE))
+```
+
+
+```{r echo = F}
+# arrange the model based on significance of interaction term in model
+ordered_model <- subset(model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST") %>%
+  arrange(PValue)
+gene_order <- factor(ordered_model$Gene, levels = ordered_model$Gene)
+sig_genes <- subset(model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)$Gene
+```
+
+```{r echo =F}
+# compute emmean difference in POST - PRE in each treatment group
+emmeans_diff <- emmeans_filtered %>%
+  pivot_wider(names_from = Visit, values_from = c(emmean, SE)) %>%
+  group_by(Treatment, Gene) %>%
+  fill(ends_with("PRE"), ends_with("POST")) %>%
+  mutate(diff_emmean = emmean_POST - emmean_PRE,
+         SE_diff = sqrt(SE_POST^2 + SE_PRE^2),  # Propagating SE for difference
+         diff_lowerCL = diff_emmean - 1.96 * SE_diff,
+         diff_upperCL = diff_emmean + 1.96 * SE_diff,
+         t_stat = diff_emmean / SE_diff,  # t-statistic
+         p_value = 2 * pt(-abs(t_stat), df)) %>%
+  filter(!is.na(diff_emmean)) %>%
+  mutate(interaction_significance = case_when(Gene %in% sig_genes ~ "p<0.05", 
+                                 T ~ "p>0.05"),
+         Gene = factor(Gene, levels = gene_order)) %>%
+  arrange(Gene)
+write.csv(emmeans_diff, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans_diff.csv", row.names = F)
+
+# separate out for placebo/dapa & save to run for IPA
+emmeans_diff_placebo <- emmeans_diff %>%
+  filter(Treatment == "Placebo") %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr"))
+write.csv(emmeans_diff_placebo, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans_diff_placebo.csv", row.names = F)
+
+emmeans_diff_dapa <- emmeans_diff %>%
+  filter(Treatment == "Dapagliflozin") %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr"))
+write.csv(emmeans_diff_dapa, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans_diff_dapa.csv", row.names = F)
+```
+
+```{r echo = F}
+# DiD (Differences in Differences)
+emmeans_diff_wide <- emmeans_diff %>%
+  pivot_wider(names_from = Treatment, values_from = c(diff_emmean, SE_diff))
+
+emmeans_diff_DiD <- emmeans_diff_wide %>%
+  group_by(Gene) %>%
+  fill(ends_with("Placebo"), ends_with("Dapagliflozin")) %>%
+  dplyr::mutate(DiD = diff_emmean_Dapagliflozin - diff_emmean_Placebo,
+         SE_DiD = sqrt(SE_diff_Dapagliflozin^2 + SE_diff_Placebo^2),  # SE computation
+         t_stat_DiD = DiD / SE_DiD,  # t-statistic
+         p_value_DiD = 2 * (1 - pt(abs(t_stat_DiD), df = nrow(emmeans_diff) - 2))) %>%
+  select(Gene, diff_emmean_Dapagliflozin,diff_emmean_Placebo, DiD, SE_DiD, t_stat_DiD, p_value_DiD) %>%
+  filter(!is.na(DiD)) %>%
+  mutate(q_value = p.adjust(p_value_DiD, method = "fdr"))
+write.csv(emmeans_diff_DiD, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans_diff_DiD.csv", row.names = F)
+```
+
+```{r echo = F}
+emmeans_diff %>%
+  filter(significant == "p<0.05") %>%
+  filter(Gene %in% sig_genes[1:10]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8), 
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) + 
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1")) +
+    ylim(c(-0.5, 0.5))
+
+
+emmeans_diff %>%
+  filter(significant == "p<0.05") %>%
+  filter(Gene %in% sig_genes[11:20]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8), 
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) + 
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1")) +
+    ylim(c(-0.5, 0.5))
+```

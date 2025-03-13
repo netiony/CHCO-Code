@@ -1,0 +1,912 @@
+---
+title: "Proteins for AKQQ"
+author: "Ye Ji Choi"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    embed-resources: true
+---
+
+```{r echo = F, include = F}
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(ensr)
+library(kableExtra)
+library(ggrepel)
+library(purrr)
+library(tidyverse)
+library(limma)
+library(arsenal)
+```
+
+```{r echo = F, include = F}
+# SOMA analytes names/info
+load("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Combined SomaScan/analytes.Rdata")
+
+# Olink data
+olink_plasma <- read.csv("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Olink Data/Data_Clean/plasma_cleaned.csv")
+olink_urine <- read.csv("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Olink Data/Data_Clean/urine_cleaned.csv")
+olink_map <- read.csv("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Olink Data/Data_Clean/olink_id_map.csv")
+
+# List of proteins from Anil
+proteins_dat <- read.csv("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Anil Karihaloo/List of proteins for AKQQ.csv")
+proteins <- proteins_dat$proteins
+```
+
+```{r echo = F}
+harm_dat_raw <- read.csv("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/soma_harmonized_dataset.csv", na.strings = "") 
+
+harm_dat <- harm_dat_raw %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+                   .by = c(record_id, visit)) %>%
+  mutate(group = case_when(group == "Lean Control" ~ "HC",
+                           group == "Obese Control" ~ "OB",
+                           group == "Type 1 Diabetes" ~ "T1D",
+                           group == "Type 2 Diabetes" ~ "T2D",
+                           T ~ group))
+```
+
+
+# SOMA
+## HC vs. T1D
+
+```{r echo = F, results='asis'}
+soma <- harm_dat %>%
+  filter(group %in% c("HC", "T1D")) %>%
+  filter(visit == "baseline") %>%
+  filter(!is.na(seq.10000.28))
+
+summary(arsenal::tableby(group ~ age + sex + kwt(acr_u, "Nmiss", "medianq1q3") + bmi + diabetes_duration, 
+                         data = soma), test = F, 
+        labelTranslations = c("age" = "Age", "sex" = "Sex", "acr_u" = "UACR", "bmi" = "BMI", "diabetes_duration" = "Diabetes duration"))
+```
+
+#### Top 50 DE
+```{r echo = F}
+# filter soma scan data to baseline data only and log transform
+soma_filtered <- soma %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id") %>%
+  dplyr::select(starts_with("seq"))
+
+y <- t(soma_filtered)
+y <- log2(y)
+
+# Design matrix
+cond = as.factor(soma$group)
+design_mat <- model.matrix(~0 + group, data = soma)
+colnames(design_mat) = gsub("group","",colnames(design_mat))
+# Fit
+contrast = makeContrasts(contrasts = c("T1D-HC"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$EntrezGeneSymbol <- analytes$EntrezGeneSymbol[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+res_save <- res %>%
+  rownames_to_column("AptName") %>%
+  dplyr::select(-c(EntrezGeneSymbol, TargetFullName)) %>%
+  left_join(analytes, by = "AptName")
+
+# QC, checking if all proteins requested by Anil were in the list
+# proteins[!proteins %in% analytes$EntrezGeneSymbol]
+# res1 <- res %>% filter(EntrezGeneSymbol %in% proteins)
+res2 <-  res %>%
+  filter(EntrezGeneSymbol %in% proteins | 
+           map_lgl(TargetFullName, ~ any(str_detect(.x, proteins_dat$function.))))
+# unique_res1 <- unique(res1$EntrezGeneSymbol)
+# unique_res2 <- unique(res2$EntrezGeneSymbol)
+# setdiff(unique_res2, unique_res1)
+```
+
+#### Proteins of interest DE
+
+```{r echo = F}
+# Set thresholds for significance
+pval_threshold <- 0.05
+logFC_threshold <- 1
+
+# Classify genes as upregulated, downregulated, or not significant
+res <- res %>%
+  mutate(protein_interest_color = case_when(EntrezGeneSymbol %in% res2$EntrezGeneSymbol ~ "#f28482",
+                                            T ~ "#ced4da"),
+         protein_interest_size = case_when(EntrezGeneSymbol %in% res2$EntrezGeneSymbol ~ 3,
+                                            T ~ 1),
+         protein_interest_lab = case_when(EntrezGeneSymbol %in% res2$EntrezGeneSymbol ~ EntrezGeneSymbol,
+                                            T ~ ""))
+
+
+ggplot(res, aes(x = logFC, y = -log10(adj.P.Val))) +
+  geom_hline(yintercept =-log10(0.05), linetype = "dashed", color = "#f28482") +
+  geom_point(alpha = 0.5, aes(size = protein_interest_size, color = protein_interest_color)) +
+  labs(title = "Volcano Plot",
+       x = "Log2 Fold Change (logFC)",
+       y = "-log10(adj.p-value)") +
+  scale_size_continuous(range = c(1, 3)) + 
+  geom_text_repel(aes(label = protein_interest_lab), 
+                  size = 3, color = "black", max.overlaps = Inf,
+                  force = 5, segment.alpha = 0.3, segment.size = 0.3) +
+  scale_color_manual(values = c("#ced4da","#f28482")) + 
+  theme_minimal() +
+  theme(legend.title = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 15)) +
+  guides(color = "none",
+         size = "none")
+
+kbl(res2) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+```
+
+## HC vs T2D/OB
+```{r echo = F, results='asis'}
+soma <- harm_dat %>%
+  filter(group %in% c("HC", "T2D", "OB")) %>%
+  filter(visit == "baseline") %>%
+  filter(!is.na(seq.10000.28)) %>%
+  mutate(group_t2dob = case_when(group == "HC" ~ "HC",
+                                 T ~ "T2D_OB"))
+
+summary(arsenal::tableby(group ~ age + sex + kwt(acr_u, "Nmiss", "medianq1q3") + bmi + diabetes_duration, 
+                         data = soma), test = F, 
+        labelTranslations = c("age" = "Age", "sex" = "Sex", "acr_u" = "UACR", "bmi" = "BMI", "diabetes_duration" = "Diabetes duration"))
+```
+#### Top 50 DE
+
+```{r echo = F}
+# filter soma scan data to baseline data only and log transform
+soma_filtered <- soma %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id") %>%
+  dplyr::select(starts_with("seq"))
+
+y <- t(soma_filtered)
+y <- log2(y)
+
+# Design matrix
+cond = as.factor(soma$group_t2dob)
+design_mat <- model.matrix(~0 + group_t2dob, data = soma)
+colnames(design_mat) = gsub("group_t2dob","",colnames(design_mat))
+# Fit
+contrast = makeContrasts(contrasts = c("T2D_OB-HC"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$EntrezGeneSymbol <- analytes$EntrezGeneSymbol[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+res_save <- res %>%
+  rownames_to_column("AptName") %>%
+  dplyr::select(-c(EntrezGeneSymbol, TargetFullName)) %>%
+  left_join(analytes, by = "AptName")
+
+# QC, checking if all proteins requested by Anil were in the list
+# proteins[!proteins %in% analytes$EntrezGeneSymbol]
+# res1 <- res %>% filter(EntrezGeneSymbol %in% proteins)
+res2 <-  res %>%
+  filter(EntrezGeneSymbol %in% proteins | 
+           map_lgl(TargetFullName, ~ any(str_detect(.x, proteins_dat$function.))))
+# unique_res1 <- unique(res1$EntrezGeneSymbol)
+# unique_res2 <- unique(res2$EntrezGeneSymbol)
+# setdiff(unique_res2, unique_res1)
+```
+
+#### Proteins of interest DE
+
+```{r echo = F}
+# Set thresholds for significance
+pval_threshold <- 0.05
+logFC_threshold <- 1
+
+# Classify genes as upregulated, downregulated, or not significant
+res <- res %>%
+  mutate(protein_interest_color = case_when(EntrezGeneSymbol %in% res2$EntrezGeneSymbol ~ "#f28482",
+                                            T ~ "#ced4da"),
+         protein_interest_size = case_when(EntrezGeneSymbol %in% res2$EntrezGeneSymbol ~ 3,
+                                            T ~ 1),
+         protein_interest_lab = case_when(EntrezGeneSymbol %in% res2$EntrezGeneSymbol ~ EntrezGeneSymbol,
+                                            T ~ ""))
+
+ggplot(res, aes(x = logFC, y = -log10(adj.P.Val))) +
+  geom_hline(yintercept =-log10(0.05), linetype = "dashed", color = "#f28482") +
+  geom_point(alpha = 0.5, aes(size = protein_interest_size, color = protein_interest_color)) +
+  labs(title = "Volcano Plot",
+       x = "Log2 Fold Change (logFC)",
+       y = "-log10(adj.p-value)") +
+  scale_size_continuous(range = c(1, 3)) + 
+  geom_text_repel(aes(label = protein_interest_lab), 
+                  size = 3, color = "black", max.overlaps = Inf,
+                  force = 5, segment.alpha = 0.3, segment.size = 0.3) +
+  scale_color_manual(values = c("#ced4da","#f28482")) + 
+  theme_minimal() +
+  theme(legend.title = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 15)) +
+  guides(color = "none",
+         size = "none")
+kbl(res2) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+```
+
+## DKD- vs DKD+ (T2D only)
+
+```{r echo = F, results='asis'}
+soma <- harm_dat %>%
+  filter(group %in% c("T2D")) %>%
+  filter(visit == "baseline") %>%
+  filter(!is.na(seq.10000.28)) %>%
+  filter(!is.na(acr_u)) %>%
+  mutate(dkd = case_when(acr_u >= 30 ~ "DKDy", acr_u <30 ~ "DKDn"))
+
+summary(arsenal::tableby(dkd ~ age + sex + kwt(acr_u, "Nmiss", "medianq1q3") + bmi + diabetes_duration, 
+                         data = soma), test = F, 
+        labelTranslations = c("age" = "Age", "sex" = "Sex", "acr_u" = "UACR", "bmi" = "BMI", "diabetes_duration" = "Diabetes duration"))
+```
+
+### Defined by UACR >= 30 mg/g Y/N
+
+#### Top 50 DE
+
+```{r echo = F}
+# filter soma scan data to baseline data only and log transform
+soma_filtered <- soma %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id") %>%
+  dplyr::select(starts_with("seq"))
+
+y <- t(soma_filtered)
+y <- log2(y)
+
+# Design matrix
+cond = as.factor(soma$dkd)
+design_mat <- model.matrix(~0 + dkd, data = soma)
+colnames(design_mat) = gsub("dkd","",colnames(design_mat))
+# Fit
+contrast = makeContrasts(contrasts = c("DKDy-DKDn"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$EntrezGeneSymbol <- analytes$EntrezGeneSymbol[match(rownames(res), analytes$AptName)]
+res$TargetFullName <- analytes$TargetFullName[match(rownames(res), analytes$AptName)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+res_save <- res %>%
+  rownames_to_column("AptName") %>%
+  dplyr::select(-c(EntrezGeneSymbol, TargetFullName)) %>%
+  left_join(analytes, by = "AptName")
+
+# QC, checking if all proteins requested by Anil were in the list
+# proteins[!proteins %in% analytes$EntrezGeneSymbol]
+# res1 <- res %>% filter(EntrezGeneSymbol %in% proteins)
+res2 <-  res %>%
+  filter(EntrezGeneSymbol %in% proteins | 
+           map_lgl(TargetFullName, ~ any(str_detect(.x, proteins_dat$function.))))
+# unique_res1 <- unique(res1$EntrezGeneSymbol)
+# unique_res2 <- unique(res2$EntrezGeneSymbol)
+# setdiff(unique_res2, unique_res1)
+```
+
+#### Proteins of interest DE
+
+```{r echo = F}
+# Set thresholds for significance
+pval_threshold <- 0.05
+logFC_threshold <- 1
+
+# Classify genes as upregulated, downregulated, or not significant
+res <- res %>%
+  mutate(protein_interest_color = case_when(EntrezGeneSymbol %in% res2$EntrezGeneSymbol ~ "#f28482",
+                                            T ~ "#ced4da"),
+         protein_interest_size = case_when(EntrezGeneSymbol %in% res2$EntrezGeneSymbol ~ 3,
+                                            T ~ 1),
+         protein_interest_lab = case_when(EntrezGeneSymbol %in% res2$EntrezGeneSymbol ~ EntrezGeneSymbol,
+                                            T ~ ""))
+
+ggplot(res, aes(x = logFC, y = -log10(adj.P.Val))) +
+  geom_hline(yintercept =-log10(0.05), linetype = "dashed", color = "#f28482") +
+  geom_point(alpha = 0.5, aes(size = protein_interest_size, color = protein_interest_color)) +
+  labs(title = "Volcano Plot",
+       x = "Log2 Fold Change (logFC)",
+       y = "-log10(adj.p-value)") +
+  scale_size_continuous(range = c(1, 3)) + 
+  geom_text_repel(aes(label = protein_interest_lab), 
+                  size = 3, color = "black", max.overlaps = Inf,
+                  force = 5, segment.alpha = 0.3, segment.size = 0.3) +
+  scale_color_manual(values = c("#ced4da","#f28482")) + 
+  theme_minimal() +
+  theme(legend.title = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 15)) +
+  guides(color = "none",
+         size = "none")
+
+kbl(res2) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+```
+
+# Olink (Plasma)
+
+## HC vs. T1D
+```{r echo = F, results='asis'}
+groups <- harm_dat %>% select(record_id, group, acr_u, age, sex, bmi, diabetes_duration) %>% 
+  distinct(record_id, .keep_all = T)
+olink <- olink_plasma %>%
+  mutate(visit = case_when(endsWith(record_id, "BL") ~ "baseline",
+                           endsWith(record_id, "12M") ~ "12_months_post_surgery",
+                           T ~ "baseline"),
+         record_id = gsub("_BL|_12M", "", record_id)) %>%
+  left_join(groups) %>%
+  filter(group %in% c("HC", "T1D"))
+
+summary(arsenal::tableby(group ~ age + sex + kwt(acr_u, "Nmiss", "medianq1q3") + bmi + diabetes_duration, 
+                         data = olink), test = F, 
+        labelTranslations = c("age" = "Age", "sex" = "Sex", "acr_u" = "UACR", "bmi" = "BMI", "diabetes_duration" = "Diabetes duration"))
+```
+
+#### Top 50 DE
+
+```{r echo = F}
+
+
+# filter olink scan data to baseline data only
+olink_filtered <- olink %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id") %>%
+  dplyr::select(starts_with("OID"))
+y <- t(olink_filtered)
+
+# Design matrix
+cond = as.factor(olink$group)
+design_mat <- model.matrix(~0 + group, data = olink)
+colnames(design_mat) = gsub("group","",colnames(design_mat))
+
+# Fit
+contrast = makeContrasts(contrasts = c("T1D-HC"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+
+res$Assay <- olink_map$Assay[match(rownames(res), olink_map$OlinkID)]
+res$Uniprot.ID <- olink_map$Uniprot.ID[match(rownames(res), olink_map$OlinkID)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+
+# QC, checking if all proteins requested by Anil were in the list
+# proteins[!proteins %in% olink_map$Assay]
+res1 <- res %>% filter(Assay %in% proteins)
+# unique_res1 <- unique(res1$Assay)
+```
+
+#### Proteins of interest DE
+
+```{r echo = F}
+# Set thresholds for significance
+pval_threshold <- 0.05
+logFC_threshold <- 1
+
+# Classify genes as upregulated, downregulated, or not significant
+res <- res %>%
+  mutate(protein_interest_color = case_when(Assay %in% res1$Assay ~ "#f28482",
+                                            T ~ "#ced4da"),
+         protein_interest_size = case_when(Assay %in% res1$Assay ~ 3,
+                                            T ~ 1),
+         protein_interest_lab = case_when(Assay %in% res1$Assay ~ Assay,
+                                            T ~ ""))
+
+
+ggplot(res, aes(x = logFC, y = -log10(adj.P.Val))) +
+  geom_hline(yintercept =-log10(0.05), linetype = "dashed", color = "#f28482") +
+  geom_point(alpha = 0.5, aes(size = protein_interest_size, color = protein_interest_color)) +
+  labs(title = "Volcano Plot",
+       x = "Log2 Fold Change (logFC)",
+       y = "-log10(adj.p-value)") +
+  scale_size_continuous(range = c(1, 3)) + 
+  geom_text_repel(aes(label = protein_interest_lab), 
+                  size = 3, color = "black", max.overlaps = Inf,
+                  force = 5, segment.alpha = 0.3, segment.size = 0.3) +
+  scale_color_manual(values = c("#ced4da","#f28482")) + 
+  theme_minimal() +
+  theme(legend.title = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 15)) +
+  guides(color = "none",
+         size = "none")
+
+kbl(res1) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+```
+
+## HC vs T2D (no OB)
+```{r echo = F, results='asis'}
+olink <- olink_plasma %>%
+  mutate(visit = case_when(endsWith(record_id, "BL") ~ "baseline",
+                           endsWith(record_id, "12M") ~ "12_months_post_surgery",
+                           T ~ "baseline"),
+         record_id = gsub("_BL|_12M", "", record_id)) %>%
+  filter(visit == "baseline") %>%
+  left_join(groups) %>%
+  filter(group %in% c("HC", "T2D", "OB")) %>%
+  mutate(group_t2dob = case_when(group == "HC" ~ "HC",
+                                 T ~ "T2D_OB"))
+
+summary(arsenal::tableby(group ~ age + sex + kwt(acr_u, "Nmiss", "medianq1q3") + bmi + diabetes_duration, 
+                         data = olink), test = F, 
+        labelTranslations = c("age" = "Age", "sex" = "Sex", "acr_u" = "UACR", "bmi" = "BMI", "diabetes_duration" = "Diabetes duration"))
+```
+#### Top 50 DE
+
+```{r echo = F}
+# filter olink scan data to baseline data only
+olink_filtered <- olink %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id") %>%
+  dplyr::select(starts_with("OID"))
+y <- t(olink_filtered)
+
+# Design matrix
+cond = as.factor(olink$group_t2dob)
+design_mat <- model.matrix(~0 + group_t2dob, data = olink)
+colnames(design_mat) = gsub("group_t2dob","",colnames(design_mat))
+
+# Fit
+contrast = makeContrasts(contrasts = c("T2D_OB-HC"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+
+res$Assay <- olink_map$Assay[match(rownames(res), olink_map$OlinkID)]
+res$Uniprot.ID <- olink_map$Uniprot.ID[match(rownames(res), olink_map$OlinkID)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+
+# QC, checking if all proteins requested by Anil were in the list
+# proteins[!proteins %in% olink_map$Assay]
+res1 <- res %>% filter(Assay %in% proteins)
+# unique_res1 <- unique(res1$Assay)
+```
+
+#### Proteins of interest DE
+
+```{r echo = F}
+# Set thresholds for significance
+pval_threshold <- 0.05
+logFC_threshold <- 1
+
+# Classify genes as upregulated, downregulated, or not significant
+res <- res %>%
+  mutate(protein_interest_color = case_when(Assay %in% res1$Assay ~ "#f28482",
+                                            T ~ "#ced4da"),
+         protein_interest_size = case_when(Assay %in% res1$Assay ~ 3,
+                                            T ~ 1),
+         protein_interest_lab = case_when(Assay %in% res1$Assay ~ Assay,
+                                            T ~ ""))
+
+
+ggplot(res, aes(x = logFC, y = -log10(adj.P.Val))) +
+  geom_hline(yintercept =-log10(0.05), linetype = "dashed", color = "#f28482") +
+  geom_point(alpha = 0.5, aes(size = protein_interest_size, color = protein_interest_color)) +
+  labs(title = "Volcano Plot",
+       x = "Log2 Fold Change (logFC)",
+       y = "-log10(adj.p-value)") +
+  scale_size_continuous(range = c(1, 3)) + 
+  geom_text_repel(aes(label = protein_interest_lab), 
+                  size = 3, color = "black", max.overlaps = Inf,
+                  force = 5, segment.alpha = 0.3, segment.size = 0.3) +
+  scale_color_manual(values = c("#ced4da","#f28482")) + 
+  theme_minimal() +
+  theme(legend.title = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 15)) +
+  guides(color = "none",
+         size = "none")
+
+kbl(res1) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+```
+
+## DKD- vs DKD+ (T2D only)
+```{r echo = F, results='asis'}
+olink <- olink_plasma %>%
+  mutate(visit = case_when(endsWith(record_id, "BL") ~ "baseline",
+                           endsWith(record_id, "12M") ~ "12_months_post_surgery",
+                           T ~ "baseline"),
+         record_id = gsub("_BL|_12M", "", record_id)) %>%
+  filter(visit == "baseline") %>%
+  left_join(groups) %>%
+  filter(group %in% c("T2D")) %>%
+  filter(!is.na(acr_u)) %>%
+  mutate(dkd = case_when(acr_u >= 30 ~ "DKDy", acr_u <30 ~ "DKDn"))
+
+summary(arsenal::tableby(dkd ~ age + sex + kwt(acr_u, "Nmiss", "medianq1q3") + bmi + diabetes_duration, 
+                         data = olink), test = F, 
+        labelTranslations = c("age" = "Age", "sex" = "Sex", "acr_u" = "UACR", "bmi" = "BMI", "diabetes_duration" = "Diabetes duration"))
+```
+### Defined by UACR >= 30 mg/g Y/N
+
+#### Top 50 DE
+
+```{r echo = F}
+olink <- olink_plasma %>%
+  mutate(visit = case_when(endsWith(record_id, "BL") ~ "baseline",
+                           endsWith(record_id, "12M") ~ "12_months_post_surgery",
+                           T ~ "baseline"),
+         record_id = gsub("_BL|_12M", "", record_id)) %>%
+  filter(visit == "baseline") %>%
+  left_join(groups) %>%
+  filter(group %in% c("T2D")) %>%
+  filter(!is.na(acr_u)) %>%
+  mutate(dkd = case_when(acr_u >= 30 ~ "DKDy", acr_u <30 ~ "DKDn"))
+
+# filter olink scan data to baseline data only
+olink_filtered <- olink %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id") %>%
+  dplyr::select(starts_with("OID"))
+y <- t(olink_filtered)
+
+# Design matrix
+cond = as.factor(olink$dkd)
+design_mat <- model.matrix(~0 + dkd, data = olink)
+colnames(design_mat) = gsub("dkd","",colnames(design_mat))
+
+# Fit
+contrast = makeContrasts(contrasts = c("DKDy-DKDn"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+
+res$Assay <- olink_map$Assay[match(rownames(res), olink_map$OlinkID)]
+res$Uniprot.ID <- olink_map$Uniprot.ID[match(rownames(res), olink_map$OlinkID)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+
+# QC, checking if all proteins requested by Anil were in the list
+# proteins[!proteins %in% olink_map$Assay]
+res1 <- res %>% filter(Assay %in% proteins)
+# unique_res1 <- unique(res1$Assay)
+```
+
+#### Proteins of interest DE
+
+```{r echo = F}
+# Set thresholds for significance
+pval_threshold <- 0.05
+logFC_threshold <- 1
+
+# Classify genes as upregulated, downregulated, or not significant
+res <- res %>%
+  mutate(protein_interest_color = case_when(Assay %in% res1$Assay ~ "#f28482",
+                                            T ~ "#ced4da"),
+         protein_interest_size = case_when(Assay %in% res1$Assay ~ 3,
+                                            T ~ 1),
+         protein_interest_lab = case_when(Assay %in% res1$Assay ~ Assay,
+                                            T ~ ""))
+
+
+ggplot(res, aes(x = logFC, y = -log10(adj.P.Val))) +
+  geom_hline(yintercept =-log10(0.05), linetype = "dashed", color = "#f28482") +
+  geom_point(alpha = 0.5, aes(size = protein_interest_size, color = protein_interest_color)) +
+  labs(title = "Volcano Plot",
+       x = "Log2 Fold Change (logFC)",
+       y = "-log10(adj.p-value)") +
+  scale_size_continuous(range = c(1, 3)) + 
+  geom_text_repel(aes(label = protein_interest_lab), 
+                  size = 3, color = "black", max.overlaps = Inf,
+                  force = 5, segment.alpha = 0.3, segment.size = 0.3) +
+  scale_color_manual(values = c("#ced4da","#f28482")) + 
+  theme_minimal() +
+  theme(legend.title = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 15)) +
+  guides(color = "none",
+         size = "none")
+
+kbl(res1) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+```
+
+
+# Olink (Urine)
+
+
+## HC vs. T1D
+```{r echo = F, results='asis'}
+groups <- harm_dat %>% select(record_id, group, acr_u, age, sex, bmi, diabetes_duration) %>% 
+  distinct(record_id, .keep_all = T)
+olink <- olink_urine %>%
+  mutate(visit = case_when(endsWith(record_id, "BL") ~ "baseline",
+                           endsWith(record_id, "12M") ~ "12_months_post_surgery",
+                           T ~ "baseline"),
+         record_id = gsub("_BL|_12M", "", record_id)) %>%
+  left_join(groups) %>%
+  filter(group %in% c("HC", "T1D"))
+
+summary(arsenal::tableby(group ~ age + sex + kwt(acr_u, "Nmiss", "medianq1q3") + bmi + diabetes_duration, 
+                         data = olink), test = F, 
+        labelTranslations = c("age" = "Age", "sex" = "Sex", "acr_u" = "UACR", "bmi" = "BMI", "diabetes_duration" = "Diabetes duration"))
+```
+#### Top 50 DE
+
+```{r echo = F}
+# filter olink scan data to baseline data only
+olink_filtered <- olink %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id") %>%
+  dplyr::select(starts_with("OID"))
+y <- t(olink_filtered)
+
+# Design matrix
+cond = as.factor(olink$group)
+design_mat <- model.matrix(~0 + group, data = olink)
+colnames(design_mat) = gsub("group","",colnames(design_mat))
+
+# Fit
+contrast = makeContrasts(contrasts = c("T1D-HC"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+
+res$Assay <- olink_map$Assay[match(rownames(res), olink_map$OlinkID)]
+res$Uniprot.ID <- olink_map$Uniprot.ID[match(rownames(res), olink_map$OlinkID)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+
+# QC, checking if all proteins requested by Anil were in the list
+# proteins[!proteins %in% olink_map$Assay]
+res1 <- res %>% filter(Assay %in% proteins)
+# unique_res1 <- unique(res1$Assay)
+```
+
+#### Proteins of interest DE
+
+```{r echo = F}
+# Set thresholds for significance
+pval_threshold <- 0.05
+logFC_threshold <- 1
+
+# Classify genes as upregulated, downregulated, or not significant
+res <- res %>%
+  mutate(protein_interest_color = case_when(Assay %in% res1$Assay ~ "#f28482",
+                                            T ~ "#ced4da"),
+         protein_interest_size = case_when(Assay %in% res1$Assay ~ 3,
+                                            T ~ 1),
+         protein_interest_lab = case_when(Assay %in% res1$Assay ~ Assay,
+                                            T ~ ""))
+
+
+ggplot(res, aes(x = logFC, y = -log10(adj.P.Val))) +
+  geom_hline(yintercept =-log10(0.05), linetype = "dashed", color = "#f28482") +
+  geom_point(alpha = 0.5, aes(size = protein_interest_size, color = protein_interest_color)) +
+  labs(title = "Volcano Plot",
+       x = "Log2 Fold Change (logFC)",
+       y = "-log10(adj.p-value)") +
+  scale_size_continuous(range = c(1, 3)) + 
+  geom_text_repel(aes(label = protein_interest_lab), 
+                  size = 3, color = "black", max.overlaps = Inf,
+                  force = 5, segment.alpha = 0.3, segment.size = 0.3) +
+  scale_color_manual(values = c("#ced4da","#f28482")) + 
+  theme_minimal() +
+  theme(legend.title = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 15)) +
+  guides(color = "none",
+         size = "none")
+
+kbl(res1) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+```
+
+## HC vs T2D (no OB)
+```{r echo = F, results='asis'}
+olink <- olink_urine %>%
+  mutate(visit = case_when(endsWith(record_id, "BL") ~ "baseline",
+                           endsWith(record_id, "12M") ~ "12_months_post_surgery",
+                           T ~ "baseline"),
+         record_id = gsub("_BL|_12M", "", record_id)) %>%
+  filter(visit == "baseline") %>%
+  left_join(groups) %>%
+  filter(group %in% c("HC", "T2D", "OB")) %>%
+  mutate(group_t2dob = case_when(group == "HC" ~ "HC",
+                                 T ~ "T2D_OB"))
+
+summary(arsenal::tableby(group ~ age + sex + kwt(acr_u, "Nmiss", "medianq1q3") + bmi + diabetes_duration, 
+                         data = olink), test = F, 
+        labelTranslations = c("age" = "Age", "sex" = "Sex", "acr_u" = "UACR", "bmi" = "BMI", "diabetes_duration" = "Diabetes duration"))
+```
+
+#### Top 50 DE
+
+```{r echo = F}
+# filter olink scan data to baseline data only
+olink_filtered <- olink %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id") %>%
+  dplyr::select(starts_with("OID"))
+y <- t(olink_filtered)
+
+# Design matrix
+cond = as.factor(olink$group_t2dob)
+design_mat <- model.matrix(~0 + group_t2dob, data = olink)
+colnames(design_mat) = gsub("group_t2dob","",colnames(design_mat))
+
+# Fit
+contrast = makeContrasts(contrasts = c("T2D_OB-HC"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+
+res$Assay <- olink_map$Assay[match(rownames(res), olink_map$OlinkID)]
+res$Uniprot.ID <- olink_map$Uniprot.ID[match(rownames(res), olink_map$OlinkID)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+
+# QC, checking if all proteins requested by Anil were in the list
+# proteins[!proteins %in% olink_map$Assay]
+res1 <- res %>% filter(Assay %in% proteins)
+# unique_res1 <- unique(res1$Assay)
+```
+
+#### Proteins of interest DE
+
+```{r echo = F}
+# Set thresholds for significance
+pval_threshold <- 0.05
+logFC_threshold <- 1
+
+# Classify genes as upregulated, downregulated, or not significant
+res <- res %>%
+  mutate(protein_interest_color = case_when(Assay %in% res1$Assay ~ "#f28482",
+                                            T ~ "#ced4da"),
+         protein_interest_size = case_when(Assay %in% res1$Assay ~ 3,
+                                            T ~ 1),
+         protein_interest_lab = case_when(Assay %in% res1$Assay ~ Assay,
+                                            T ~ ""))
+
+
+ggplot(res, aes(x = logFC, y = -log10(adj.P.Val))) +
+  geom_hline(yintercept =-log10(0.05), linetype = "dashed", color = "#f28482") +
+  geom_point(alpha = 0.5, aes(size = protein_interest_size, color = protein_interest_color)) +
+  labs(title = "Volcano Plot",
+       x = "Log2 Fold Change (logFC)",
+       y = "-log10(adj.p-value)") +
+  scale_size_continuous(range = c(1, 3)) + 
+  geom_text_repel(aes(label = protein_interest_lab), 
+                  size = 3, color = "black", max.overlaps = Inf,
+                  force = 5, segment.alpha = 0.3, segment.size = 0.3) +
+  scale_color_manual(values = c("#ced4da","#f28482")) + 
+  theme_minimal() +
+  theme(legend.title = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 15)) +
+  guides(color = "none",
+         size = "none")
+
+kbl(res1) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+```
+
+## DKD- vs DKD+ (T2D only)
+
+### Defined by UACR >= 30 mg/g Y/N
+```{r echo = F, results='asis'}
+olink <- olink_urine %>%
+  mutate(visit = case_when(endsWith(record_id, "BL") ~ "baseline",
+                           endsWith(record_id, "12M") ~ "12_months_post_surgery",
+                           T ~ "baseline"),
+         record_id = gsub("_BL|_12M", "", record_id)) %>%
+  filter(visit == "baseline") %>%
+  left_join(groups) %>%
+  filter(group %in% c("T2D")) %>%
+  filter(!is.na(acr_u)) %>%
+  mutate(dkd = case_when(acr_u >= 30 ~ "DKDy", acr_u <30 ~ "DKDn"))
+
+summary(arsenal::tableby(dkd ~ age + sex + kwt(acr_u, "Nmiss", "medianq1q3") + bmi + diabetes_duration, 
+                         data = olink), test = F, 
+        labelTranslations = c("age" = "Age", "sex" = "Sex", "acr_u" = "UACR", "bmi" = "BMI", "diabetes_duration" = "Diabetes duration"))
+```
+#### Top 50 DE
+
+```{r echo = F}
+# filter olink scan data to baseline data only
+olink_filtered <- olink %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id") %>%
+  dplyr::select(starts_with("OID"))
+y <- t(olink_filtered)
+
+# Design matrix
+cond = as.factor(olink$dkd)
+design_mat <- model.matrix(~0 + dkd, data = olink)
+colnames(design_mat) = gsub("dkd","",colnames(design_mat))
+
+# Fit
+contrast = makeContrasts(contrasts = c("DKDy-DKDn"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+
+res$Assay <- olink_map$Assay[match(rownames(res), olink_map$OlinkID)]
+res$Uniprot.ID <- olink_map$Uniprot.ID[match(rownames(res), olink_map$OlinkID)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+
+# QC, checking if all proteins requested by Anil were in the list
+# proteins[!proteins %in% olink_map$Assay]
+res1 <- res %>% filter(Assay %in% proteins)
+# unique_res1 <- unique(res1$Assay)
+```
+
+#### Proteins of interest DE
+
+```{r echo = F}
+# Set thresholds for significance
+pval_threshold <- 0.05
+logFC_threshold <- 1
+
+# Classify genes as upregulated, downregulated, or not significant
+res <- res %>%
+  mutate(protein_interest_color = case_when(Assay %in% res1$Assay ~ "#f28482",
+                                            T ~ "#ced4da"),
+         protein_interest_size = case_when(Assay %in% res1$Assay ~ 3,
+                                            T ~ 1),
+         protein_interest_lab = case_when(Assay %in% res1$Assay ~ Assay,
+                                            T ~ ""))
+
+
+ggplot(res, aes(x = logFC, y = -log10(adj.P.Val))) +
+  geom_hline(yintercept =-log10(0.05), linetype = "dashed", color = "#f28482") +
+  geom_point(alpha = 0.5, aes(size = protein_interest_size, color = protein_interest_color)) +
+  labs(title = "Volcano Plot",
+       x = "Log2 Fold Change (logFC)",
+       y = "-log10(adj.p-value)") +
+  scale_size_continuous(range = c(1, 3)) + 
+  geom_text_repel(aes(label = protein_interest_lab), 
+                  size = 3, color = "black", max.overlaps = Inf,
+                  force = 5, segment.alpha = 0.3, segment.size = 0.3) +
+  scale_color_manual(values = c("#ced4da","#f28482")) + 
+  theme_minimal() +
+  theme(legend.title = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(size = 15)) +
+  guides(color = "none",
+         size = "none")
+
+kbl(res1) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+```
