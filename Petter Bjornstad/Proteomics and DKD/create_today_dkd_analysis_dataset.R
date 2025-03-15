@@ -3,63 +3,63 @@ library(readxl)
 library(Seurat)
 library(pedbp)
 # Import top proteins for MIC, MAC, etc. at baseline
-top_mic_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "MIC CPH")
+top_mic_df <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "MIC CPH")
 de_genes_mic <- top_mic_df[top_mic_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_mic <- setNames(de_genes_mic$estimate, de_genes_mic$EntrezGeneID)
 top_mic <- top_mic_df %>%
   filter(adj.p.value <= 0.05) %>%
   slice_max(abs(log(estimate)), n = 5) %>%
   pull(AptName)
-top_mac_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "MAC CPH")
+top_mac_df <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "MAC CPH")
 de_genes_mac <- top_mac_df[top_mac_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_mac <- setNames(de_genes_mac$estimate, de_genes_mac$EntrezGeneID)
 top_mac <- top_mac_df %>%
   filter(adj.p.value <= 0.05) %>%
   slice_max(abs(log(estimate)), n = 5) %>%
   pull(AptName)
-top_mic.or.mac_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "MIC.OR.MAC CPH")
+top_mic.or.mac_df <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "MIC.OR.MAC CPH")
 de_genes_mic.or.mac <- top_mic.or.mac_df[top_mic.or.mac_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_mic.or.mac <- setNames(de_genes_mic.or.mac$estimate, de_genes_mic.or.mac$EntrezGeneID)
 top_mic.or.mac <- top_mic.or.mac_df %>%
   filter(adj.p.value <= 0.05) %>%
   slice_max(abs(log(estimate)), n = 5) %>%
   pull(AptName)
-top_hyp_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "HYP CPH")
+top_hyp_df <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "HYP CPH")
 de_genes_hyp <- top_hyp_df[top_hyp_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_hyp <- setNames(de_genes_hyp$estimate, de_genes_hyp$EntrezGeneID)
 top_hyp <- top_hyp_df %>%
   filter(adj.p.value <= 0.05) %>%
   slice_max(abs(log(estimate)), n = 5) %>%
   pull(AptName)
-top_rapid_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "RAPID CPH")
+top_rapid_df <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "RAPID CPH")
 de_genes_rapid <- top_rapid_df[top_rapid_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_rapid <- setNames(de_genes_rapid$estimate, de_genes_rapid$EntrezGeneID)
 top_rapid <- top_rapid_df %>%
   filter(adj.p.value <= 0.05) %>%
   slice_max(abs(log(estimate)), n = 5) %>%
   pull(AptName)
-top_neuro_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "NEURO CPH")
+top_neuro_df <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "NEURO CPH")
 de_genes_neuro <- top_neuro_df[top_neuro_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_neuro <- setNames(de_genes_neuro$estimate, de_genes_neuro$EntrezGeneID)
 top_neuro <- top_neuro_df %>%
   filter(adj.p.value <= 0.05) %>%
   slice_max(abs(log(estimate)), n = 5) %>%
   pull(AptName)
-top_retino_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "RETINO CPH")
+top_retino_df <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "RETINO CPH")
 de_genes_retino <- top_retino_df[top_retino_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_retino <- setNames(de_genes_retino$estimate, de_genes_retino$EntrezGeneID)
 top_retino <- top_retino_df %>%
   filter(adj.p.value <= 0.05) %>%
   slice_max(abs(log(estimate)), n = 5) %>%
   pull(AptName)
-top_glyc_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "GLYC CPH")
+top_glyc_df <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "GLYC CPH")
 de_genes_glyc <- top_glyc_df[top_glyc_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_glyc <- setNames(de_genes_glyc$estimate, de_genes_glyc$EntrezGeneID)
 top_glyc <- top_glyc_df %>%
   filter(adj.p.value <= 0.05) %>%
   slice_max(abs(log(estimate)), n = 5) %>%
   pull(AptName)
-top_glyc_a1c_df <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "GLYC with A1c CPH")
+top_glyc_a1c_df <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Results/Linear and Cox models/TODAY somalogic Cox models scaled baseline adjusted.xlsx", sheet = "GLYC with A1c CPH")
 de_genes_glyc_a1c <- top_glyc_a1c_df[top_glyc_a1c_df$p.value <= 0.05, c("EntrezGeneID", "estimate")]
 de_genes_glyc_a1c <- setNames(de_genes_glyc_a1c$estimate, de_genes_glyc_a1c$EntrezGeneID)
 top_glyc_a1c <- top_glyc_a1c_df %>%
@@ -67,29 +67,29 @@ top_glyc_a1c <- top_glyc_a1c_df %>%
   slice_max(abs(log(estimate)), n = 5) %>%
   pull(AptName)
 # Import 10 year results
-top_mac_df_10 <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "MAC_moderated_FDR")
+top_mac_df_10 <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "MAC_moderated_FDR")
 de_genes_mac_10 <- top_mac_df_10[top_mac_df_10$P.Value <= 0.05, c("EntrezGeneID", "logFC")]
 de_genes_mac_10 <- setNames(de_genes_mac_10$logFC, de_genes_mac_10$EntrezGeneID)
-top_mic_df_10 <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "MIC_moderated_FDR")
+top_mic_df_10 <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "MIC_moderated_FDR")
 de_genes_mic_10 <- top_mic_df_10[top_mic_df_10$P.Value <= 0.05, c("EntrezGeneID", "logFC")]
 de_genes_mic_10 <- setNames(de_genes_mic_10$logFC, de_genes_mic_10$EntrezGeneID)
-top_hyp_df_10 <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "hyperfilt_moderated_FDR")
+top_hyp_df_10 <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "hyperfilt_moderated_FDR")
 de_genes_hyp_10 <- top_hyp_df_10[top_hyp_df_10$P.Value <= 0.05, c("EntrezGeneID", "logFC")]
 de_genes_hyp_10 <- setNames(de_genes_hyp_10$logFC, de_genes_hyp_10$EntrezGeneID)
-top_rapid_df_10 <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "rapid_moderated_FDR")
+top_rapid_df_10 <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "rapid_moderated_FDR")
 de_genes_rapid_10 <- top_rapid_df_10[top_rapid_df_10$P.Value <= 0.05, c("EntrezGeneID", "logFC")]
 de_genes_rapid_10 <- setNames(de_genes_rapid_10$logFC, de_genes_rapid_10$EntrezGeneID)
-top_neuro_df_10 <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "neuro_moderated_FDR")
+top_neuro_df_10 <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "neuro_moderated_FDR")
 de_genes_neuro_10 <- top_neuro_df_10[top_neuro_df_10$P.Value <= 0.05, c("EntrezGeneID", "logFC")]
 de_genes_neuro_10 <- setNames(de_genes_neuro_10$logFC, de_genes_neuro_10$EntrezGeneID)
-top_glyc_df_10 <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "glyc_moderated_FDR")
+top_glyc_df_10 <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "glyc_moderated_FDR")
 de_genes_glyc_10 <- top_glyc_df_10[top_glyc_df_10$P.Value <= 0.05, c("EntrezGeneID", "logFC")]
 de_genes_glyc_10 <- setNames(de_genes_glyc_10$logFC, de_genes_glyc_10$EntrezGeneID)
-top_glyc_a1c_df_10 <- read_excel("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "glyc_with_a1c_moderated_FDR")
+top_glyc_a1c_df_10 <- read_excel("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/TODAY subaward/Results/Linear and Cox models/TODAY somalogic limma yr10 adjusted.xlsx", sheet = "glyc_with_a1c_moderated_FDR")
 de_genes_glyc_a1c_10 <- top_glyc_a1c_df_10[top_glyc_a1c_df_10$P.Value <= 0.05, c("EntrezGeneID", "logFC")]
 de_genes_glyc_a1c_10 <- setNames(de_genes_glyc_a1c_10$logFC, de_genes_glyc_a1c_10$EntrezGeneID)
 # Import and clean data
-df <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Data Clean/soma_harmonized_dataset.csv", na.strings = "")
+df <- read.csv("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/soma_harmonized_dataset.csv", na.strings = "")
 df <- df %>%
   filter(
     study %in% c("IMPROVE", "RENAL-HEIR","RENAL-HEIRitage"),
@@ -103,7 +103,7 @@ df <- df %>%
   ) %>%
   mutate_all(~ ifelse(is.nan(.), NA, .))
 # Import proteomics data for RH and IMPROVE
-load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Combined SomaScan/analytes.Rdata")
+load("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Combined SomaScan/analytes.Rdata")
 soma <- df %>% select(record_id, visit, contains("seq."))
 # Transform
 soma[, 3:ncol(soma)] <- lapply(soma[, 3:ncol(soma)], log)
@@ -134,11 +134,11 @@ df <- full_join(df, soma, by = c("record_id", "visit"))
 df <- df %>% filter(visit == "baseline")
 
 # Import Olink data and combine
-olink_map <- read.csv("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Olink Data/Data_Clean/olink_id_map.csv")
-load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/IMPROVE T2D/Olink Data/improve_olink_plasma.Rdata")
-load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/IMPROVE T2D/Olink Data/improve_olink_urine.Rdata")
-load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Renal HERITAGE/Olink Data/rh_olink_plasma.Rdata")
-load("/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Renal HERITAGE/Olink Data/rh_olink_urine.Rdata")
+olink_map <- read.csv("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Olink Data/Data_Clean/olink_id_map.csv")
+load("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Olink Data/improve_olink_plasma.Rdata")
+load("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Olink Data/improve_olink_urine.Rdata")
+load("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Olink Data/rh_olink_plasma.Rdata")
+load("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Olink Data/rh_olink_urine.Rdata")
 olink_plasma <- rbind(improve_olink_plasma, rh_olink_plasma)
 olink_urine <- rbind(improve_olink_urine, rh_olink_urine)
 # Add visit column, format IDs
@@ -181,36 +181,36 @@ save(df, plasma, urine, analytes, olink_map,
   file = "/Volumes/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Data_Cleaned/analysis_dataset.RData"
 )
 
-# Read in scRNA object
-so <- readRDS("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/Data_Clean/seurat_data_no_computations.RDS")
-# Limit to RH/IMPROVE baseline visit
-so <- so[, !grepl("_12M", so$michigan_id)]
-# Limit to those with SOMA and Olink
-so$michigan_id <- sub("_BL", "", so$michigan_id)
-so <- so[, so$michigan_id %in% ids]
-# Combined groups
-so$diabetes <- sub("i", "", so$T2D_HC_Phil)
-so$SGLT2i <- factor(so$T2D_HC_Phil,
-  levels = c("HC", "T2D", "T2Di"),
-  labels = c("SGLT2i-", "SGLT2i-", "SGLT2i+")
-)
-so$elevated_uacr <- df$elevated_uacr[match(so$michigan_id, df$record_id)]
-so$htn <- df$htn[match(so$michigan_id, df$record_id)]
-so$hyp <- df$hyp[match(so$michigan_id, df$record_id)]
-# Normalize and scale
-so <- NormalizeData(so)
-so <- ScaleData(so, features = rownames(so))
-# PCA
-so <- RunPCA(so, features = VariableFeatures(object = so))
-# Cluster cells
-so <- FindNeighbors(so)
-so <- FindClusters(so)
-# Perform UMAP
-so <- RunUMAP(so, dims = 1:20)
-# General cell types as identifiers
-so$generaltype <- sub("_.*", "", so$LR_clusters)
-Idents(so) <- so$generaltype
-# Save
-save(so,
-  file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Data_Cleaned/analysis_seurat_object.RData"
-)
+# # Read in scRNA object
+# so <- readRDS("/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/scRNA/Data_Clean/seurat_data_no_computations.RDS")
+# # Limit to RH/IMPROVE baseline visit
+# so <- so[, !grepl("_12M", so$michigan_id)]
+# # Limit to those with SOMA and Olink
+# so$michigan_id <- sub("_BL", "", so$michigan_id)
+# so <- so[, so$michigan_id %in% ids]
+# # Combined groups
+# so$diabetes <- sub("i", "", so$T2D_HC_Phil)
+# so$SGLT2i <- factor(so$T2D_HC_Phil,
+#   levels = c("HC", "T2D", "T2Di"),
+#   labels = c("SGLT2i-", "SGLT2i-", "SGLT2i+")
+# )
+# so$elevated_uacr <- df$elevated_uacr[match(so$michigan_id, df$record_id)]
+# so$htn <- df$htn[match(so$michigan_id, df$record_id)]
+# so$hyp <- df$hyp[match(so$michigan_id, df$record_id)]
+# # Normalize and scale
+# so <- NormalizeData(so)
+# so <- ScaleData(so, features = rownames(so))
+# # PCA
+# so <- RunPCA(so, features = VariableFeatures(object = so))
+# # Cluster cells
+# so <- FindNeighbors(so)
+# so <- FindClusters(so)
+# # Perform UMAP
+# so <- RunUMAP(so, dims = 1:20)
+# # General cell types as identifiers
+# so$generaltype <- sub("_.*", "", so$LR_clusters)
+# Idents(so) <- so$generaltype
+# # Save
+# save(so,
+#   file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Proteomics and DKD/Data_Cleaned/analysis_seurat_object.RData"
+# )
