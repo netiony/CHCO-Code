@@ -533,8 +533,8 @@ gc()
 so_liver_sn <- FindVariableFeatures(so_liver_sn, selection.method = "vst", nfeatures = 2000)
 gc()
 
-so_liver_sn$orig.ident <- so_liver_sn$Kit_Lot
-so_liver_sc$orig.ident <- so_liver_sc$Kit_Lot
+so_liver_sn$orig.ident <- "Single_Nuc"
+so_liver_sc$orig.ident <- "Single_Cell"
 
 #-----------------------
 # 4. Integration
@@ -542,9 +542,6 @@ so_liver_sc$orig.ident <- so_liver_sc$Kit_Lot
 # Identify integration anchors using the top 20 principal components (PCs)
 gc()
 anchors <- FindIntegrationAnchors(object.list = list(so_liver_sc, so_liver_sn), dims = 1:20,verbose=T)
-
-
-
 gc()
 # Computing 2000 integration features
 # Scaling features for provided objects
@@ -563,6 +560,9 @@ gc()
 # 5. Downstream Analysis
 #-----------------------
 DefaultAssay(combined) <- "integrated"
+
+saveRDS(combined,fs::path(dir.dat,"scRNA","data_clean","integrated_sn_sc.rds"))
+
 # Scale the integrated data
 combined <- ScaleData(combined)
 # Run PCA
@@ -573,27 +573,20 @@ combined <- RunUMAP(combined, dims = 1:20)
 combined <- FindNeighbors(combined, dims = 1:20)
 combined <- FindClusters(combined, resolution = 0.5)
 # Visualize UMAP results
-DimPlot(combined, reduction = "umap", group.by = "orig.ident", raster = F, label = T)
-
-# View metadata
-head(combined@meta.data)
-
-# Check the number of cells per sample
-table(combined$orig.ident)
-
-# Check the number of cells per cluster
-table(Idents(combined))
+DimPlot(combined, reduction = "umap", group.by = "orig.ident", repel = TRUE, label = T)
 
 DefaultAssay(combined) <- "integrated"
 
 DimPlot(combined, reduction = "umap", group.by = "Kit_Lot", label = TRUE, repel = TRUE)
+DimPlot(combined, reduction = "umap", group.by = "celltype", label = TRUE)
 
-cluster_markers <- FindAllMarkers(combined, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
-head(cluster_markers)
-
-FeaturePlot(combined, features = c("Gene1", "Gene2"), min.cutoff = "q10", max.cutoff = "q90")
-VlnPlot(combined, features = c("Gene1", "Gene2"), group.by = "seurat_clusters", pt.size = 0)
-DotPlot(combined, features = c("Gene1", "Gene2"), group.by = "seurat_clusters")
+# cluster_markers <- FindAllMarkers(combined, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+# head(cluster_markers)
+Idents(combined) <- combined$celltype
+all_genes <- rownames(combined)
+FeaturePlot(combined, features = c("SAMD5","AC104041.1","MARCH1"), min.cutoff = "q10", max.cutoff = "q90")
+VlnPlot(combined, features = c("SAMD5","AC104041.1","MARCH1"), group.by = "seurat_clusters", pt.size = 0)
+DotPlot(combined, features = c("PNPLA3"), group.by = "celltype")
 
 ```
 
@@ -5036,3 +5029,198 @@ for (cell in all_cell_types[-1]) {
 
 ```
 
+## C. Integrated 
+```{r}
+#Steatosis Low vs. Steatosis High - ="2+3",ref_group="0+1
+# all_genes <- rownames(combined)
+# length(all_genes)
+#Hepatocytes Cells
+combined$celltype2 <- ifelse(grepl("Hep-",combined$celltype) | grepl("dHep",combined$celltype) | grepl("Hepatocyte",combined$celltype),"Hep","Non-Hep")
+# so_celltype <- subset(combined,celltype2=="Hep")
+# 
+# # Extract the gene expression data for all genes
+# gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
+
+#START HERE
+so_celltype <- subset(combined,celltype2=="Hep")
+DefaultAssay(combined) <- "integrated"
+#START HERE
+# so_celltype <- subset(combined,celltype=="Hep-5")
+# so_celltype <- combined
+Genes <- nrow(so_celltype) #2000 genes
+Nuclei <- ncol(so_celltype) #98427 nuclei
+# Extract the gene expression data for all genes
+gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
+
+#Assign gene names as rownames, cell names as colnames
+# rownames(gene_expression) <- rownames(so_celltype) #Gene Names
+# colnames(gene_expression) <- colnames(so_celltype) #Cell Names
+#Transpose gene expression dataset to merge with metadata
+gene_expression <- t(gene_expression)
+gene_expression <- data.frame(gene_expression) #Make a dataframe again after transposing
+#Set gene list
+gene_list <- colnames(gene_expression)
+gene_expression$cellname <- rownames(gene_expression)
+rownames(gene_expression) <- NULL
+
+# Extract the metadata
+metadata <- so_celltype@meta.data
+# metadata <- metadata %>%
+#   mutate(across(everything(),~ifelse(.==".",NA,.)))
+metadata$cellname <- rownames(metadata)
+rownames(metadata) <- NULL
+
+# Combine the gene expression data and metadata
+data <- tidylog::full_join(metadata,gene_expression,by="cellname")
+rm(metadata,gene_expression)
+
+data_subset <- data
+data_subset$steatosis_cat <- factor(data_subset$steatosis_cat)
+data_subset$steatosis_cat <- relevel(data_subset$steatosis_cat,ref="0+1")
+# #Log transform gene expression
+# data_subset <- data_subset %>%
+#   mutate(across(all_of(gene_list),~log2(.+1)))
+
+#First half of genes
+# gene_list_total <- rownames(combined)
+gene_list <- gene_list_total[1]
+# gene_list <- gene_list_total[2246:4489]
+# gene <- gene_list[1]
+# Define the function to process each gene
+process_gene <- function(gene_idx) {
+  
+  gene <- gene_list[gene_idx]  # Get the gene name based on the index
+  
+  # Ensure that the gene exists in your data subset
+  if (sum(data_subset[[gene]]) > 0) {
+    # 
+    # # Fit the model with key covariates
+    # m1 <- as.formula(paste0(gene, " ~ fibrosis_cat + a1c + (1 | Kit_Lot)"))
+    m1 <- as.formula(paste0(gene, " ~ steatosis_cat + a1c + nih_ethnicity + (1 | Kit_Lot)"))
+    # model1 <- glmmTMB(Expression ~ Treatment * Visit + (1 | Subject / Visit),
+    #         data = sc_dat_sub, family = gaussian, ziformula = ~1)
+    model1 <- glmmTMB(m1,data = data_subset, family = gaussian, ziformula = ~1)
+    # model1 <- lmer(m1, data = data_subset)
+    # Beta2 <- summary(model1)$coef$cond[3,1]
+    # PValue2 <- summary(model1)$coef$cond[3,4]
+    # # SE2 <- summary(model1)$coef$cond[3,2]
+    Beta <- summary(model1)$coef$cond[2,1]
+    PValue <- summary(model1)$coef$cond[2,4]
+    # SE3 <- summary(model1)$coef$cond[3,2]
+    zi <- summary(model1)$coef$zi[1,1]
+    zi_pval <- summary(model1)$coef$zi[1,4]
+    
+  } else {
+    # Beta2 <- NA
+    # PValue2 <- NA
+    # SE2 <- NA
+    Beta <- NA
+    PValue <- NA
+    #SE3 <- NA
+    zi <- NA
+    zi_pval <- NA
+  }
+  
+  # Return the result for the current gene
+  # result <- data.frame(contrast = "Overall", estimate = beta1, SE = se, df = df,
+  #                      lower.CL = lowerci, upper.CL = upperci, PValue = pval1, Gene = gene)
+  result <- data.frame(Gene=gene,Beta,PValue,ZI_Intercept=zi,ZI_PValue=zi_pval)
+  return(result)
+}
+
+# Total number of genes
+total_genes <- length(gene_list)
+
+# Calculate the batch size
+batch_size <- round(total_genes / 5)
+
+# Pre-initialize an empty data frame for results
+full_results <- data.frame(Gene = character(), Beta = numeric(), PValue = numeric())
+
+# Split the gene list into batches for parallel processing
+gene_batches <- split(seq(1, total_genes), ceiling(seq_along(seq(1, total_genes)) / batch_size))
+
+# Use mclapply to process the batches in parallel
+results_list <- mclapply(gene_batches, function(batch) {
+  # Apply the process_gene function to each gene index in the current batch
+  lapply(batch, process_gene)
+}, mc.cores = detectCores() - 1)  # Use one less core than available to avoid overloading
+
+# Flatten the list and combine the results into a single data frame
+full_results <- do.call(rbind, unlist(results_list, recursive = FALSE))
+
+# Print the final results
+view(full_results)
+# full_results2 <- full_results
+# full_results <- rbind(full_results,full_results2)
+# rm(full_results2,full_results3,full_results4,full_results5,full_results6,full_results7)
+#Accidentally ran RORA twice, remove second entry (they are identical)
+# full_results <- full_results[-3501,]
+
+# #Make volcano plot of all gene results for group
+full_results <- full_results %>%
+  mutate(fdr=p.adjust(PValue,method="fdr"))  
+# mutate(fdr3=p.adjust(PValue3,method="fdr"))
+full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
+# full_results$PValue10_3 <- -log10(pmax(full_results$PValue3, 1e-10))  # Avoid log(0)
+
+# view(full_results)
+
+full_results <- full_results %>%
+  mutate(FoldChange=2^Beta-1)  
+# mutate(FoldChange3=2^Beta3-1)
+# full_results <- full_results %>% 
+#   dplyr::rename(color=color2,
+#                 FoldChange=FoldChange2) %>%
+#   # dplyr::rename(fdr=fdr2,
+#   #               PValue10=PValue10_2) %>%
+#   # dplyr::select(-c("Beta3","PValue3")) %>% 
+#   dplyr::select(-c("color3","FoldChange3"))
+
+write.csv(full_results,fs::path(dir.results,"Pseudobulk_Hepatocytes_Steatosis.csv"))
+write.csv(full_results,fs::path(dir.ipa %>% dirname(),"Liver Pathways","Pseudobulk_Hepatocytes_Steatosis.csv"))
+# full_results <- read.csv(fs::path(dir.results,"Hep_5_Fibrosis_Steatosis.csv"))
+
+full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$Beta > 0, "lightcoral",
+                             ifelse(full_results$fdr < 0.05 & full_results$Beta < 0, "lightblue", "gray"))
+
+# Identify significant points (fdr < 0.05)
+significant_df <- full_results[full_results$fdr < 0.05, ]
+# 
+# full_results$color3 <- ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 > 0, "lightcoral",
+#                               ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 < 0, "lightblue", "gray"))
+# 
+# # Identify significant points (fdr < 0.05)
+# significant_df3 <- full_results[full_results$fdr3 < 0.2, ]
+
+# Create the volcano plot using ggplot
+volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color)) +
+  geom_point(alpha = 0.7) +  # Plot points with transparency
+  scale_color_identity() +  # Use the color column directly
+  theme_minimal() +  # Minimal theme
+  labs(
+    title = "High Steatosis (2+3) vs. Low Steatosis (0+1)",
+    subtitle = "All Cell Types, Adjusted for HbA1c & Ethnicity",
+    x = "Log2FC",
+    y = "-log10(P-Value)",
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Nuclei = ",Nuclei)
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )+
+  # # Add labels for significant points
+  geom_text(data = significant_df, aes(label = Gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+
+volcano_plot
+
+pdf(fs::path(dir.results,"Plot_Pseudobulk_Hepatocytes_Steatosis.pdf"),width=10,height=7)
+print(volcano_plot)
+dev.off()
+
+```
