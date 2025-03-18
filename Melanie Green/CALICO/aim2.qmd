@@ -3,13 +3,23 @@ title: "CALICO Aim 2 Analyses"
 author: "Tim Vigers"
 date: "today"
 date-format: long
-format: pdf
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-float: true
+    code-fold: true
+    self-contained: true
+    fig-cap-location: top
+    fig-width: 12
+    fig-height: 9
+    page-layout: full
+    theme:
+      light: flatly
+      dark: darkly
 bibliography: /home/timvigers/Documents/Miscellaneous/zotero.bib
 csl: /home/timvigers/Documents/GitHub/styles/american-medical-association.csl
 editor: source
-execute:
-  warning: false
-  echo: false
 ---
 
 ```{r setup}
@@ -43,21 +53,91 @@ levels(df$combined_race) <- c(
 )
 df$combined_race <- relevel(df$combined_race, ref = "Caucasian")
 # Remove crazy values for now (ask Grayson to fix in REDCap)
-df$cv_monthssincepcosdx[which.max(df$cv_monthssincepcosdx)] <- NA
-df$cv_weight[which.max(df$cv_weight)] <- NA
-df$cv_weight[which.max(df$cv_weight)] <- NA
-df$cv_bmi[which.max(df$cv_bmi)] <- NA
-df$cv_bmi[which.max(df$cv_bmi)] <- NA
-df$cv_bmi[which.max(df$cv_bmi)] <- NA
-df$cv_bmi[which.max(df$cv_bmi)] <- NA
-df$cv_bmi[which.max(df$cv_bmi)] <- NA
-df$cv_bmi[which.max(df$cv_bmi)] <- NA
-df$cv_dbp[which.max(df$cv_dbp)] <- NA
+# Remove crazy values
+df$cv_dbp[df$cv_dbp >= 200] <- NA
+df$cv_bmi[df$cv_bmi >= 200] <- NA
+df$cv_weight[df$cv_weight >= 1000] <- NA
+df$cv_monthssincepcosdx[df$cv_monthssincepcosdx >= 1000] <- NA
 df$cv_age[which.max(df$cv_age)] <- 17.2
 df$weight_cat[df$record_number == "KC_24" &
   df$redcap_repeat_instance == 1] <- NA
 df$weight_cat[df$record_number == "BCH15"] <- NA
-# Exclude visits where people were on weight loss medication
+# Get time since last visit on EC
+df <- df %>%
+  group_by(record_number) %>%
+  mutate(
+    last_ec = ifelse(ec == "Yes", cv_monthssincepcosdx, NA)
+  ) %>%
+  fill(last_ec, .direction = "down") %>%
+  mutate(
+    months_since_last_ec =
+      cv_monthssincepcosdx - last_ec
+  )
+# For those who go off EC, if the visit is within 6 months of last EC,
+# include that value in the post-LARC analysis.
+df$ec[df$ec == "No" & df$months_since_last_ec < 6] <- "Yes"
+# Find visits where they are off EC after first starting
+df <- df %>%
+  group_by(record_number) %>%
+  mutate(
+    pre_post_ec =
+      first(cv_monthssincepcosdx[ec == "No" & !is.na(last_ec)], na_rm = T)
+  )
+df$pre_post_ec[is.na(df$pre_post_ec)] <- Inf
+# Get time since last visit on Metformin
+df <- df %>%
+  group_by(record_number) %>%
+  mutate(
+    last_metformin = ifelse(metformin == "Yes", cv_monthssincepcosdx, NA)
+  ) %>%
+  fill(last_metformin, .direction = "down") %>%
+  mutate(
+    months_since_last_metformin =
+      cv_monthssincepcosdx - last_metformin
+  )
+# For those who go off Metformin, if the visit is within 6 months of last
+# Metformin, include that value in the post-Metformin analysis.
+df$metformin[df$metformin == "No" & df$months_since_last_metformin < 6] <- "Yes"
+# Find visits where they are off Metformin after first starting
+df <- df %>%
+  group_by(record_number) %>%
+  mutate(
+    pre_post_metformin =
+      first(cv_monthssincepcosdx[metformin == "No" & !is.na(last_metformin)],
+        na_rm = T
+      )
+  )
+df$pre_post_metformin[is.na(df$pre_post_metformin)] <- Inf
+
+
+
+
+
+# Get time since last visit on lifestyle
+df <- df %>%
+  group_by(record_number) %>%
+  mutate(
+    last_lifestyle = ifelse(lifestyle == "Yes", cv_monthssincepcosdx, NA)
+  ) %>%
+  fill(last_lifestyle, .direction = "down") %>%
+  mutate(
+    months_since_last_lifestyle =
+      cv_monthssincepcosdx - last_lifestyle
+  )
+# For those who go off lifestyle, if the visit is within 6 months of last
+# lifestyle, include that value in the post-lifestyle analysis.
+df$lifestyle[df$lifestyle == "No" & df$months_since_last_lifestyle < 6] <- "Yes"
+# Find visits where they are off lifestyle after first starting
+df <- df %>%
+  group_by(record_number) %>%
+  mutate(
+    pre_post_lifestyle =
+      first(cv_monthssincepcosdx[lifestyle == "No" & !is.na(last_lifestyle)],
+        na_rm = T
+      )
+  )
+df$pre_post_lifestyle[is.na(df$pre_post_lifestyle)] <- Inf
+# Exclude visits where people were on weight loss medication or progesterone
 weight_loss <- df %>%
   filter(
     cv_medications___25 == "Checked" | cv_medications___26 == "Checked" |
@@ -156,6 +236,7 @@ label(df$baseline_bmi) <- "Baseline BMI"
 # Make a dataset for spline models
 ec_only <- df %>%
   filter(ec_ever == "EC Ever") %>%
+  filter(cv_monthssincepcosdx < pre_post_ec | ec_ever == "No") %>%
   mutate(
     time_from_first_ec = (cv_age - age_first_ec) * 12,
     x = (time_from_first_ec > 0) * time_from_first_ec
@@ -221,7 +302,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = ec, color = ec)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On EC?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -260,7 +342,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From EC Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -318,7 +401,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = ec, color = ec)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On EC?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -357,7 +441,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From EC Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -415,7 +500,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = ec, color = ec)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On EC?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -454,7 +540,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From EC Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -512,7 +599,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = ec, color = ec)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On EC?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -551,7 +639,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From EC Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -609,7 +698,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = ec, color = ec)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On EC?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -648,7 +738,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From EC Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -706,7 +797,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = ec, color = ec)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On EC?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -745,7 +837,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From EC Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -803,7 +896,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = ec, color = ec)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On EC?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -842,7 +936,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_ec)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From EC Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -871,6 +966,7 @@ label(df$baseline_bmi) <- "Baseline BMI"
 # Make a dataset for spline models
 metformin_only <- df %>%
   filter(metformin_ever == "Metformin Ever") %>%
+  filter(cv_monthssincepcosdx < pre_post_metformin | metformin_ever == "No") %>%
   mutate(
     time_from_first_metformin = (cv_age - age_first_metformin) * 12,
     x = (time_from_first_metformin > 0) * time_from_first_metformin
@@ -936,7 +1032,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = metformin, color = metformin)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On Metformin?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -975,7 +1072,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_metformin)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From Metformin Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -1033,7 +1131,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = metformin, color = metformin)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On Metformin?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -1072,7 +1171,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_metformin)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From Metformin Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -1130,7 +1230,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = metformin, color = metformin)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On Metformin?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -1169,7 +1270,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_metformin)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From Metformin Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -1227,7 +1329,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = metformin, color = metformin)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On Metformin?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -1266,7 +1369,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_metformin)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From Metformin Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -1324,7 +1428,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = metformin, color = metformin)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On Metformin?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -1363,7 +1468,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_metformin)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From Metformin Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -1421,7 +1527,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = metformin, color = metformin)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On Metformin?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -1460,7 +1567,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_metformin)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From Metformin Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -1518,7 +1626,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = metformin, color = metformin)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On Metformin?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -1557,7 +1666,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_metformin)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From Metformin Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -1586,6 +1696,7 @@ label(df$baseline_bmi) <- "Baseline BMI"
 # Make a dataset for spline models
 lifestyle_only <- df %>%
   filter(lifestyle_ever == "Lifestyle Ever") %>%
+  filter(cv_monthssincepcosdx < pre_post_lifestyle | lifestyle_ever == "No") %>%
   mutate(
     time_from_first_lifestyle = (cv_age - age_first_lifestyle) * 12,
     x = (time_from_first_lifestyle > 0) * time_from_first_lifestyle
@@ -1650,7 +1761,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = lifestyle, color = lifestyle)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On Lifestyle Medicine?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -1688,7 +1800,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_lifestyle)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From Lifestyle Medicine Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -1745,7 +1858,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = lifestyle, color = lifestyle)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On Lifestyle Medicine?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -1783,7 +1897,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_lifestyle)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From Lifestyle Medicine Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -1840,7 +1955,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = lifestyle, color = lifestyle)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On Lifestyle Medicine?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -1878,7 +1994,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_lifestyle)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From Lifestyle Medicine Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -1935,7 +2052,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = lifestyle, color = lifestyle)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On Lifestyle Medicine?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -1973,7 +2091,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_lifestyle)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From Lifestyle Medicine Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -2030,7 +2149,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = lifestyle, color = lifestyle)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On Lifestyle Medicine?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -2068,7 +2188,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_lifestyle)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From Lifestyle Medicine Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -2125,7 +2246,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = lifestyle, color = lifestyle)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On Lifestyle Medicine?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -2163,7 +2285,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_lifestyle)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From Lifestyle Medicine Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
@@ -2220,7 +2343,8 @@ p <- ggplot(mod_df, aes(x = cv_monthssincepcosdx)) +
   geom_line(aes(y = pop_pred, group = lifestyle, color = lifestyle)) +
   xlab("Months from PCOS Dx") +
   labs(color = "On Lifestyle Medicine?") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 mod %>% tbl_regression(
@@ -2258,7 +2382,8 @@ p <- ggplot(mod_df, aes(x = time_from_first_lifestyle)) +
   ) +
   geom_line(aes(y = pop_pred)) +
   xlab("Months From Lifestyle Medicine Start") +
-  theme_classic()
+  theme_bw() +
+  scale_color_manual(values = c("#E41A1C", "#377EB8"))
 p
 # Model summary
 change_mod %>% tbl_regression(
