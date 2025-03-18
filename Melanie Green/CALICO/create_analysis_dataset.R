@@ -31,6 +31,8 @@ clinic <- clinic %>%
 # Merge
 df <- full_join(history, clinic, by = join_by(record_number)) %>%
   select(record_number, redcap_repeat_instance, everything())
+# Diagnostic visits are 0 months since diagnosis
+df$cv_monthssincepcosdx[df$cv_visittype == "Diagnostic Visit"] <- 0
 # Define variable sets
 # Demographics
 demo_vars <- c(
@@ -359,7 +361,7 @@ aim1_vars <- c(
 #   "Midwest", "Southeast", "Midwest", "Southwest", "Southwest"
 # )
 # Mental health diagnosis variables
-# Conver to numeric
+# Convert to numeric
 df$cv_phq9[df$cv_phq9 %in%
   c("performed, score not included", "performed, results not listed")] <- NA
 df$cv_phq9[df$cv_phq9 == "negative"] <- 0

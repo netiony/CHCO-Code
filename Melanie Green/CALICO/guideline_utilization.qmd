@@ -29,7 +29,11 @@ execute:
 library(Hmisc)
 library(tidyverse)
 library(gtsummary)
-knitr::opts_knit$set(root.dir = "/home/timvigers/OneDrive/Vigers/BDC/Janet Snell-Bergeon/CALICO")
+home_dir <- switch(Sys.info()["sysname"],
+  "Darwin" = "/Users/timvigers/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/Vigers/BDC/Janet Snell-Bergeon/CALICO",
+  "Linux" = "/home/timvigers/OneDrive/Vigers/BDC/Janet Snell-Bergeon/CALICO"
+)
+knitr::opts_knit$set(root.dir = home_dir)
 ```
 
 ```{r data import}
@@ -46,7 +50,8 @@ diagnostic_check <- c(
   "labs_this_visit___4", "labs_this_visit___5", "labs_this_visit___10",
   "labs_this_visit___11", "labs_this_visit___12", "labs_this_visit___33",
   "cv_acneother___0", "cv_acneother___1", "cv_acneother___2",
-  "cv_osa_sx", paste0("cv_referrals___", 1:12), paste0("cv_newmeds___", 1:31)
+  "cv_osa_sx", paste0("cv_referrals___", c(1:9, 11, 12)),
+  paste0("cv_newmeds___", 1:31)
 )
 demo_vars <- c(demo_vars, "weight_cat", "pcosdx_specialty")
 # Provider specialty levels
@@ -57,7 +62,7 @@ levels(df$pcosdx_specialty) <- c(
 # Make 1 year dataset
 one_year <- df %>%
   group_by(record_number) %>%
-  filter(row_number() == 1 | cv_monthssincepcosdx <= 12) %>%
+  filter(cv_monthssincepcosdx <= 12) %>%
   summarise(
     across(all_of(demo_vars), ~ first(.x, na_rm = F)),
     across(all_of(diagnostic_check), ~ any(.x == "Checked")),
@@ -72,7 +77,32 @@ one_year <- df %>%
     cv_dietarycounseling =
       any(cv_dietarycounseling %in% c("Yes", "No, but referred to a dietitian")),
     cv_exerciseplan =
-      any(cv_exerciseplan %in% c("Yes", "No, but referred to a exercise specialist"))
+      any(cv_exerciseplan %in%
+        c("Yes", "No, but referred to a exercise specialist")),
+    EC = any(cv_medications___5 == "Checked") |
+      any(cv_medications___6 == "Checked") |
+      any(cv_medications___7 == "Checked"),
+    cv_medications___8 = any(cv_medications___8 == "Checked"),
+    `Any other progesterone` =
+      any(cv_medications___9 == "Checked") |
+        any(cv_medications___10 == "Checked") |
+        any(cv_medications___11 == "Checked") |
+        any(cv_medications___12 == "Checked"),
+    `Weight loss medication` =
+      any(cv_medications___25 == "Checked") |
+        any(cv_medications___26 == "Checked") |
+        any(cv_medications___27 == "Checked") |
+        any(cv_medications___28 == "Checked") |
+        any(cv_medications___29 == "Checked"),
+    `Acne medication` =
+      any(cv_medications___13 == "Checked") |
+        any(cv_medications___14 == "Checked") |
+        any(cv_medications___15 == "Checked"),
+    cv_medications___16 = any(cv_medications___16 == "Checked"),
+    `Mood medication` =
+      any(cv_medications___18 == "Checked") |
+        any(cv_medications___19 == "Checked"),
+    cv_medications___19 = any(cv_medications___19 == "Checked")
   )
 ```
 
@@ -80,9 +110,9 @@ one_year <- df %>%
 
 For the following analysis, we filtered the dataset to visits where `cv_monthssincepcosdx <= 12`. Then, we grouped the data by participant ID and checked whether any of the labs were performed at any visit (for checkbox variables we looked for any visit marked "Checked" and for continuous variables we looked for any non-missing values). Participants who had the test performed were marked "TRUE" and others marked "FALSE."
 
-7 participants were missing the `pcosdx_specialty` field.
+`r sum(is.na(one_year$pcosdx_specialty))` participants were missing the `pcosdx_specialty` field.
 
-36 participants were missing weight category.
+`r sum(is.na(one_year$weight_cat))` participants were missing weight category.
 
 All q values are FDR-adjusted for multiple comparisons.
 
@@ -95,7 +125,9 @@ one_year %>%
   select(-record_number, -site, -weight_cat) %>%
   tbl_summary(by = pcosdx_specialty, label = as.list(label(df))) %>%
   add_overall() %>%
-  add_p(test.args = all_tests("fisher.test") ~ list(simulate.p.value = TRUE)) %>%
+  add_p(
+    test.args = all_tests("fisher.test") ~ list(simulate.p.value = TRUE)
+  ) %>%
   separate_p_footnotes() %>%
   add_q() %>%
   modify_footnote(everything() ~ NA)
@@ -108,15 +140,41 @@ one_year %>%
   select(-record_number, -site, -pcosdx_specialty) %>%
   tbl_summary(by = weight_cat, label = as.list(label(df))) %>%
   add_overall() %>%
-  add_p(test.args = all_tests("fisher.test") ~ list(simulate.p.value = TRUE)) %>%
+  add_p(
+    test.args = all_tests("fisher.test") ~ list(simulate.p.value = TRUE)
+  ) %>%
   separate_p_footnotes() %>%
   add_q() %>%
   modify_footnote(everything() ~ NA)
 ```
 
-# Questions
+## By specialty type and weight category
 
-- Which variable(s) should I use for sleep assessment?
+```{r}
+one_year %>%
+  mutate(pcosdx_specialty = fct_recode(one_year$pcosdx_specialty,
+    "Primary Care (Pediatrics or Family Medicine)/Other" =
+      "Primary Care (Pediatrics or Family Medicine)",
+    "Primary Care (Pediatrics or Family Medicine)/Other" = "Other",
+    "Gynecology/Adolescent Medicine" = "Gynecology",
+    "Gynecology/Adolescent Medicine" = "Adolescent Medicine"
+  )) %>%
+  select(-record_number, -site) %>%
+  filter(!is.na(pcosdx_specialty)) %>%
+  tbl_strata(
+    strata = pcosdx_specialty,
+    .tbl_fun =
+      ~ .x |>
+        tbl_summary(by = weight_cat, label = as.list(label(df))) %>%
+        add_overall() %>%
+        add_p(test.args = all_tests("fisher.test") ~
+          list(simulate.p.value = TRUE)) %>%
+        separate_p_footnotes() %>%
+        add_q() %>%
+        modify_footnote(everything() ~ NA),
+    .header = "**{strata}**, N = {n}"
+  )
+```
 
 # To Do
 
