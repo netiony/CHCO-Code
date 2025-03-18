@@ -1,7 +1,11 @@
 library(redcapAPI)
 library(tidyverse)
 library(Hmisc)
-setwd("/home/timvigers/OneDrive/Vigers/BDC/Janet Snell-Bergeon/CALICO")
+home_dir <- switch(Sys.info()["sysname"],
+  "Darwin" = "/Users/timvigers/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/Vigers/BDC/Janet Snell-Bergeon/CALICO",
+  "Linux" = "/home/timvigers/OneDrive/Vigers/BDC/Janet Snell-Bergeon/CALICO"
+)
+setwd(home_dir)
 # Open REDCap
 unlockREDCap(c(rcon = "CALICO"),
   keyring = "API_KEYs",
@@ -415,10 +419,13 @@ df$larc <- factor(df$larc, levels = c(F, T), labels = c("No", "Yes"))
 # Age at LARC start, etc.
 df <- df %>%
   group_by(record_number) %>%
-  mutate(age_first_larc = first(na.omit(cv_age[larc == "Yes"]))) %>%
+  mutate(
+    age_first_larc = first(na.omit(cv_age[larc == "Yes"])),
+    time_first_larc = first(na.omit(cv_monthssincepcosdx[larc == "Yes"]))
+  ) %>%
   ungroup() %>%
   mutate(
-    time_pcos_to_first_larc = age_first_larc - pcosdx_age,
+    time_pcos_to_first_larc = time_first_larc - cv_monthssincepcosdx,
     time_menarche_to_first_larc = age_first_larc - pcosdx_menarche
   )
 label(df$age_first_larc) <- "Age at First LARC"
@@ -435,10 +442,13 @@ df$ec <- df$cv_medications___5 == "Checked" |
 df$ec <- factor(df$ec, levels = c(F, T), labels = c("No", "Yes"))
 df <- df %>%
   group_by(record_number) %>%
-  mutate(age_first_ec = first(na.omit(cv_age[ec == "Yes"]))) %>%
+  mutate(
+    age_first_ec = first(na.omit(cv_age[ec == "Yes"])),
+    time_first_ec = first(na.omit(cv_monthssincepcosdx[ec == "Yes"]))
+  ) %>%
   ungroup() %>%
   mutate(
-    time_pcos_to_first_ec = age_first_ec - pcosdx_age,
+    time_pcos_to_first_ec = time_first_ec - cv_monthssincepcosdx,
     time_menarche_to_first_ec = age_first_ec - pcosdx_menarche
   )
 label(df$age_first_ec) <- "Age at First EC"
@@ -453,11 +463,14 @@ df$metformin <- df$cv_newmeds___1 == "Checked"
 df$metformin <- factor(df$metformin, levels = c(F, T), labels = c("No", "Yes"))
 df <- df %>%
   group_by(record_number) %>%
-  mutate(age_first_metformin = first(na.omit(cv_age[metformin == "Yes"]))) %>%
+  mutate(
+    age_first_metformin = first(na.omit(cv_age[metformin == "Yes"])),
+    time_first_metformin = first(na.omit(cv_monthssincepcosdx[metformin == "Yes"]))
+  ) %>%
   ungroup() %>%
   mutate(
     time_pcos_to_first_metformin = age_first_metformin - pcosdx_age,
-    time_menarche_to_first_metformin = age_first_metformin - pcosdx_menarche
+    time_menarche_to_first_metformin = time_first_metformin - cv_monthssincepcosdx
   )
 label(df$age_first_metformin) <- "Age at First Metformin"
 label(df$time_pcos_to_first_metformin) <-
@@ -475,7 +488,10 @@ df$lifestyle <- df$metformin == "No" & df$ec == "No"
 df$lifestyle <- factor(df$lifestyle, levels = c(F, T), labels = c("No", "Yes"))
 df <- df %>%
   group_by(record_number) %>%
-  mutate(age_first_lifestyle = first(na.omit(cv_age[lifestyle == "Yes"]))) %>%
+  mutate(
+    age_first_lifestyle = first(na.omit(cv_age[lifestyle == "Yes"])),
+    time_first_lifestyle = first(na.omit(cv_monthssincepcosdx[lifestyle == "Yes"]))
+  ) %>%
   ungroup() %>%
   mutate(
     time_pcos_to_first_lifestyle = age_first_lifestyle - pcosdx_age,
