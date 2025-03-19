@@ -259,7 +259,7 @@ def harmonize_data():
     panda_mrns = harmonized.loc[harmonized['study'] == 'PANDA', ['mrn', 'record_id']]
     panda_id_map = dict(zip(panda_mrns['mrn'], panda_mrns['record_id']))
     harmonized['panda_id'] = harmonized.apply(lambda row: panda_id_map[row['mrn']] if row['mrn'] in panda_id_map else '', axis=1)
-    attempt_mrns = harmonized.loc[harmonized['study'] == 'attempt', ['mrn', 'record_id']]
+    attempt_mrns = harmonized.loc[harmonized['study'] == 'ATTEMPT', ['mrn', 'record_id']]
     attempt_id_map = dict(zip(attempt_mrns['mrn'], attempt_mrns['record_id']))
     harmonized['attempt_id'] = harmonized.apply(lambda row: attempt_id_map[row['mrn']] if row['mrn'] in attempt_id_map else '', axis=1)
     

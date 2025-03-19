@@ -6,14 +6,16 @@ library(dplyr)
 library(tidyr)
 library(purrr)
 
-if(Sys.info()["sysname"] == "Windows"){
-  home_dir = "E:/Petter Bjornstad"
-} else if (Sys.info()["sysname"] == "Linux"){
-  home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad"
-} else if (Sys.info()["sysname"] == "Darwin"){
-  home_dir = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/"
-}
-setwd(home_dir)
+# if(Sys.info()["sysname"] == "Windows"){
+#   home_dir = "E:/Petter Bjornstad"
+# } else if (Sys.info()["sysname"] == "Linux"){
+#   home_dir = "~/UCD/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad"
+# } else if (Sys.info()["sysname"] == "Darwin"){
+#   home_dir = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/"
+# }
+# setwd(home_dir)
+
+setwd("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/")
 
 ###################
 # ANML ADAT FILES #
@@ -49,6 +51,21 @@ analytes2 <- getAnalyteInfo(soma2)
 # 2nd analytes file is esssentially the same as the first except for some batch specific information we don't need
 # will keep the first file
 
+# read in data - we want to use the fully processed, normalized file ending in "anmlSMP.adat"
+soma <- read_adat("./Local cohort Somalogic data/WUS-22-002/WUS-22-002_v4.1_EDTAPlasma_hybNorm_medNormInt_plateScale_calibrate_anmlQC_qcCheck_anmlSMP.adat")
+soma <- soma %>% select(-Optional2)
+soma <- soma %>% filter(!is.na(SampleDescription))
+analytes <- getAnalyteInfo(soma)
+analytes <- analytes %>% select(AptName,SeqId,SeqIdVersion,SomaId,TargetFullName,Target,UniProt,EntrezGeneID,EntrezGeneSymbol,Organism,Units,Type)
+# remove fc mouse and no protein
+drop <- analytes %>% filter(Target == "Fc_MOUSE" | Target == "No Protein" | !(Organism == "Human") | !(Type == "Protein"))
+apt_drop <- drop$AptName
+soma <- soma %>% select(!all_of(apt_drop))
+analytes <- analytes %>% filter(!Target == "Fc_MOUSE")
+analytes <- analytes %>% filter(!Target == "No Protein")
+analytes <- analytes %>% filter(Organism == "Human")
+analytes <- analytes %>% filter(Type == "Protein")
+
 # read in PANTHER data
 panther <- read_adat("./Local cohort Somalogic data/PANTHER/20240126_597_Bjornstad_SOMAscan7k_WUS-24-002_data_export/WUS-24-002_2024-01-26_Somalogic_standardized_files/WUS_24_002_v4.1_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.adat")
 panther <- panther %>% filter(!is.na(SampleDescription))
@@ -58,8 +75,31 @@ panther <- panther %>% select(!all_of(apt_drop))
 # one ID changed
 panther$SampleDescription <- ifelse(panther$SampleDescription == "PAN-14-C", "PAN-14-O", panther$SampleDescription)
 
+# read in ATTEMPT data
+attempt <- read_adat("./Local cohort Somalogic data/ATTEMPT/20250313_SR006998_Bjornstad_SOMAscan_11K_WUS_25_003_data_export/WUS_25_003_somalogic_standardized_data_files/WUS_25_003_v5.0_EDTAPlasma.hybNorm.medNormInt.plateScale.calibrate.anmlQC.qcCheck.anmlSMP.20250312.adat")
+attempt <- attempt %>% filter(!is.na(SampleDescription))
+attempt <- attempt %>% select(-Optional1, -Optional2, -SampleNumber)
+# remove fc mouse and no protein
+attempt <- attempt %>% select(!all_of(apt_drop))
+
+# ATTEMPT analytes file (9k)
+analytes_attempt <- getAnalyteInfo(attempt)
+analytes_attempt <- analytes_attempt %>% select(AptName,SeqId,SeqIdVersion,SomaId,TargetFullName,Target,UniProt,EntrezGeneID,EntrezGeneSymbol,Organism,Units,Type)
+# remove fc mouse and no protein
+drop <- analytes_attempt %>% filter(Target == "Fc_MOUSE" | Target == "No Protein" | !(Organism == "Human") | !(Type == "Protein"))
+apt_drop <- drop$AptName
+attempt <- attempt %>% select(!all_of(apt_drop))
+analytes_attempt <- analytes_attempt %>% filter(!Target == "Fc_MOUSE")
+analytes_attempt <- analytes_attempt %>% filter(!Target == "No Protein")
+analytes_attempt <- analytes_attempt %>% filter(Organism == "Human")
+analytes_attempt <- analytes_attempt %>% filter(Type == "Protein")
+
+additional_proteins9k <- colnames(attempt)[colnames(attempt) %nin% colnames(soma)]
+soma[additional_proteins9k] <- NA
+soma2[additional_proteins9k] <- NA
+panther[additional_proteins9k] <- NA
 # filter out Q/C samples
-soma <- rbind(soma,soma2,panther)
+soma <- rbind(soma,soma2,panther,attempt)
 # delete Pima data
 soma <- soma %>% filter(!str_detect(SampleDescription,"CKDS"))
 # fix sample IDs on a few RH2 participants who changed groups
@@ -112,11 +152,10 @@ soma_combined <- soma
 # some extra spaces in the sample IDs
 soma_combined$SampleDescription <- str_trim(soma_combined$SampleDescription)
 # add labels
-labels <- paste0("log(",analytes$EntrezGeneSymbol[match(colnames(soma_combined), analytes$AptName)],")")
+labels <- paste0("log(",analytes_attempt$EntrezGeneSymbol[match(colnames(soma_combined), analytes_attempt$AptName)],")")
 labels[labels == "log(NA)"] <- ""
 label(soma_combined) <- as.list(labels)
 
 # write copy of the entire local SomaScan dataframe to the data harmonization folder
-save(soma_combined, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Combined SomaScan/soma_combined_anml.RData")
-save(analytes, file = "/Volumes/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad/Data Harmonization/Combined SomaScan/analytes.RData")
-
+save(soma_combined, file = "./Data Harmonization/Combined SomaScan/soma_combined_anml_2.RData")
+save(analytes_attempt, file = "./Data Harmonization/Combined SomaScan/analytes_2.RData")

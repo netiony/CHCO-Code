@@ -120,17 +120,17 @@ merged_data <- reduce(data_frames, ~ full_join(.x, .y)) %>%
                    across(where(is.numeric),  ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
                    .by = c(subject_id, visit)) %>%
   filter(visit %in% c("baseline", "4_months_post")) %>%
-  rename(record_id = subject_id,
-         date = date_visit,
-         weight = weight_kg, 
-         bmi = bmi_kgm2,
-         sbp = sbp_mmhg, 
-         dbp = dbp_mmhg, 
-         temp = body_temp_celsius, 
-         pulse = heart_rate_bpm, 
-         diabetes_dx_duration = t1d_duration, 
-         creatinine_s = creatinine_blood_local,
-         cystatin_c_s = cystatin_c_serum_mgl,
-         age = age_baseline)
+  dplyr::rename(record_id = subject_id,
+                date = date_visit,
+                weight = weight_kg, 
+                bmi = bmi_kgm2,
+                sbp = sbp_mmhg, 
+                dbp = dbp_mmhg, 
+                temp = body_temp_celsius, 
+                pulse = heart_rate_bpm, 
+                diabetes_dx_duration = t1d_duration, 
+                creatinine_s = creatinine_blood_local,
+                cystatin_c_s = cystatin_c_serum_mgl,
+                age = age_baseline)
 
 save(merged_data, file = "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/ATTEMPT_AC.RData")

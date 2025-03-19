@@ -10,8 +10,17 @@ clean <- data.frame(lapply(clean, as.character))
 clean[clean == "NaN"] <- NA # Replace NaN from Python to NA
 clean[clean == ""] <- NA
 
+# ATTEMPT from Antoine
+load(file = "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/ATTEMPT_AC.RData")
+attempt <- merged_data %>%
+  select(record_id, visit, date, treatment_arm, sex, diabetes_dx_duration) %>%
+  mutate(date = as.character(as.POSIXct(date, origin = "1970-01-01", tz = "UTC")),
+         group = "Type 1 Diabetes",
+         study = "ATTEMPT")
+
 # Create screen_date (screening date for each participant or earliest date available)
 clean <- clean %>%
+  full_join(attempt) %>%
   dplyr::group_by(record_id, visit) %>% 
   dplyr::mutate(across(where(is.character), ~ na_if(., ""))) %>%
   dplyr::mutate(screen_date = case_when(procedure == "screening" ~ date)) %>%
@@ -19,7 +28,7 @@ clean <- clean %>%
   dplyr::mutate(screen_date = case_when(is.na(screen_date) ~ min(date, na.rm = T), 
                                  T ~ screen_date)) %>%
   fill(screen_date, .direction = "updown") %>% ungroup() %>%
-  dplyr::select(record_id, casper_id, coffee_id, croc_id, improve_id, penguin_id, 
+  dplyr::select(record_id, attempt_id, casper_id, coffee_id, croc_id, improve_id, penguin_id, 
                 rh_id, rh2_id, panther_id, panda_id, co_enroll_id,
                 mrn, date, screen_date, everything())
 
@@ -31,7 +40,8 @@ write.csv(clean,
 ##########################################################################################
 
 # Combine with SOMA
-load("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Combined SomaScan/soma_combined_anml.RData")
+load("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Combined SomaScan/soma_combined_anml_2.RData")
+
 soma <- soma_combined %>%
   as.matrix() %>% as.data.frame() %>%
   mutate_at(vars(starts_with("seq")), as.numeric) %>%
@@ -48,7 +58,9 @@ soma <- soma_combined %>%
                            visit == "Year 2" ~ "year_2",
                            visit == "Year 3" ~ "year_3",
                            visit == "3M" ~ "3_months_post_surgery",
-                           visit == "12M" ~ "12_months_post_surgery"),
+                           visit == "12M" ~ "12_months_post_surgery",
+                           visit == "V1" ~ "baseline",
+                           visit == "V4" ~ "4_months_post"),
          visit = case_when(grepl("PAN-", record_id) & visit == "year_1" ~ "baseline", # PANTHER dates skips baseline in SOMA (shifted)
                            grepl("PAN-", record_id) & visit == "year_2" ~ "year_1",
                            grepl("PAN-", record_id) & visit == "year_3" ~ "year_2",
@@ -56,12 +68,12 @@ soma <- soma_combined %>%
   dplyr::select(record_id, visit, starts_with("seq")) %>% 
   mutate_at(vars(starts_with("seq")), as.numeric)
 
-# Check for mismatches between SOMA harmonized and data harmonized
-mismatches <- soma$record_id[!soma$record_id %in% clean$record_id]
+# Check for mismatches between SOMA harmonized and data harmonized (have proteomics but no clinical data)
+mismatches <- soma$record_id[!soma$record_id %in% test$record_id]
 mismatches
 
 # Combine SOMA & data harmonized
-soma_clean <- clean %>% left_join(soma, by = c("record_id", "visit")) %>%
+soma_clean <- clean %>% full_join(soma, by = c("record_id", "visit")) %>%
   group_by(mrn, screen_date) %>%
   fill(starts_with("seq"), .direction = "downup") %>%
   ungroup()
@@ -71,6 +83,62 @@ write.csv(soma_clean,
           "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/soma_harmonized_dataset.csv", row.names = F,
           na = "")
 
+##########################################################################################
+
+# Combine with Olink
+# Olink data
+# olink_map <- read.csv("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Olink Data/Data_Clean/olink_id_map.csv")
+
+## Plasma
+olink_plasma <- read.csv("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Olink Data/Data_Clean/plasma_cleaned.csv")
+
+olink_plasma <- olink_plasma %>%
+  mutate(visit = case_when(endsWith(record_id, "BL") ~ "baseline",
+                           endsWith(record_id, "12M") ~ "12_months_post_surgery",
+                           T ~ "baseline"),
+         record_id = gsub("_BL|_12M", "", record_id)) %>%
+  rename_with(~ paste0(.x, "_p"), starts_with("OID"))
+
+olink_plasma_clean <- clean %>% left_join(olink_plasma, by = c("record_id", "visit")) %>%
+  group_by(mrn, screen_date) %>%
+  fill(starts_with("OID"), .direction = "downup") %>%
+  ungroup() 
+
+# Save harmonized data with Olink Plasma
+write.csv(olink_plasma_clean, 
+          "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/olink_plasma_harmonized_dataset.csv", row.names = F,
+          na = "")
+
+## Urine
+olink_urine <- read.csv("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Olink Data/Data_Clean/urine_cleaned.csv")
+olink_urine <- olink_urine %>%
+  mutate(visit = case_when(endsWith(record_id, "BL") ~ "baseline",
+                           endsWith(record_id, "12M") ~ "12_months_post_surgery",
+                           T ~ "baseline"),
+         record_id = gsub("_BL|_12M", "", record_id)) %>%
+  rename_with(~ paste0(.x, "_u"), starts_with("OID"))
+
+olink_urine_clean <- clean %>% left_join(olink_urine, by = c("record_id", "visit")) %>%
+  group_by(mrn, screen_date) %>%
+  fill(starts_with("OID"), .direction = "downup") %>%
+  ungroup() 
+
+# Save harmonized data with Olink Urine
+write.csv(olink_urine_clean, 
+          "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/olink_urine_harmonized_dataset.csv", row.names = F,
+          na = "")
+
+# Save harmonized data with Olink (both plasma and urine) and SOMA
+clean_proteomics_comb <- clean %>% 
+  left_join(olink_plasma, by = c("record_id", "visit")) %>%
+  left_join(olink_urine, by = c("record_id", "visit")) %>%
+  left_join(soma, by = c("record_id", "visit")) %>%
+  group_by(mrn, screen_date) %>% 
+  fill(starts_with("OID"), .direction = "downup") %>%
+  fill(starts_with("seq"), .direction = "downup")
+write.csv(clean_proteomics_comb, 
+          "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/soma_olink_harmonized_dataset.csv", row.names = F,
+          na = "")
 
 #### INDICATORS FOR TABLEAU ####
 clean_ind <- clean %>% 
