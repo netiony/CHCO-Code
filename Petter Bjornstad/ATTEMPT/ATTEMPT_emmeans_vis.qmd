@@ -14,37 +14,52 @@ format:
 ```{r echo = F}
 library(dplyr)
 library(ggplot2)
+library(purrr)
+library(tidyr)
+library(stats)
+library(patchwork)
+library(UpSetR)
 ```
 
+# emmeans
+## PT
 ```{r echo = F}
 # read mixed model results dataframe (rendered in Hyak)
-model_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/ATTEMPT_scrna_mm_model_combined.rds")
+pt_model_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/kopah/pt_attempt_scrna_mm_model_combined_2.rds")
 
 # read emmeans dataframe (rendered in Hyak)
-emmeans_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/ATTEMPT_scrna_mm_emmeans_combined.rds")
+pt_emmeans_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/kopah/pt_attempt_scrna_mm_emmeans_combined_2.rds")
 ```
 
 ```{r echo = F}
 # keep converged model results only
-model_filtered <- model_df %>%
-  filter(!is.na(PValue)) %>%
-  arrange(PValue)
-emmeans_filtered <- emmeans_df %>%
-  filter(!is.na(SE))
-```
+pt_model_filtered <- pt_model_df %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
 
+pt_emmeans_filtered <- pt_emmeans_df %>%
+  filter(Gene %in% pt_model_filtered$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+# non-converged genes percentage
+pt_nonconverged_genes <- (pt_model_df %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene
+(length(unique(pt_nonconverged_genes))/length(unique(pt_model_df$Gene)))*100
+```
 
 ```{r echo = F}
 # arrange the model based on significance of interaction term in model
-ordered_model <- subset(model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST") %>%
+ordered_model <- subset(pt_model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST") %>%
   arrange(PValue)
 gene_order <- factor(ordered_model$Gene, levels = ordered_model$Gene)
-sig_genes <- subset(model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)$Gene
+sig_genes <- subset(pt_model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)$Gene
 ```
 
 ```{r echo =F}
 # compute emmean difference in POST - PRE in each treatment group
-emmeans_diff <- emmeans_filtered %>%
+pt_emmeans_diff <- pt_emmeans_filtered %>%
   pivot_wider(names_from = Visit, values_from = c(emmean, SE)) %>%
   group_by(Treatment, Gene) %>%
   fill(ends_with("PRE"), ends_with("POST")) %>%
@@ -55,77 +70,3236 @@ emmeans_diff <- emmeans_filtered %>%
          t_stat = diff_emmean / SE_diff,  # t-statistic
          p_value = 2 * pt(-abs(t_stat), df)) %>%
   filter(!is.na(diff_emmean)) %>%
+  ungroup() %>%
   mutate(interaction_significance = case_when(Gene %in% sig_genes ~ "p<0.05", 
-                                 T ~ "p>0.05"),
-         Gene = factor(Gene, levels = gene_order)) %>%
-  arrange(Gene)
-write.csv(emmeans_diff, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans_diff.csv", row.names = F)
+                                 T ~ "p>0.05"))
 
 # separate out for placebo/dapa & save to run for IPA
-emmeans_diff_placebo <- emmeans_diff %>%
-  filter(Treatment == "Placebo") %>%
-  mutate(q_value = p.adjust(p_value, method = "fdr"))
-write.csv(emmeans_diff_placebo, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans_diff_placebo.csv", row.names = F)
 
-emmeans_diff_dapa <- emmeans_diff %>%
+## Placebo
+pt_emmeans_diff_placebo <- pt_emmeans_diff %>%
+  filter(Treatment == "Placebo") %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr")) %>%
+  select(Gene, diff_emmean, p_value, q_value)
+colnames(pt_emmeans_diff_placebo) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+write.csv(pt_emmeans_diff_placebo, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/pt_emmeans_diff_placebo.csv", row.names = F)
+
+## Dapa
+pt_emmeans_diff_dapa <- pt_emmeans_diff %>%
   filter(Treatment == "Dapagliflozin") %>%
-  mutate(q_value = p.adjust(p_value, method = "fdr"))
-write.csv(emmeans_diff_dapa, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans_diff_dapa.csv", row.names = F)
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr")) %>%
+  select(Gene, diff_emmean, p_value, q_value)
+colnames(pt_emmeans_diff_dapa) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+write.csv(pt_emmeans_diff_dapa, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/pt_emmeans_diff_dapa.csv", row.names = F)
 ```
 
 ```{r echo = F}
 # DiD (Differences in Differences)
-emmeans_diff_wide <- emmeans_diff %>%
+pt_emmeans_diff_wide <- pt_emmeans_diff %>%
   pivot_wider(names_from = Treatment, values_from = c(diff_emmean, SE_diff))
 
-emmeans_diff_DiD <- emmeans_diff_wide %>%
+pt_emmeans_diff_DiD <- pt_emmeans_diff_wide %>%
   group_by(Gene) %>%
   fill(ends_with("Placebo"), ends_with("Dapagliflozin")) %>%
   dplyr::mutate(DiD = diff_emmean_Dapagliflozin - diff_emmean_Placebo,
          SE_DiD = sqrt(SE_diff_Dapagliflozin^2 + SE_diff_Placebo^2),  # SE computation
          t_stat_DiD = DiD / SE_DiD,  # t-statistic
-         p_value_DiD = 2 * (1 - pt(abs(t_stat_DiD), df = nrow(emmeans_diff) - 2))) %>%
+         p_value_DiD = 2 * (1 - pt(abs(t_stat_DiD), df = nrow(pt_emmeans_diff) - 2))) %>%
   select(Gene, diff_emmean_Dapagliflozin,diff_emmean_Placebo, DiD, SE_DiD, t_stat_DiD, p_value_DiD) %>%
   filter(!is.na(DiD)) %>%
-  mutate(q_value = p.adjust(p_value_DiD, method = "fdr"))
-write.csv(emmeans_diff_DiD, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans_diff_DiD.csv", row.names = F)
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value_DiD, method = "fdr")) %>%
+  select(Gene, DiD, p_value_DiD, q_value)
+colnames(pt_emmeans_diff_DiD) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+
+## Save for IPA
+write.csv(pt_emmeans_diff_DiD, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/pt_emmeans_diff_DiD.csv", row.names = F)
+```
+
+### Top genes delta plot
+```{r echo = F}
+pt_emmeans_diff %>%
+  filter(interaction_significance == "p<0.05") %>%
+  filter(Gene %in% gene_order[1:10]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8),
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) +
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1"))
+
+pt_emmeans_diff %>%
+  filter(interaction_significance == "p<0.05") %>%
+  filter(Gene %in% gene_order[11:20]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8),
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) +
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1"))
+```
+
+## TAL
+```{r echo = F}
+# read mixed model results dataframe (rendered in Hyak)
+tal_model_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/kopah/tal_attempt_scrna_mm_model_combined_2.rds")
+
+# read emmeans dataframe (rendered in Hyak)
+tal_emmeans_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/kopah/tal_attempt_scrna_mm_emmeans_combined_2.rds")
 ```
 
 ```{r echo = F}
-emmeans_diff %>%
-  filter(significant == "p<0.05") %>%
-  filter(Gene %in% sig_genes[1:10]) %>%
-  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
-    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8), 
-                    position = position_dodge(width = 0.5)) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
-  theme_bw() +
-  theme(panel.grid = element_blank(),
-        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
-        text = element_text(size = 12)) +
-  guides(alpha = "none") +
-  labs(y = "Delta (Post - Pre)",
-       x = NULL) + 
-  scale_color_manual(values = c("Placebo" = "#df7373",
-                                 "Dapagliflozin" = "#3e7cb1")) +
-    ylim(c(-0.5, 0.5))
-
-
-emmeans_diff %>%
-  filter(significant == "p<0.05") %>%
-  filter(Gene %in% sig_genes[11:20]) %>%
-  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
-    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8), 
-                    position = position_dodge(width = 0.5)) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
-  theme_bw() +
-  theme(panel.grid = element_blank(),
-        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
-        text = element_text(size = 12)) +
-  guides(alpha = "none") +
-  labs(y = "Delta (Post - Pre)",
-       x = NULL) + 
-  scale_color_manual(values = c("Placebo" = "#df7373",
-                                 "Dapagliflozin" = "#3e7cb1")) +
-    ylim(c(-0.5, 0.5))
+# keep converged model results only
+tal_model_filtered <- tal_model_df %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+tal_emmeans_filtered <- tal_emmeans_df %>%
+  filter(Gene %in% tal_model_filtered$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+# non-converged genes percentage
+tal_nonconverged_genes <- (tal_model_df %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene
+(length(unique(tal_nonconverged_genes))/length(unique(tal_model_df$Gene)))*100
 ```
+
+```{r echo = F}
+# arrange the model based on significance of interaction term in model
+ordered_model <- subset(tal_model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST") %>%
+  arrange(PValue)
+gene_order <- factor(ordered_model$Gene, levels = ordered_model$Gene)
+sig_genes <- subset(tal_model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)$Gene
+```
+
+```{r echo =F}
+# compute emmean difference in POST - PRE in each treatment group
+tal_emmeans_diff <- tal_emmeans_filtered %>%
+  pivot_wider(names_from = Visit, values_from = c(emmean, SE)) %>%
+  group_by(Treatment, Gene) %>%
+  fill(ends_with("PRE"), ends_with("POST")) %>%
+  mutate(diff_emmean = emmean_POST - emmean_PRE,
+         SE_diff = sqrt(SE_POST^2 + SE_PRE^2),  # Propagating SE for difference
+         diff_lowerCL = diff_emmean - 1.96 * SE_diff,
+         diff_upperCL = diff_emmean + 1.96 * SE_diff,
+         t_stat = diff_emmean / SE_diff,  # t-statistic
+         p_value = 2 * pt(-abs(t_stat), df)) %>%
+  filter(!is.na(diff_emmean)) %>%
+  ungroup() %>%
+  mutate(interaction_significance = case_when(Gene %in% sig_genes ~ "p<0.05", 
+                                 T ~ "p>0.05"))
+
+# separate out for placebo/dapa & save to run for IPA
+
+## Placebo
+tal_emmeans_diff_placebo <- tal_emmeans_diff %>%
+  filter(Treatment == "Placebo") %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr")) %>%
+  select(Gene, diff_emmean, p_value, q_value)
+colnames(tal_emmeans_diff_placebo) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+write.csv(tal_emmeans_diff_placebo, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/tal_emmeans_diff_placebo_2.csv", row.names = F)
+
+## Dapa
+tal_emmeans_diff_dapa <- tal_emmeans_diff %>%
+  filter(Treatment == "Dapagliflozin") %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr")) %>%
+  select(Gene, diff_emmean, p_value, q_value)
+colnames(tal_emmeans_diff_dapa) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+write.csv(tal_emmeans_diff_dapa, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/tal_emmeans_diff_dapa_2.csv", row.names = F)
+```
+
+```{r echo = F}
+# DiD (Differences in Differences)
+tal_emmeans_diff_wide <- tal_emmeans_diff %>%
+  pivot_wider(names_from = Treatment, values_from = c(diff_emmean, SE_diff))
+
+tal_emmeans_diff_DiD <- tal_emmeans_diff_wide %>%
+  group_by(Gene) %>%
+  fill(ends_with("Placebo"), ends_with("Dapagliflozin")) %>%
+  dplyr::mutate(DiD = diff_emmean_Dapagliflozin - diff_emmean_Placebo,
+         SE_DiD = sqrt(SE_diff_Dapagliflozin^2 + SE_diff_Placebo^2),  # SE computation
+         t_stat_DiD = DiD / SE_DiD,  # t-statistic
+         p_value_DiD = 2 * (1 - pt(abs(t_stat_DiD), df = nrow(tal_emmeans_diff) - 2))) %>%
+  select(Gene, diff_emmean_Dapagliflozin,diff_emmean_Placebo, DiD, SE_DiD, t_stat_DiD, p_value_DiD) %>%
+  filter(!is.na(DiD)) %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value_DiD, method = "fdr")) %>%
+  select(Gene, DiD, p_value_DiD, q_value)
+colnames(tal_emmeans_diff_DiD) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+
+## Save for IPA
+write.csv(tal_emmeans_diff_DiD, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/tal_emmeans_diff_DiD_2.csv", row.names = F)
+```
+
+### Top genes delta plot
+```{r echo = F}
+tal_emmeans_diff %>%
+  filter(interaction_significance == "p<0.05") %>%
+  filter(Gene %in% gene_order[1:10]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8),
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) +
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1"))
+
+tal_emmeans_diff %>%
+  filter(interaction_significance == "p<0.05") %>%
+  filter(Gene %in% gene_order[11:20]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8),
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) +
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1"))
+```
+## PC
+```{r echo = F}
+# read mixed model results dataframe (rendered in Hyak)
+pc_model_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/kopah/pc_attempt_scrna_mm_model_combined_2.rds")
+
+# read emmeans dataframe (rendered in Hyak)
+pc_emmeans_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/kopah/pc_attempt_scrna_mm_emmeans_combined_2.rds")
+```
+
+```{r echo = F}
+# keep converged model results only
+pc_model_filtered <- pc_model_df %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+pc_emmeans_filtered <- pc_emmeans_df %>%
+  filter(Gene %in% pc_model_filtered$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+# non-converged genes percentage
+pc_nonconverged_genes <- (pc_model_df %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene
+(length(unique(pc_nonconverged_genes))/length(unique(pc_model_df$Gene)))*100
+```
+
+```{r echo = F}
+# arrange the model based on significance of interaction term in model
+ordered_model <- subset(pc_model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST") %>%
+  arrange(PValue)
+gene_order <- factor(ordered_model$Gene, levels = ordered_model$Gene)
+sig_genes <- subset(pc_model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)$Gene
+```
+
+```{r echo =F}
+# compute emmean difference in POST - PRE in each treatment group
+pc_emmeans_diff <- pc_emmeans_filtered %>%
+  pivot_wider(names_from = Visit, values_from = c(emmean, SE)) %>%
+  group_by(Treatment, Gene) %>%
+  fill(ends_with("PRE"), ends_with("POST")) %>%
+  mutate(diff_emmean = emmean_POST - emmean_PRE,
+         SE_diff = sqrt(SE_POST^2 + SE_PRE^2),  # Propagating SE for difference
+         diff_lowerCL = diff_emmean - 1.96 * SE_diff,
+         diff_upperCL = diff_emmean + 1.96 * SE_diff,
+         t_stat = diff_emmean / SE_diff,  # t-statistic
+         p_value = 2 * pt(-abs(t_stat), df)) %>%
+  filter(!is.na(diff_emmean)) %>%
+  ungroup() %>%
+  mutate(interaction_significance = case_when(Gene %in% sig_genes ~ "p<0.05", 
+                                 T ~ "p>0.05"))
+
+# separate out for placebo/dapa & save to run for IPA
+
+## Placebo
+pc_emmeans_diff_placebo <- pc_emmeans_diff %>%
+  filter(Treatment == "Placebo") %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr")) %>%
+  select(Gene, diff_emmean, p_value, q_value)
+colnames(pc_emmeans_diff_placebo) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+write.csv(pc_emmeans_diff_placebo, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/pc_emmeans_diff_placebo_2.csv", row.names = F)
+
+## Dapa
+pc_emmeans_diff_dapa <- pc_emmeans_diff %>%
+  filter(Treatment == "Dapagliflozin") %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr")) %>%
+  select(Gene, diff_emmean, p_value, q_value)
+colnames(pc_emmeans_diff_dapa) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+write.csv(pc_emmeans_diff_dapa, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/pc_emmeans_diff_dapa_2.csv", row.names = F)
+```
+
+```{r echo = F}
+# DiD (Differences in Differences)
+pc_emmeans_diff_wide <- pc_emmeans_diff %>%
+  pivot_wider(names_from = Treatment, values_from = c(diff_emmean, SE_diff))
+
+pc_emmeans_diff_DiD <- pc_emmeans_diff_wide %>%
+  group_by(Gene) %>%
+  fill(ends_with("Placebo"), ends_with("Dapagliflozin")) %>%
+  dplyr::mutate(DiD = diff_emmean_Dapagliflozin - diff_emmean_Placebo,
+         SE_DiD = sqrt(SE_diff_Dapagliflozin^2 + SE_diff_Placebo^2),  # SE computation
+         t_stat_DiD = DiD / SE_DiD,  # t-statistic
+         p_value_DiD = 2 * (1 - pt(abs(t_stat_DiD), df = nrow(pc_emmeans_diff) - 2))) %>%
+  select(Gene, diff_emmean_Dapagliflozin,diff_emmean_Placebo, DiD, SE_DiD, t_stat_DiD, p_value_DiD) %>%
+  filter(!is.na(DiD)) %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value_DiD, method = "fdr")) %>%
+  select(Gene, DiD, p_value_DiD, q_value)
+colnames(pc_emmeans_diff_DiD) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+
+## Save for IPA
+write.csv(pc_emmeans_diff_DiD, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/pc_emmeans_diff_DiD_2.csv", row.names = F)
+```
+
+### Top genes delta plot
+```{r echo = F}
+pc_emmeans_diff %>%
+  filter(interaction_significance == "p<0.05") %>%
+  filter(Gene %in% gene_order[1:10]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8),
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) +
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1"))
+
+pc_emmeans_diff %>%
+  filter(interaction_significance == "p<0.05") %>%
+  filter(Gene %in% gene_order[11:20]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8),
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) +
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1"))
+```
+
+## Immune (very few cells)
+```{r echo = F}
+# read mixed model results dataframe (rendered in Hyak)
+immune_model_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/kopah/immune_attempt_scrna_mm_model_combined_2.rds")
+
+# read emmeans dataframe (rendered in Hyak)
+immune_emmeans_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/kopah/immune_attempt_scrna_mm_emmeans_combined_2.rds")
+```
+
+```{r echo = F}
+# keep converged model results only
+immune_model_filtered <- immune_model_df %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+immune_emmeans_filtered <- immune_emmeans_df %>%
+  filter(Gene %in% immune_model_filtered$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+# non-converged genes percentage
+immune_nonconverged_genes <- (immune_model_df %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene
+(length(unique(immune_nonconverged_genes))/length(unique(immune_model_df$Gene)))*100
+```
+
+```{r echo = F}
+# arrange the model based on significance of interaction term in model
+ordered_model <- subset(immune_model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST") %>%
+  arrange(PValue)
+gene_order <- factor(ordered_model$Gene, levels = ordered_model$Gene)
+sig_genes <- subset(immune_model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)$Gene
+```
+
+```{r echo =F}
+# compute emmean difference in POST - PRE in each treatment group
+immune_emmeans_diff <- immune_emmeans_filtered %>%
+  pivot_wider(names_from = Visit, values_from = c(emmean, SE)) %>%
+  group_by(Treatment, Gene) %>%
+  fill(ends_with("PRE"), ends_with("POST")) %>%
+  mutate(diff_emmean = emmean_POST - emmean_PRE,
+         SE_diff = sqrt(SE_POST^2 + SE_PRE^2),  # Propagating SE for difference
+         diff_lowerCL = diff_emmean - 1.96 * SE_diff,
+         diff_upperCL = diff_emmean + 1.96 * SE_diff,
+         t_stat = diff_emmean / SE_diff,  # t-statistic
+         p_value = 2 * pt(-abs(t_stat), df)) %>%
+  filter(!is.na(diff_emmean)) %>%
+  ungroup() %>%
+  mutate(interaction_significance = case_when(Gene %in% sig_genes ~ "p<0.05", 
+                                 T ~ "p>0.05"))
+
+# separate out for placebo/dapa & save to run for IPA
+
+## Placebo
+immune_emmeans_diff_placebo <- immune_emmeans_diff %>%
+  filter(Treatment == "Placebo") %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr")) %>%
+  select(Gene, diff_emmean, p_value, q_value)
+colnames(immune_emmeans_diff_placebo) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+write.csv(immune_emmeans_diff_placebo, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/immune_emmeans_diff_placebo_2.csv", row.names = F)
+
+## Dapa
+immune_emmeans_diff_dapa <- immune_emmeans_diff %>%
+  filter(Treatment == "Dapagliflozin") %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr")) %>%
+  select(Gene, diff_emmean, p_value, q_value)
+colnames(immune_emmeans_diff_dapa) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+write.csv(immune_emmeans_diff_dapa, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/immune_emmeans_diff_dapa_2.csv", row.names = F)
+```
+
+```{r echo = F}
+# DiD (Differences in Differences)
+immune_emmeans_diff_wide <- immune_emmeans_diff %>%
+  pivot_wider(names_from = Treatment, values_from = c(diff_emmean, SE_diff))
+
+immune_emmeans_diff_DiD <- immune_emmeans_diff_wide %>%
+  group_by(Gene) %>%
+  fill(ends_with("Placebo"), ends_with("Dapagliflozin")) %>%
+  dplyr::mutate(DiD = diff_emmean_Dapagliflozin - diff_emmean_Placebo,
+         SE_DiD = sqrt(SE_diff_Dapagliflozin^2 + SE_diff_Placebo^2),  # SE computation
+         t_stat_DiD = DiD / SE_DiD,  # t-statistic
+         p_value_DiD = 2 * (1 - pt(abs(t_stat_DiD), df = nrow(immune_emmeans_diff) - 2))) %>%
+  select(Gene, diff_emmean_Dapagliflozin,diff_emmean_Placebo, DiD, SE_DiD, t_stat_DiD, p_value_DiD) %>%
+  filter(!is.na(DiD)) %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value_DiD, method = "fdr")) %>%
+  select(Gene, DiD, p_value_DiD, q_value)
+colnames(immune_emmeans_diff_DiD) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+
+## Save for IPA
+write.csv(immune_emmeans_diff_DiD, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/immune_emmeans_diff_DiD_2.csv", row.names = F)
+```
+
+### Top genes delta plot
+```{r echo = F}
+immune_emmeans_diff %>%
+  filter(interaction_significance == "p<0.05") %>%
+  filter(Gene %in% gene_order[1:10]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8),
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) +
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1"))
+
+immune_emmeans_diff %>%
+  filter(interaction_significance == "p<0.05") %>%
+  filter(Gene %in% gene_order[11:20]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8),
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) +
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1"))
+```
+
+## IC
+```{r echo = F}
+# read mixed model results dataframe (rendered in Hyak)
+ic_model_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/kopah/ic_attempt_scrna_mm_model_combined_2.rds")
+
+# read emmeans dataframe (rendered in Hyak)
+ic_emmeans_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/kopah/ic_attempt_scrna_mm_emmeans_combined_2.rds")
+```
+
+```{r echo = F}
+# keep converged model results only
+ic_model_filtered <- ic_model_df %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+ic_emmeans_filtered <- ic_emmeans_df %>%
+  filter(Gene %in% ic_model_filtered$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+# non-converged genes percentage
+ic_nonconverged_genes <- (ic_model_df %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene
+(length(unique(ic_nonconverged_genes))/length(unique(ic_model_df$Gene)))*100
+```
+
+```{r echo = F}
+# arrange the model based on significance of interaction term in model
+ordered_model <- subset(ic_model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST") %>%
+  arrange(PValue)
+gene_order <- factor(ordered_model$Gene, levels = ordered_model$Gene)
+sig_genes <- subset(ic_model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)$Gene
+```
+
+```{r echo =F}
+# compute emmean difference in POST - PRE in each treatment group
+ic_emmeans_diff <- ic_emmeans_filtered %>%
+  pivot_wider(names_from = Visit, values_from = c(emmean, SE)) %>%
+  group_by(Treatment, Gene) %>%
+  fill(ends_with("PRE"), ends_with("POST")) %>%
+  mutate(diff_emmean = emmean_POST - emmean_PRE,
+         SE_diff = sqrt(SE_POST^2 + SE_PRE^2),  # Propagating SE for difference
+         diff_lowerCL = diff_emmean - 1.96 * SE_diff,
+         diff_upperCL = diff_emmean + 1.96 * SE_diff,
+         t_stat = diff_emmean / SE_diff,  # t-statistic
+         p_value = 2 * pt(-abs(t_stat), df)) %>%
+  filter(!is.na(diff_emmean)) %>%
+  ungroup() %>%
+  mutate(interaction_significance = case_when(Gene %in% sig_genes ~ "p<0.05", 
+                                 T ~ "p>0.05"))
+
+# separate out for placebo/dapa & save to run for IPA
+
+## Placebo
+ic_emmeans_diff_placebo <- ic_emmeans_diff %>%
+  filter(Treatment == "Placebo") %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr")) %>%
+  select(Gene, diff_emmean, p_value, q_value)
+colnames(ic_emmeans_diff_placebo) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+write.csv(ic_emmeans_diff_placebo, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/ic_emmeans_diff_placebo.csv", row.names = F)
+
+## Dapa
+ic_emmeans_diff_dapa <- ic_emmeans_diff %>%
+  filter(Treatment == "Dapagliflozin") %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr")) %>%
+  select(Gene, diff_emmean, p_value, q_value)
+colnames(ic_emmeans_diff_dapa) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+write.csv(ic_emmeans_diff_dapa, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/ic_emmeans_diff_dapa.csv", row.names = F)
+```
+
+```{r echo = F}
+# DiD (Differences in Differences)
+ic_emmeans_diff_wide <- ic_emmeans_diff %>%
+  pivot_wider(names_from = Treatment, values_from = c(diff_emmean, SE_diff))
+
+ic_emmeans_diff_DiD <- ic_emmeans_diff_wide %>%
+  group_by(Gene) %>%
+  fill(ends_with("Placebo"), ends_with("Dapagliflozin")) %>%
+  dplyr::mutate(DiD = diff_emmean_Dapagliflozin - diff_emmean_Placebo,
+         SE_DiD = sqrt(SE_diff_Dapagliflozin^2 + SE_diff_Placebo^2),  # SE computation
+         t_stat_DiD = DiD / SE_DiD,  # t-statistic
+         p_value_DiD = 2 * (1 - pt(abs(t_stat_DiD), df = nrow(ic_emmeans_diff) - 2))) %>%
+  select(Gene, diff_emmean_Dapagliflozin,diff_emmean_Placebo, DiD, SE_DiD, t_stat_DiD, p_value_DiD) %>%
+  filter(!is.na(DiD)) %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value_DiD, method = "fdr")) %>%
+  select(Gene, DiD, p_value_DiD, q_value)
+colnames(ic_emmeans_diff_DiD) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+
+## Save for IPA
+write.csv(ic_emmeans_diff_DiD, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/ic_emmeans_diff_DiD.csv", row.names = F)
+```
+
+### Top genes delta plot
+```{r echo = F}
+ic_emmeans_diff %>%
+  filter(interaction_significance == "p<0.05") %>%
+  filter(Gene %in% gene_order[1:10]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8),
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) +
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1"))
+
+ic_emmeans_diff %>%
+  filter(interaction_significance == "p<0.05") %>%
+  filter(Gene %in% gene_order[11:20]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8),
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) +
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1"))
+```
+## EC
+```{r echo = F}
+# read mixed model results dataframe (rendered in Hyak)
+ec_model_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/kopah/ec_attempt_scrna_mm_model_combined_2.rds")
+
+# read emmeans dataframe (rendered in Hyak)
+ec_emmeans_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/kopah/ec_attempt_scrna_mm_emmeans_combined_2.rds")
+```
+
+```{r echo = F}
+# keep converged model results only
+ec_model_filtered <- ec_model_df %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+ec_emmeans_filtered <- ec_emmeans_df %>%
+  filter(Gene %in% ec_model_filtered$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+# non-converged genes percentage
+ec_nonconverged_genes <- (ec_model_df %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene
+(length(unique(ec_nonconverged_genes))/length(unique(ec_model_df$Gene)))*100
+```
+
+```{r echo = F}
+# arrange the model based on significance of interaction term in model
+ordered_model <- subset(ec_model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST") %>%
+  arrange(PValue)
+gene_order <- factor(ordered_model$Gene, levels = ordered_model$Gene)
+sig_genes <- subset(ec_model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)$Gene
+```
+
+```{r echo =F}
+# compute emmean difference in POST - PRE in each treatment group
+ec_emmeans_diff <- ec_emmeans_filtered %>%
+  pivot_wider(names_from = Visit, values_from = c(emmean, SE)) %>%
+  group_by(Treatment, Gene) %>%
+  fill(ends_with("PRE"), ends_with("POST")) %>%
+  mutate(diff_emmean = emmean_POST - emmean_PRE,
+         SE_diff = sqrt(SE_POST^2 + SE_PRE^2),  # Propagating SE for difference
+         diff_lowerCL = diff_emmean - 1.96 * SE_diff,
+         diff_upperCL = diff_emmean + 1.96 * SE_diff,
+         t_stat = diff_emmean / SE_diff,  # t-statistic
+         p_value = 2 * pt(-abs(t_stat), df)) %>%
+  filter(!is.na(diff_emmean)) %>%
+  ungroup() %>%
+  mutate(interaction_significance = case_when(Gene %in% sig_genes ~ "p<0.05", 
+                                 T ~ "p>0.05"))
+
+# separate out for placebo/dapa & save to run for IPA
+
+## Placebo
+ec_emmeans_diff_placebo <- ec_emmeans_diff %>%
+  filter(Treatment == "Placebo") %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr")) %>%
+  select(Gene, diff_emmean, p_value, q_value)
+colnames(ec_emmeans_diff_placebo) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+write.csv(ec_emmeans_diff_placebo, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/ec_emmeans_diff_placebo.csv", row.names = F)
+
+## Dapa
+ec_emmeans_diff_dapa <- ec_emmeans_diff %>%
+  filter(Treatment == "Dapagliflozin") %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr")) %>%
+  select(Gene, diff_emmean, p_value, q_value)
+colnames(ec_emmeans_diff_dapa) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+write.csv(ec_emmeans_diff_dapa, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/ec_emmeans_diff_dapa.csv", row.names = F)
+```
+
+```{r echo = F}
+# DiD (Differences in Differences)
+ec_emmeans_diff_wide <- ec_emmeans_diff %>%
+  pivot_wider(names_from = Treatment, values_from = c(diff_emmean, SE_diff))
+
+ec_emmeans_diff_DiD <- ec_emmeans_diff_wide %>%
+  group_by(Gene) %>%
+  fill(ends_with("Placebo"), ends_with("Dapagliflozin")) %>%
+  dplyr::mutate(DiD = diff_emmean_Dapagliflozin - diff_emmean_Placebo,
+         SE_DiD = sqrt(SE_diff_Dapagliflozin^2 + SE_diff_Placebo^2),  # SE computation
+         t_stat_DiD = DiD / SE_DiD,  # t-statistic
+         p_value_DiD = 2 * (1 - pt(abs(t_stat_DiD), df = nrow(ec_emmeans_diff) - 2))) %>%
+  select(Gene, diff_emmean_Dapagliflozin,diff_emmean_Placebo, DiD, SE_DiD, t_stat_DiD, p_value_DiD) %>%
+  filter(!is.na(DiD)) %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value_DiD, method = "fdr")) %>%
+  select(Gene, DiD, p_value_DiD, q_value)
+colnames(ec_emmeans_diff_DiD) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+
+## Save for IPA
+write.csv(ec_emmeans_diff_DiD, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/ec_emmeans_diff_DiD.csv", row.names = F)
+```
+
+### Top genes delta plot
+```{r echo = F}
+ec_emmeans_diff %>%
+  filter(interaction_significance == "p<0.05") %>%
+  filter(Gene %in% gene_order[1:10]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8),
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) +
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1"))
+
+ec_emmeans_diff %>%
+  filter(interaction_significance == "p<0.05") %>%
+  filter(Gene %in% gene_order[11:20]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8),
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) +
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1"))
+```
+
+## DTL (very few cells)
+```{r echo = F}
+# read mixed model results dataframe (rendered in Hyak)
+dtl_model_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/kopah/dtl_attempt_scrna_mm_model_combined_2.rds")
+
+# read emmeans dataframe (rendered in Hyak)
+dtl_emmeans_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/kopah/dtl_attempt_scrna_mm_emmeans_combined_2.rds")
+```
+
+```{r echo = F}
+# keep converged model results only
+dtl_model_filtered <- dtl_model_df %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+dtl_emmeans_filtered <- dtl_emmeans_df %>%
+  filter(Gene %in% dtl_model_filtered$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+# non-converged genes percentage
+dtl_nonconverged_genes <- (dtl_model_df %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene
+(length(unique(dtl_nonconverged_genes))/length(unique(dtl_model_df$Gene)))*100
+```
+
+```{r echo = F}
+# arrange the model based on significance of interaction term in model
+ordered_model <- subset(dtl_model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST") %>%
+  arrange(PValue)
+gene_order <- factor(ordered_model$Gene, levels = ordered_model$Gene)
+sig_genes <- subset(dtl_model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)$Gene
+```
+
+```{r echo =F}
+# compute emmean difference in POST - PRE in each treatment group
+dtl_emmeans_diff <- dtl_emmeans_filtered %>%
+  pivot_wider(names_from = Visit, values_from = c(emmean, SE)) %>%
+  group_by(Treatment, Gene) %>%
+  fill(ends_with("PRE"), ends_with("POST")) %>%
+  mutate(diff_emmean = emmean_POST - emmean_PRE,
+         SE_diff = sqrt(SE_POST^2 + SE_PRE^2),  # Propagating SE for difference
+         diff_lowerCL = diff_emmean - 1.96 * SE_diff,
+         diff_upperCL = diff_emmean + 1.96 * SE_diff,
+         t_stat = diff_emmean / SE_diff,  # t-statistic
+         p_value = 2 * pt(-abs(t_stat), df)) %>%
+  filter(!is.na(diff_emmean)) %>%
+  ungroup() %>%
+  mutate(interaction_significance = case_when(Gene %in% sig_genes ~ "p<0.05", 
+                                 T ~ "p>0.05"))
+
+# separate out for placebo/dapa & save to run for IPA
+
+## Placebo
+dtl_emmeans_diff_placebo <- dtl_emmeans_diff %>%
+  filter(Treatment == "Placebo") %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr")) %>%
+  select(Gene, diff_emmean, p_value, q_value)
+colnames(dtl_emmeans_diff_placebo) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+write.csv(dtl_emmeans_diff_placebo, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/dtl_emmeans_diff_placebo.csv", row.names = F)
+
+## Dapa
+dtl_emmeans_diff_dapa <- dtl_emmeans_diff %>%
+  filter(Treatment == "Dapagliflozin") %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr")) %>%
+  select(Gene, diff_emmean, p_value, q_value)
+colnames(dtl_emmeans_diff_dapa) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+write.csv(dtl_emmeans_diff_dapa, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/dtl_emmeans_diff_dapa.csv", row.names = F)
+```
+
+```{r echo = F}
+# DiD (Differences in Differences)
+dtl_emmeans_diff_wide <- dtl_emmeans_diff %>%
+  pivot_wider(names_from = Treatment, values_from = c(diff_emmean, SE_diff))
+
+dtl_emmeans_diff_DiD <- dtl_emmeans_diff_wide %>%
+  group_by(Gene) %>%
+  fill(ends_with("Placebo"), ends_with("Dapagliflozin")) %>%
+  dplyr::mutate(DiD = diff_emmean_Dapagliflozin - diff_emmean_Placebo,
+         SE_DiD = sqrt(SE_diff_Dapagliflozin^2 + SE_diff_Placebo^2),  # SE computation
+         t_stat_DiD = DiD / SE_DiD,  # t-statistic
+         p_value_DiD = 2 * (1 - pt(abs(t_stat_DiD), df = nrow(dtl_emmeans_diff) - 2))) %>%
+  select(Gene, diff_emmean_Dapagliflozin,diff_emmean_Placebo, DiD, SE_DiD, t_stat_DiD, p_value_DiD) %>%
+  filter(!is.na(DiD)) %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value_DiD, method = "fdr")) %>%
+  select(Gene, DiD, p_value_DiD, q_value)
+colnames(dtl_emmeans_diff_DiD) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+
+## Save for IPA
+write.csv(dtl_emmeans_diff_DiD, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/dtl_emmeans_diff_DiD.csv", row.names = F)
+```
+
+### Top genes delta plot
+```{r echo = F}
+dtl_emmeans_diff %>%
+  filter(interaction_significance == "p<0.05") %>%
+  filter(Gene %in% gene_order[1:10]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8),
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) +
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1"))
+
+dtl_emmeans_diff %>%
+  filter(interaction_significance == "p<0.05") %>%
+  filter(Gene %in% gene_order[11:20]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8),
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) +
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1"))
+```
+
+## FIB/VSMC/P
+```{r echo = F}
+# read mixed model results dataframe (rendered in Hyak)
+fibvsmcp_model_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/kopah/fibvsmcp_attempt_scrna_mm_model_combined_2.rds")
+
+# read emmeans dataframe (rendered in Hyak)
+fibvsmcp_emmeans_df <- readRDS("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/kopah/fibvsmcp_attempt_scrna_mm_emmeans_combined_2.rds")
+```
+
+```{r echo = F}
+# keep converged model results only
+fibvsmcp_model_filtered <- fibvsmcp_model_df %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+fibvsmcp_emmeans_filtered <- fibvsmcp_emmeans_df %>%
+  filter(Gene %in% fibvsmcp_model_filtered$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+# non-converged genes percentage
+fibvsmcp_nonconverged_genes <- (fibvsmcp_model_df %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene
+(length(unique(fibvsmcp_nonconverged_genes))/length(unique(fibvsmcp_model_df$Gene)))*100
+```
+
+```{r echo = F}
+# arrange the model based on significance of interaction term in model
+ordered_model <- subset(fibvsmcp_model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST") %>%
+  arrange(PValue)
+gene_order <- factor(ordered_model$Gene, levels = ordered_model$Gene)
+sig_genes <- subset(fibvsmcp_model_filtered, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)$Gene
+```
+
+```{r echo =F}
+# compute emmean difference in POST - PRE in each treatment group
+fibvsmcp_emmeans_diff <- fibvsmcp_emmeans_filtered %>%
+  pivot_wider(names_from = Visit, values_from = c(emmean, SE)) %>%
+  group_by(Treatment, Gene) %>%
+  fill(ends_with("PRE"), ends_with("POST")) %>%
+  mutate(diff_emmean = emmean_POST - emmean_PRE,
+         SE_diff = sqrt(SE_POST^2 + SE_PRE^2),  # Propagating SE for difference
+         diff_lowerCL = diff_emmean - 1.96 * SE_diff,
+         diff_upperCL = diff_emmean + 1.96 * SE_diff,
+         t_stat = diff_emmean / SE_diff,  # t-statistic
+         p_value = 2 * pt(-abs(t_stat), df)) %>%
+  filter(!is.na(diff_emmean)) %>%
+  ungroup() %>%
+  mutate(interaction_significance = case_when(Gene %in% sig_genes ~ "p<0.05", 
+                                 T ~ "p>0.05"))
+
+# separate out for placebo/dapa & save to run for IPA
+
+## Placebo
+fibvsmcp_emmeans_diff_placebo <- fibvsmcp_emmeans_diff %>%
+  filter(Treatment == "Placebo") %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr")) %>%
+  select(Gene, diff_emmean, p_value, q_value)
+colnames(fibvsmcp_emmeans_diff_placebo) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+write.csv(fibvsmcp_emmeans_diff_placebo, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/fibvsmcp_emmeans_diff_placebo.csv", row.names = F)
+
+## Dapa
+fibvsmcp_emmeans_diff_dapa <- fibvsmcp_emmeans_diff %>%
+  filter(Treatment == "Dapagliflozin") %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value, method = "fdr")) %>%
+  select(Gene, diff_emmean, p_value, q_value)
+colnames(fibvsmcp_emmeans_diff_dapa) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+write.csv(fibvsmcp_emmeans_diff_dapa, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/fibvsmcp_emmeans_diff_dapa.csv", row.names = F)
+```
+
+```{r echo = F}
+# DiD (Differences in Differences)
+fibvsmcp_emmeans_diff_wide <- fibvsmcp_emmeans_diff %>%
+  pivot_wider(names_from = Treatment, values_from = c(diff_emmean, SE_diff))
+
+fibvsmcp_emmeans_diff_DiD <- fibvsmcp_emmeans_diff_wide %>%
+  group_by(Gene) %>%
+  fill(ends_with("Placebo"), ends_with("Dapagliflozin")) %>%
+  dplyr::mutate(DiD = diff_emmean_Dapagliflozin - diff_emmean_Placebo,
+         SE_DiD = sqrt(SE_diff_Dapagliflozin^2 + SE_diff_Placebo^2),  # SE computation
+         t_stat_DiD = DiD / SE_DiD,  # t-statistic
+         p_value_DiD = 2 * (1 - pt(abs(t_stat_DiD), df = nrow(fibvsmcp_emmeans_diff) - 2))) %>%
+  select(Gene, diff_emmean_Dapagliflozin,diff_emmean_Placebo, DiD, SE_DiD, t_stat_DiD, p_value_DiD) %>%
+  filter(!is.na(DiD)) %>%
+  ungroup() %>%
+  mutate(q_value = p.adjust(p_value_DiD, method = "fdr")) %>%
+  select(Gene, DiD, p_value_DiD, q_value)
+colnames(fibvsmcp_emmeans_diff_DiD) <- c("Gene", "Expr Other", "Expr p-value", "Expr False Discovery Rate")
+
+## Save for IPA
+write.csv(fibvsmcp_emmeans_diff_DiD, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/emmeans/fibvsmcp_emmeans_diff_DiD.csv", row.names = F)
+```
+
+### Top genes delta plot
+```{r echo = F}
+fibvsmcp_emmeans_diff %>%
+  filter(interaction_significance == "p<0.05") %>%
+  filter(Gene %in% gene_order[1:10]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8),
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) +
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1"))
+
+fibvsmcp_emmeans_diff %>%
+  filter(interaction_significance == "p<0.05") %>%
+  filter(Gene %in% gene_order[11:20]) %>%
+  ggplot(aes(x = Gene, y = diff_emmean, color = Treatment)) +
+    geom_pointrange(aes(ymin = diff_lowerCL, ymax = diff_upperCL, alpha = 0.8),
+                    position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1, size = 8),
+        text = element_text(size = 12)) +
+  guides(alpha = "none") +
+  labs(y = "Delta (Post - Pre)",
+       x = NULL) +
+  scale_color_manual(values = c("Placebo" = "#df7373",
+                                 "Dapagliflozin" = "#3e7cb1"))
+```
+
+# Troubleshooting...
+```{r echo = F, eval = F}
+# PT
+pt_nonconverged_genes <- (pt_model_df %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene
+(length(unique(pt_nonconverged_genes))/length(unique(pt_model_df$Gene)))*100
+# TAL
+tal_nonconverged_genes <- (tal_model_df %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene
+(length(unique(tal_nonconverged_genes))/length(unique(tal_model_df$Gene)))*100
+# PC
+pc_nonconverged_genes <- (pc_model_df %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene
+(length(unique(pc_nonconverged_genes))/length(unique(pc_model_df$Gene)))*100
+# Immune
+immune_nonconverged_genes <- (immune_model_df %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene
+(length(unique(immune_nonconverged_genes))/length(unique(immune_model_df$Gene)))*100
+# IC
+ic_nonconverged_genes <- (ic_model_df %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene
+(length(unique(ic_nonconverged_genes))/length(unique(ic_model_df$Gene)))*100
+# EC
+ec_nonconverged_genes <- (ec_model_df %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene
+(length(unique(ec_nonconverged_genes))/length(unique(ec_model_df$Gene)))*100
+# DTL
+dtl_nonconverged_genes <- (dtl_model_df %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene
+(length(unique(dtl_nonconverged_genes))/length(unique(dtl_model_df$Gene)))*100
+# FIB/VSMC/P
+fibvsmcp_nonconverged_genes <- (fibvsmcp_model_df %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene
+(length(unique(fibvsmcp_nonconverged_genes))/length(unique(fibvsmcp_model_df$Gene)))*100
+
+nonconverged_list <- list(pt = pt_nonconverged_genes,
+                          immune = immune_nonconverged_genes,
+                          #ic = ic_nonconverged_genes,
+                          #ec = ec_nonconverged_genes,
+                          #dtl = dtl_nonconverged_genes,
+                          #fibvsmcp = fibvsmcp_nonconverged_genes,
+                          tal = tal_nonconverged_genes)
+                          #pc = pc_nonconverged_genes)
+upset(fromList(nonconverged_list), order.by = "freq")
+```
+
+# IPA pathway results
+
+```{r echo = F}
+text1 = 6.5
+text2 = 18
+text3 = 20
+scenario_colors = c("Activated in D, stable/inhibited in P" = "#81171b",
+                    "Activated in both, more in D" = "#ad2e24",
+                    "Stable in D, inhibited in P" = "#c75146",
+                    "Inhibited in both, less in D" = "#ea8c55",
+                    "Activated in P, stable/inhibited in D" = "#1d3461",
+                    "Activated in both, less in D" = "#004ba8",
+                    "Stable in P, inhibited in D" = "#2c7da0", 
+                    "Inhibited in both, more in D" = "#22aed1")
+```
+
+## PT
+
+```{r echo = F}
+pt_pathways <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/pt_DiD_pathways.xls", skip = 1) 
+pt_dapa <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/pt_dapa_pathways.xls", skip = 1) 
+pt_placebo <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/pt_placebo_pathways.xls", skip = 1) 
+
+colnames(pt_pathways) <- c("pathway", "neg_log_p", "ratio", "z", "genes")
+colnames(pt_dapa) <- c("pathway", "neg_log_p_dapa", "ratio_dapa", "z_dapa", "genes_dapa")
+colnames(pt_placebo) <- c("pathway", "neg_log_p_placebo", "ratio_placebo", "z_placebo", "genes_placebo")
+
+pt_pathways_merged <- pt_pathways %>%
+  full_join(pt_dapa) %>% full_join(pt_placebo) %>%
+  dplyr::select(pathway, neg_log_p, z, neg_log_p_dapa, z_dapa, neg_log_p_placebo, z_placebo) %>%
+  mutate(scenario = case_when(
+    z_dapa > 0 & z_placebo > 0 & z_placebo < z_dapa ~ "Activated in both, more in D",
+    z_dapa > 0 & z_placebo > 0 & z_placebo > z_dapa ~ "Activated in both, less in D",
+    z_dapa > 0 & (z_placebo < 0  | z_placebo == 0) ~ "Activated in D, stable/inhibited in P",
+    z_dapa < 0 & z_placebo > 0 ~ "Activated in P, stable/inhibited in D",
+    z_dapa < 0 & z_placebo < 0 & z_placebo < z_dapa ~ "Inhibited in both, less in D",
+    z_dapa < 0 & z_placebo < 0 & z_placebo > z_dapa ~ "Inhibited in both, more in D",
+    (z_dapa == 0) & z_placebo > 0 ~ "Activated in P, stable/inhibited in D",
+    (z_dapa == 0) & z_placebo < 0 ~ "Stable in D, inhibited in P",
+    z_dapa < 0 & (z_placebo == 0) ~ "Stable in P, inhibited in D"))
+```
+
+
+```{r echo = F}
+pt_pathways_merged$scenario <- factor(pt_pathways_merged$scenario,
+                                      levels = c("Activated in D, stable/inhibited in P","Activated in both, more in D",
+                                                 "Stable in D, inhibited in P","Inhibited in both, less in D",
+                                                 "Activated in P, stable/inhibited in D","Activated in both, less in D",
+                                                 "Stable in P, inhibited in D", "Inhibited in both, more in D"))
+```
+
+### Inhibited Pathways
+```{r echo = F}
+pt_pathways_inhibited <- pt_pathways_merged %>%
+  filter(z < 0) %>%
+  arrange(desc(neg_log_p))
+
+pt_pathways_inhibited$pathway <- reorder(pt_pathways_inhibited$pathway, pt_pathways_inhibited$neg_log_p)
+  
+pt_top30_inhibited <- pt_pathways_inhibited[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(0,10),labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.04) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "PT Top 30 Inhibited Pathways")   +
+  scale_x_continuous(limits = c(0, 5), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(add = 1)) 
+n_pt_pathways_inhibited <- pt_pathways_inhibited %>%
+  filter(neg_log_p > -log10(0.05)) %>%
+  nrow()
+# pt_inhibited_scenarios <- as.data.frame(table(pt_pathways_inhibited$scenario))[5:8,] %>%
+#   mutate(percent = (Freq / nrow(pt_pathways_inhibited))*100) %>%
+#   ggplot(aes(x = Var1, y = percent, fill = Var1)) + 
+#   geom_col() +
+#   scale_fill_manual(values = scenario_colors) +
+#   scale_x_discrete(drop = T) +
+#   theme_minimal() +
+#   theme(panel.grid = element_blank(),
+#         axis.text.x = element_text(size = text2,
+#                                    angle = 30,
+#                                    hjust = 1),
+#         axis.ticks.y = element_blank(), 
+#         legend.position = "none",
+#         text = element_text(size = text3),
+#         panel.background = element_rect(color="black")) +
+#   labs(y = "Percent",
+#        x = NULL,
+#        fill = "Scenario") +
+#   ylim(c(0,50))
+# 
+# pt_top30_inhibited + inset_element(pt_inhibited_scenarios, 
+#                                left = 0.45, bottom = 0.01,
+#                                right = 0.8, top = 0.6)
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/pt_top30_inhibited_pathways.jpeg",
+       width = 27.5, height = 14, scale = 1)
+
+########## Limited to z < -2
+pt_pathways_inhibited_sig <- pt_pathways_inhibited %>%
+  filter(z < -2)
+pt_top30_inhibited_2 <- pt_pathways_inhibited_sig[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(min(-pt_pathways_inhibited_sig$z), max(-pt_pathways_inhibited_sig$z)),
+                        labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.01) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "PT Top Inhibited Pathways (Z < -2)")   +
+  scale_x_continuous(limits = c(0, 1.5), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors)  +
+  scale_y_discrete(expand = expansion(mult = c(0.05, 0))) 
+
+# top30_inhibited + inset_element(inhibited_scenarios, 
+#                                left = 0.45, bottom = 0.01,
+#                                right = 0.80, top = 0.6)
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/pt_top_inhibited_pathways_2.jpeg",
+       width = 27.5, height = 10, scale = 1)
+```
+
+### Activated Pathways
+```{r echo = F}
+pt_pathways_activated <- pt_pathways_merged %>%
+  filter(z > 0) %>%
+  arrange(desc(neg_log_p))
+
+pt_pathways_activated$pathway <- reorder(pt_pathways_activated$pathway, pt_pathways_activated$neg_log_p)
+  
+pt_top30_activated <- pt_pathways_activated[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(0,10),labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.03) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "PT Top 30 Activated Pathways")   +
+  scale_x_continuous(limits = c(0, 3), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(add = 1)) 
+n_pt_pathways_activated <- pt_pathways_activated %>%
+  filter(neg_log_p > -log10(0.05)) %>%
+  nrow()
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/pt_top30_activated_pathways.jpeg",
+       width = 27.5, height = 14, scale = 1)
+
+########## Limited to z > 2
+pt_pathways_activated_sig <- pt_pathways_activated %>%
+  filter(z > 2)
+pt_top30_activated_2 <- pt_pathways_activated_sig[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(min(pt_pathways_activated_sig$z), max(pt_pathways_activated_sig$z))) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.01) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "PT Top Activated Pathways (Z > 2)")   +
+  scale_x_continuous(limits = c(0, 1.5), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(mult = c(0.125, 0.025))) 
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/pt_top_activated_pathways_2.jpeg",
+       width = 27.5, height = 10, scale = 1)
+```
+
+### Z-Score Bar charts
+```{r echo = F, warning = F}
+# z-scores in bar charts
+pt_neg_pathways_merged_long <- pt_pathways_merged %>% 
+  filter(z < 0) %>%
+  head(10) %>%
+  pivot_longer(cols = c("z", "z_dapa", "z_placebo")) %>%
+  mutate(name = case_when(name == "z" ~ "DiD",
+                          name == "z_dapa" ~ "Dapagliflozin",
+                          name == "z_placebo" ~ "Placebo"),
+         w = case_when(name == "DiD" ~ 0.5,
+                       name == "Dapagliflozin" ~ 0.3,
+                       name == "Placebo" ~ 0.3),
+         a = case_when(name == "DiD" ~ 0.7,
+                       name == "Dapagliflozin" ~ 0.8,
+                       name == "Placebo" ~ 0.8))
+pt_neg_pathways_merged_long$name <- factor(pt_neg_pathways_merged_long$name, levels = c("DiD", "Placebo", "Dapagliflozin"))
+
+pt_neg_pathways_merged_long %>%
+  mutate(pathway = factor(pathway, levels = unique(pathway))) %>%
+  ggplot(aes(x = pathway, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "identity",
+           aes(width=w, alpha = a)) +
+  scale_alpha_continuous(range = c(0.7, 0.8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.grid = element_blank(),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        plot.margin = margin(10, 10, 10, 10, unit = "pt")) +
+  scale_fill_manual(values = c("Placebo" = "#f28482",
+                               "Dapagliflozin" = "#669bbc",
+                               "DiD" = "#bb8588")) +
+  labs(y = "Z-score",
+      x = NULL,
+      fill = "Treatment",
+      title = "PT Top 10 Inhibited Pathways") +
+  guides(alpha = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Z score bar plots/pt_top10_inhibited_pathway_zscores.jpeg",
+       scale = 1.5)
+
+pt_pos_pathways_merged_long <- pt_pathways_merged %>% 
+  filter(z > 0) %>%
+  head(10) %>%
+  pivot_longer(cols = c("z", "z_dapa", "z_placebo")) %>%
+  mutate(name = case_when(name == "z" ~ "DiD",
+                          name == "z_dapa" ~ "Dapagliflozin",
+                          name == "z_placebo" ~ "Placebo"),
+         w = case_when(name == "DiD" ~ 0.5,
+                       name == "Dapagliflozin" ~ 0.3,
+                       name == "Placebo" ~ 0.3),
+         a = case_when(name == "DiD" ~ 0.7,
+                       name == "Dapagliflozin" ~ 0.8,
+                       name == "Placebo" ~ 0.8))
+pt_pos_pathways_merged_long$name <- factor(pt_pos_pathways_merged_long$name, levels = c("DiD", "Placebo", "Dapagliflozin"))
+
+pt_pos_pathways_merged_long
+pt_pos_pathways_merged_long %>%
+  mutate(pathway = factor(pathway, levels = unique(pathway))) %>%
+  ggplot(aes(x = pathway, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "identity",
+           aes(width=w, alpha = a)) +
+  scale_alpha_continuous(range = c(0.7, 0.8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.grid = element_blank(),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        plot.margin = margin(10, 10, 10, 20, unit = "pt")) +
+  scale_fill_manual(values = c("Placebo" = "#f28482",
+                               "Dapagliflozin" = "#669bbc",
+                               "DiD" = "#bb8588")) +
+  labs(y = "Z-score",
+      x = NULL,
+      fill = "Treatment",
+      title = "PT Top 10 Activated Pathways") +
+  guides(alpha = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Z score bar plots/pt_top10_activated_pathway_zscores.jpeg",
+       scale = 1.5)
+```
+
+## TAL
+
+```{r echo = F}
+tal_pathways <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/tal_DiD_pathways.xls", skip = 1) 
+tal_dapa <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/tal_dapa_pathways.xls", skip = 1) 
+tal_placebo <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/tal_placebo_pathways.xls", skip = 1) 
+
+colnames(tal_pathways) <- c("pathway", "neg_log_p", "ratio", "z", "genes")
+colnames(tal_dapa) <- c("pathway", "neg_log_p_dapa", "ratio_dapa", "z_dapa", "genes_dapa")
+colnames(tal_placebo) <- c("pathway", "neg_log_p_placebo", "ratio_placebo", "z_placebo", "genes_placebo")
+
+tal_pathways_merged <- tal_pathways %>%
+  full_join(tal_dapa) %>% full_join(tal_placebo) %>%
+  dplyr::select(pathway, neg_log_p, z, neg_log_p_dapa, z_dapa, neg_log_p_placebo, z_placebo)  %>%
+  dplyr::select(pathway, neg_log_p, z, neg_log_p_dapa, z_dapa, neg_log_p_placebo, z_placebo) %>%
+  mutate(scenario = case_when(
+    z_dapa > 0 & z_placebo > 0 & z_placebo < z_dapa ~ "Activated in both, more in D",
+    z_dapa > 0 & z_placebo > 0 & z_placebo > z_dapa ~ "Activated in both, less in D",
+    z_dapa > 0 & (z_placebo < 0  | z_placebo == 0) ~ "Activated in D, stable/inhibited in P",
+    z_dapa < 0 & z_placebo > 0 ~ "Activated in P, stable/inhibited in D",
+    z_dapa < 0 & z_placebo < 0 & z_placebo < z_dapa ~ "Inhibited in both, less in D",
+    z_dapa < 0 & z_placebo < 0 & z_placebo > z_dapa ~ "Inhibited in both, more in D",
+    (z_dapa == 0) & z_placebo > 0 ~ "Activated in P, stable/inhibited in D",
+    (z_dapa == 0) & z_placebo < 0 ~ "Stable in D, inhibited in P",
+    z_dapa < 0 & (z_placebo == 0) ~ "Stable in P, inhibited in D"))
+
+tal_pathways_merged$scenario <- factor(tal_pathways_merged$scenario,
+                                      levels = c("Activated in D, stable/inhibited in P","Activated in both, more in D",
+                                                 "Stable in D, inhibited in P","Inhibited in both, less in D",
+                                                 "Activated in P, stable/inhibited in D","Activated in both, less in D",
+                                                 "Stable in P, inhibited in D", "Inhibited in both, more in D"))
+```
+
+### Inhibited Pathways
+```{r echo = F}
+tal_pathways_inhibited <- tal_pathways_merged %>%
+  filter(z < 0) %>%
+  arrange(desc(neg_log_p))
+
+tal_pathways_inhibited$pathway <- reorder(tal_pathways_inhibited$pathway, tal_pathways_inhibited$neg_log_p)
+  
+tal_top30_inhibited <- tal_pathways_inhibited[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(0,10),labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.02) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "TAL Top 30 Inhibited Pathways")   +
+  scale_x_continuous(limits = c(0, 3), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(add = 1)) 
+n_tal_pathways_inhibited <- tal_pathways_inhibited %>%
+  filter(neg_log_p > -log10(0.05)) %>%
+  nrow()
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/tal_top30_inhibited_pathways.jpeg",
+       width = 27.5, height = 14, scale = 1)
+
+########## Limited to z < -2
+tal_pathways_inhibited_sig <- tal_pathways_inhibited %>%
+  filter(z < -2)
+tal_top30_inhibited_2 <- tal_pathways_inhibited_sig[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(min(-tal_pathways_inhibited_sig$z), max(-tal_pathways_inhibited_sig$z)),
+                        labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.01) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "TAL Top Inhibited Pathways (Z < -2)")   +
+  scale_x_continuous(limits = c(0, 1.5), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors)  +
+  scale_y_discrete(expand = expansion(mult = c(0.5, 0.01))) 
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/tal_top_inhibited_pathways_2.jpeg",
+       width = 27.5, height = 10, scale = 1)
+```
+
+### Activated Pathways
+```{r echo = F}
+tal_pathways_activated <- tal_pathways_merged %>%
+  filter(z > 0) %>%
+  arrange(desc(neg_log_p))
+
+tal_pathways_activated$pathway <- reorder(tal_pathways_activated$pathway, tal_pathways_activated$neg_log_p)
+  
+tal_top30_activated <- tal_pathways_activated[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(0,10),labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.02) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "TAL Top 30 Activated Pathways")   +
+  scale_x_continuous(limits = c(0, 3), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(add = 1)) 
+n_tal_pathways_activated <- tal_pathways_activated %>%
+  filter(neg_log_p > -log10(0.05)) %>%
+  nrow()
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/tal_top30_activated_pathways.jpeg",
+       width = 27.5, height = 14, scale = 1)
+
+########## Limited to z > 2
+tal_pathways_activated_sig <- tal_pathways_activated %>%
+  filter(z > 2)
+tal_top30_activated_2 <- tal_pathways_activated_sig[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(min(tal_pathways_activated_sig$z), max(tal_pathways_activated_sig$z))) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.02) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "TAL Top Activated Pathways (Z > 2)")   +
+  scale_x_continuous(limits = c(0, 2), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(mult = c(0.1, 0.025))) 
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/tal_top_activated_pathways_2.jpeg",
+       width = 27.5, height = 10, scale = 1)
+```
+### Z-Score Bar charts
+```{r echo = F, warning = F}
+# z-scores in bar charts
+tal_neg_pathways_merged_long <- tal_pathways_merged %>% 
+  filter(z < 0) %>%
+  head(10) %>%
+  pivot_longer(cols = c("z", "z_dapa", "z_placebo")) %>%
+  mutate(name = case_when(name == "z" ~ "DiD",
+                          name == "z_dapa" ~ "Dapagliflozin",
+                          name == "z_placebo" ~ "Placebo"),
+         w = case_when(name == "DiD" ~ 0.5,
+                       name == "Dapagliflozin" ~ 0.3,
+                       name == "Placebo" ~ 0.3),
+         a = case_when(name == "DiD" ~ 0.7,
+                       name == "Dapagliflozin" ~ 0.8,
+                       name == "Placebo" ~ 0.8))
+tal_neg_pathways_merged_long$name <- factor(tal_neg_pathways_merged_long$name, levels = c("DiD", "Placebo", "Dapagliflozin"))
+
+tal_neg_pathways_merged_long %>%
+  mutate(pathway = factor(pathway, levels = unique(pathway))) %>%
+  ggplot(aes(x = pathway, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "identity",
+           aes(width=w, alpha = a)) +
+  scale_alpha_continuous(range = c(0.7, 0.8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.grid = element_blank(),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        plot.margin = margin(10, 10, 10, 50, unit = "pt")) +
+  scale_fill_manual(values = c("Placebo" = "#f28482",
+                               "Dapagliflozin" = "#669bbc",
+                               "DiD" = "#bb8588")) +
+  labs(y = "Z-score",
+      x = NULL,
+      fill = "Treatment",
+      title = "TAL Top 10 Inhibited Pathways") +
+  guides(alpha = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Z score bar plots/tal_top10_inhibited_pathway_zscores.jpeg",
+       scale = 1.5)
+
+tal_pos_pathways_merged_long <- tal_pathways_merged %>% 
+  filter(z > 0) %>%
+  head(10) %>%
+  pivot_longer(cols = c("z", "z_dapa", "z_placebo")) %>%
+  mutate(name = case_when(name == "z" ~ "DiD",
+                          name == "z_dapa" ~ "Dapagliflozin",
+                          name == "z_placebo" ~ "Placebo"),
+         w = case_when(name == "DiD" ~ 0.5,
+                       name == "Dapagliflozin" ~ 0.3,
+                       name == "Placebo" ~ 0.3),
+         a = case_when(name == "DiD" ~ 0.7,
+                       name == "Dapagliflozin" ~ 0.8,
+                       name == "Placebo" ~ 0.8))
+tal_pos_pathways_merged_long$name <- factor(tal_pos_pathways_merged_long$name, levels = c("DiD", "Placebo", "Dapagliflozin"))
+
+tal_pos_pathways_merged_long
+tal_pos_pathways_merged_long %>%
+  mutate(pathway = factor(pathway, levels = unique(pathway))) %>%
+  ggplot(aes(x = pathway, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "identity",
+           aes(width=w, alpha = a)) +
+  scale_alpha_continuous(range = c(0.7, 0.8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.grid = element_blank(),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        plot.margin = margin(10, 10, 10, 10, unit = "pt")) +
+  scale_fill_manual(values = c("Placebo" = "#f28482",
+                               "Dapagliflozin" = "#669bbc",
+                               "DiD" = "#bb8588")) +
+  labs(y = "Z-score",
+      x = NULL,
+      fill = "Treatment",
+      title = "TAL Top 10 Activated Pathways") +
+  guides(alpha = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Z score bar plots/tal_top10_activated_pathway_zscores.jpeg",
+       scale = 1.5)
+```
+
+## PC
+
+```{r echo = F}
+pc_pathways <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/pc_DiD_pathways.xls", skip = 1) 
+pc_dapa <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/pc_dapa_pathways.xls", skip = 1) 
+pc_placebo <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/pc_placebo_pathways.xls", skip = 1) 
+
+colnames(pc_pathways) <- c("pathway", "neg_log_p", "ratio", "z", "genes")
+colnames(pc_dapa) <- c("pathway", "neg_log_p_dapa", "ratio_dapa", "z_dapa", "genes_dapa")
+colnames(pc_placebo) <- c("pathway", "neg_log_p_placebo", "ratio_placebo", "z_placebo", "genes_placebo")
+
+pc_pathways_merged <- pc_pathways %>%
+  full_join(pc_dapa) %>% full_join(pc_placebo) %>%
+  dplyr::select(pathway, neg_log_p, z, neg_log_p_dapa, z_dapa, neg_log_p_placebo, z_placebo) %>%
+  mutate(scenario = case_when(
+    z_dapa > 0 & z_placebo > 0 & z_placebo < z_dapa ~ "Activated in both, more in D",
+    z_dapa > 0 & z_placebo > 0 & z_placebo > z_dapa ~ "Activated in both, less in D",
+    z_dapa > 0 & (z_placebo < 0  | z_placebo == 0) ~ "Activated in D, stable/inhibited in P",
+    z_dapa < 0 & z_placebo > 0 ~ "Activated in P, stable/inhibited in D",
+    z_dapa < 0 & z_placebo < 0 & z_placebo < z_dapa ~ "Inhibited in both, less in D",
+    z_dapa < 0 & z_placebo < 0 & z_placebo > z_dapa ~ "Inhibited in both, more in D",
+    (z_dapa == 0) & z_placebo > 0 ~ "Activated in P, stable/inhibited in D",
+    (z_dapa == 0) & z_placebo < 0 ~ "Stable in D, inhibited in P",
+    z_dapa < 0 & (z_placebo == 0) ~ "Stable in P, inhibited in D"))
+
+pc_pathways_merged$scenario <- factor(pc_pathways_merged$scenario,
+                                      levels = c("Activated in D, stable/inhibited in P","Activated in both, more in D",
+                                                 "Stable in D, inhibited in P","Inhibited in both, less in D",
+                                                 "Activated in P, stable/inhibited in D","Activated in both, less in D",
+                                                 "Stable in P, inhibited in D", "Inhibited in both, more in D"))
+```
+
+### Inhibited Pathways
+```{r echo = F}
+pc_pathways_inhibited <- pc_pathways_merged %>%
+  filter(z < 0) %>%
+  arrange(desc(neg_log_p))
+
+pc_pathways_inhibited$pathway <- reorder(pc_pathways_inhibited$pathway, pc_pathways_inhibited$neg_log_p)
+  
+pc_top30_inhibited <- pc_pathways_inhibited[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(0,10),labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.02) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "PC Top 30 Inhibited Pathways")   +
+  scale_x_continuous(limits = c(0, 3), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(add = 1)) 
+n_pc_pathways_inhibited <- pc_pathways_inhibited %>%
+  filter(neg_log_p > -log10(0.05)) %>%
+  nrow()
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/pc_top30_inhibited_pathways.jpeg",
+       width = 27.5, height = 14, scale = 1)
+
+########## Limited to z < -2
+pc_pathways_inhibited_sig <- pc_pathways_inhibited %>%
+  filter(z < -2)
+pc_top30_inhibited_2 <- pc_pathways_inhibited_sig[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(min(-pc_pathways_inhibited_sig$z), max(-pc_pathways_inhibited_sig$z)),
+                        labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.02) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "PC Top Inhibited Pathways (Z < -2)")   +
+  scale_x_continuous(limits = c(0, 2), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors)  +
+  scale_y_discrete(expand = expansion(mult = c(0.1, 0))) 
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/pc_top_inhibited_pathways_2.jpeg",
+       width = 27.5, height = 10, scale = 1)
+```
+
+### Activated Pathways
+```{r echo = F}
+pc_pathways_activated <- pc_pathways_merged %>%
+  filter(z > 0) %>%
+  arrange(desc(neg_log_p))
+
+pc_pathways_activated$pathway <- reorder(pc_pathways_activated$pathway, pc_pathways_activated$neg_log_p)
+  
+pc_top30_activated <- pc_pathways_activated[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(0,10),labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.05) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "PC Top 30 Activated Pathways")   +
+  scale_x_continuous(limits = c(0, 5), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(add = 1)) 
+n_pc_pathways_activated <- pc_pathways_activated %>%
+  filter(neg_log_p > -log10(0.05)) %>%
+  nrow()
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/pc_top30_activated_pathways.jpeg",
+       width = 27.5, height = 14, scale = 1)
+
+########## Limited to z > 2
+pc_pathways_activated_sig <- pc_pathways_activated %>%
+  filter(z > 2)
+pc_top30_activated_2 <- pc_pathways_activated_sig[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(min(pc_pathways_activated_sig$z), max(pc_pathways_activated_sig$z))) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.01) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "PC Top Activated Pathways (Z > 2)")   +
+  scale_x_continuous(limits = c(0, 1.5), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(mult = c(0.4, 0))) 
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/pc_top_activated_pathways_2.jpeg",
+       width = 27.5, height = 10, scale = 1)
+```
+### Z-Score Bar charts
+```{r echo = F, warning = F}
+# z-scores in bar charts
+pc_neg_pathways_merged_long <- pc_pathways_merged %>% 
+  filter(z < 0) %>%
+  head(10) %>%
+  pivot_longer(cols = c("z", "z_dapa", "z_placebo")) %>%
+  mutate(name = case_when(name == "z" ~ "DiD",
+                          name == "z_dapa" ~ "Dapagliflozin",
+                          name == "z_placebo" ~ "Placebo"),
+         w = case_when(name == "DiD" ~ 0.5,
+                       name == "Dapagliflozin" ~ 0.3,
+                       name == "Placebo" ~ 0.3),
+         a = case_when(name == "DiD" ~ 0.7,
+                       name == "Dapagliflozin" ~ 0.8,
+                       name == "Placebo" ~ 0.8))
+pc_neg_pathways_merged_long$name <- factor(pc_neg_pathways_merged_long$name, levels = c("DiD", "Placebo", "Dapagliflozin"))
+
+pc_neg_pathways_merged_long %>%
+  mutate(pathway = factor(pathway, levels = unique(pathway))) %>%
+  ggplot(aes(x = pathway, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "identity",
+           aes(width=w, alpha = a)) +
+  scale_alpha_continuous(range = c(0.7, 0.8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.grid = element_blank(),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        plot.margin = margin(10, 10, 10, 50, unit = "pt")) +
+  scale_fill_manual(values = c("Placebo" = "#f28482",
+                               "Dapagliflozin" = "#669bbc",
+                               "DiD" = "#bb8588")) +
+  labs(y = "Z-score",
+      x = NULL,
+      fill = "Treatment",
+      title = "PC Top 10 Inhibited Pathways") +
+  guides(alpha = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Z score bar plots/pc_top10_inhibited_pathway_zscores.jpeg",
+       scale = 1.5)
+
+pc_pos_pathways_merged_long <- pc_pathways_merged %>% 
+  filter(z > 0) %>%
+  head(10) %>%
+  pivot_longer(cols = c("z", "z_dapa", "z_placebo")) %>%
+  mutate(name = case_when(name == "z" ~ "DiD",
+                          name == "z_dapa" ~ "Dapagliflozin",
+                          name == "z_placebo" ~ "Placebo"),
+         w = case_when(name == "DiD" ~ 0.5,
+                       name == "Dapagliflozin" ~ 0.3,
+                       name == "Placebo" ~ 0.3),
+         a = case_when(name == "DiD" ~ 0.7,
+                       name == "Dapagliflozin" ~ 0.8,
+                       name == "Placebo" ~ 0.8))
+pc_pos_pathways_merged_long$name <- factor(pc_pos_pathways_merged_long$name, levels = c("DiD", "Placebo", "Dapagliflozin"))
+
+pc_pos_pathways_merged_long
+pc_pos_pathways_merged_long %>%
+  mutate(pathway = factor(pathway, levels = unique(pathway))) %>%
+  ggplot(aes(x = pathway, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "identity",
+           aes(width=w, alpha = a)) +
+  scale_alpha_continuous(range = c(0.7, 0.8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.grid = element_blank(),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        plot.margin = margin(10, 10, 10, 50, unit = "pt")) +
+  scale_fill_manual(values = c("Placebo" = "#f28482",
+                               "Dapagliflozin" = "#669bbc",
+                               "DiD" = "#bb8588")) +
+  labs(y = "Z-score",
+      x = NULL,
+      fill = "Treatment",
+      title = "PC Top 10 Activated Pathways") +
+  guides(alpha = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Z score bar plots/pc_top10_activated_pathway_zscores.jpeg",
+       scale = 1.5)
+```
+
+## Immune (very few cells)
+
+```{r echo = F}
+immune_pathways <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/immune_DiD_pathways.xls", skip = 1) 
+immune_dapa <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/immune_dapa_pathways.xls", skip = 1) 
+immune_placebo <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/immune_placebo_pathways.xls", skip = 1) 
+
+colnames(immune_pathways) <- c("pathway", "neg_log_p", "ratio", "z", "genes")
+colnames(immune_dapa) <- c("pathway", "neg_log_p_dapa", "ratio_dapa", "z_dapa", "genes_dapa")
+colnames(immune_placebo) <- c("pathway", "neg_log_p_placebo", "ratio_placebo", "z_placebo", "genes_placebo")
+
+immune_pathways_merged <- immune_pathways %>%
+  full_join(immune_dapa) %>% full_join(immune_placebo) %>%
+  dplyr::select(pathway, neg_log_p, z, neg_log_p_dapa, z_dapa, neg_log_p_placebo, z_placebo) %>%
+  mutate(scenario = case_when(
+    z_dapa > 0 & z_placebo > 0 & z_placebo < z_dapa ~ "Activated in both, more in D",
+    z_dapa > 0 & z_placebo > 0 & z_placebo > z_dapa ~ "Activated in both, less in D",
+    z_dapa > 0 & (z_placebo < 0  | z_placebo == 0) ~ "Activated in D, stable/inhibited in P",
+    z_dapa < 0 & z_placebo > 0 ~ "Activated in P, stable/inhibited in D",
+    z_dapa < 0 & z_placebo < 0 & z_placebo < z_dapa ~ "Inhibited in both, less in D",
+    z_dapa < 0 & z_placebo < 0 & z_placebo > z_dapa ~ "Inhibited in both, more in D",
+    (z_dapa == 0) & z_placebo > 0 ~ "Activated in P, stable/inhibited in D",
+    (z_dapa == 0) & z_placebo < 0 ~ "Stable in D, inhibited in P",
+    z_dapa < 0 & (z_placebo == 0) ~ "Stable in P, inhibited in D"))
+
+immune_pathways_merged$scenario <- factor(immune_pathways_merged$scenario,
+                                      levels = c("Activated in D, stable/inhibited in P","Activated in both, more in D",
+                                                 "Stable in D, inhibited in P","Inhibited in both, less in D",
+                                                 "Activated in P, stable/inhibited in D","Activated in both, less in D",
+                                                 "Stable in P, inhibited in D", "Inhibited in both, more in D"))
+```
+
+### Inhibited Pathways
+```{r echo = F}
+immune_pathways_inhibited <- immune_pathways_merged %>%
+  filter(z < 0) %>%
+  arrange(desc(neg_log_p))
+
+immune_pathways_inhibited$pathway <- reorder(immune_pathways_inhibited$pathway, immune_pathways_inhibited$neg_log_p)
+  
+immune_top30_inhibited <- immune_pathways_inhibited[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(0,10),labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.05) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "Immune Top 30 Inhibited Pathways")   +
+  scale_x_continuous(limits = c(0, 5), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(add = 1)) 
+n_immune_pathways_inhibited <- immune_pathways_inhibited %>%
+  filter(neg_log_p > -log10(0.05)) %>%
+  nrow()
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/immune_top30_inhibited_pathways.jpeg",
+       width = 27.5, height = 14, scale = 1)
+
+########## Limited to z < -2
+immune_pathways_inhibited_sig <- immune_pathways_inhibited %>%
+  filter(z < -2)
+immune_top30_inhibited_2 <- immune_pathways_inhibited_sig[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(min(-immune_pathways_inhibited_sig$z), max(-immune_pathways_inhibited_sig$z)),
+                        labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.01) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "Immune Top Inhibited Pathways (Z < -2)")   +
+  scale_x_continuous(limits = c(0, 1.5), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors)  +
+  scale_y_discrete(expand = expansion(mult = c(0.2, 0))) 
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/immune_top_inhibited_pathways_2.jpeg",
+       width = 27.5, height = 10, scale = 1)
+```
+
+### Activated Pathways
+```{r echo = F}
+immune_pathways_activated <- immune_pathways_merged %>%
+  filter(z > 0) %>%
+  arrange(desc(neg_log_p))
+
+immune_pathways_activated$pathway <- reorder(immune_pathways_activated$pathway, immune_pathways_activated$neg_log_p)
+  
+immune_top30_activated <- immune_pathways_activated[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(0,10),labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.03) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "Immune Top 30 Activated Pathways")   +
+  scale_x_continuous(limits = c(0, 3), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(add = 1)) 
+n_immune_pathways_activated <- immune_pathways_activated %>%
+  filter(neg_log_p > -log10(0.05)) %>%
+  nrow()
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/immune_top30_activated_pathways.jpeg",
+       width = 27.5, height = 14, scale = 1)
+
+########## Limited to z > 2
+immune_pathways_activated_sig <- immune_pathways_activated %>%
+  filter(z > 2)
+immune_top30_activated_2 <- immune_pathways_activated_sig[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(min(immune_pathways_activated_sig$z), max(immune_pathways_activated_sig$z))) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.01) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "Immune Top Activated Pathways (Z > 2)")   +
+  scale_x_continuous(limits = c(0, 1.5), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(mult = c(0.1, 0.025))) 
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/immune_top_activated_pathways_2.jpeg",
+       width = 27.5, height = 10, scale = 1)
+```
+### Z-Score Bar charts
+```{r echo = F, warning = F}
+# z-scores in bar charts
+immune_neg_pathways_merged_long <- immune_pathways_merged %>% 
+  filter(z < 0) %>%
+  head(10) %>%
+  pivot_longer(cols = c("z", "z_dapa", "z_placebo")) %>%
+  mutate(name = case_when(name == "z" ~ "DiD",
+                          name == "z_dapa" ~ "Dapagliflozin",
+                          name == "z_placebo" ~ "Placebo"),
+         w = case_when(name == "DiD" ~ 0.5,
+                       name == "Dapagliflozin" ~ 0.3,
+                       name == "Placebo" ~ 0.3),
+         a = case_when(name == "DiD" ~ 0.7,
+                       name == "Dapagliflozin" ~ 0.8,
+                       name == "Placebo" ~ 0.8))
+immune_neg_pathways_merged_long$name <- factor(immune_neg_pathways_merged_long$name, levels = c("DiD", "Placebo", "Dapagliflozin"))
+
+immune_neg_pathways_merged_long %>%
+  mutate(pathway = factor(pathway, levels = unique(pathway))) %>%
+  ggplot(aes(x = pathway, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "identity",
+           aes(width=w, alpha = a)) +
+  scale_alpha_continuous(range = c(0.7, 0.8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.grid = element_blank(),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        plot.margin = margin(10, 10, 10, 60, unit = "pt")) +
+  scale_fill_manual(values = c("Placebo" = "#f28482",
+                               "Dapagliflozin" = "#669bbc",
+                               "DiD" = "#bb8588")) +
+  labs(y = "Z-score",
+      x = NULL,
+      fill = "Treatment",
+      title = "Immune Top 10 Inhibited Pathways") +
+  guides(alpha = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Z score bar plots/immune_top10_inhibited_pathway_zscores.jpeg",
+       scale = 1.5)
+
+immune_pos_pathways_merged_long <- immune_pathways_merged %>% 
+  filter(z > 0) %>%
+  head(10) %>%
+  pivot_longer(cols = c("z", "z_dapa", "z_placebo")) %>%
+  mutate(name = case_when(name == "z" ~ "DiD",
+                          name == "z_dapa" ~ "Dapagliflozin",
+                          name == "z_placebo" ~ "Placebo"),
+         w = case_when(name == "DiD" ~ 0.5,
+                       name == "Dapagliflozin" ~ 0.3,
+                       name == "Placebo" ~ 0.3),
+         a = case_when(name == "DiD" ~ 0.7,
+                       name == "Dapagliflozin" ~ 0.8,
+                       name == "Placebo" ~ 0.8))
+immune_pos_pathways_merged_long$name <- factor(immune_pos_pathways_merged_long$name, levels = c("DiD", "Placebo", "Dapagliflozin"))
+
+immune_pos_pathways_merged_long
+immune_pos_pathways_merged_long %>%
+  mutate(pathway = factor(pathway, levels = unique(pathway))) %>%
+  ggplot(aes(x = pathway, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "identity",
+           aes(width=w, alpha = a)) +
+  scale_alpha_continuous(range = c(0.7, 0.8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.grid = element_blank(),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        plot.margin = margin(10, 10, 10, 10, unit = "pt")) +
+  scale_fill_manual(values = c("Placebo" = "#f28482",
+                               "Dapagliflozin" = "#669bbc",
+                               "DiD" = "#bb8588")) +
+  labs(y = "Z-score",
+      x = NULL,
+      fill = "Treatment",
+      title = "Immune Top 10 Activated Pathways") +
+  guides(alpha = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Z score bar plots/immune_top10_activated_pathway_zscores.jpeg",
+       scale = 1.5)
+```
+
+## IC
+
+```{r echo = F}
+ic_pathways <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/ic_DiD_pathways.xls", skip = 1) 
+ic_dapa <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/ic_dapa_pathways.xls", skip = 1) 
+ic_placebo <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/ic_placebo_pathways.xls", skip = 1) 
+
+colnames(ic_pathways) <- c("pathway", "neg_log_p", "ratio", "z", "genes")
+colnames(ic_dapa) <- c("pathway", "neg_log_p_dapa", "ratio_dapa", "z_dapa", "genes_dapa")
+colnames(ic_placebo) <- c("pathway", "neg_log_p_placebo", "ratio_placebo", "z_placebo", "genes_placebo")
+
+ic_pathways_merged <- ic_pathways %>%
+  full_join(ic_dapa) %>% full_join(ic_placebo) %>%
+  dplyr::select(pathway, neg_log_p, z, neg_log_p_dapa, z_dapa, neg_log_p_placebo, z_placebo) %>%
+  mutate(scenario = case_when(
+    z_dapa > 0 & z_placebo > 0 & z_placebo < z_dapa ~ "Activated in both, more in D",
+    z_dapa > 0 & z_placebo > 0 & z_placebo > z_dapa ~ "Activated in both, less in D",
+    z_dapa > 0 & (z_placebo < 0  | z_placebo == 0) ~ "Activated in D, stable/inhibited in P",
+    z_dapa < 0 & z_placebo > 0 ~ "Activated in P, stable/inhibited in D",
+    z_dapa < 0 & z_placebo < 0 & z_placebo < z_dapa ~ "Inhibited in both, less in D",
+    z_dapa < 0 & z_placebo < 0 & z_placebo > z_dapa ~ "Inhibited in both, more in D",
+    (z_dapa == 0) & z_placebo > 0 ~ "Activated in P, stable/inhibited in D",
+    (z_dapa == 0) & z_placebo < 0 ~ "Stable in D, inhibited in P",
+    z_dapa < 0 & (z_placebo == 0) ~ "Stable in P, inhibited in D"))
+
+ic_pathways_merged$scenario <- factor(ic_pathways_merged$scenario,
+                                      levels = c("Activated in D, stable/inhibited in P","Activated in both, more in D",
+                                                 "Stable in D, inhibited in P","Inhibited in both, less in D",
+                                                 "Activated in P, stable/inhibited in D","Activated in both, less in D",
+                                                 "Stable in P, inhibited in D", "Inhibited in both, more in D"))
+```
+
+### Inhibited Pathways
+```{r echo = F}
+ic_pathways_inhibited <- ic_pathways_merged %>%
+  filter(z < 0) %>%
+  arrange(desc(neg_log_p))
+
+ic_pathways_inhibited$pathway <- reorder(ic_pathways_inhibited$pathway, ic_pathways_inhibited$neg_log_p)
+  
+ic_top30_inhibited <- ic_pathways_inhibited[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(0,10),labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.05) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "IC Top 30 Inhibited Pathways")   +
+  scale_x_continuous(limits = c(0, 5), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(add = 1)) 
+n_ic_pathways_inhibited <- ic_pathways_inhibited %>%
+  filter(neg_log_p > -log10(0.05)) %>%
+  nrow()
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/ic_top30_inhibited_pathways.jpeg",
+       width = 27.5, height = 14, scale = 1)
+
+########## Limited to z < -2
+ic_pathways_inhibited_sig <- ic_pathways_inhibited %>%
+  filter(z < -2)
+ic_top30_inhibited_2 <- ic_pathways_inhibited_sig[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(min(-ic_pathways_inhibited_sig$z), max(-ic_pathways_inhibited_sig$z)),
+                        labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.01) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "IC Top Inhibited Pathways (Z < -2)")   +
+  scale_x_continuous(limits = c(0, 1.5), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors)  +
+  scale_y_discrete(expand = expansion(mult = c(0.2, 0))) 
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/ic_top_inhibited_pathways_2.jpeg",
+       width = 27.5, height = 10, scale = 1)
+```
+
+### Activated Pathways
+```{r echo = F}
+ic_pathways_activated <- ic_pathways_merged %>%
+  filter(z > 0) %>%
+  arrange(desc(neg_log_p))
+
+ic_pathways_activated$pathway <- reorder(ic_pathways_activated$pathway, ic_pathways_activated$neg_log_p)
+  
+ic_top30_activated <- ic_pathways_activated[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(0,10),labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.05) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "IC Top 30 Activated Pathways")   +
+  scale_x_continuous(limits = c(0, 5), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(add = 1)) 
+n_ic_pathways_activated <- ic_pathways_activated %>%
+  filter(neg_log_p > -log10(0.05)) %>%
+  nrow()
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/ic_top30_activated_pathways.jpeg",
+       width = 27.5, height = 14, scale = 1)
+
+########## Limited to z > 2
+ic_pathways_activated_sig <- ic_pathways_activated %>%
+  filter(z > 2)
+ic_top30_activated_2 <- ic_pathways_activated_sig[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(min(ic_pathways_activated_sig$z), max(ic_pathways_activated_sig$z))) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.02) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "IC Top Activated Pathways (Z > 2)")   +
+  scale_x_continuous(limits = c(0, 2), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(mult = c(0.1, 0.025))) 
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/ic_top_activated_pathways_2.jpeg",
+       width = 27.5, height = 10, scale = 1)
+```
+
+### Z-Score Bar charts
+```{r echo = F, warning = F}
+# z-scores in bar charts
+ic_neg_pathways_merged_long <- ic_pathways_merged %>% 
+  filter(z < 0) %>%
+  head(10) %>%
+  pivot_longer(cols = c("z", "z_dapa", "z_placebo")) %>%
+  mutate(name = case_when(name == "z" ~ "DiD",
+                          name == "z_dapa" ~ "Dapagliflozin",
+                          name == "z_placebo" ~ "Placebo"),
+         w = case_when(name == "DiD" ~ 0.5,
+                       name == "Dapagliflozin" ~ 0.3,
+                       name == "Placebo" ~ 0.3),
+         a = case_when(name == "DiD" ~ 0.7,
+                       name == "Dapagliflozin" ~ 0.8,
+                       name == "Placebo" ~ 0.8))
+ic_neg_pathways_merged_long$name <- factor(ic_neg_pathways_merged_long$name, levels = c("DiD", "Placebo", "Dapagliflozin"))
+
+ic_neg_pathways_merged_long %>%
+  mutate(pathway = factor(pathway, levels = unique(pathway))) %>%
+  ggplot(aes(x = pathway, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "identity",
+           aes(width=w, alpha = a)) +
+  scale_alpha_continuous(range = c(0.7, 0.8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.grid = element_blank(),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        plot.margin = margin(10, 10, 10, 10, unit = "pt")) +
+  scale_fill_manual(values = c("Placebo" = "#f28482",
+                               "Dapagliflozin" = "#669bbc",
+                               "DiD" = "#bb8588")) +
+  labs(y = "Z-score",
+      x = NULL,
+      fill = "Treatment",
+      title = "IC Top 10 Inhibited Pathways") +
+  guides(alpha = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Z score bar plots/ic_top10_inhibited_pathway_zscores.jpeg",
+       scale = 1.5)
+
+ic_pos_pathways_merged_long <- ic_pathways_merged %>% 
+  filter(z > 0) %>%
+  head(10) %>%
+  pivot_longer(cols = c("z", "z_dapa", "z_placebo")) %>%
+  mutate(name = case_when(name == "z" ~ "DiD",
+                          name == "z_dapa" ~ "Dapagliflozin",
+                          name == "z_placebo" ~ "Placebo"),
+         w = case_when(name == "DiD" ~ 0.5,
+                       name == "Dapagliflozin" ~ 0.3,
+                       name == "Placebo" ~ 0.3),
+         a = case_when(name == "DiD" ~ 0.7,
+                       name == "Dapagliflozin" ~ 0.8,
+                       name == "Placebo" ~ 0.8))
+ic_pos_pathways_merged_long$name <- factor(ic_pos_pathways_merged_long$name, levels = c("DiD", "Placebo", "Dapagliflozin"))
+
+ic_pos_pathways_merged_long
+ic_pos_pathways_merged_long %>%
+  mutate(pathway = factor(pathway, levels = unique(pathway))) %>%
+  ggplot(aes(x = pathway, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "identity",
+           aes(width=w, alpha = a)) +
+  scale_alpha_continuous(range = c(0.7, 0.8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.grid = element_blank(),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        plot.margin = margin(10, 10, 10, 50, unit = "pt")) +
+  scale_fill_manual(values = c("Placebo" = "#f28482",
+                               "Dapagliflozin" = "#669bbc",
+                               "DiD" = "#bb8588")) +
+  labs(y = "Z-score",
+      x = NULL,
+      fill = "Treatment",
+      title = "IC Top 10 Activated Pathways") +
+  guides(alpha = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Z score bar plots/ic_top10_activated_pathway_zscores.jpeg",
+       scale = 1.5)
+```
+
+## EC
+
+```{r echo = F}
+ec_pathways <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/ec_DiD_pathways.xls", skip = 1) 
+ec_dapa <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/ec_dapa_pathways.xls", skip = 1) 
+ec_placebo <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/ec_placebo_pathways.xls", skip = 1) 
+
+colnames(ec_pathways) <- c("pathway", "neg_log_p", "ratio", "z", "genes")
+colnames(ec_dapa) <- c("pathway", "neg_log_p_dapa", "ratio_dapa", "z_dapa", "genes_dapa")
+colnames(ec_placebo) <- c("pathway", "neg_log_p_placebo", "ratio_placebo", "z_placebo", "genes_placebo")
+
+ec_pathways_merged <- ec_pathways %>%
+  full_join(ec_dapa) %>% full_join(ec_placebo) %>%
+  dplyr::select(pathway, neg_log_p, z, neg_log_p_dapa, z_dapa, neg_log_p_placebo, z_placebo) %>%
+  mutate(scenario = case_when(
+    z_dapa > 0 & z_placebo > 0 & z_placebo < z_dapa ~ "Activated in both, more in D",
+    z_dapa > 0 & z_placebo > 0 & z_placebo > z_dapa ~ "Activated in both, less in D",
+    z_dapa > 0 & (z_placebo < 0  | z_placebo == 0) ~ "Activated in D, stable/inhibited in P",
+    z_dapa < 0 & z_placebo > 0 ~ "Activated in P, stable/inhibited in D",
+    z_dapa < 0 & z_placebo < 0 & z_placebo < z_dapa ~ "Inhibited in both, less in D",
+    z_dapa < 0 & z_placebo < 0 & z_placebo > z_dapa ~ "Inhibited in both, more in D",
+    (z_dapa == 0) & z_placebo > 0 ~ "Activated in P, stable/inhibited in D",
+    (z_dapa == 0) & z_placebo < 0 ~ "Stable in D, inhibited in P",
+    z_dapa < 0 & (z_placebo == 0) ~ "Stable in P, inhibited in D"))
+
+ec_pathways_merged$scenario <- factor(ec_pathways_merged$scenario,
+                                      levels = c("Activated in D, stable/inhibited in P","Activated in both, more in D",
+                                                 "Stable in D, inhibited in P","Inhibited in both, less in D",
+                                                 "Activated in P, stable/inhibited in D","Activated in both, less in D",
+                                                 "Stable in P, inhibited in D", "Inhibited in both, more in D"))
+```
+
+### Inhibited Pathways
+```{r echo = F}
+ec_pathways_inhibited <- ec_pathways_merged %>%
+  filter(z < 0) %>%
+  arrange(desc(neg_log_p))
+
+ec_pathways_inhibited$pathway <- reorder(ec_pathways_inhibited$pathway, ec_pathways_inhibited$neg_log_p)
+  
+ec_top30_inhibited <- ec_pathways_inhibited[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(0,10),labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.02) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "EC Top 30 Inhibited Pathways")   +
+  scale_x_continuous(limits = c(0, 3), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(add = 1)) 
+n_ec_pathways_inhibited <- ec_pathways_inhibited %>%
+  filter(neg_log_p > -log10(0.05)) %>%
+  nrow()
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/ec_top30_inhibited_pathways.jpeg",
+       width = 27.5, height = 14, scale = 1)
+
+########## Limited to z < -2
+ec_pathways_inhibited_sig <- ec_pathways_inhibited %>%
+  filter(z < -2)
+ec_top30_inhibited_2 <- ec_pathways_inhibited_sig[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(min(-ec_pathways_inhibited_sig$z), max(-ec_pathways_inhibited_sig$z)),
+                        labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.01) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "EC Top Inhibited Pathways (Z < -2)")   +
+  scale_x_continuous(limits = c(0, 1.5), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors)  +
+  scale_y_discrete(expand = expansion(mult = c(0.2, 0))) 
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/ec_top_inhibited_pathways_2.jpeg",
+       width = 27.5, height = 10, scale = 1)
+```
+
+### Activated Pathways
+```{r echo = F}
+ec_pathways_activated <- ec_pathways_merged %>%
+  filter(z > 0) %>%
+  arrange(desc(neg_log_p))
+
+ec_pathways_activated$pathway <- reorder(ec_pathways_activated$pathway, ec_pathways_activated$neg_log_p)
+  
+ec_top30_activated <- ec_pathways_activated[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(0,10),labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.02) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "EC Top 30 Activated Pathways")   +
+  scale_x_continuous(limits = c(0, 3), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(add = 1)) 
+n_ec_pathways_activated <- ec_pathways_activated %>%
+  filter(neg_log_p > -log10(0.05)) %>%
+  nrow()
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/ec_top30_activated_pathways.jpeg",
+       width = 27.5, height = 14, scale = 1)
+
+########## Limited to z > 2
+ec_pathways_activated_sig <- ec_pathways_activated %>%
+  filter(z > 2)
+ec_top30_activated_2 <- ec_pathways_activated_sig[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(min(ec_pathways_activated_sig$z), max(ec_pathways_activated_sig$z))) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.02) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "EC Top Activated Pathways (Z > 2)")   +
+  scale_x_continuous(limits = c(0, 2), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(mult = c(1, 0))) 
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/ec_top_activated_pathways_2.jpeg",
+       width = 27.5, height = 10, scale = 1)
+```
+### Z-Score Bar charts
+```{r echo = F, warning = F}
+# z-scores in bar charts
+ec_neg_pathways_merged_long <- ec_pathways_merged %>% 
+  filter(z < 0) %>%
+  head(10) %>%
+  pivot_longer(cols = c("z", "z_dapa", "z_placebo")) %>%
+  mutate(name = case_when(name == "z" ~ "DiD",
+                          name == "z_dapa" ~ "Dapagliflozin",
+                          name == "z_placebo" ~ "Placebo"),
+         w = case_when(name == "DiD" ~ 0.5,
+                       name == "Dapagliflozin" ~ 0.3,
+                       name == "Placebo" ~ 0.3),
+         a = case_when(name == "DiD" ~ 0.7,
+                       name == "Dapagliflozin" ~ 0.8,
+                       name == "Placebo" ~ 0.8))
+ec_neg_pathways_merged_long$name <- factor(ec_neg_pathways_merged_long$name, levels = c("DiD", "Placebo", "Dapagliflozin"))
+
+ec_neg_pathways_merged_long %>%
+  mutate(pathway = factor(pathway, levels = unique(pathway))) %>%
+  ggplot(aes(x = pathway, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "identity",
+           aes(width=w, alpha = a)) +
+  scale_alpha_continuous(range = c(0.7, 0.8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.grid = element_blank(),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        plot.margin = margin(10, 10, 10, 10, unit = "pt")) +
+  scale_fill_manual(values = c("Placebo" = "#f28482",
+                               "Dapagliflozin" = "#669bbc",
+                               "DiD" = "#bb8588")) +
+  labs(y = "Z-score",
+      x = NULL,
+      fill = "Treatment",
+      title = "EC Top 10 Inhibited Pathways") +
+  guides(alpha = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Z score bar plots/ec_top10_inhibited_pathway_zscores.jpeg",
+       scale = 1.5)
+
+ec_pos_pathways_merged_long <- ec_pathways_merged %>% 
+  filter(z > 0) %>%
+  head(10) %>%
+  pivot_longer(cols = c("z", "z_dapa", "z_placebo")) %>%
+  mutate(name = case_when(name == "z" ~ "DiD",
+                          name == "z_dapa" ~ "Dapagliflozin",
+                          name == "z_placebo" ~ "Placebo"),
+         w = case_when(name == "DiD" ~ 0.5,
+                       name == "Dapagliflozin" ~ 0.3,
+                       name == "Placebo" ~ 0.3),
+         a = case_when(name == "DiD" ~ 0.7,
+                       name == "Dapagliflozin" ~ 0.8,
+                       name == "Placebo" ~ 0.8))
+ec_pos_pathways_merged_long$name <- factor(ec_pos_pathways_merged_long$name, levels = c("DiD", "Placebo", "Dapagliflozin"))
+
+ec_pos_pathways_merged_long
+ec_pos_pathways_merged_long %>%
+  mutate(pathway = factor(pathway, levels = unique(pathway))) %>%
+  ggplot(aes(x = pathway, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "identity",
+           aes(width=w, alpha = a)) +
+  scale_alpha_continuous(range = c(0.7, 0.8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.grid = element_blank(),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        plot.margin = margin(10, 10, 10, 10, unit = "pt")) +
+  scale_fill_manual(values = c("Placebo" = "#f28482",
+                               "Dapagliflozin" = "#669bbc",
+                               "DiD" = "#bb8588")) +
+  labs(y = "Z-score",
+      x = NULL,
+      fill = "Treatment",
+      title = "EC Top 10 Activated Pathways") +
+  guides(alpha = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Z score bar plots/ec_top10_activated_pathway_zscores.jpeg",
+       scale = 1.5)
+```
+
+## DTL (very few cells)
+
+```{r echo = F}
+dtl_pathways <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/dtl_DiD_pathways.xls", skip = 1) 
+dtl_dapa <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/dtl_dapa_pathways.xls", skip = 1) 
+dtl_placebo <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/dtl_placebo_pathways.xls", skip = 1) 
+
+colnames(dtl_pathways) <- c("pathway", "neg_log_p", "ratio", "z", "genes")
+colnames(dtl_dapa) <- c("pathway", "neg_log_p_dapa", "ratio_dapa", "z_dapa", "genes_dapa")
+colnames(dtl_placebo) <- c("pathway", "neg_log_p_placebo", "ratio_placebo", "z_placebo", "genes_placebo")
+
+dtl_pathways_merged <- dtl_pathways %>%
+  full_join(dtl_dapa) %>% full_join(dtl_placebo) %>%
+  dplyr::select(pathway, neg_log_p, z, neg_log_p_dapa, z_dapa, neg_log_p_placebo, z_placebo) %>%
+  mutate(scenario = case_when(
+    z_dapa > 0 & z_placebo > 0 & z_placebo < z_dapa ~ "Activated in both, more in D",
+    z_dapa > 0 & z_placebo > 0 & z_placebo > z_dapa ~ "Activated in both, less in D",
+    z_dapa > 0 & (z_placebo < 0  | z_placebo == 0) ~ "Activated in D, stable/inhibited in P",
+    z_dapa < 0 & z_placebo > 0 ~ "Activated in P, stable/inhibited in D",
+    z_dapa < 0 & z_placebo < 0 & z_placebo < z_dapa ~ "Inhibited in both, less in D",
+    z_dapa < 0 & z_placebo < 0 & z_placebo > z_dapa ~ "Inhibited in both, more in D",
+    (z_dapa == 0) & z_placebo > 0 ~ "Activated in P, stable/inhibited in D",
+    (z_dapa == 0) & z_placebo < 0 ~ "Stable in D, inhibited in P",
+    z_dapa < 0 & (z_placebo == 0) ~ "Stable in P, inhibited in D"))
+
+dtl_pathways_merged$scenario <- factor(dtl_pathways_merged$scenario,
+                                      levels = c("Activated in D, stable/inhibited in P","Activated in both, more in D",
+                                                 "Stable in D, inhibited in P","Inhibited in both, less in D",
+                                                 "Activated in P, stable/inhibited in D","Activated in both, less in D",
+                                                 "Stable in P, inhibited in D", "Inhibited in both, more in D"))
+```
+
+### Inhibited Pathways
+```{r echo = F}
+dtl_pathways_inhibited <- dtl_pathways_merged %>%
+  filter(z < 0) %>%
+  arrange(desc(neg_log_p))
+
+dtl_pathways_inhibited$pathway <- reorder(dtl_pathways_inhibited$pathway, dtl_pathways_inhibited$neg_log_p)
+  
+dtl_top30_inhibited <- dtl_pathways_inhibited[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(0,10),labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.03) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "DTL Top 30 Inhibited Pathways")   +
+  scale_x_continuous(limits = c(0, 4), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(add = 1)) 
+n_dtl_pathways_inhibited <- dtl_pathways_inhibited %>%
+  filter(neg_log_p > -log10(0.05)) %>%
+  nrow()
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/dtl_top30_inhibited_pathways.jpeg",
+       width = 27.5, height = 14, scale = 1)
+
+########## Limited to z < -2 (none significant)
+# dtl_pathways_inhibited_sig <- dtl_pathways_inhibited %>%
+#   filter(z < -2)
+# dtl_top30_inhibited_2 <- dtl_pathways_inhibited_sig[1:30,] %>%
+#   ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+#   geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+#   scale_size_continuous(range = c(min(-dtl_pathways_inhibited_sig$z), max(-dtl_pathways_inhibited_sig$z)),
+#                         labels = function(x) paste0("-", x)) +
+#   geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+#   geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.01) +
+#   theme_bw() +
+#   theme(axis.text.y = element_blank(),
+#         panel.grid = element_blank(),
+#         axis.text.x = element_text(size = text3),
+#         axis.title = element_text(size = text3),
+#         axis.ticks.y = element_blank(), 
+#         legend.position = c(0.9,0.2),
+#         legend.background = element_blank(),
+#         legend.box.background = element_rect(color = "black"),
+#         legend.title = element_text(size = text2),
+#         legend.text = element_text(size = text2),
+#         title = element_text (size = text3)) +
+#   labs(x = "-log(p-value)",
+#        y = "Pathways",
+#        color = "Scenario",
+#        size = "Z-score",
+#        title = "DTL Top Inhibited Pathways (Z < -2)")   +
+#   scale_x_continuous(limits = c(0, 1.5), expand = c(0, 0)) +
+#   scale_color_manual(values = scenario_colors)  +
+#   scale_y_discrete(expand = expansion(mult = c(0.5, 0.01))) 
+# 
+# ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/dtl_top_inhibited_pathways_2.jpeg",
+#        width = 27.5, height = 10, scale = 1)
+```
+
+### Activated Pathways
+```{r echo = F}
+dtl_pathways_activated <- dtl_pathways_merged %>%
+  filter(z > 0) %>%
+  arrange(desc(neg_log_p))
+
+dtl_pathways_activated$pathway <- reorder(dtl_pathways_activated$pathway, dtl_pathways_activated$neg_log_p)
+  
+dtl_top30_activated <- dtl_pathways_activated[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(0,10),labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.03) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "DTL Top 30 Activated Pathways")   +
+  scale_x_continuous(limits = c(0, 4), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(add = 1)) 
+n_dtl_pathways_activated <- dtl_pathways_activated %>%
+  filter(neg_log_p > -log10(0.05)) %>%
+  nrow()
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/dtl_top30_activated_pathways.jpeg",
+       width = 27.5, height = 14, scale = 1)
+
+########## Limited to z > 2
+dtl_pathways_activated_sig <- dtl_pathways_activated %>%
+  filter(z > 2)
+dtl_top30_activated_2 <- dtl_pathways_activated_sig[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(min(dtl_pathways_activated_sig$z), max(dtl_pathways_activated_sig$z))) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.02) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "DTL Top Activated Pathways (Z > 2)")   +
+  scale_x_continuous(limits = c(0, 4), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(mult = c(0.05, 0.05))) 
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/dtl_top_activated_pathways_2.jpeg",
+       width = 27.5, height = 10, scale = 1)
+```
+
+### Z-Score Bar charts
+```{r echo = F, warning = F}
+# z-scores in bar charts
+dtl_neg_pathways_merged_long <- dtl_pathways_merged %>% 
+  filter(z < 0) %>%
+  head(10) %>%
+  pivot_longer(cols = c("z", "z_dapa", "z_placebo")) %>%
+  mutate(name = case_when(name == "z" ~ "DiD",
+                          name == "z_dapa" ~ "Dapagliflozin",
+                          name == "z_placebo" ~ "Placebo"),
+         w = case_when(name == "DiD" ~ 0.5,
+                       name == "Dapagliflozin" ~ 0.3,
+                       name == "Placebo" ~ 0.3),
+         a = case_when(name == "DiD" ~ 0.7,
+                       name == "Dapagliflozin" ~ 0.8,
+                       name == "Placebo" ~ 0.8))
+dtl_neg_pathways_merged_long$name <- factor(dtl_neg_pathways_merged_long$name, levels = c("DiD", "Placebo", "Dapagliflozin"))
+
+dtl_neg_pathways_merged_long %>%
+  mutate(pathway = factor(pathway, levels = unique(pathway))) %>%
+  ggplot(aes(x = pathway, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "identity",
+           aes(width=w, alpha = a)) +
+  scale_alpha_continuous(range = c(0.7, 0.8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.grid = element_blank(),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        plot.margin = margin(10, 10, 10, 10, unit = "pt")) +
+  scale_fill_manual(values = c("Placebo" = "#f28482",
+                               "Dapagliflozin" = "#669bbc",
+                               "DiD" = "#bb8588")) +
+  labs(y = "Z-score",
+      x = NULL,
+      fill = "Treatment",
+      title = "DTL Top 10 Inhibited Pathways") +
+  guides(alpha = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Z score bar plots/dtl_top10_inhibited_pathway_zscores.jpeg",
+       scale = 1.5)
+
+dtl_pos_pathways_merged_long <- dtl_pathways_merged %>% 
+  filter(z > 0) %>%
+  head(10) %>%
+  pivot_longer(cols = c("z", "z_dapa", "z_placebo")) %>%
+  mutate(name = case_when(name == "z" ~ "DiD",
+                          name == "z_dapa" ~ "Dapagliflozin",
+                          name == "z_placebo" ~ "Placebo"),
+         w = case_when(name == "DiD" ~ 0.5,
+                       name == "Dapagliflozin" ~ 0.3,
+                       name == "Placebo" ~ 0.3),
+         a = case_when(name == "DiD" ~ 0.7,
+                       name == "Dapagliflozin" ~ 0.8,
+                       name == "Placebo" ~ 0.8))
+dtl_pos_pathways_merged_long$name <- factor(dtl_pos_pathways_merged_long$name, levels = c("DiD", "Placebo", "Dapagliflozin"))
+
+dtl_pos_pathways_merged_long
+dtl_pos_pathways_merged_long %>%
+  mutate(pathway = factor(pathway, levels = unique(pathway))) %>%
+  ggplot(aes(x = pathway, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "identity",
+           aes(width=w, alpha = a)) +
+  scale_alpha_continuous(range = c(0.7, 0.8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.grid = element_blank(),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        plot.margin = margin(10, 10, 10, 10, unit = "pt")) +
+  scale_fill_manual(values = c("Placebo" = "#f28482",
+                               "Dapagliflozin" = "#669bbc",
+                               "DiD" = "#bb8588")) +
+  labs(y = "Z-score",
+      x = NULL,
+      fill = "Treatment",
+      title = "DTL Top 10 Activated Pathways") +
+  guides(alpha = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Z score bar plots/dtl_top10_activated_pathway_zscores.jpeg",
+       scale = 1.5)
+```
+
+## FIB/VSMC/P
+
+```{r echo = F}
+fibvsmcp_pathways <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/fibvsmcp_DiD_pathways.xls", skip = 1) 
+fibvsmcp_dapa <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/fibvsmcp_dapa_pathways.xls", skip = 1) 
+fibvsmcp_placebo <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/IPA/fibvsmcp_placebo_pathways.xls", skip = 1) 
+
+colnames(fibvsmcp_pathways) <- c("pathway", "neg_log_p", "ratio", "z", "genes")
+colnames(fibvsmcp_dapa) <- c("pathway", "neg_log_p_dapa", "ratio_dapa", "z_dapa", "genes_dapa")
+colnames(fibvsmcp_placebo) <- c("pathway", "neg_log_p_placebo", "ratio_placebo", "z_placebo", "genes_placebo")
+
+fibvsmcp_pathways_merged <- fibvsmcp_pathways %>%
+  full_join(fibvsmcp_dapa) %>% full_join(fibvsmcp_placebo) %>%
+  dplyr::select(pathway, neg_log_p, z, neg_log_p_dapa, z_dapa, neg_log_p_placebo, z_placebo) %>%
+  mutate(scenario = case_when(
+    z_dapa > 0 & z_placebo > 0 & z_placebo < z_dapa ~ "Activated in both, more in D",
+    z_dapa > 0 & z_placebo > 0 & z_placebo > z_dapa ~ "Activated in both, less in D",
+    z_dapa > 0 & (z_placebo < 0  | z_placebo == 0) ~ "Activated in D, stable/inhibited in P",
+    z_dapa < 0 & z_placebo > 0 ~ "Activated in P, stable/inhibited in D",
+    z_dapa < 0 & z_placebo < 0 & z_placebo < z_dapa ~ "Inhibited in both, less in D",
+    z_dapa < 0 & z_placebo < 0 & z_placebo > z_dapa ~ "Inhibited in both, more in D",
+    (z_dapa == 0) & z_placebo > 0 ~ "Activated in P, stable/inhibited in D",
+    (z_dapa == 0) & z_placebo < 0 ~ "Stable in D, inhibited in P",
+    z_dapa < 0 & (z_placebo == 0) ~ "Stable in P, inhibited in D"))
+
+fibvsmcp_pathways_merged$scenario <- factor(fibvsmcp_pathways_merged$scenario,
+                                      levels = c("Activated in D, stable/inhibited in P","Activated in both, more in D",
+                                                 "Stable in D, inhibited in P","Inhibited in both, less in D",
+                                                 "Activated in P, stable/inhibited in D","Activated in both, less in D",
+                                                 "Stable in P, inhibited in D", "Inhibited in both, more in D"))
+```
+
+### Inhibited Pathways
+```{r echo = F}
+fibvsmcp_pathways_inhibited <- fibvsmcp_pathways_merged %>%
+  filter(z < 0) %>%
+  arrange(desc(neg_log_p))
+
+fibvsmcp_pathways_inhibited$pathway <- reorder(fibvsmcp_pathways_inhibited$pathway, fibvsmcp_pathways_inhibited$neg_log_p)
+  
+fibvsmcp_top30_inhibited <- fibvsmcp_pathways_inhibited[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(0,10),labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.02) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "FIB/VSMC/P Top 30 Inhibited Pathways")   +
+  scale_x_continuous(limits = c(0, 3), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(add = 1)) 
+n_fibvsmcp_pathways_inhibited <- fibvsmcp_pathways_inhibited %>%
+  filter(neg_log_p > -log10(0.05)) %>%
+  nrow()
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/fibvsmcp_top30_inhibited_pathways.jpeg",
+       width = 27.5, height = 14, scale = 1)
+
+########## Limited to z < -2
+fibvsmcp_pathways_inhibited_sig <- fibvsmcp_pathways_inhibited %>%
+  filter(z < -2)
+fibvsmcp_top30_inhibited_2 <- fibvsmcp_pathways_inhibited_sig[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(min(-fibvsmcp_pathways_inhibited_sig$z), max(-fibvsmcp_pathways_inhibited_sig$z)),
+                        labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.01) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "FIB/VSMC/P Top Inhibited Pathways (Z < -2)")   +
+  scale_x_continuous(limits = c(0, 1.5), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors)  +
+  scale_y_discrete(expand = expansion(mult = c(0.3, 0))) 
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/fibvsmcp_top_inhibited_pathways_2.jpeg",
+       width = 27.5, height = 10, scale = 1)
+```
+
+### Activated Pathways
+```{r echo = F}
+fibvsmcp_pathways_activated <- fibvsmcp_pathways_merged %>%
+  filter(z > 0) %>%
+  arrange(desc(neg_log_p))
+
+fibvsmcp_pathways_activated$pathway <- reorder(fibvsmcp_pathways_activated$pathway, fibvsmcp_pathways_activated$neg_log_p)
+  
+fibvsmcp_top30_activated <- fibvsmcp_pathways_activated[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(0,10),labels = function(x) paste0("-", x)) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.02) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "FIB/VSMC/P Top 30 Activated Pathways")   +
+  scale_x_continuous(limits = c(0, 3), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(add = 1)) 
+n_fibvsmcp_pathways_activated <- fibvsmcp_pathways_activated %>%
+  filter(neg_log_p > -log10(0.05)) %>%
+  nrow()
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/fibvsmcp_top30_activated_pathways.jpeg",
+       width = 27.5, height = 14, scale = 1)
+
+########## Limited to z > 2
+fibvsmcp_pathways_activated_sig <- fibvsmcp_pathways_activated %>%
+  filter(z > 2)
+fibvsmcp_top30_activated_2 <- fibvsmcp_pathways_activated_sig[1:30,] %>%
+  ggplot(aes(x = neg_log_p, y = pathway, label = pathway)) +
+  geom_point(aes(size = abs(z), color = scenario), alpha = 0.8) +
+  scale_size_continuous(range = c(min(fibvsmcp_pathways_activated_sig$z), max(fibvsmcp_pathways_activated_sig$z))) +
+  geom_vline(xintercept = -log10(0.05), linetype = "dashed") +
+  geom_text(aes(group = pathway, color = scenario), hjust = 0, size = text1, nudge_x = 0.02) +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = text3),
+        axis.title = element_text(size = text3),
+        axis.ticks.y = element_blank(), 
+        legend.position = c(0.9,0.2),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        legend.title = element_text(size = text2),
+        legend.text = element_text(size = text2),
+        title = element_text (size = text3)) +
+  labs(x = "-log(p-value)",
+       y = "Pathways",
+       color = "Scenario",
+       size = "Z-score",
+       title = "FIB/VSMC/P Top Activated Pathways (Z > 2)")   +
+  scale_x_continuous(limits = c(0, 1.5), expand = c(0, 0)) +
+  scale_color_manual(values = scenario_colors) +
+  scale_y_discrete(expand = expansion(mult = c(0.1, 0.025))) 
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/fibvsmcp_top_activated_pathways_2.jpeg",
+       width = 27.5, height = 10, scale = 1)
+```
+
+### Z-Score Bar charts
+```{r echo = F, warning = F}
+# z-scores in bar charts
+fibvsmcp_neg_pathways_merged_long <- fibvsmcp_pathways_merged %>% 
+  filter(z < 0) %>%
+  head(10) %>%
+  pivot_longer(cols = c("z", "z_dapa", "z_placebo")) %>%
+  mutate(name = case_when(name == "z" ~ "DiD",
+                          name == "z_dapa" ~ "Dapagliflozin",
+                          name == "z_placebo" ~ "Placebo"),
+         w = case_when(name == "DiD" ~ 0.5,
+                       name == "Dapagliflozin" ~ 0.3,
+                       name == "Placebo" ~ 0.3),
+         a = case_when(name == "DiD" ~ 0.7,
+                       name == "Dapagliflozin" ~ 0.8,
+                       name == "Placebo" ~ 0.8))
+fibvsmcp_neg_pathways_merged_long$name <- factor(fibvsmcp_neg_pathways_merged_long$name, levels = c("DiD", "Placebo", "Dapagliflozin"))
+
+fibvsmcp_neg_pathways_merged_long %>%
+  mutate(pathway = factor(pathway, levels = unique(pathway))) %>%
+  ggplot(aes(x = pathway, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "identity",
+           aes(width=w, alpha = a)) +
+  scale_alpha_continuous(range = c(0.7, 0.8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.grid = element_blank(),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        plot.margin = margin(10, 10, 10, 12, unit = "pt")) +
+  scale_fill_manual(values = c("Placebo" = "#f28482",
+                               "Dapagliflozin" = "#669bbc",
+                               "DiD" = "#bb8588")) +
+  labs(y = "Z-score",
+      x = NULL,
+      fill = "Treatment",
+      title = "FIB/VSMC/P Top 10 Inhibited Pathways") +
+  guides(alpha = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Z score bar plots/fibvsmcp_top10_inhibited_pathway_zscores.jpeg",
+       scale = 1.5)
+
+fibvsmcp_pos_pathways_merged_long <- fibvsmcp_pathways_merged %>% 
+  filter(z > 0) %>%
+  head(10) %>%
+  pivot_longer(cols = c("z", "z_dapa", "z_placebo")) %>%
+  mutate(name = case_when(name == "z" ~ "DiD",
+                          name == "z_dapa" ~ "Dapagliflozin",
+                          name == "z_placebo" ~ "Placebo"),
+         w = case_when(name == "DiD" ~ 0.5,
+                       name == "Dapagliflozin" ~ 0.3,
+                       name == "Placebo" ~ 0.3),
+         a = case_when(name == "DiD" ~ 0.7,
+                       name == "Dapagliflozin" ~ 0.8,
+                       name == "Placebo" ~ 0.8))
+fibvsmcp_pos_pathways_merged_long$name <- factor(fibvsmcp_pos_pathways_merged_long$name, levels = c("DiD", "Placebo", "Dapagliflozin"))
+
+fibvsmcp_pos_pathways_merged_long
+fibvsmcp_pos_pathways_merged_long %>%
+  mutate(pathway = factor(pathway, levels = unique(pathway))) %>%
+  ggplot(aes(x = pathway, y = value, fill = name)) +
+  geom_bar(stat = "identity", position = "identity",
+           aes(width=w, alpha = a)) +
+  scale_alpha_continuous(range = c(0.7, 0.8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        panel.grid = element_blank(),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        plot.margin = margin(10, 10, 10, 10, unit = "pt")) +
+  scale_fill_manual(values = c("Placebo" = "#f28482",
+                               "Dapagliflozin" = "#669bbc",
+                               "DiD" = "#bb8588")) +
+  labs(y = "Z-score",
+      x = NULL,
+      fill = "Treatment",
+      title = "FIB/VSMC/P Top 10 Activated Pathways") +
+  guides(alpha = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")
+
+ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Z score bar plots/fibvsmcp_top10_activated_pathway_zscores.jpeg",
+       scale = 1.5)
+```
+
