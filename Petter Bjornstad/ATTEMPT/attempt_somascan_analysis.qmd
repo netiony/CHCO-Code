@@ -1,0 +1,288 @@
+---
+title: "ATTEMPT SOMA Scan Analysis"
+author: "Ye Ji Choi"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    embed-resources: true
+---
+
+```{r echo = F, include = F}
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(ensr)
+library(kableExtra)
+library(ggrepel)
+library(purrr)
+library(tidyverse)
+library(limma)
+library(arsenal)
+```
+
+```{r echo = F, include = F}
+# SOMA analytes names/info
+load("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Combined SomaScan/analytes_2.Rdata")
+```
+
+```{r echo = F}
+harm_dat_raw <- read.csv("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/soma_harmonized_dataset.csv", na.strings = "") 
+
+harm_dat <- harm_dat_raw %>%
+  filter(study == "ATTEMPT") %>%
+  dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+                   .by = c(record_id, visit)) %>%
+  mutate(visit = case_when(visit == "4_months_post" ~ "POST",
+                           visit == "baseline" ~ "PRE"),
+         record_id_visit = paste0(record_id, "_", visit),
+         treatment_arm = case_when(treatment_arm == "Placebo" ~ "Placebo",
+                                   T ~ "Dapagliflozin"))
+
+soma <- harm_dat %>%
+  filter(!is.na(seq.10000.28))
+
+```
+
+```{r echo = F, include = F}
+# volcano plot function
+plot_volcano <- function(data, p_col, title_suffix, x_axis, y_axis, p_thresh = 0.05) {
+  top_pos <- data %>%
+    filter(logFC > 0, !!sym(p_col) < p_thresh) %>%
+    arrange(!!sym(p_col)) %>%
+    head(20)
+
+  top_neg <- data %>%
+    filter(logFC < 0, !!sym(p_col) < p_thresh) %>%
+    arrange(!!sym(p_col)) %>%
+    head(20)
+
+  data <- data %>%
+    mutate(top_color = case_when(rownames(data) %in% rownames(top_pos) ~ "#f28482",
+                                 rownames(data) %in% rownames(top_neg) ~ "#457b9d",
+                                 TRUE ~ "#ced4da"),
+           top_size = if_else(rownames(data) %in% c(rownames(top_pos), rownames(top_neg)), 1.3, 1),
+           top_lab  = if_else(rownames(data) %in% c(rownames(top_pos), rownames(top_neg)), EntrezGeneSymbol, ""))
+
+  p <- ggplot(data, aes(x = logFC, y = -log10(!!sym(p_col)))) +
+    geom_hline(yintercept = -log10(p_thresh), linetype = "dashed", color = "darkgrey") +
+    geom_point(alpha = 0.5, aes(color = top_color, size = top_size)) +
+    geom_text_repel(aes(label = top_lab, color = top_color),
+                    size = 3, max.overlaps = Inf,
+                    force = 6, segment.alpha = 0.3, segment.size = 0.3) +
+    labs(title = paste(title_suffix),
+         x = paste(x_axis),
+         y = paste(y_axis)) +
+    scale_size_continuous(range = c(1, 1.3)) + 
+    scale_color_manual(values = c("#457b9d"="#457b9d", "#ced4da"="#ced4da", "#f28482"="#f28482")) +
+    theme_minimal() +
+    theme(legend.title = element_blank(),
+          panel.grid = element_blank(),
+          text = element_text(size = 15),
+          title = element_text(size = 9)) +
+    guides(color = "none", size = "none")
+  return(p)
+}
+```
+
+# SOMA
+
+```{r echo = F, results='asis'}
+summary(arsenal::tableby(visit ~ age + sex + bmi + diabetes_duration, 
+                         data = soma, strata = treatment_arm), test = F, 
+        labelTranslations = c("age" = "Age", "sex" = "Sex", "acr_u" = "UACR", "bmi" = "BMI", "diabetes_duration" = "Diabetes duration"))
+```
+
+## Placebo
+#### Top 20 DE
+```{r echo = F}
+# filter soma scan data to baseline data only and log transform
+soma_placebo <- soma %>%
+  filter(treatment_arm == "Placebo") 
+
+soma_placebo_filtered <- soma_placebo %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id_visit") %>%
+  dplyr::select(starts_with("seq"))
+
+y <- t(soma_placebo_filtered)
+y <- log2(y)
+
+# Design matrix
+cond = as.factor(soma_placebo$visit)
+design_mat <- model.matrix(~0 + visit, data = soma_placebo)
+colnames(design_mat) = gsub("visit","",colnames(design_mat))
+# Fit
+contrast = makeContrasts(contrasts = c("POST-PRE"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$EntrezGeneSymbol <- analytes_attempt$EntrezGeneSymbol[match(rownames(res), analytes_attempt$AptName)]
+res$TargetFullName <- analytes_attempt$TargetFullName[match(rownames(res), analytes_attempt$AptName)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+res_save <- res %>%
+  rownames_to_column("AptName") %>%
+  dplyr::select(-c(EntrezGeneSymbol, TargetFullName)) %>%
+  left_join(analytes_attempt, by = "AptName")
+```
+
+```{r echo = F}
+plot_volcano(res, "adj.P.Val",
+             "Placebo (PRE/POST DE)", 
+             "LogFC", 
+             "-log10(adj.p-value)")
+
+plot_volcano(res, "P.Value",
+             "Placebo (PRE/POST DE)", 
+             "LogFC", 
+             "-log10(p-value)")
+```
+
+## Dapagliflozin
+#### Top 20 DE
+```{r echo = F}
+# filter soma scan data to baseline data only and log transform
+soma_dapa <- soma %>%
+  filter(treatment_arm == "Dapagliflozin") 
+
+soma_dapa_filtered <- soma_dapa %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id_visit") %>%
+  dplyr::select(starts_with("seq"))
+
+y <- t(soma_dapa_filtered)
+y <- log2(y)
+
+# Design matrix
+cond = as.factor(soma_dapa$visit)
+design_mat <- model.matrix(~0 + visit, data = soma_dapa)
+colnames(design_mat) = gsub("visit","",colnames(design_mat))
+# Fit
+contrast = makeContrasts(contrasts = c("POST-PRE"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$EntrezGeneSymbol <- analytes_attempt$EntrezGeneSymbol[match(rownames(res), analytes_attempt$AptName)]
+res$TargetFullName <- analytes_attempt$TargetFullName[match(rownames(res), analytes_attempt$AptName)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+res_save <- res %>%
+  rownames_to_column("AptName") %>%
+  dplyr::select(-c(EntrezGeneSymbol, TargetFullName)) %>%
+  left_join(analytes_attempt, by = "AptName")
+```
+
+```{r echo = F}
+plot_volcano(res, "adj.P.Val",
+             "Dapagliflozin (PRE/POST DE)", 
+             "LogFC", 
+             "-log10(adj.p-value)")
+
+plot_volcano(res, "P.Value",
+             "Dapagliflozin (PRE/POST DE)", 
+             "LogFC", 
+             "-log10(p-value)")
+```
+## PRE (Placebo vs. Dapa)
+#### Top 20 DE
+```{r echo = F}
+# filter soma scan data to baseline data only and log transform
+soma_pre <- soma %>%
+  filter(visit == "PRE") 
+
+soma_pre_filtered <- soma_pre %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id_visit") %>%
+  dplyr::select(starts_with("seq"))
+
+y <- t(soma_pre_filtered)
+y <- log2(y)
+
+# Design matrix
+cond = as.factor(soma_pre$treatment_arm)
+design_mat <- model.matrix(~0 + treatment_arm, data = soma_pre)
+colnames(design_mat) = gsub("treatment_arm","",colnames(design_mat))
+# Fit
+contrast = makeContrasts(contrasts = c("Dapagliflozin-Placebo"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$EntrezGeneSymbol <- analytes_attempt$EntrezGeneSymbol[match(rownames(res), analytes_attempt$AptName)]
+res$TargetFullName <- analytes_attempt$TargetFullName[match(rownames(res), analytes_attempt$AptName)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+res_save <- res %>%
+  rownames_to_column("AptName") %>%
+  dplyr::select(-c(EntrezGeneSymbol, TargetFullName)) %>%
+  left_join(analytes_attempt, by = "AptName")
+```
+
+```{r echo = F}
+plot_volcano(res, "adj.P.Val",
+             "PRE (Placebo / Dapa DE)", 
+             "LogFC", 
+             "-log10(adj.p-value)")
+
+plot_volcano(res, "P.Value",
+             "PRE (Placebo / Dapa DE)", 
+             "LogFC", 
+             "-log10(p-value)")
+```
+## POST (Placebo vs. Dapa)
+#### Top 20 DE
+```{r echo = F}
+# filter soma scan data to baseline data only and log transform
+soma_post <- soma %>%
+  filter(visit == "POST") 
+
+soma_post_filtered <- soma_post %>% 
+  arrange(record_id) %>%
+  remove_rownames() %>% column_to_rownames(var = "record_id_visit") %>%
+  dplyr::select(starts_with("seq"))
+
+y <- t(soma_post_filtered)
+y <- log2(y)
+
+# Design matrix
+cond = as.factor(soma_post$treatment_arm)
+design_mat <- model.matrix(~0 + treatment_arm, data = soma_post)
+colnames(design_mat) = gsub("treatment_arm","",colnames(design_mat))
+# Fit
+contrast = makeContrasts(contrasts = c("Dapagliflozin-Placebo"), levels = design_mat)
+fit <- lmFit(y, design_mat)
+fit <- contrasts.fit(fit, contrasts = contrast)
+fit <- eBayes(fit)
+res <- topTable(fit, coef = 1, number = dim(y)[1], sort.by = "p")
+res$EntrezGeneSymbol <- analytes_attempt$EntrezGeneSymbol[match(rownames(res), analytes_attempt$AptName)]
+res$TargetFullName <- analytes_attempt$TargetFullName[match(rownames(res), analytes_attempt$AptName)]
+kbl(head(res, 50)) %>%
+  kable_paper() %>%
+  scroll_box(width = "100%", height = "500px")
+res_save <- res %>%
+  rownames_to_column("AptName") %>%
+  dplyr::select(-c(EntrezGeneSymbol, TargetFullName)) %>%
+  left_join(analytes_attempt, by = "AptName")
+```
+
+```{r echo = F}
+plot_volcano(res, "adj.P.Val",
+             "PRE (Placebo / Dapa DE)", 
+             "LogFC", 
+             "-log10(adj.p-value)")
+
+plot_volcano(res, "P.Value",
+             "PRE (Placebo / Dapa DE)", 
+             "LogFC", 
+             "-log10(p-value)")
+```
