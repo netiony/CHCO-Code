@@ -363,6 +363,7 @@ def clean_renal_heiritage():
     plasma_metab.replace(rep, np.nan, inplace=True)
     plasma_metab["procedure"] = "plasma_metab"
     plasma_metab["date"] = annual_labs["date"]
+    plasma_metab["visit"] = "baseline"
     
     # --------------------------------------------------------------------------
     # Brain biomarkers
