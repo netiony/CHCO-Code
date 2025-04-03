@@ -390,7 +390,7 @@ for (start_idx in seq(1, total_genes, by = batch_size)) {
     process_gene(i)
   }
   
-    # Stop the cluster
+  # Stop the cluster
   stopCluster(cl)
   
   # Store batch results
@@ -1125,10 +1125,11 @@ dev.off()
 #### ii. EC-AVR
 ```{r}
 #EC-AVR
-so_celltype <- subset(so_filtered,KPMP_celltype=="EC-AVR")
+so_celltype <- subset(so_kpmp_sc,KPMP_celltype=="EC-AVR")
 # Extract the gene expression data for all genes
 gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
-
+ncol(so_celltype) #3262 cells
+nrow(so_celltype) #9276 genes
 #Assign gene names as rownames, cell names as colnames
 # rownames(gene_expression) <- rownames(so_celltype) #Gene Names
 # colnames(gene_expression) <- colnames(so_celltype) #Cell Names
@@ -1157,12 +1158,20 @@ data_subset <- data %>%
   filter(medication=="no_med")
 
 data_subset$group <- factor(data_subset$group)
-
-#Log transform gene expression
+data_subset$group <- relevel(data_subset$group,ref="Lean_Control")
 data_subset <- data_subset %>% 
-  mutate(across(all_of(gene_list),~log2(.+1)))
+  dplyr::select(c("kit_id","group","age","sex","bmi",all_of(gene_list)))
 
-full_results <- data.frame()
+# #Gene Set
+gene_list_total <- gene_list
+# gene_list <- gene_list_total[1:10]
+
+# Define the number of cores to use
+num_cores <- detectCores() - 1  # Use one less than the total available cores
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+gene_list <- gene_list_total
 
 # Total number of genes
 total_genes <- length(gene_list)
@@ -1173,105 +1182,173 @@ batch_size <- round(total_genes / 5)
 # Simulate a vector of genes (replace this with your actual gene data)
 genes <- 1:total_genes
 
-# Loop through the genes in batches
-for (i in seq(1, total_genes, by = batch_size)) {
+# Run the loop in parallel
+results_list <- foreach(i = seq(1, total_genes, by = batch_size), .combine = rbind, .packages = c("glmmTMB")) %dopar% {
   
-  # Get the current batch (subsetting the gene vector)
+  batch_results <- list()  # Store results as a list to avoid repeated rbind
+  
   batch <- genes[i:min(i + batch_size - 1, total_genes)]
-  for (gene in gene_list[batch]) { #tester genes
-    if (sum(data_subset[[gene]])>0) {
-      # m0 <- as.formula(paste0(gene," ~ group + (1 | kit_id)"))
-      # model <- lmer(m0,data=data_subset)
-      #Adjust for key covariates
-      m1 <- as.formula(paste0(gene," ~ group + age + sex + bmi + (1 | kit_id)"))
-      model1 <- lmer(m1,data=data_subset)
+  
+  for (gene in gene_list[batch]) { 
+    if (sum(data_subset[[gene]]) > 0) {
+      # Adjust for key covariates
+      m1 <- as.formula(paste0(gene, " ~ group + age + sex + bmi + (1 | kit_id)"))
+      # model1 <- glmmTMB(m1, data = data_subset, family = gaussian, ziformula = ~1)
       
-      # # Plot residuals vs fitted values
-      # residuals <- residuals(model1)
-      # fitted_values <- fitted(model1)
-      # 
-      # plot(fitted_values, residuals)
-      # abline(h = 0, col = "red")
-      # 
-      # # Histogram of residuals
-      # hist(residuals, main = "Histogram of Residuals", xlab = "Residuals", col = "lightblue", border = "black")
-      # 
-      # # Q-Q plot for normality
-      # qqnorm(residuals)
-      # qqline(residuals, col = "red")
-      
-      # beta <- round(summary(model)$coef[2,1],3)
-      # pval <-round(summary(model)$coef[2,5],5)
-      beta1 <- round(summary(model1)$coef[2,1],3)
-      pval1 <-round(summary(model1)$coef[2,5],5)
+      # Safe model fitting with error handling
+      model1 <- tryCatch({
+        glmmTMB(m1, data = data_subset, family = gaussian, ziformula = ~1)
+      }, error = function(e) {
+        NULL  # Return NULL if the model fails
+      })
+      if (!is.null(model1)) {
+        Beta <- summary(model1)$coef$cond[2,1]
+        PValue <- summary(model1)$coef$cond[2,4]
+        zi <- summary(model1)$coef$zi[1,1]
+        zi_pval <- summary(model1)$coef$zi[1,4]
+      } else {
+        Beta <- NA
+        PValue <- NA
+        zi <- NA
+        zi_pval <- NA
+      }
     } else {
-      beta1 <- NA
-      pval1 <- NA
+        Beta <- NA
+        PValue <- NA
+        zi <- NA
+        zi_pval <- NA
     }
-    result <- data.frame(Gene=gene,Beta=beta1,PValue=pval1)
-    full_results <- rbind(full_results,result)
+    
+    # Store results as a proper data frame with named columns
+    batch_results[[length(batch_results) + 1]] <- data.frame(
+      Gene = gene,
+      Beta = Beta,
+      PValue = PValue,
+      ZI_Intercept = zi,
+      ZI_PValue = zi_pval,
+      stringsAsFactors = FALSE
+    )
   }
+  
+  # Combine batch results before returning
+  do.call(rbind, batch_results)
 }
+
+# Combine results from all parallel batches
+full_results <- t(do.call(rbind, results_list))
+
+# Stop the cluster
+stopCluster(cl)
+
+# View results
+full_results <- data.frame(full_results)
+View(full_results)
+length(which(is.na(full_results$Beta))) #47 NAs in Beta
+length(which(full_results$Beta=="NaN")) #0 NaNs in Beta
+length(which(is.na(full_results$PValue))) #47 NAs in Pvalue
+length(which(full_results$PValue=="NaN")) #4802 NaNs in Pvalue
+Nonconvergence_Rate <- paste0(round(((length(which(is.na(full_results2$PValue)))+length(which(full_results2$PValue=="NaN")))/length(full_results2$Gene))*100,0),"%")
+# write.csv(full_results2,fs::path(dir.results,"EC_AVR_T2D_HC_No_Med.csv"))
+# full_results <- read.csv(fs::path(dir.results,"EC_AVR_T2D_HC_No_Med.csv"))
+
 # #Make volcano plot of all gene results for group
+# Ensure Beta and PValue10 are numeric
+full_results <- full_results2 %>%
+  mutate(
+    Beta = as.numeric(Beta),
+    PValue10 = as.numeric(PValue10)
+  ) %>%
+  filter(!is.na(Beta), !is.na(PValue10))   # Remove NA values
+    # dplyr::select(c("Gene","Beta","FoldChange","PValue10","color"))
+
 full_results <- full_results %>%
-  mutate(fdr=p.adjust(PValue,method="fdr"))
-full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
+  mutate(fdr=p.adjust(PValue,method="fdr"))  
+  # mutate(across(everything(),~ifelse(.=="NaN",NA,.))) %>% 
+  # mutate(PValue=as.numeric(PValue))
+# full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
+full_results$PValue10 <- ifelse(is.na(full_results$PValue), NA, -log10(pmax(full_results$PValue, 1e-10)))
+full_results <- full_results %>%
+  mutate(FoldChange=2^as.numeric(Beta)-1)  
 
-
-write.csv(full_results,fs::path(dir.results,"EC_AVR_T2D_HC_No_Med.csv"))
+# write.csv(full_results,fs::path(dir.results,"EC_AVR_T2D_HC_No_Med.csv"))
 # full_results <- read.csv(fs::path(dir.results,"EC_AVR_T2D_HC_No_Med.csv"))
 
 # }
 # Add a column to determine color based on the sign of the beta
 # Create a new color column based on beta sign and FDR threshold
-full_results$color <- ifelse(full_results$fdr < 0.2 & full_results$Beta > 0, "lightcoral",
-                             ifelse(full_results$fdr < 0.2 & full_results$Beta < 0, "lightblue", "gray"))
+full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$Beta > 0, "lightcoral",
+                             ifelse(full_results$fdr < 0.05 & full_results$Beta < 0, "lightblue", "gray"))
 
 # Identify significant points (fdr < 0.05)
-significant_df <- full_results[full_results$fdr < 0.2, ]
+significant_df <- full_results[full_results$fdr < 0.05, ]
 # full_results$color <- ifelse(full_results$PValue < 0.05 & full_results$Beta > 0, "red", 
 #                              ifelse(full_results$PValue < 0.05 & full_results$Beta < 0, "blue", "gray"))
-# 
+
+  
+# full_results$Beta <- as.numeric(full_results$Beta)
+# full_results$Beta <- ifelse(full_results$Beta=="NA",NA,full_results$Beta)
 # # Identify significant points (PValue < 0.05)
 # significant_df <- full_results[full_results$PValue < 0.05, ]
 
+# Create the volcano plot using ggplot
+Genes <- length(unique(full_results$Gene))
+Cells <- ncol(so_celltype)
+
+# plot_results <- full_results %>% 
+#   filter(!is.na(PValue10)) %>% 
+#   filter(!is.na(Beta)) %>% 
+#   filter(!is.na(PValue)) %>% 
+#   dplyr::select(c("Gene","Beta","PValue10","color"))
+
+# # Ensure Beta and PValue10 are numeric
+# plot_results <- full_results %>%
+#   mutate(
+#     Beta = as.numeric(Beta),
+#     PValue10 = as.numeric(PValue10)
+#   ) %>%
+#   filter(!is.na(Beta), !is.na(PValue10)) %>%   # Remove NA values
+#     dplyr::select(c("Gene","Beta","FoldChange","PValue10","color"))
+
+Nonconvergence <- 
 # Create the volcano plot using ggplot
 volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color)) +
   geom_point(alpha = 0.7) +  # Plot points with transparency
   scale_color_identity() +  # Use the color column directly
   theme_minimal() +  # Minimal theme
   labs(
-    title = "EC-AVR Cells: Lean Controls vs. Type 2 Diabetes (No Medication)",
-    subtitle = "Adjusted for Age, Sex, & BMI",
-    x = "Log2FC",
+    title = "Type 2 Diabetes vs. Lean Controls (All No Medication)",
+    subtitle = "EC-AVR, Adjusted for Age, Sex & BMI",
+    x = "Beta",
     y = "-log10(P-Value)",
-    color = "Beta Direction",
-    caption = "Positive Beta = Upregulation in T2D vs. LC, Negative Beta = Downregulation in T2D vs. LC \n Signficance threshold: FDR < 0.2"
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,"; Non-convergence Rate: ",Nonconvergence_Rate)
   ) +
-  # Add a horizontal line at -log10(0.05) ≈ 1.3 (FDR threshold)
-  # geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "red", linewidth = 1) +
+  # xlim(-20,7)+
   theme(
     plot.title = element_text(hjust = 0),
     axis.text.x = element_text(angle = 45, hjust = 1)
   )+
   # # Add labels for significant points
-  # geom_text(data = significant_df, aes(label = gene), 
-  #           vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
-  # Add labels for significant points with ggrepel
-  geom_text_repel(data = significant_df, aes(label = Gene),
-                  size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+  geom_text(data = significant_df, aes(label = Gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
 
-pdf(fs::path(dir.results,"Plot_EC_AVR_T2D_HC_No_Med.pdf"),width=10,height=7)
+volcano_plot
+
+pdf(fs::path(dir.results,"Plot_EC_AVR_T2D_HC_No_Med.pdf"),width=15,height=10)
 print(volcano_plot)
 dev.off()
 ```
 #### iii. EC-GC
 ```{r}
 #EC-GC
-so_celltype <- subset(so_filtered,KPMP_celltype=="EC-GC")
+so_celltype <- subset(so_kpmp_sc,KPMP_celltype=="EC-GC")
 # Extract the gene expression data for all genes
 gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
-
+ncol(so_celltype) #3262 cells
+nrow(so_celltype) #9276 genes
 #Assign gene names as rownames, cell names as colnames
 # rownames(gene_expression) <- rownames(so_celltype) #Gene Names
 # colnames(gene_expression) <- colnames(so_celltype) #Cell Names
@@ -1300,12 +1377,20 @@ data_subset <- data %>%
   filter(medication=="no_med")
 
 data_subset$group <- factor(data_subset$group)
-
-#Log transform gene expression
+data_subset$group <- relevel(data_subset$group,ref="Lean_Control")
 data_subset <- data_subset %>% 
-  mutate(across(all_of(gene_list),~log2(.+1)))
+  dplyr::select(c("kit_id","group","age","sex","bmi",all_of(gene_list)))
 
-full_results <- data.frame()
+# #Gene Set
+gene_list_total <- gene_list
+# gene_list <- gene_list_total[1:10]
+
+# Define the number of cores to use
+num_cores <- detectCores() - 1  # Use one less than the total available cores
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+gene_list <- gene_list_total
 
 # Total number of genes
 total_genes <- length(gene_list)
@@ -1316,67 +1401,132 @@ batch_size <- round(total_genes / 5)
 # Simulate a vector of genes (replace this with your actual gene data)
 genes <- 1:total_genes
 
-# Loop through the genes in batches
-for (i in seq(1, total_genes, by = batch_size)) {
+# Run the loop in parallel
+results_list <- foreach(i = seq(1, total_genes, by = batch_size), .combine = rbind, .packages = c("glmmTMB")) %dopar% {
   
-  # Get the current batch (subsetting the gene vector)
+  batch_results <- list()  # Store results as a list to avoid repeated rbind
+  
   batch <- genes[i:min(i + batch_size - 1, total_genes)]
-  for (gene in gene_list[batch]) { #tester genes
-    if (sum(data_subset[[gene]])>0) {
-      # m0 <- as.formula(paste0(gene," ~ group + (1 | kit_id)"))
-      # model <- lmer(m0,data=data_subset)
-      #Adjust for key covariates
-      m1 <- as.formula(paste0(gene," ~ group + age + sex + bmi + (1 | kit_id)"))
-      model1 <- lmer(m1,data=data_subset)
+  
+  for (gene in gene_list[batch]) { 
+    if (sum(data_subset[[gene]]) > 0) {
+      # Adjust for key covariates
+      m1 <- as.formula(paste0(gene, " ~ group + age + sex + bmi + (1 | kit_id)"))
+      # model1 <- glmmTMB(m1, data = data_subset, family = gaussian, ziformula = ~1)
       
-      # # Plot residuals vs fitted values
-      # residuals <- residuals(model1)
-      # fitted_values <- fitted(model1)
-      # 
-      # plot(fitted_values, residuals)
-      # abline(h = 0, col = "red")
-      # 
-      # # Histogram of residuals
-      # hist(residuals, main = "Histogram of Residuals", xlab = "Residuals", col = "lightblue", border = "black")
-      # 
-      # # Q-Q plot for normality
-      # qqnorm(residuals)
-      # qqline(residuals, col = "red")
-      
-      # beta <- round(summary(model)$coef[2,1],3)
-      # pval <-round(summary(model)$coef[2,5],5)
-      beta1 <- round(summary(model1)$coef[2,1],3)
-      pval1 <-round(summary(model1)$coef[2,5],5)
+      # Safe model fitting with error handling
+      model1 <- tryCatch({
+        glmmTMB(m1, data = data_subset, family = gaussian, ziformula = ~1)
+      }, error = function(e) {
+        NULL  # Return NULL if the model fails
+      })
+      if (!is.null(model1)) {
+        Beta <- summary(model1)$coef$cond[2,1]
+        PValue <- summary(model1)$coef$cond[2,4]
+        zi <- summary(model1)$coef$zi[1,1]
+        zi_pval <- summary(model1)$coef$zi[1,4]
+      } else {
+        Beta <- NA
+        PValue <- NA
+        zi <- NA
+        zi_pval <- NA
+      }
     } else {
-      beta1 <- NA
-      pval1 <- NA
+        Beta <- NA
+        PValue <- NA
+        zi <- NA
+        zi_pval <- NA
     }
-    result <- data.frame(Gene=gene,Beta=beta1,PValue=pval1)
-    full_results <- rbind(full_results,result)
+    
+    # Store results as a proper data frame with named columns
+    batch_results[[length(batch_results) + 1]] <- data.frame(
+      Gene = gene,
+      Beta = Beta,
+      PValue = PValue,
+      ZI_Intercept = zi,
+      ZI_PValue = zi_pval,
+      stringsAsFactors = FALSE
+    )
   }
+  
+  # Combine batch results before returning
+  do.call(rbind, batch_results)
 }
+
+# Combine results from all parallel batches
+full_results <- t(do.call(rbind, results_list))
+
+# Stop the cluster
+stopCluster(cl)
+
+# View results
+full_results <- data.frame(full_results)
+View(full_results)
+length(which(is.na(full_results$Beta))) #47 NAs in Beta
+length(which(full_results$Beta=="NaN")) #0 NaNs in Beta
+length(which(is.na(full_results$PValue))) #47 NAs in Pvalue
+length(which(full_results$PValue=="NaN")) #4802 NaNs in Pvalue
+Nonconvergence_Rate <- paste0(round(((length(which(is.na(full_results$PValue)))+length(which(full_results$PValue=="NaN")))/length(full_results$Gene))*100,0),"%")
+write.csv(full_results2,fs::path(dir.results,"EC_GC_T2D_HC_No_Med.csv"))
+# full_results <- read.csv(fs::path(dir.results,"EC_GC_T2D_HC_No_Med.csv"))
+
 # #Make volcano plot of all gene results for group
+# Ensure Beta and PValue10 are numeric
+full_results <- full_results2 %>%
+  mutate(
+    Beta = as.numeric(Beta),
+    PValue10 = as.numeric(PValue10)
+  ) %>%
+  filter(!is.na(Beta), !is.na(PValue10))   # Remove NA values
+    # dplyr::select(c("Gene","Beta","FoldChange","PValue10","color"))
+
 full_results <- full_results %>%
-  mutate(fdr=p.adjust(PValue,method="fdr"))
-full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
+  mutate(fdr=p.adjust(PValue,method="fdr"))  
+  # mutate(across(everything(),~ifelse(.=="NaN",NA,.))) %>% 
+  # mutate(PValue=as.numeric(PValue))
+# full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
+full_results$PValue10 <- ifelse(is.na(full_results$PValue), NA, -log10(pmax(full_results$PValue, 1e-10)))
+full_results <- full_results %>%
+  mutate(FoldChange=2^as.numeric(Beta)-1)  
 
-
-write.csv(full_results,fs::path(dir.results,"EC_GC_T2D_HC_No_Med.csv"))
+# write.csv(full_results,fs::path(dir.results,"EC_GC_T2D_HC_No_Med.csv"))
 # full_results <- read.csv(fs::path(dir.results,"EC_GC_T2D_HC_No_Med.csv"))
 
 # }
 # Add a column to determine color based on the sign of the beta
 # Create a new color column based on beta sign and FDR threshold
-full_results$color <- ifelse(full_results$fdr < 0.2 & full_results$Beta > 0, "lightcoral",
-                             ifelse(full_results$fdr < 0.2 & full_results$Beta < 0, "lightblue", "gray"))
+full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$Beta > 0, "lightcoral",
+                             ifelse(full_results$fdr < 0.05 & full_results$Beta < 0, "lightblue", "gray"))
 
 # Identify significant points (fdr < 0.05)
-significant_df <- full_results[full_results$fdr < 0.2, ]
+significant_df <- full_results[full_results$fdr < 0.05, ]
 # full_results$color <- ifelse(full_results$PValue < 0.05 & full_results$Beta > 0, "red", 
 #                              ifelse(full_results$PValue < 0.05 & full_results$Beta < 0, "blue", "gray"))
-# 
+
+  
+# full_results$Beta <- as.numeric(full_results$Beta)
+# full_results$Beta <- ifelse(full_results$Beta=="NA",NA,full_results$Beta)
 # # Identify significant points (PValue < 0.05)
 # significant_df <- full_results[full_results$PValue < 0.05, ]
+
+# Create the volcano plot using ggplot
+Genes <- length(unique(full_results$Gene))
+Cells <- ncol(so_celltype)
+
+# plot_results <- full_results %>% 
+#   filter(!is.na(PValue10)) %>% 
+#   filter(!is.na(Beta)) %>% 
+#   filter(!is.na(PValue)) %>% 
+#   dplyr::select(c("Gene","Beta","PValue10","color"))
+
+# # Ensure Beta and PValue10 are numeric
+# plot_results <- full_results %>%
+#   mutate(
+#     Beta = as.numeric(Beta),
+#     PValue10 = as.numeric(PValue10)
+#   ) %>%
+#   filter(!is.na(Beta), !is.na(PValue10)) %>%   # Remove NA values
+#     dplyr::select(c("Gene","Beta","FoldChange","PValue10","color"))
 
 # Create the volcano plot using ggplot
 volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color)) +
@@ -1384,31 +1534,249 @@ volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color))
   scale_color_identity() +  # Use the color column directly
   theme_minimal() +  # Minimal theme
   labs(
-    title = "EC-GC Cells: Lean Controls vs. Type 2 Diabetes (No Medication)",
-    subtitle = "Adjusted for Age, Sex, & BMI",
-    x = "Log2FC",
+    title = "Type 2 Diabetes vs. Lean Controls (All No Medication)",
+    subtitle = "EC-GC, Adjusted for Age, Sex & BMI",
+    x = "Beta",
     y = "-log10(P-Value)",
-    color = "Beta Direction",
-    caption = "Positive Beta = Upregulation in T2D vs. LC, Negative Beta = Downregulation in T2D vs. LC \n Signficance threshold: FDR < 0.2"
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,"; Non-convergence Rate: ",Nonconvergence_Rate)
   ) +
-  # Add a horizontal line at -log10(0.05) ≈ 1.3 (FDR threshold)
-  # geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "red", linewidth = 1) +
+  # xlim(-20,7)+
   theme(
     plot.title = element_text(hjust = 0),
     axis.text.x = element_text(angle = 45, hjust = 1)
   )+
   # # Add labels for significant points
-  # geom_text(data = significant_df, aes(label = gene), 
-  #           vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
-  # Add labels for significant points with ggrepel
-  geom_text_repel(data = significant_df, aes(label = Gene),
-                  size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+  geom_text(data = significant_df, aes(label = Gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
 
-pdf(fs::path(dir.results,"Plot_EC_GC_T2D_HC_No_Med.pdf"),width=10,height=7)
+volcano_plot
+
+pdf(fs::path(dir.results,"Plot_EC_GC_T2D_HC_No_Med.pdf"),width=15,height=10)
 print(volcano_plot)
 dev.off()
 ```
 #### iv. EC-PTC
+```{r}
+#EC-PTC
+so_celltype <- subset(so_kpmp_sc,KPMP_celltype=="EC-PTC")
+# Extract the gene expression data for all genes
+gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
+ncol(so_celltype) #3262 cells
+nrow(so_celltype) #9276 genes
+#Assign gene names as rownames, cell names as colnames
+# rownames(gene_expression) <- rownames(so_celltype) #Gene Names
+# colnames(gene_expression) <- colnames(so_celltype) #Cell Names
+#Transpose gene expression dataset to merge with metadata
+gene_expression <- t(gene_expression)
+gene_expression <- data.frame(gene_expression) #Make a dataframe again after transposing
+#Set gene list
+gene_list <- colnames(gene_expression)
+gene_expression$cellname <- rownames(gene_expression) 
+rownames(gene_expression) <- NULL
+
+# Extract the metadata
+metadata <- so_celltype@meta.data
+# metadata <- metadata %>%
+#   mutate(across(everything(),~ifelse(.==".",NA,.)))
+metadata$cellname <- rownames(metadata)
+rownames(metadata) <- NULL
+
+# Combine the gene expression data and metadata
+data <- tidylog::full_join(metadata,gene_expression,by="cellname")
+rm(metadata,gene_expression)
+
+#Compare Health Controls to Type 2 Diabetes on no meds
+data_subset <- data %>%
+  filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
+  filter(medication=="no_med")
+
+data_subset$group <- factor(data_subset$group)
+data_subset$group <- relevel(data_subset$group,ref="Lean_Control")
+data_subset <- data_subset %>% 
+  dplyr::select(c("kit_id","group","age","sex","bmi",all_of(gene_list)))
+
+# #Gene Set
+gene_list_total <- gene_list
+# gene_list <- gene_list_total[1:10]
+
+# Define the number of cores to use
+num_cores <- detectCores() - 1  # Use one less than the total available cores
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+gene_list <- gene_list_total
+
+# Total number of genes
+total_genes <- length(gene_list)
+
+# Calculate the batch size
+batch_size <- round(total_genes / 5)
+
+# Simulate a vector of genes (replace this with your actual gene data)
+genes <- 1:total_genes
+
+# Run the loop in parallel
+results_list <- foreach(i = seq(1, total_genes, by = batch_size), .combine = rbind, .packages = c("glmmTMB")) %dopar% {
+  
+  batch_results <- list()  # Store results as a list to avoid repeated rbind
+  
+  batch <- genes[i:min(i + batch_size - 1, total_genes)]
+  
+  for (gene in gene_list[batch]) { 
+    if (sum(data_subset[[gene]]) > 0) {
+      # Adjust for key covariates
+      m1 <- as.formula(paste0(gene, " ~ group + age + sex + bmi + (1 | kit_id)"))
+      # model1 <- glmmTMB(m1, data = data_subset, family = gaussian, ziformula = ~1)
+      
+      # Safe model fitting with error handling
+      model1 <- tryCatch({
+        glmmTMB(m1, data = data_subset, family = gaussian, ziformula = ~1)
+      }, error = function(e) {
+        NULL  # Return NULL if the model fails
+      })
+      if (!is.null(model1)) {
+        Beta <- summary(model1)$coef$cond[2,1]
+        PValue <- summary(model1)$coef$cond[2,4]
+        zi <- summary(model1)$coef$zi[1,1]
+        zi_pval <- summary(model1)$coef$zi[1,4]
+      } else {
+        Beta <- NA
+        PValue <- NA
+        zi <- NA
+        zi_pval <- NA
+      }
+    } else {
+        Beta <- NA
+        PValue <- NA
+        zi <- NA
+        zi_pval <- NA
+    }
+    
+    # Store results as a proper data frame with named columns
+    batch_results[[length(batch_results) + 1]] <- data.frame(
+      Gene = gene,
+      Beta = Beta,
+      PValue = PValue,
+      ZI_Intercept = zi,
+      ZI_PValue = zi_pval,
+      stringsAsFactors = FALSE
+    )
+  }
+  
+  # Combine batch results before returning
+  do.call(rbind, batch_results)
+}
+
+# Combine results from all parallel batches
+full_results <- t(do.call(rbind, results_list))
+
+# Stop the cluster
+stopCluster(cl)
+
+# View results
+full_results <- data.frame(full_results)
+View(full_results)
+length(which(is.na(full_results$Beta))) #47 NAs in Beta
+length(which(full_results$Beta=="NaN")) #0 NaNs in Beta
+length(which(is.na(full_results$PValue))) #47 NAs in Pvalue
+length(which(full_results$PValue=="NaN")) #4802 NaNs in Pvalue
+Nonconvergence_Rate <- paste0(round(((length(which(is.na(full_results$PValue)))+length(which(full_results$PValue=="NaN")))/length(full_results$Gene))*100,0),"%")
+write.csv(full_results2,fs::path(dir.results,"EC_PTC_T2D_HC_No_Med.csv"))
+# full_results <- read.csv(fs::path(dir.results,"EC_PTC_T2D_HC_No_Med.csv"))
+
+# #Make volcano plot of all gene results for group
+# Ensure Beta and PValue10 are numeric
+full_results <- full_results2 %>%
+  mutate(
+    Beta = as.numeric(Beta),
+    PValue10 = as.numeric(PValue10)
+  ) %>%
+  filter(!is.na(Beta), !is.na(PValue10))   # Remove NA values
+    # dplyr::select(c("Gene","Beta","FoldChange","PValue10","color"))
+
+full_results <- full_results %>%
+  mutate(fdr=p.adjust(PValue,method="fdr"))  
+  # mutate(across(everything(),~ifelse(.=="NaN",NA,.))) %>% 
+  # mutate(PValue=as.numeric(PValue))
+# full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
+full_results$PValue10 <- ifelse(is.na(full_results$PValue), NA, -log10(pmax(full_results$PValue, 1e-10)))
+full_results <- full_results %>%
+  mutate(FoldChange=2^as.numeric(Beta)-1)  
+
+# write.csv(full_results,fs::path(dir.results,"EC_PTC_T2D_HC_No_Med.csv"))
+# full_results <- read.csv(fs::path(dir.results,"EC_PTC_T2D_HC_No_Med.csv"))
+
+# }
+# Add a column to determine color based on the sign of the beta
+# Create a new color column based on beta sign and FDR threshold
+full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$Beta > 0, "lightcoral",
+                             ifelse(full_results$fdr < 0.05 & full_results$Beta < 0, "lightblue", "gray"))
+
+# Identify significant points (fdr < 0.05)
+significant_df <- full_results[full_results$fdr < 0.05, ]
+# full_results$color <- ifelse(full_results$PValue < 0.05 & full_results$Beta > 0, "red", 
+#                              ifelse(full_results$PValue < 0.05 & full_results$Beta < 0, "blue", "gray"))
+
+  
+# full_results$Beta <- as.numeric(full_results$Beta)
+# full_results$Beta <- ifelse(full_results$Beta=="NA",NA,full_results$Beta)
+# # Identify significant points (PValue < 0.05)
+# significant_df <- full_results[full_results$PValue < 0.05, ]
+
+# Create the volcano plot using ggplot
+Genes <- length(unique(full_results$Gene))
+Cells <- ncol(so_celltype)
+
+# plot_results <- full_results %>% 
+#   filter(!is.na(PValue10)) %>% 
+#   filter(!is.na(Beta)) %>% 
+#   filter(!is.na(PValue)) %>% 
+#   dplyr::select(c("Gene","Beta","PValue10","color"))
+
+# # Ensure Beta and PValue10 are numeric
+# plot_results <- full_results %>%
+#   mutate(
+#     Beta = as.numeric(Beta),
+#     PValue10 = as.numeric(PValue10)
+#   ) %>%
+#   filter(!is.na(Beta), !is.na(PValue10)) %>%   # Remove NA values
+#     dplyr::select(c("Gene","Beta","FoldChange","PValue10","color"))
+
+# Create the volcano plot using ggplot
+volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color)) +
+  geom_point(alpha = 0.7) +  # Plot points with transparency
+  scale_color_identity() +  # Use the color column directly
+  theme_minimal() +  # Minimal theme
+  labs(
+    title = "Type 2 Diabetes vs. Lean Controls (All No Medication)",
+    subtitle = "EC-PTC, Adjusted for Age, Sex & BMI",
+    x = "Beta",
+    y = "-log10(P-Value)",
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,"; Non-convergence Rate: ",Nonconvergence_Rate)
+  ) +
+  # xlim(-20,7)+
+  theme(
+    plot.title = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )+
+  # # Add labels for significant points
+  geom_text(data = significant_df, aes(label = Gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+
+volcano_plot
+
+pdf(fs::path(dir.results,"Plot_EC_PTC_T2D_HC_No_Med.pdf"),width=15,height=10)
+print(volcano_plot)
+dev.off()
+```
 #### v. EC-AEA
 ## c. TAL
 ## d. Podocytes
