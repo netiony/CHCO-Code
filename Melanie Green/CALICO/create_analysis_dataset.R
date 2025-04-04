@@ -25,6 +25,8 @@ clinic <- exportReportsTyped(rcon,
   report_id = 131533, warn_zero_coded = F,
   na = list(number = isMissingSpecial, radio = isMissingSpecial)
 )
+# Diagnostic visits are 0 months since diagnosis
+clinic$cv_monthssincepcosdx[clinic$cv_visittype == "Diagnostic Visit"] <- 0
 # Completed  entries only, drop some columns
 history <- history %>%
   filter(history_complete == "Complete") %>%
