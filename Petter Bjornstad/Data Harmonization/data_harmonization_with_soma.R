@@ -12,11 +12,16 @@ clean[clean == ""] <- NA
 
 # ATTEMPT from Antoine
 load(file = "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/ATTEMPT_AC.RData")
+names(merged_data)[names(merged_data) %in% names(clean)]
 attempt <- merged_data %>%
-  select(record_id, visit, date, treatment_arm, sex, diabetes_dx_duration) %>%
-  mutate(date = as.character(as.POSIXct(date, origin = "1970-01-01", tz = "UTC")),
-         group = "Type 1 Diabetes",
-         study = "ATTEMPT")
+  mutate(group = "Type 1 Diabetes",
+         study = "ATTEMPT",
+         diabetes_duration = diabetes_dx_duration,
+         procedure = "attempt_visit") %>%
+  select(names(merged_data)[names(merged_data) %in% names(clean)], group, study, PWV, treatment_arm, diabetes_duration, procedure, -diabetes_dx_duration)
+attempt[] <- lapply(attempt, function(x) {
+  if (is.numeric(x)) as.character(x) else x
+})
 
 # Create screen_date (screening date for each participant or earliest date available)
 clean <- clean %>%

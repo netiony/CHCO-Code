@@ -6,6 +6,8 @@ library(tidyverse)
 attempt_file = "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Raw/ATTEMPT_AnalyticalDatasets_Denver.xlsx"
 attempt_mri_file = "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Raw/ATTEMPT_MRI_SK_LHSC_TorontoLondon.csv"
 attempt_mri_labs_file = "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Raw/ATTEMPT_MRI_HCT_SBP_TorontoLondon.csv"
+# attempt data from Antoine on 3/14/25 after SOMAScan results
+attempt_031425_raw <- read.csv("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Raw/ATTEMPT_DenverDataRequest_20250314.csv")
 
 # non-Denver data formatting to match
 attempt_mri <- read.csv(attempt_mri_file) %>%
@@ -19,6 +21,24 @@ attempt_mri <- read.csv(attempt_mri_file) %>%
 attempt_mri_labs <- read.csv(attempt_mri_labs_file) %>%
   dplyr::mutate(mri_date = as.Date(mri_date, format = "%m/%d/%y"),
                 date_visit = as.Date(date_visit, format = "%m/%d/%y"))
+attempt_031425 <- attempt_031425_raw %>%
+  dplyr::mutate(date_visit = as.Date(date_visit, format = "%m/%d/%y"),
+                urine24h_start_date = as.Date(urine24h_start_date, format = "%m/%d/%y"),
+                urine24h_stop_date = as.Date(urine24h_stop_date, format = "%m/%d/%y"),
+                target_glucose_low_mmoll = case_when(grepl("<", target_glucose_low_mmoll) ~ "5",
+                                                     T ~ target_glucose_low_mmoll),
+                target_glucose_low_mmoll = as.numeric(target_glucose_low_mmoll),
+                target_glucose_high_mmoll = case_when(grepl("<", target_glucose_high_mmoll) ~ "5",
+                                                     T ~ target_glucose_high_mmoll),
+                target_glucose_high_mmoll = as.numeric(target_glucose_high_mmoll),
+                emu_1_albumin_mgl = as.character(emu_1_albumin_mgl),
+                emu_2_albumin_mgl = as.character(emu_2_albumin_mgl),
+                emu_3_albumin_mgl = as.character(emu_3_albumin_mgl),
+                emu_1_acr_mgmmol = as.character(emu_1_acr_mgmmol),
+                emu_2_acr_mgmmol = as.character(emu_2_acr_mgmmol),
+                emu_3_acr_mgmmol = as.character(emu_3_acr_mgmmol),
+                emu_urine_acr_mean_pooled = as.character(emu_urine_acr_mean_pooled),
+                emu_urine_acr_mean = as.character(emu_urine_acr_mean))
 
 dict <- read_excel(attempt_file, sheet = "Data Dictionary", na = c("NA", "")) %>%
   dplyr::select(Variable_Name, Label) %>%
@@ -32,7 +52,15 @@ diabetesman <- read_excel(attempt_file, sheet = "ATTEMPT_DiabetesManagement", na
 glucosemon <- read_excel(attempt_file, sheet = "ATTEMPT_GlucoseMonitoring", na = c("NA", ""))
 urinelab <- read_excel(attempt_file, sheet = "ATTEMPT_LocalUrineLabs", na = c("NA", ""))
 urine_24h <- read_excel(attempt_file, sheet = "ATTEMPT_Urine24h", na = c("NA", "")) %>%
-  mutate(date_visit = urine24h_start_date)
+  mutate(date_visit = urine24h_start_date,
+         urine24h_start_time = format(urine24h_start_time, "%H:%M"),
+         urine24h_stop_time = format(urine24h_stop_time, "%H:%M"),
+         urine24h_volume_litres = case_when(urine24h_volume_litres == "UNK" ~ "",
+                                            T ~ urine24h_volume_litres),
+         urine24h_volume_litres = as.numeric(urine24h_volume_litres),
+         urine24h_volume_24h_litres = case_when(urine24h_volume_24h_litres == "UNK" ~ "",
+                                                T ~ urine24h_volume_24h_litres),
+         urine24h_volume_24h_litres = as.numeric(urine24h_volume_24h_litres))
 urineemu <- read_excel(attempt_file, sheet = "ATTEMPT_UrineEMU", na = c("NA", ""))
 bloodlab_local <- read_excel(attempt_file, sheet = "ATTEMPT_LocalBloodLabs", na = c("NA", ""))
 bloodlab_central <- read_excel(attempt_file, sheet = "ATTEMPT_CentralBloodLabs", na = c("NA", ""))
@@ -45,7 +73,7 @@ mri <- read_excel(attempt_file, sheet = "ATTEMPT_BoldMRI", na = c("NA", "")) %>%
 randomization <- read_excel("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Raw/ATTEMPT_Randomization_Denver.xlsx",
                             sheet = "ATTEMPT_Randomization", na = c("NA", ""))
 
-data_frames <- list(
+data_frames <- list(attempt_031425 = attempt_031425,
   demo = demo, randomization = randomization, anthro = anthro, 
   medfamsmoking = medfamsmoking, diabetesman = diabetesman, 
   glucosemon = glucosemon, urinelab = urinelab, 
@@ -77,9 +105,8 @@ merged_data <- reduce(data_frames, ~ full_join(.x, .y)) %>%
   fill(-c(visit), .direction = "downup") %>%
   ungroup() %>% rowwise() %>%
   dplyr::mutate(height = height_m * 100,
+                randomization_time= format(randomization_time, "%H:%M"), 
                 across(where(is.logical), ~ ifelse(.x, "Yes", "No")),
-                across(where(~ any(grepl("^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$", .))), 
-                       ~ format(as.POSIXct(.), "%H:%M")),
                 ethnicity = case_when(ethnicity_categorized == 1 ~ eth_names[1], 
                                       ethnicity_categorized == 2 ~ eth_names[2],
                                       ethnicity_categorized == 3 ~ eth_names[3], 
@@ -92,7 +119,8 @@ merged_data <- reduce(data_frames, ~ full_join(.x, .y)) %>%
                                           treatment_arm == "B" ~ "Dapagliflozin 5mg"),
                 microalbumin_urine24h = case_when(microalbumin_urine24h == "< 5"  ~ "2.5",
                                                   T ~ microalbumin_urine24h),
-                microalbumin_urine24h_mgL = as.numeric(microalbumin_urine24h) * 1000,
+                microalbumin_urine24h = as.numeric(microalbumin_urine24h),
+                microalbumin_urine24h_mgL = microalbumin_urine24h * 1000,
                 creatinine_urine24h_gL = creatinine_urine24h * 0.11312,
                 # uaer_24 = microalbumin_urine24h_mgL / creatinine_urine24h_gL,
                 mri_r2_cortex_l = case_when(!is.na(mri_r2_cortex_l) ~ as.numeric(mri_r2_cortex_l)),
@@ -115,22 +143,51 @@ merged_data <- reduce(data_frames, ~ full_join(.x, .y)) %>%
                 emu_3_albumin_mgl = as.numeric(emu_3_albumin_mgl), 
                 emu_3_acr_mgmmol = emu_3_albumin_mgl/emu_3_creatinine_umoll*1000,
                 emu_urine_acr_mean = mean(c(emu_1_acr_mgmmol, emu_2_acr_mgmmol, emu_3_acr_mgmmol)),
-                subject_id = as.character(subject_id)) %>% ungroup() %>%
+                subject_id = as.character(subject_id),
+                age = coalesce(age, age_baseline),
+                sbp = coalesce(sbp_mmhg, mri_sbp),
+                dbp = coalesce(dbp_mmhg),
+                hba1c = hba1c/100,
+                hct = coalesce(hct_ll, hct_percent_us/100)) %>% ungroup() %>%
   dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA, last(na.omit(.x)))),
                    across(where(is.numeric),  ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
                    .by = c(subject_id, visit)) %>%
   filter(visit %in% c("baseline", "4_months_post")) %>%
+  select(-c(age_baseline, sbp_mmhg, mri_sbp, dbp_mmhg, hct_ll, hct_percent_us)) %>%
   dplyr::rename(record_id = subject_id,
                 date = date_visit,
                 weight = weight_kg, 
                 bmi = bmi_kgm2,
-                sbp = sbp_mmhg, 
-                dbp = dbp_mmhg, 
                 temp = body_temp_celsius, 
                 pulse = heart_rate_bpm, 
                 diabetes_dx_duration = t1d_duration, 
                 creatinine_s = creatinine_blood_local,
                 cystatin_c_s = cystatin_c_serum_mgl,
-                age = age_baseline)
+                gfr_raw_plasma = mgfr_si,
+                gfr_bsa_plasma = mgfr_si_adjusted)
 
+date_cols <- grep("(^date$|_date$|^date_|_date_)", names(merged_data), value = TRUE)
+time_cols <- grep("(^time$|time$|^time_|_time_)", names(merged_data), value = TRUE)
+
+# Convert numeric Unix timestamps to formatted date strings
+merged_data[date_cols] <- lapply(merged_data[date_cols], function(x) {
+  format(as.POSIXct(x, origin = "1970-01-01", tz = "UTC"), "%m/%d/%y")
+})
+
+merged_data[time_cols] <- lapply(merged_data[time_cols], function(x) {
+  # Only convert if numeric
+  if (is.numeric(x)) {
+    format(as.POSIXct(x, origin = "1970-01-01", tz = "UTC"), "%H:%M")
+  } else {
+    x  # leave as-is if not numeric
+  }
+})
+
+# remove columns that are all NAs
+merged_data <- merged_data[, colSums(!is.na(merged_data)) > 0]
+
+merged_data <- merged_data[, !grepl("^ethnicity_ca___|^ethnicity_us___", names(merged_data))]
+
+# merge and save
 save(merged_data, file = "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Clean/ATTEMPT_AC.RData")
+

@@ -22,18 +22,18 @@ sens_genes <- c("ACVR1B","ANG","ANGPT1","ANGPTL4","AREG","AXL","BEX3","BMP2","BM
 #sens_genes <- full_sens_genes
 
 # #Metabolism Pathway Gene Sets
-# tca<- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","tca_cycle_pathway.csv")) %>%
-#   pull(genesymbol)
+tca<- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","tca_cycle_pathway.csv")) %>%
+  pull(genesymbol)
 # gluco <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","gluconeogenesis_pathway.csv"))%>%
 #   pull(genesymbol)
-# glyc <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","glycolysis_pathway.csv"))%>%
-#   pull(genesymbol)
-# beta_ox <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","beta_oxidation_pathway.csv"))%>%
-#   pull(genesymbol)
-# ox_phos <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","ox_phos_pathway.csv"))%>%
-#   pull(genesymbol)
-# lipid_met <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","lipid_metabolism.csv"))%>%
-#   pull(genesymbol)
+glyc <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","glycolysis_pathway.csv"))%>%
+  pull(genesymbol)
+beta_ox <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","beta_ox_pathway.csv"))%>%
+  pull(genesymbol)
+ox_phos <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","ox_phos_pathway.csv"))%>%
+  pull(genesymbol)
+fa_met <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","fa_met_pathway.csv"))%>%
+  pull(genesymbol)
 # energy_met <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","energy_metabolism_pathway.csv"))%>%
 #   pull(genesymbol)
 # met <- read.csv(fs::path(dir.dat,"Liver project","Pathway_Genes","metabolism_pathway.csv"))%>%

@@ -124,6 +124,7 @@ def clean_crocodile():
         {0: "No", "0": "No", 2: "No", "2": "No", 1: "Yes", "1": "Yes"})
     epic_med["procedure"] = "epic_medications"
     epic_med["visit"] = "baseline"
+
     
     # --------------------------------------------------------------------------
     # Physical exam
@@ -381,6 +382,7 @@ def clean_crocodile():
     biopsy.rename({"hg": "hemoglobin"}, inplace=True, axis=1)
     biopsy["procedure"] = "kidney_biopsy"
     biopsy["visit"] = "baseline"
+    epic_med["date"] = biopsy["date"]
 
     # --------------------------------------------------------------------------
     # PET scan
@@ -419,6 +421,7 @@ def clean_crocodile():
     brain.replace(rep, np.nan, inplace=True)
     brain["procedure"] = "brain_biomarkers"
     brain["visit"] = "baseline"
+    brain["date"] = screen["date"]
 
     # --------------------------------------------------------------------------
     # Metabolomics (Blood and Tissue)
@@ -430,6 +433,7 @@ def clean_crocodile():
     metabolomics_blood.replace(rep, np.nan, inplace=True)
     metabolomics_blood["procedure"] = "metabolomics_blood"
     metabolomics_blood["visit"] = "baseline"
+    metabolomics_blood["date"] = screen["date"]
     
     var = ["record_id"] + [v for v in meta.loc[meta["form_name"]
                                                == "metabolomics_tissue", "field_name"]]
@@ -443,6 +447,7 @@ def clean_crocodile():
     metabolomics_tissue.replace(rep, np.nan, inplace=True)
     metabolomics_tissue["procedure"] = "metabolomics_tissue"
     metabolomics_tissue["visit"] = "baseline"
+    metabolomics_tissue["date"] = screen["date"]
     
     # --------------------------------------------------------------------------
     # Astrazeneca urine metabolomics
