@@ -484,8 +484,8 @@ prop_plot1
 #                                           ifelse(grepl("POD",so_filtered$KPMP_celltype),"POD",
 #                                                  ifelse(grepl("EC",so_filtered$KPMP_celltype),"EC",NA))))
 #PT
-so_celltype <- subset(so_kpmp_sc,KPMP_celltype2=="EC-AEA")
-ncol(so_celltype) #3281 cells
+so_celltype <- subset(so_kpmp_sc,celltype1=="PT")
+ncol(so_celltype) #37948 cells
 nrow(so_celltype) #14627 genes
 # Extract the gene expression data for all genes
 gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
@@ -497,7 +497,7 @@ gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
 gene_expression <- t(gene_expression)
 gene_expression <- data.frame(gene_expression) #Make a dataframe again after transposing
 #Set gene list
-gene_list <- colnames(gene_expression)
+gene_list_total <- colnames(gene_expression)
 gene_expression$cellname <- rownames(gene_expression) 
 rownames(gene_expression) <- NULL
 
@@ -557,7 +557,8 @@ for (start_idx in seq(1, total_genes, by = batch_size)) {
       
       # Fit the zero-inflated mixed-effects model with error handling
       model1 <- tryCatch({
-        glmmTMB(m1, data = data_subset, family = gaussian, ziformula = ~1)
+        # glmmTMB(m1, data = data_subset, family = gaussian, ziformula = ~1)
+        glmmTMB(m1, data = data_subset, family = gaussian)
       }, error = function(e) {
         return(NULL)
       })
@@ -565,24 +566,25 @@ for (start_idx in seq(1, total_genes, by = batch_size)) {
       if (!is.null(model1)) {
         Beta <- summary(model1)$coef$cond[2,1]
         PValue <- summary(model1)$coef$cond[2,4]
-        zi <- summary(model1)$coef$zi[1,1]
-        zi_pval <- summary(model1)$coef$zi[1,4]
+        # zi <- summary(model1)$coef$zi[1,1]
+        # zi_pval <- summary(model1)$coef$zi[1,4]
       } else {
         Beta <- NA
         PValue <- NA
-        zi <- NA
-        zi_pval <- NA
+        # zi <- NA
+        # zi_pval <- NA
       }
       
     } else {
       Beta <- NA
       PValue <- NA
-      zi <- NA
-      zi_pval <- NA
+      # zi <- NA
+      # zi_pval <- NA
     }
     
     # Return result
-    return(data.frame(Gene = gene, Beta = Beta, PValue = PValue, ZI_Intercept = zi, ZI_PValue = zi_pval))
+    # return(data.frame(Gene = gene, Beta = Beta, PValue = PValue, ZI_Intercept = zi, ZI_PValue = zi_pval))
+    return(data.frame(Gene = gene, Beta = Beta, PValue = PValue))
   }
   
   # Run the analysis in parallel
@@ -598,6 +600,8 @@ for (start_idx in seq(1, total_genes, by = batch_size)) {
   
   # Print progress
   cat("Processed batch:", start_idx, "to", end_idx, "\n")
+  
+  return(all_results)
 }
 
 # Combine all batch results into a single data frame
@@ -609,11 +613,11 @@ full_results <- final_results %>%
 # mutate(fdr3=p.adjust(PValue3,method="fdr"))
 full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
 # full_results$PValue10_3 <- -log10(pmax(full_results$PValue3, 1e-10))  # Avoid log(0)
-
+Nonconvergence_Rate <- paste0(round(((length(which(is.na(full_results$PValue)))+length(which(full_results$PValue=="NaN")))/length(full_results$Gene))*100,0),"%")
 # view(full_results)
 
-full_results <- full_results %>%
-  mutate(FoldChange=2^Beta-1)  
+# full_results <- full_results %>%
+#   mutate(FoldChange=2^Beta-1)  
 # mutate(FoldChange3=2^Beta3-1)
 # full_results <- full_results %>% 
 #   dplyr::rename(color=color2,
@@ -631,7 +635,7 @@ full_results <- full_results %>%
 # s3$upload_file(temp_file, bucket, "Kidney transcriptomics/Results/EC_AEA_No_Med_T2D_LC_adj_cov.csv")
 # write.csv(full_results,"test.csv")
 
-write.csv(full_results,fs::path(dir.results,"EC-AEA_No_Med_T2D_LC_adj_cov.csv"))
+write.csv(full_results,fs::path(dir.results,"PT_Cells_No_Med_T2D_LC_adj_cov.csv"))
 # full_results <- read.csv(fs::path(dir.results,"Hep_5_Fibrosis_Steatosis.csv"))
 
 full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$Beta > 0, "lightcoral",
@@ -648,6 +652,11 @@ significant_df <- full_results[full_results$fdr < 0.05, ]
 
 Genes <- length(unique(full_results$Gene))
 Cells <- ncol(so_celltype)
+
+#Figure Range
+max <- max(significant_df$Beta,na.rm=T)
+min <- min(significant_df$Beta,na.rm=T)
+
 # Create the volcano plot using ggplot
 volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color)) +
   geom_point(alpha = 0.7) +  # Plot points with transparency
@@ -655,16 +664,16 @@ volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color))
   theme_minimal() +  # Minimal theme
   labs(
     title = "Type 2 Diabetes vs. Lean Controls (All No Medication)",
-    subtitle = "EC-AEA, Adjusted for Age, Sex & BMI",
-    x = "Log2FC",
+    subtitle = "PT Cells, Adjusted for Age, Sex & BMI",
+    x = "Beta",
     y = "-log10(P-Value)",
     color = "FC Direction Direction",
-    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells)
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,", Non-Convergence Rate: ",Nonconvergence_Rate)
   ) +
-  xlim(-11,11)+
+  xlim(min,max)+
   theme(
     plot.title = element_text(hjust = 0),
-    axis.text.x = element_text(angle = 45, hjust = 1)
+    axis.text.x = element_text(angle = 0, hjust = 1)
   )+
   # # Add labels for significant points
   geom_text(data = significant_df, aes(label = Gene),
@@ -674,7 +683,7 @@ volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color))
 #                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
 
 volcano_plot
-pdf(fs::path(dir.results,"Plot_EC_AEA_T2D_LC_NoMed.pdf"),width=10,height=7)
+pdf(fs::path(dir.results,"Plot_PT_Cells_T2D_LC_NoMed.pdf"),width=10,height=7)
 print(volcano_plot)
 dev.off()
 
@@ -683,7 +692,8 @@ dev.off()
 #### ii. PT-S1/2
 ```{r}
 so_celltype <- subset(so_kpmp_sc,KPMP_celltype2=="PT-S1/S2")
-ncol(so_celltype) #21244 cells
+# so_celltype <- subset(so_kpmp_sc,celltype1=="PT")
+ncol(so_celltype) #37948 cells
 nrow(so_celltype) #14627 genes
 # Extract the gene expression data for all genes
 gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
@@ -718,88 +728,161 @@ rm(data)
 data_subset$group <- factor(data_subset$group)
 data_subset$group <- relevel(data_subset$group,ref="Lean_Control")
 data_subset <- data_subset %>% 
-  dplyr::select(c("kit_id","group","age","sex","bmi",all_of(gene_list_total)))
+  dplyr::select(c("kit_id","group","age","sex","bmi",all_of(gene_list)))
 
-#Try as batch loop
+# library(glmmTMB)
+# library(lme4)
+# library(doParallel)
+# library(foreach)
 # Set batch size
 batch_size <- 2000
-total_cores <- 50  
+total_cores <- 50
 
-# Get total number of genes
-total_genes <- length(gene_list_total)
+# Deduplicate gene list to avoid double-processing
+gene_list_total <- unique(gene_list_total)
 
-# Create an empty list to store results
-all_results <- list()
+# Split the gene list into batches
+gene_batches <- split(gene_list_total, ceiling(seq_along(gene_list_total) / batch_size))
 
-# Loop over batches
-for (start_idx in seq(1, total_genes, by = batch_size)) {
-  
-  # Define end index for the batch
-  end_idx <- min(start_idx + batch_size - 1, total_genes)
-  
-  # Subset genes for this batch
-  gene_list <- gene_list_total[start_idx:end_idx]
-  
-  # Set number of cores to use
-  cl <- makeCluster(total_cores)
-  registerDoParallel(cl)
-  
-  # Define function to process a single gene
-  process_gene <- function(gene_idx) {
-    gene <- gene_list[gene_idx]  # Get the gene name based on the index
+# Define the function that processes a single gene
+process_gene <- function(gene) {
+  if (sum(data_subset[[gene]]) > 0) {
+    m1 <- as.formula(paste0(gene, " ~ group + age + sex + bmi + (1 | kit_id)"))
     
-    # Ensure that the gene exists in your data subset
-    if (sum(data_subset[[gene]]) > 0) {
-      # Define model formula
-      m1 <- as.formula(paste0(gene, " ~ group + age + sex + bmi + (1 | kit_id)"))
-      
-      # Fit the zero-inflated mixed-effects model with error handling
-      model1 <- tryCatch({
-        glmmTMB(m1, data = data_subset, family = gaussian, ziformula = ~1)
-      }, error = function(e) {
-        return(NULL)
-      })
-      
-      if (!is.null(model1)) {
-        Beta <- summary(model1)$coef$cond[2,1]
-        PValue <- summary(model1)$coef$cond[2,4]
-        zi <- summary(model1)$coef$zi[1,1]
-        zi_pval <- summary(model1)$coef$zi[1,4]
-      } else {
-        Beta <- NA
-        PValue <- NA
-        zi <- NA
-        zi_pval <- NA
-      }
-      
+    model1 <- tryCatch({
+      glmmTMB(m1, data = data_subset, family = gaussian)
+    }, error = function(e) {
+      return(NULL)
+    })
+    
+    if (!is.null(model1)) {
+      Beta <- summary(model1)$coef$cond[2,1]
+      PValue <- summary(model1)$coef$cond[2,4]
     } else {
       Beta <- NA
       PValue <- NA
-      zi <- NA
-      zi_pval <- NA
     }
-    
-    # Return result
-    return(data.frame(Gene = gene, Beta = Beta, PValue = PValue, ZI_Intercept = zi, ZI_PValue = zi_pval))
+  } else {
+    Beta <- NA
+    PValue <- NA
   }
   
-  # Run the analysis in parallel
-  batch_results <- foreach(i = seq_along(gene_list), .combine = rbind, .packages = c("glmmTMB", "lme4")) %dopar% {
-    process_gene(i)
-  }
-  
-  # Stop the cluster
-  stopCluster(cl)
-  
-  # Store batch results
-  all_results[[length(all_results) + 1]] <- batch_results
-  
-  # Print progress
-  cat("Processed batch:", start_idx, "to", end_idx, "\n")
+  return(data.frame(Gene = gene, Beta = Beta, PValue = PValue))
 }
+
+# Set number of cores
+total_cores <- parallel::detectCores() - 1
+
+# Initialize and register cluster
+cl <- makeCluster(total_cores)
+registerDoParallel(cl)
+
+# Run analysis per batch
+all_results <- lapply(seq_along(gene_batches), function(batch_idx) {
+  batch_genes <- gene_batches[[batch_idx]]
+  
+  batch_results <- foreach(
+    gene = batch_genes,
+    .combine = rbind,
+    .packages = c("glmmTMB", "lme4"),
+    .export = c("process_gene", "data_subset")
+  ) %dopar% {
+    process_gene(gene)
+  }
+  
+  cat("Processed batch", batch_idx, "with", length(batch_genes), "genes\n")
+  return(batch_results)
+})
+
+# Stop cluster
+stopCluster(cl)
 
 # Combine all batch results into a single data frame
 final_results <- do.call(rbind, all_results)
+
+# #Try as batch loop
+# # Set batch size
+# batch_size <- 2000
+# total_cores <- 50  
+# 
+# # Get total number of genes
+# total_genes <- length(gene_list_total)
+# 
+# # Create an empty list to store results
+# all_results <- list()
+# 
+# # Loop over batches
+# for (start_idx in seq(1, total_genes, by = batch_size)) {
+#   
+#   # Define end index for the batch
+#   end_idx <- min(start_idx + batch_size - 1, total_genes)
+#   
+#   # Subset genes for this batch
+#   gene_list <- gene_list_total[start_idx:end_idx]
+#   
+#   # Set number of cores to use
+#   cl <- makeCluster(total_cores)
+#   registerDoParallel(cl)
+# 
+#   # Define function to process a single gene
+#   process_gene <- function(gene_idx) {
+#     gene <- gene_list[gene_idx]  # Get the gene name based on the index
+#     
+#     # Ensure that the gene exists in your data subset
+#     if (sum(data_subset[[gene]]) > 0) {
+#       # Define model formula
+#       m1 <- as.formula(paste0(gene, " ~ group + age + sex + bmi + (1 | kit_id)"))
+#       
+#       # Fit the zero-inflated mixed-effects model with error handling
+#       model1 <- tryCatch({
+#         # glmmTMB(m1, data = data_subset, family = gaussian, ziformula = ~1)
+#         glmmTMB(m1, data = data_subset, family = gaussian)
+#       }, error = function(e) {
+#         return(NULL)
+#       })
+#       
+#       if (!is.null(model1)) {
+#         Beta <- summary(model1)$coef$cond[2,1]
+#         PValue <- summary(model1)$coef$cond[2,4]
+#         # zi <- summary(model1)$coef$zi[1,1]
+#         # zi_pval <- summary(model1)$coef$zi[1,4]
+#       } else {
+#         Beta <- NA
+#         PValue <- NA
+#         # zi <- NA
+#         # zi_pval <- NA
+#       }
+#       
+#     } else {
+#       Beta <- NA
+#       PValue <- NA
+#       # zi <- NA
+#       # zi_pval <- NA
+#     }
+#     
+#     # Return result
+#     # return(data.frame(Gene = gene, Beta = Beta, PValue = PValue, ZI_Intercept = zi, ZI_PValue = zi_pval))
+#     return(data.frame(Gene = gene, Beta = Beta, PValue = PValue))
+#   }
+#   
+#   # Run the analysis in parallel
+#   batch_results <- foreach(i = seq_along(gene_list), .combine = rbind, .packages = c("glmmTMB", "lme4")) %dopar% {
+#     process_gene(i)
+#   }
+#   
+#   # Stop the cluster
+#   stopCluster(cl)
+#   
+#   # Store batch results
+#   all_results[[length(all_results) + 1]] <- batch_results
+#   
+#   # Print progress
+#   cat("Processed batch:", start_idx, "to", end_idx, "\n")
+#   
+# }
+# 
+# # Combine all batch results into a single data frame
+# final_results <- do.call(rbind, all_results)
 
 # #Make volcano plot of all gene results for group
 full_results <- final_results %>%
@@ -807,11 +890,11 @@ full_results <- final_results %>%
 # mutate(fdr3=p.adjust(PValue3,method="fdr"))
 full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
 # full_results$PValue10_3 <- -log10(pmax(full_results$PValue3, 1e-10))  # Avoid log(0)
-
+Nonconvergence_Rate <- paste0(round(((length(which(is.na(full_results$PValue)))+length(which(full_results$PValue=="NaN")))/length(full_results$Gene))*100,0),"%")
 # view(full_results)
 
-full_results <- full_results %>%
-  mutate(FoldChange=2^Beta-1)  
+# full_results <- full_results %>%
+#   mutate(FoldChange=2^Beta-1)  
 # mutate(FoldChange3=2^Beta3-1)
 # full_results <- full_results %>% 
 #   dplyr::rename(color=color2,
@@ -822,15 +905,14 @@ full_results <- full_results %>%
 #   dplyr::select(-c("color3","FoldChange3"))
 
 # full_results2 <- full_results
-# write file
+# # write file
 # bucket <- "scrna" # bucket name in Kopah
 # temp_file <- tempfile(fileext = ".csv") # need to create a temporary file
 # write.csv(full_results, row.names = FALSE) # save the temp file locally (will delete after R session)
-# s3$upload_file(temp_file, bucket, "Kidney transcriptomics/Results/PT-S1/S2_No_Med_T2D_LC_adj_cov.csv")
+# s3$upload_file(temp_file, bucket, "Kidney transcriptomics/Results/EC_AEA_No_Med_T2D_LC_adj_cov.csv")
 # write.csv(full_results,"test.csv")
 
-write.csv(full_results,fs::path(dir.results,"PT-S1/S2_No_Med_T2D_LC_adj_cov.csv"))
-# write.csv(full_results,fs::path(dir.ipa %>% dirname(),"Liver Pathways","PT-S1/S2_No_Med_T2D_LC_adj_cov.csv"))
+write.csv(full_results,fs::path(dir.results,"PT_Cells_No_Med_T2D_LC_adj_cov.csv"))
 # full_results <- read.csv(fs::path(dir.results,"Hep_5_Fibrosis_Steatosis.csv"))
 
 full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$Beta > 0, "lightcoral",
@@ -847,6 +929,11 @@ significant_df <- full_results[full_results$fdr < 0.05, ]
 
 Genes <- length(unique(full_results$Gene))
 Cells <- ncol(so_celltype)
+
+#Figure Range
+max <- max(significant_df$Beta,na.rm=T)
+min <- min(significant_df$Beta,na.rm=T)
+
 # Create the volcano plot using ggplot
 volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color)) +
   geom_point(alpha = 0.7) +  # Plot points with transparency
@@ -855,15 +942,15 @@ volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color))
   labs(
     title = "Type 2 Diabetes vs. Lean Controls (All No Medication)",
     subtitle = "PT-S1/S2, Adjusted for Age, Sex & BMI",
-    x = "Log2FC",
+    x = "Beta",
     y = "-log10(P-Value)",
     color = "FC Direction Direction",
-    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells)
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,", Non-Convergence Rate: ",Nonconvergence_Rate)
   ) +
-  xlim(-5,5)+
+  xlim(min,max)+
   theme(
     plot.title = element_text(hjust = 0),
-    axis.text.x = element_text(angle = 45, hjust = 1)
+    axis.text.x = element_text(angle = 0, hjust = 1)
   )+
   # # Add labels for significant points
   geom_text(data = significant_df, aes(label = Gene),
@@ -873,9 +960,10 @@ volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color))
 #                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
 
 volcano_plot
-pdf(fs::path(dir.results,"Plot_PT-S1/S2_T2D_LC_NoMed.pdf"),width=10,height=7)
+pdf(fs::path(dir.results,"Plot_PT_S1S2_T2D_LC_NoMed.pdf"),width=10,height=7)
 print(volcano_plot)
 dev.off()
+
 ```
 #### iii. PT-S3
 ```{r}

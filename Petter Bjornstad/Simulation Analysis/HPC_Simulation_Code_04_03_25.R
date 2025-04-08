@@ -6,38 +6,78 @@ library(dplyr)
 #library(ggplot2)
 library(pscl)
 library(purrr) 
-library(slurmR)
+# library(slurmR)
 
 # Set CRAN mirror----
 # options(repos = c(CRAN = "https://cloud.r-project.org"))
 # install.packages("qgcomp")
 library(qgcomp)
 # install.packages("pbdMPI",lib="/home1/hhampson/R/x86_64-pc-linux-gnu-library/4.3",type="source")
-library(pbdMPI)
+# library(pbdMPI)
 library(MASS)
 
 
-#Set working directory----
-setwd("/project/jagoodri_1060/Hailey")
+# #Set working directory----
+# setwd("/project/jagoodri_1060/Hailey")
+setwd("/home/hailey/Documents/CHCO-Code/Petter Bjornstad/Simulation Analysis")
 
 #Load functions----
 source("HPC_Simulation_Functions_03_12.R")
+
+#Set location to store results ----
+dir.results <- c("/home/hailey/Documents/Simulation Results")
+
+#Set up Cyberduck
+library(reticulate)
+reticulate::py_config()
+## Load boto3 and pandas
+boto3 <- reticulate::import("boto3")
+pd <- reticulate::import("pandas")
+
+## Create an S3 client
+# install.packages("jsonlite")  # Install if not already installed
+library(jsonlite)  # Load the package
+
+keys <- fromJSON("/home/hailey/keys.json") # replace with your Lambda username
+session <- boto3$session$Session(
+  aws_access_key_id = keys$MY_ACCESS_KEY,
+  aws_secret_access_key = keys$MY_SECRET_KEY
+)
+
+## Create an S3 client with the session
+s3 <- session$client("s3", endpoint_url = "https://s3.kopah.uw.edu")
 
 #Set Iteration Number (1:15) -----
 # for (k in 1:10) {
 for (k in 1) {
   # for (scenario in 1:40) {
-  for (scenario in 30) {
+  for (scenario in 1) {
     
     #Load data----
-    Object <- readRDS("FormattedObject.RDS")
+    #Formatted Taxonomy Information
+    # Object <- readRDS("FormattedObject.RDS")
+    invisible(gc())
+    bucket <- "simulation" # bucket name in Kopah
+    temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
+    s3$download_file(bucket, "Simulation_Data/FormattedObject.RDS", temp_file)
+    Object <- readRDS(temp_file)
+    invisible(gc())
     Table <- data.frame(Object$Table)
     Table <- Table[-149]
-    P.s.causal.all <- readRDS("Simulation_Scenarios_03_12_25.rds")
-    sim.par <- readRDS(paste0("Simulation_Parameter_",scenario,".rds"))  
-      # rename(P.s.causal=P.s.scenario)
-    # sim.par <- sim.par %>% 
-    #   mutate(P.e.causal=ifelse(P.e.causal==6,7,P.e.causal)) 
+    
+    #Simulation Scenarios & Parameters
+    # P.s.causal.all <- readRDS("Simulation_Scenarios_03_12_25.rds")
+    invisible(gc())
+    temp_file <- tempfile(fileext = ".rds") # need to create a temporary file
+    s3$download_file(bucket, "Simulation_Data/Simulation_Scenarios_03_12_25.rds", temp_file)
+    P.s.causal.all <- readRDS(temp_file)
+    invisible(gc())
+    
+    # sim.par <- readRDS(paste0("Simulation_Parameter_",scenario,".rds"))  
+    temp_file <- tempfile(fileext = ".rds") # need to create a temporary file
+    s3$download_file(bucket, paste0("Simulation_Data/Simulation_Parameter_",scenario,".rds"), temp_file)
+    sim.par <- readRDS(temp_file)
+    invisible(gc())
     
     #Set Parameters----
     P.s <- 206
@@ -51,23 +91,43 @@ for (k in 1) {
     # Load Z matrices----
     # Genus
     # Z.s.g <- readRDS("/Users/hhampson/Dropbox (USC Lab)/Chatzi Projects (Active)/Env Chem SOL-CHS/Analysis/2_ongoing/CHS PFAS Microbiome (Hailey)/BHRM_microbiome/Formatted Data/Z.s.g.RDS")
-    Z.s.g <- readRDS("Z.s.g.RDS")
+    # Z.s.g <- readRDS("Z.s.g.RDS")
+    temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
+    s3$download_file(bucket, paste0("Simulation_Data/Z.s.g.RDS"), temp_file)
+    Z.s.g <- readRDS(temp_file)
+    invisible(gc())
     Genus.R <- ncol(Z.s.g)
     #Family
     # Z.g.f <- readRDS("/Users/hhampson/Dropbox (USC Lab)/Chatzi Projects (Active)/Env Chem SOL-CHS/Analysis/2_ongoing/CHS PFAS Microbiome (Hailey)/BHRM_microbiome/Formatted Data/Z.g.f.RDS")
-    Z.g.f <- readRDS("Z.g.f.RDS")
+    # Z.g.f <- readRDS("Z.g.f.RDS")
+    temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
+    s3$download_file(bucket, paste0("Simulation_Data/Z.g.f.RDS"), temp_file)
+    Z.g.f <- readRDS(temp_file)
+    invisible(gc())
     Family.R <- ncol(Z.g.f)
     #Order
     # Z.f.o <- readRDS("/Users/hhampson/Dropbox (USC Lab)/Chatzi Projects (Active)/Env Chem SOL-CHS/Analysis/2_ongoing/CHS PFAS Microbiome (Hailey)/BHRM_microbiome/Formatted Data/Z.f.o.RDS")
-    Z.f.o <- readRDS("Z.f.o.RDS")
+    # Z.f.o <- readRDS("Z.f.o.RDS")
+    temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
+    s3$download_file(bucket, paste0("Simulation_Data/Z.f.o.RDS"), temp_file)
+    Z.f.o <- readRDS(temp_file)
+    invisible(gc())
     Order.R <- ncol(Z.f.o)
     #Class
     # Z.o.c <- readRDS("/Users/hhampson/Dropbox (USC Lab)/Chatzi Projects (Active)/Env Chem SOL-CHS/Analysis/2_ongoing/CHS PFAS Microbiome (Hailey)/BHRM_microbiome/Formatted Data/Z.o.c.RDS")
-    Z.o.c <- readRDS("Z.o.c.RDS")
+    # Z.o.c <- readRDS("Z.o.c.RDS")
+    temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
+    s3$download_file(bucket, paste0("Simulation_Data/Z.o.c.RDS"), temp_file)
+    Z.o.c <- readRDS(temp_file)
+    invisible(gc())
     Class.R <- ncol(Z.o.c)
     #Phylum
     # Z.c.p <- readRDS("/Users/hhampson/Dropbox (USC Lab)/Chatzi Projects (Active)/Env Chem SOL-CHS/Analysis/2_ongoing/CHS PFAS Microbiome (Hailey)/BHRM_microbiome/Formatted Data/Z.c.p.RDS")
-    Z.c.p <- readRDS("Z.c.p.RDS")
+    # Z.c.p <- readRDS("Z.c.p.RDS")
+    temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
+    s3$download_file(bucket, paste0("Simulation_Data/Z.c.p.RDS"), temp_file)
+    Z.c.p <- readRDS(temp_file)
+    invisible(gc())
     Phylum.R <- ncol(Z.c.p)
     
     #Create data for simulation
@@ -81,12 +141,12 @@ for (k in 1) {
     Y.freq <- Y.freq[1:P.s] # frequency of species presence vs. absence
     phi <- 5 
     
-    # Initiate connections----
-    init()
+    # # Initiate connections----
+    # init()
     
     #Function to run Bayesian, Ridge and Zero-Inflated Models ----
     model.fxn <- function(i) {
-       # i = 1
+      # i = 1
       #Set seed for reproducibility
       set.seed(i)
       
@@ -135,6 +195,7 @@ for (k in 1) {
       #Run ZING Model ----
       results_list <- map(Taxa.names,dat=Y2,exposure=exposure.names,ZING_Model)
       ZING.results <- bind_rows(results_list) 
+      # NonConvergence <- paste0(round((1-(length(ZING.results$Taxa)/(371*4*2)))*100,0),"%")
       # return(ZING.results)
       
       #Run BaH-ZING Model----
@@ -221,8 +282,8 @@ for (k in 1) {
     }
     
     # Set number of iterations -------------------------------------------------
-   #n_iter <- nrow(sim.par)
-    n_iter <- 3
+    n_iter <- nrow(sim.par)
+    #n_iter <- 3
     
     # Run model ---------------------------------------------------------------
     coefs <- pbdLapply(X = 1:n_iter,
@@ -235,18 +296,8 @@ for (k in 1) {
     # Write Success from each connection
     message(paste("SUCCESS from rank", comm.rank()))
     
-    # End connections
-    finalize(mpi.finalize = TRUE)
-    #if (comm.size() > 1) {
-    #finalize(mpi.finalize = TRUE)
-#}
-
+    
+    
+    
   }
 }
-
-# I have run into an issue where the finalize function does not always 
-# close the connection, so the job will run  until it is terminated by the 
-# Slurm scheduler, even if it is completed. Therefore, I have included this final 
-# line of code. This line throws an error, but will also kill the slurm job without 
-# wasting resources (please email me at jagoodri@usc.edu if you find a solution to this)
-slurmR::Slurm_clean(coefs)
