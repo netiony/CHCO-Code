@@ -3850,8 +3850,14 @@ dev.off()
 ```
 #### iv. aPT
 ```{r}
-#aPT
-so_celltype <- subset(so_filtered,KPMP_celltype=="aPT")
+# library(lme4)
+# library(emmeans)
+# library(parallel)
+# library(doParallel)
+# library(dplyr)
+so_celltype <- subset(so_kpmp_sc,KPMP_celltype2=="aPT")
+ncol(so_celltype) #37948 cells
+nrow(so_celltype) #14627 genes
 # Extract the gene expression data for all genes
 gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
 
@@ -3862,7 +3868,7 @@ gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
 gene_expression <- t(gene_expression)
 gene_expression <- data.frame(gene_expression) #Make a dataframe again after transposing
 #Set gene list
-gene_list <- colnames(gene_expression)
+gene_list_total <- colnames(gene_expression)
 gene_expression$cellname <- rownames(gene_expression) 
 rownames(gene_expression) <- NULL
 
@@ -3879,107 +3885,86 @@ rm(metadata,gene_expression)
 
 #Compare Health Controls to Type 2 Diabetes on no meds
 data_subset <- data %>%
-  filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
-  filter(medication=="no_med")
+  filter(group=="Type_2_Diabetes") 
+# filter(medication=="no_med")
 
-data_subset$group <- factor(data_subset$group)
-
-#Log transform gene expression
+data_subset$medication <- factor(data_subset$medication)
 data_subset <- data_subset %>% 
-  mutate(across(all_of(gene_list),~log2(.+1)))
-
-full_results <- data.frame()
-
-# Total number of genes
-total_genes <- length(gene_list)
-
-# Calculate the batch size
-batch_size <- round(total_genes / 5)
-
-# Simulate a vector of genes (replace this with your actual gene data)
-genes <- 1:total_genes
-
-# Loop through the genes in batches
-for (i in seq(1, total_genes, by = batch_size)) {
-  
-  # Get the current batch (subsetting the gene vector)
-  batch <- genes[i:min(i + batch_size - 1, total_genes)]
-  for (gene in gene_list[batch]) { #tester genes
-    # m0 <- as.formula(paste0(gene," ~ group + (1 | kit_id)"))
-    # model <- lmer(m0,data=data_subset)
-    #Adjust for key covariates
-    m1 <- as.formula(paste0(gene," ~ group + age + sex + bmi + (1 | kit_id)"))
-    model1 <- lmer(m1,data=data_subset)
+  dplyr::select(c("kit_id","medication","group","age","sex","bmi",all_of(gene_list_total)))
+rm(data)
+gc()
+rm(so_celltype)
+gene_hold <- gene_list_total
+gene_list_total <- gene_hold[1001:5000]
+# Define your function for processing a gene
+process_gene <- function(gene) {
+    # Define the formula for the linear mixed-effects model
+    formula <- as.formula(paste0(gene, " ~ medication + age + sex + bmi + (1 | kit_id)"))
     
-    # # Plot residuals vs fitted values
-    # residuals <- residuals(model1)
-    # fitted_values <- fitted(model1)
-    # 
-    # plot(fitted_values, residuals)
-    # abline(h = 0, col = "red")
-    # 
-    # # Histogram of residuals
-    # hist(residuals, main = "Histogram of Residuals", xlab = "Residuals", col = "lightblue", border = "black")
-    # 
-    # # Q-Q plot for normality
-    # qqnorm(residuals)
-    # qqline(residuals, col = "red")
+    # Fit the model
+    model <- suppressWarnings(lmer(formula, data = data_subset))
     
-    # beta <- round(summary(model)$coef[2,1],3)
-    # pval <-round(summary(model)$coef[2,5],5)
-    beta1 <- round(summary(model1)$coef[2,1],3)
-    pval1 <-round(summary(model1)$coef[2,5],5)
-    
-    result <- data.frame(Gene=gene,Beta=beta1,PValue=pval1)
-    full_results <- rbind(full_results,result)
-  }
+    # Compute emmeans
+    emm <- emmeans(model, ~ medication, lmerTest.limit = 19037, pbkrtest.limit = 19037)
+
+    # Define the contrasts to test
+    contrast_results <- contrast(emm, list(
+      "GLP1 vs No Med"        = c(0, 1, 0, -1),
+      "SGT2 vs No Med"        = c(0, 0, 1, -1),
+      "GLP1+SGT2 vs No Med"   = c(0, 0, 0, 1),
+      "GLP1+SGT2 vs GLP1"     = c(0, -1, 1, 0),
+      "GLP1+SGT2 vs SGT2"     = c(0, 0, -1, 1)
+    ))
+
+    # Convert the contrast results to a data frame and add PValue and Gene columns
+    contrast_df <- as.data.frame(confint(contrast_results))
+    contrast_df$PValue <- summary(contrast_results)$p.value
+    contrast_df$Gene <- gene
+    contrast_df <- as.data.drame(contrast_df)
+
+    return(contrast_df)
 }
-# #Make volcano plot of all gene results for group
-full_results <- full_results %>%
-  mutate(fdr=p.adjust(PValue,method="fdr"))
 
-write.csv(full_results,fs::path(dir.results,"aPT_T2D_HC_No_Med.csv"))
+# Set up parallel backend (use maximum available cores)
+num_cores <- detectCores() - 1  # Reserve one core for the system, adjust as needed
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
 
-# }
-# Add a column to determine color based on the sign of the beta
-# Create a new color column based on beta sign and FDR threshold
-full_results$color <- ifelse(full_results$fdr < 0.3 & full_results$Beta > 0, "salmon",
-                             ifelse(full_results$fdr < 0.3 & full_results$Beta < 0, "lightblue", "gray"))
+# List of genes to process (replace with actual gene names)
+# genes <- c("Gene1", "Gene2", "Gene3", ...)  # your list of genes
+genes <- gene_list_total
+# Run the analysis for each gene in parallel
+results <- foreach(gene = genes, .combine = rbind, .packages = c("lme4", "emmeans", "dplyr")) %dopar% {
+    process_gene(gene)
+}
 
-# Identify significant points (fdr < 0.05)
-significant_df <- full_results[full_results$fdr < 0.3, ]
-# full_results$color <- ifelse(full_results$PValue < 0.05 & full_results$Beta > 0, "red", 
-#                              ifelse(full_results$PValue < 0.05 & full_results$Beta < 0, "blue", "gray"))
-# 
-# # Identify significant points (PValue < 0.05)
-# significant_df <- full_results[full_results$PValue < 0.05, ]
+# Stop the parallel cluster
+stopCluster(cl)
 
-# Create the volcano plot using ggplot
-volcano_plot <- ggplot(full_results, aes(x = Beta, y = -log10(PValue), color = color)) +
-  geom_point(alpha = 0.7) +  # Plot points with transparency
-  scale_color_identity() +  # Use the color column directly
-  theme_minimal() +  # Minimal theme
-  labs(
-    title = "aPT Cells: Lean Controls vs. Type 2 Diabetes (No Medication)",
-    subtitle = "Adjusted for Age, Sex, & BMI",
-    x = "Log2FC",
-    y = "-log10(P-Value)",
-    color = "Beta Direction",
-    caption = "Positive Beta = Upregulation in T2D vs. LC, Negative Beta = Downregulation in T2D vs. LC \n Signficance threshold: FDR < 0.3"
-  ) +
-  theme(
-    plot.title = element_text(hjust = 0),
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  )+
-  # # Add labels for significant points
-  # geom_text(data = significant_df, aes(label = gene), 
-  #           vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
-  # Add labels for significant points with ggrepel
-  geom_text_repel(data = significant_df, aes(label = Gene),
-                  size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
-
-pdf(fs::path(dir.results,"Plot_aPT_T2D_HC_No_Med.pdf"),width=10,height=7)
-print(volcano_plot)
-dev.off()
+# View the combined results
+head(results)
+# results2 <- results
+rm(results)
+# full_results <- rbind(results,results2)
+nc_rate <- full_results %>%
+  group_by(contrast, Gene) %>%
+  summarize(
+    total_na = sum(is.na(estimate)),
+    total_nan = sum(is.nan(estimate)),
+    total_non_na_non_nan = sum(!is.na(estimate) & !is.nan(estimate)),
+    .groups = "drop"
+  ) %>% 
+  ungroup() 
+nc_rate2 <- full_results %>%
+  group_by(contrast, Gene) %>%
+  summarize(
+    total_na = sum(is.na(PValue)),
+    total_nan = sum(is.nan(PValue)),
+    total_non_na_non_nan = sum(!is.na(PValue) & !is.nan(PValue)),
+    .groups = "drop"
+  ) %>% 
+  ungroup() 
+# Nonconvergence_Rate <- sum(nc_rate$total_na,nc_rate$total_nan)/sum(nc_rate$total_na,nc_rate$total_nan+total)
+# Nonconvergence_Rate <- paste0(round(((length(which(is.na(full_results$PValue)))+length(which(full_results$PValue=="NaN")))/length(full_results$Gene))*100,0),"%")
 ```
 
