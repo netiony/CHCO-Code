@@ -243,7 +243,8 @@ so_kpmp_sc$celltype2 <- ifelse(so_kpmp_sc$KPMP_celltype=="aPT" |
                                ifelse(grepl("TAL",so_kpmp_sc$KPMP_celltype),"TAL",
                                       ifelse(grepl("EC-",so_kpmp_sc$KPMP_celltype),"EC",so_kpmp_sc$KPMP_celltype2)))
 
-#2. Visualize ----
+#2. Visualize & Descriptive Stats ----
+##a. UMAPS & Barcharts ----
 # PCA
 so_kpmp_sc <- FindVariableFeatures(object = so_kpmp_sc)
 so_kpmp_sc <- RunPCA(so_kpmp_sc, features = VariableFeatures(object = so_kpmp_sc),assay="RNA")
@@ -357,8 +358,196 @@ prop_plot1 <- ggplot(data=cellcount,aes(group, fill = KPMP_celltype)) +
   scale_fill_manual(values = c("#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51","darkred"))
 
 prop_plot1
+rm(cellcount,plot1,prop_plot1)
 
+
+
+##b. Descriptive Statistics ----
+#Get metadata for everyone
+dat <- so_kpmp_sc@meta.data %>%
+  group_by(record_id) %>%
+  summarise(across(everything(), first)) %>%
+  ungroup() 
+
+dat$hba1c <- as.numeric(dat$hba1c)
+dat$eGFR_CKD_epi <- as.numeric(dat$eGFR_CKD_epi)
+
+#Table 1. 
+table1(~ age + sex + race_ethnicity  + bmi + triglycerides + hba1c + medication| study, data=dat)
+table1(~pah_clear_bsa + eGFR_CKD_epi +acr_u +metformin_timepoint+insulin_med_timepoint| study, data=dat)
+
+#Covariates to adjust for: 
+#Acru, metformin/insulin,bmi,age,tg
+#Although check on metformin/insulin variables...
 
 #3. Analysis ----
 #ROBO and FN1 genes DEGs and Pathways (IPA & GSEA)
+##a. PT Cells ----
+#PT
+so_celltype <- subset(so_kpmp_sc,celltype1=="PT")
+ncol(so_celltype) #2246 cells
+nrow(so_celltype) #9196 genes
+# Extract the gene expression data for all genes
+gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
 
+#Assign gene names as rownames, cell names as colnames
+# rownames(gene_expression) <- rownames(so_celltype) #Gene Names
+# colnames(gene_expression) <- colnames(so_celltype) #Cell Names
+#Transpose gene expression dataset to merge with metadata
+gene_expression <- t(gene_expression)
+gene_expression <- data.frame(gene_expression) #Make a dataframe again after transposing
+#Set gene list
+gene_list_total <- colnames(gene_expression)
+gene_expression$cellname <- rownames(gene_expression) 
+rownames(gene_expression) <- NULL
+
+# Extract the metadata
+metadata <- so_celltype@meta.data
+# metadata <- metadata %>%
+#   mutate(across(everything(),~ifelse(.==".",NA,.)))
+metadata$cellname <- rownames(metadata)
+rownames(metadata) <- NULL
+
+# Combine the gene expression data and metadata
+data <- tidylog::full_join(metadata,gene_expression,by="cellname")
+rm(metadata,gene_expression)
+
+#Compare Health Controls to Type 2 Diabetes on no meds
+data_subset <- data %>%
+  filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
+  filter(medication=="no_med")
+rm(data)
+data_subset$group <- factor(data_subset$group)
+data_subset$group <- relevel(data_subset$group,ref="Lean_Control")
+data_subset <- data_subset %>% 
+  dplyr::select(c("kit_id","group","age","sex","bmi",all_of(gene_list_total)))
+
+#Try as batch loop
+# Set batch size
+batch_size <- 2000
+total_cores <- 50
+
+# Deduplicate gene list to avoid double-processing
+gene_list_total <- unique(gene_list_total)
+
+# Split the gene list into batches
+gene_batches <- split(gene_list_total, ceiling(seq_along(gene_list_total) / batch_size))
+
+# Define the function that processes a single gene
+process_gene <- function(gene) {
+  if (sum(data_subset[[gene]]) > 0) {
+    m1 <- as.formula(paste0(gene, " ~ group + age + sex + bmi + (1 | kit_id)"))
+    
+    model1 <- tryCatch({
+      glmmTMB(m1, data = data_subset, family = gaussian)
+    }, error = function(e) {
+      return(NULL)
+    })
+    
+    if (!is.null(model1)) {
+      Beta <- summary(model1)$coef$cond[2,1]
+      PValue <- summary(model1)$coef$cond[2,4]
+    } else {
+      Beta <- NA
+      PValue <- NA
+    }
+  } else {
+    Beta <- NA
+    PValue <- NA
+  }
+  
+  return(data.frame(Gene = gene, Beta = Beta, PValue = PValue))
+}
+
+# Set number of cores
+total_cores <- parallel::detectCores() - 1
+
+# Initialize and register cluster
+cl <- makeCluster(total_cores)
+registerDoParallel(cl)
+
+# Run analysis per batch
+all_results <- lapply(seq_along(gene_batches), function(batch_idx) {
+  batch_genes <- gene_batches[[batch_idx]]
+  
+  batch_results <- foreach(
+    gene = batch_genes,
+    .combine = rbind,
+    .packages = c("glmmTMB", "lme4"),
+    .export = c("process_gene", "data_subset")
+  ) %dopar% {
+    process_gene(gene)
+  }
+  
+  cat("Processed batch", batch_idx, "with", length(batch_genes), "genes\n")
+  return(batch_results)
+})
+
+# Stop cluster
+stopCluster(cl)
+
+# Combine all batch results into a single data frame
+final_results <- do.call(rbind, all_results)
+
+# #Make volcano plot of all gene results for group
+full_results <- final_results %>%
+  mutate(fdr=p.adjust(PValue,method="fdr"))  
+# mutate(fdr3=p.adjust(PValue3,method="fdr"))
+full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
+# full_results$PValue10_3 <- -log10(pmax(full_results$PValue3, 1e-10))  # Avoid log(0)
+Nonconvergence_Rate <- paste0(round(((length(which(is.na(full_results$PValue)))+length(which(full_results$PValue=="NaN")))/length(full_results$Gene))*100,0),"%")
+# view(full_results)
+
+write.csv(full_results,fs::path(dir.results,"PT_Cells_No_Med_T2D_LC_adj_cov_lmm_no_zi.csv"))
+# full_results <- read.csv(fs::path(dir.results,"Hep_5_Fibrosis_Steatosis.csv"))
+
+full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$Beta > 0, "lightcoral",
+                             ifelse(full_results$fdr < 0.05 & full_results$Beta < 0, "lightblue", "gray"))
+
+# Identify significant points (fdr < 0.05)
+significant_df <- full_results[full_results$fdr < 0.05, ]
+# 
+# full_results$color3 <- ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 > 0, "lightcoral",
+#                               ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 < 0, "lightblue", "gray"))
+# 
+# # Identify significant points (fdr < 0.05)
+# significant_df3 <- full_results[full_results$fdr3 < 0.2, ]
+
+Genes <- length(unique(full_results$Gene))
+Cells <- ncol(so_celltype)
+
+#Figure Range
+max <- max(significant_df$Beta,na.rm=T)
+min <- min(significant_df$Beta,na.rm=T)
+
+
+# full_results$Log2FC <- 2^(full_results$Beta)
+# Create the volcano plot using ggplot
+volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color)) +
+  geom_point(alpha = 0.7) +  # Plot points with transparency
+  scale_color_identity() +  # Use the color column directly
+  theme_minimal() +  # Minimal theme
+  labs(
+    title = "Type 2 Diabetes vs. Lean Controls (All No Medication)",
+    subtitle = "PT Cells, Adjusted for Age, Sex & BMI",
+    x = "Fold Change",
+    y = "-log10(P-Value)",
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,", Non-Convergence Rate: ",Nonconvergence_Rate)
+  ) +
+  xlim(min,max)+
+  theme(
+    plot.title = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 0, hjust = 1)
+  )+
+  # # Add labels for significant points
+  geom_text(data = significant_df, aes(label = Gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+
+volcano_plot
+pdf(fs::path(dir.results,"Plot_PT_Cells_T2D_LC_NoMed.pdf"),width=10,height=7)
+print(volcano_plot)
+dev.off()
