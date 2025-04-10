@@ -236,7 +236,7 @@ model.fxn <- function(i) {
 }
 
 # Get the number of cores your machine has
-num_cores <- detectCores() - 1  # Reserve one core for the system, adjust as needed
+num_cores <- 4  # Reserve one core for the system, adjust as needed
 
 # Function to run the model for each k and scenario
 run_simulation <- function(k, scenario, dir.data, dir.results) {
