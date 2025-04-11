@@ -1,0 +1,615 @@
+---
+title: "Kidney_Project"
+author: "Hailey Hampson"
+date: "2025-02-25"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+  output_dir: "/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Kidney scRNAseq Project/Results"
+---
+
+# 1. Set up 
+## a. Libraries & Directores
+```{r, include=F}
+# library(reprex)
+# install.packages("reticulate")
+library(reticulate)
+reticulate::use_python("/mmfs1/gscratch/scrubbed/hhampson/pytorch-cuda11/bin/python") 
+library(tidyverse)
+library(BiocManager)        
+library(arsenal)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(Seurat)
+library(future)
+# library(colorspace)
+# library(patchwork)
+# library(ggdendro)
+# library(cowplot)
+# library(ggpubr)
+# library(venn)
+# library(rstatix)
+# library(table1)
+# library(Biobase)
+# library(ReactomeGSA)
+# library(GSEABase)
+# library(msigdbr)
+library(kableExtra)
+library(knitr)
+# library(SingleCellExperiment)
+# library(fgsea)
+# library(EnhancedVolcano)
+# library(openxlsx)
+# library(MAST)
+# # library(qpcR)
+# library(ggpubr)
+# library(openxlsx)
+# library(GGally)
+# library(GSEABase)
+# library(limma)
+# library(reshape2)
+# library(data.table)
+# library(knitr)
+# library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(stringr)
+#library(NMF)
+# library(rsvd)
+# library(RColorBrewer)
+# library(devtools)
+# install_github("Sun-lab/ideas",force=T)
+#library(ideas)
+library(foreach)
+library(parallel)
+library(doRNG)
+library(doParallel)
+# library(fs)
+# registerDoParallel(cores = 6)
+# library(VennDiagram)
+# library(janitor)
+# devtools::install_github('immunogenomics/presto')
+# library(presto)
+# library(knitr)
+library(lme4)
+library(lmerTest)
+#install.packages("glmmTMB")
+# Reinstall glmmTMB from source
+#install.packages("glmmTMB", type = "source")
+# library(glmmTMB)
+# Install DoubletFinder (if not already installed)
+# devtools::install_github("chris-mcginnis-ucsf/DoubletFinder",force=T)
+# Load the package
+# Install DoubletFinder from GitHub (use devtools to install)
+# if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+# devtools::install_github("chris-mcginnis-ucsf/DoubletFinder",force=T)
+# library(DoubletFinder)
+
+
+#Set number of cores for parallellization
+#maxCores <- detectCores()
+#numCores <- maxCores-1
+#cl <- makeCluster(numCores)  # Create a cluster with the desired number of cores
+#registerDoParallel(cl) 
+
+#Local file path
+#dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
+#dir.dat2 <- c("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean")
+#dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+#dir.results <- c("/Volumes/Peds Endo/Petter Bjornstad/Kidney Project/Results")
+
+# #Lambda file path
+# dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
+# dir.code <- c("/home/Github_Repo/CHCO-Code/Petter Bjornstad/Kidney scRNA/Kidney scRNA")
+# dir.results <- c(fs::path(dir.dat,"Kidney Project/Results"))
+
+# #Mac Studio File Path
+# dir.dat <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive")
+# dir.results <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Kidney scRNAseq Project/Results")
+# dir.ipa <- c("/Users/hhampson/Documents/IPA/Results")
+
+#Hyak File Paths
+dir.dat <- c("/mmfs1/home/hhampson/CHCO-Code/Petter Bjornstad")
+
+#Load functions
+source("Kidney_functions_sc.R")
+source(fs::path(dir.dat,"Data Processing and Analysis","Standard_Functions.R"))
+```
+
+## b. Kopah
+```{r, include=F}
+## Load boto3 and pandas
+boto3 <- reticulate::import("boto3")
+pd <- reticulate::import("pandas")
+
+## Create an S3 client
+keys <- fromJSON("/mmfs1/home/hhampson/keys.json") # replace with your UW ID
+session <- boto3$session$Session(
+  aws_access_key_id = keys$MY_ACCESS_KEY,
+  aws_secret_access_key = keys$MY_SECRET_KEY
+)
+
+## Create an S3 client with the session
+s3 <- session$client("s3", endpoint_url = "https://s3.kopah.uw.edu")
+
+# read file
+bucket <- "bucketname" # bucket name in Kopah
+temp_file <- tempfile(fileext = ".csv") # need to create a temporary file
+s3$download_file(bucket, "filename.csv", temp_file)
+df <- read.csv(temp_file)
+```
+
+# 2. Quality Control & Preprocessing
+## a. Load Kidney scRNA seq Data
+```{r, include=F}
+#Load PB90 with new KPMP Cell Types
+# #Mac Studio pathway
+# so_kpmp_sc <- readRDS("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/scRNA/data_raw/PB_90_RPCAFix_Metadata_LR_RM_kpmpV1labelled.rds")
+
+#Hyak Path
+so_kpmp_sc <- readRDS(fs::path(dir.dat,""))
+```
+
+## b. Data Cleaning, QC & Preprocessing
+```{r, echo=F, warning=F, fig.width=15, fig.height=10}
+#Fix Typos in kit ids in PB90
+so_kpmp_sc$kit_id[which(so_kpmp_sc$kit_id=="KI-0014643")] <- "KL-0014643"
+so_kpmp_sc$kit_id[which(so_kpmp_sc$kit_id=="kl-0023998")] <- "KL-0023998"
+
+#Load harmonized data that has been filtered from 90 to the 83 participants that have baseline single cell data
+harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney scRNAseq Project","Data","harmonized_data_kidney_sc_all_metadata2.csv"))%>%
+  dplyr::select(-X)
+
+#Select metadata from seurat object to facilitate merge of new metadata into seurat object
+meta_kidney_sc <-  so_kpmp_sc@meta.data
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+
+#Merge metadata from 83 participants at baseline into seurat object metadata
+meta_kidney_sc <- meta_kidney_sc %>%
+  left_join(harm_meta_data,by="kit_id")
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+
+#Pull ids from 83 participants at baseline to filter seurat object to these participants only 
+ids <- harm_meta_data$kit_id
+
+#Merge metadata back into seurat object
+so_kpmp_sc <- AddMetaData(so_kpmp_sc, meta_kidney_sc)
+
+#Check number of unique ids
+length(unique(so_kpmp_sc$kit_id)) #should be 90
+
+#Filter seurat object to only IDs that have the metadata & sc data (83 individuals at baseline)
+so_kpmp_sc <- subset(so_kpmp_sc, kit_id %in% ids)
+
+#Check number of unique ids after filtering
+length(unique(so_kpmp_sc$kit_id)) #should be 83
+
+#Remove metadatasets
+rm(meta_kidney_sc,harm_meta_data)
+
+#Remove two coenrolled IDs
+so_kpmp_sc <- subset(so_kpmp_sc,kit_id!="KL-0030621")
+so_kpmp_sc <- subset(so_kpmp_sc,kit_id!="KL-0029535")
+#Check unique number of kit ids now (should be 81)
+length(unique(so_kpmp_sc$kit_id)) #Should be 81
+
+#Load in most up to date medication data to update medication information
+med <- read.xlsx(fs::path(dir.dat,"Kidney scRNAseq Project/Data/Biopsies_w_mrn_Oct3.xlsx"))
+#Select Metformin, RASSI, Insulin data
+med <- med %>%
+  dplyr::select(all_of(c("record_id","mrn","raasi_1","insulin_1","mfm_1")))
+#Pull seurat object metadata to help harmoinize in new metadata
+meta_kidney_sc <-  so_kpmp_sc@meta.data
+#Filter to only those with a unique identifier id in the seurat object metadata
+med <- med %>%
+  filter(mrn %in% as.character(meta_kidney_sc$mrn)) 
+length(unique(med$mrn)) #95 total rows remain, 81 unique individual ids
+#Filter to only those that have a unique record id in the seurat object
+med <- med %>%
+  filter(record_id %in% meta_kidney_sc$record_id) 
+length(unique(med$mrn)) #81 remain
+length(unique(med$record_id)) #81
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+med$mrn <- as.numeric(med$mrn) #Make numeric to merge
+#Merge med data with seurat metadata
+meta_kidney_sc <- meta_kidney_sc %>%
+  left_join(med,by=c("mrn","record_id"))
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+length(unique(meta_kidney_sc$mrn)) #81 remain
+length(unique(meta_kidney_sc$record_id)) #81
+
+#Add Med Meta Data to Seurat object
+so_kpmp_sc <- AddMetaData(so_kpmp_sc, meta_kidney_sc)
+#Remove med metadatset
+rm(med,meta_kidney_sc)
+
+#Create medication & disease status groups of interest
+so_kpmp_sc@meta.data <- so_kpmp_sc@meta.data %>%
+  mutate(glp1_sglt2=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>%
+  mutate(sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>%
+  mutate(glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>%
+  mutate(no_med=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+
+#Define 4 exposure groups:
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
+invisible(gc())
+so_kpmp_sc@meta.data <- so_kpmp_sc@meta.data %>%
+  mutate(medication = case_when(glp1_sglt2 == "Yes" ~ "glp1_sglt2",
+                                sglt2 == "Yes" ~ "sglt2",
+                                glp1 == "Yes" ~ "glp1",
+                                no_med == "Yes" ~ "no_med"))
+so_kpmp_sc@meta.data$medication <- factor(so_kpmp_sc@meta.data$medication, levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
+
+#Ensure default assay in seurat object to RNA
+DefaultAssay(so_kpmp_sc) <- "RNA"
+invisible(gc())
+
+#Perform Quality Control & Preprocessing Steps
+#Number of cells before filtering: 
+cell_total1 <- ncol(so_kpmp_sc) #186125
+#Number of Genes before filtering: 
+gene_total1 <- nrow(so_kpmp_sc) #31332
+#Apply qc function
+so_object <- qc_function(so=so_kpmp_sc,cut_low=200,cut_high=5000,mt_pct=0.5,var_pct=0.75,gene_pct=0.05) 
+so_filtered <- so_object$so
+print(so_object$elbow_plot)
+
+#Number of Cells after filtering: 
+cell_total2 <- ncol(so_filtered) #14733
+#Number of Genes after filtering: 
+gene_total2 <- nrow(so_filtered) #8966
+print(paste0(cell_total1," cells before filtereing, ",cell_total2," cells after filtering (removed ",cell_total1-cell_total2," cells); ",gene_total1," genes before filtering, ",gene_total2," genes after filtering (removed ",gene_total1-gene_total2," genes)"))
+
+#Visualize filtered seurat object on umaps by cell type and diabetes group
+umap_vis(so=so_filtered ,cell_type="KPMP_celltype",group_variable="group") 
+
+#Remove unfiltered seurat object
+rm(so_object,so_kpmp_sc)
+# 
+# #Sample-level QC Metrics 
+# # o	Number of cells per sample
+# # Check the number of cells per sample using dplyr
+# qc_dat <- so_kpmp_sc@meta.data %>%
+#   group_by(kit_id) %>%
+#   summarise(cell_count = n())
+# range(qc_dat$cell_count) #80 9607
+# hist(qc_dat$cell_count)
+# ggplot(data.frame(cell_count = qc_dat$cell_count), aes(x = cell_count)) +
+#   geom_histogram(binwidth = 1000, fill = "skyblue", color = "black", alpha = 0.7) +
+#   labs(title = "Cell Count per Sample", x = "Cell Count per Biopsy Sample", y = "Frequency")
+# mean(qc_dat$cell_count)
+# median(qc_dat$cell_count)
+# sd(qc_dat$cell_count)
+# summary(qc_dat$cell_count)
+# # o	Read depth distribution
+# # Calculate total read depth (sum of counts) for each cell
+# so_kpmp_sc$read_depth <- Matrix::colSums(so_kpmp_sc@assays$RNA@layers$counts)
+# ggplot(data.frame(read_depth = so_kpmp_sc$read_depth), aes(x = read_depth)) +
+#   geom_histogram(binwidth = 1000, fill = "skyblue", color = "black", alpha = 0.7) +
+#   labs(title = "Read Depth Distribution", x = "Read Depth (Total Counts)", y = "Frequency")
+# summary(so_kpmp_sc$read_depth)
+# 
+# # o	Gene detection rates
+# # Calculate the number of detected genes per cell (non-zero counts)
+# so_kpmp_sc$detected_genes <- Matrix::colSums(so_kpmp_sc@assays$RNA@layers$counts > 0)
+# 
+# # Total number of genes in the dataset
+# total_genes <- nrow(so_kpmp_sc@assays$RNA@layers$counts)
+# 
+# # Calculate the detection rate as the percentage of detected genes
+# so_kpmp_sc$gene_detection_rate <- so_kpmp_sc$detected_genes / total_genes * 100
+# hist(so_kpmp_sc$gene_detection_rate)
+# summary(so_kpmp_sc$gene_detection_rate)
+# 
+# # o	Batch effect assessment
+# 
+# # •	Cell-level QC
+# # o	Mitochondrial gene percentage
+# # Step 1: Identify mitochondrial genes (assuming the gene names start with "MT-")
+# mito_genes <- grep("^MT-", rownames(so_kpmp_sc), value = TRUE)
+# 
+# # Step 2: Calculate the total expression for each cell and the expression from mitochondrial genes
+# # Step 2: Access the counts matrix
+# counts_matrix <- so_kpmp_sc@assays$RNA@layers$counts
+# rownames(counts_matrix) <- rownames(so_kpmp_sc)
+# colnames(counts_matrix) <- colnames(so_kpmp_sc)
+# so_kpmp_sc$mito_counts <- Matrix::colSums(counts_matrix[mito_genes,])
+# 
+# # Step 3: Calculate the mitochondrial gene percentage for each cell
+# so_kpmp_sc$mito_percent <- so_kpmp_sc$mito_counts / Matrix::colSums(counts_matrix) * 100
+# 
+# # Step 4: Inspect the first few values of the mitochondrial gene percentage
+# hist(so_kpmp_sc$mito_percent)
+# summary(so_kpmp_sc$mito_percent)
+# 
+# 
+# # o	UMI counts
+# # Access the raw UMI counts matrix
+# umi_counts <- so_kpmp_sc@assays$RNA@layers$counts
+# # Calculate total UMI counts for each cell
+# total_umi_per_cell <- Matrix::colSums(umi_counts)
+# # Add total UMI counts for each cell to the metadata
+# so_kpmp_sc$total_umi_counts <- total_umi_per_cell
+# 
+# hist(so_kpmp_sc$total_umi_counts)
+# # Histogram of total UMI counts per cell
+# ggplot(data = data.frame(umi_counts = so_kpmp_sc$total_umi_counts), aes(x = umi_counts)) +
+#   geom_histogram(binwidth = 1000, fill = "lightblue", color = "black") +
+#   theme_minimal() +
+#   labs(title = "Distribution of Total UMI Counts per Cell",
+#        x = "Total UMI Counts",
+#        y = "Frequency") +
+#   theme(text = element_text(size = 12))
+# 
+# 
+# # o	Gene counts
+# # Access the raw UMI count matrix from the Seurat object (assumes the object is named 'so_kpmp_sc')
+# raw_counts <- so_kpmp_sc@assays$RNA@layers$counts
+# 
+# # Calculate the total count for each gene (sum across cells)
+# gene_counts <- Matrix::rowSums(raw_counts)
+# 
+# # Optionally, add it to the Seurat object metadata (to track it later)
+# so_kpmp_sc$gene_counts <- gene_counts
+# hist(so_kpmp_sc$gene_counts)
+
+# o	Doublet detection
+# # Assuming 'so_kpmp_sc' is your Seurat object
+# so_kpmp_sc <- ScaleData(so_kpmp_sc)  # Optional, but can help with scaling
+# so_kpmp_sc <- RunPCA(so_kpmp_sc, features = VariableFeatures(so_kpmp_sc))  # Run PCA
+# 
+# # Find neighbors and perform clustering (often done during preprocessing)
+# so_kpmp_sc <- FindNeighbors(so_kpmp_sc, dims = 1:15)
+# so_kpmp_sc <- FindClusters(so_kpmp_sc)
+
+# Determine the expected doublet rate for your dataset
+# DoubletFinder uses a default of 0.075 (7.5% of cells are expected to be doublets),
+# but you can adjust this based on your experiment's expected doublet frequency.
+
+# # Run DoubletFinder
+# so_kpmp_sc <- doubletFinder(so_kpmp_sc, pN = 0.075, pK = 0.15, nExp = 200)
+# # 'pN' is the expected doublet proportion (e.g., 0.075 for 7.5% doublets)
+# # 'pK' is a parameter used to adjust the doublet score calculation
+# # 'nExp' is the estimated number of doublets to be identified
+# 
+# # DoubletFinder creates a column with doublet classifications (e.g., 'DF.classifications_0.075_200')
+# # This classification column will indicate if a cell is predicted to be a doublet ('Doublet') or a singlet ('Singlet')
+# 
+# # Example: View the distribution of doublet scores
+# table(so_kpmp_sc$DF.classifications_0.075_200)
+# 
+# # Plot the doublet scores using a violin plot
+# VlnPlot(so_kpmp_sc, features = "DF.classifications_0.075_200", group.by = "seurat_clusters")
+# 
+# # Filter out doublets (you can choose the threshold based on your dataset)
+# so_kpmp_sc_filtered <- subset(so_kpmp_sc, subset = DF.classifications_0.075_200 == "Singlet")
+
+# 
+# # # 
+# # Step 1: Filter to genes expressed in more than 5% of cells
+# gene_expression_matrix <- so_kpmp_sc@assays$RNA@layers$counts
+# rownames(gene_expression_matrix) <- rownames(so_kpmp_sc@assays$RNA)
+# colnames(gene_expression_matrix) <- colnames(so_kpmp_sc@assays$RNA)
+# # expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.1
+# expressed_genes <- Matrix::rowSums(gene_expression_matrix != 0) > dim(gene_expression_matrix)[2] * 0.05
+# names(expressed_genes)
+# rownames(gene_expression_matrix)[expressed_genes]
+# so_kpmp_sc <- subset(so_kpmp_sc, features = rownames(gene_expression_matrix)[expressed_genes])
+# # dim(so_kpmp_sc@assays$RNA@layers$counts) #9289 186125
+# # dim(so_kpmp_sc@assays$RNA) #9289 186125
+# # dim(so_kpmp_sc) #9289 186125
+# # sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA))) #70
+# # ncol(so_kpmp_sc) #186125 cells
+# # nrow(so_kpmp_sc) #9289 genes
+# # 
+# # Step 2: Remove mitochondrial genes (those starting with "MT")
+# mito_genes <- grep("^MT-", rownames(so_kpmp_sc@assays$RNA), value = TRUE)
+# so_kpmp_sc <- subset(so_kpmp_sc, features = setdiff(rownames(so_kpmp_sc), mito_genes))
+# dim(so_kpmp_sc@assays$RNA@layers$counts) #9276 186125
+# dim(so_kpmp_sc@assays$RNA@layers$data) #9276 186125
+# dim(so_kpmp_sc@assays$RNA)#5714 186125
+# sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA@layers$counts))) #0
+# ncol(so_kpmp_sc) #186125 cells
+# nrow(so_kpmp_sc) #9276 genes
+# # 
+# 
+# # 
+# # # Check dimensions after filtering
+# # dim(so_kpmp_sc@assays$RNA@layers$counts) #9289 81882
+# # dim(so_kpmp_sc@assays$RNA)#9289 81882
+# # dim(so_kpmp_sc)#9289 81882
+# # 
+# # # Optionally, you can also check how many MT genes remain in the filtered dataset
+# # sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA@layers$counts)))
+# # ncol(so_kpmp_sc)  # Number of cells remaining
+# # 
+# # # •	Data Normalization 
+# # Step 3: Renormalize the Seurat object after filtering
+# so_kpmp_sc <- NormalizeData(so_kpmp_sc)
+# so_kpmp_sc <- ScaleData(so_kpmp_sc)
+# # o	SCTransform implementation
+# # so_kpmp_sc <- SCTransform(so_kpmp_sc, assay = "RNA", vars.to.regress = c("nCount_RNA", "percent.mt"), verbose = TRUE)
+# 
+
+# o	Batch correction (Harmony/BBKNN)
+# o	Technical variance removal
+# 
+# #Check normalized slot
+# dim(so_kpmp_sc@assays$RNA@layers$data) #5714 186125
+# sum(grepl("^MT-", rownames(so_kpmp_sc@assays$RNA@layers$data))) #70
+# ncol(so_kpmp_sc) #186125 cells
+# nrow(so_kpmp_sc) #5714 genes
+# 
+
+```
+# 3. Comparitive Data Analysis
+```{r}
+#For each KPMP cell type
+for (celltype in so_filtered$KPMP_celltype) {
+  data_object <- ext_gene_fxn2(so=so_filtered,celltype="PT-S1/S2")
+  data <- data_object$data
+  gene_list <- data_object$gene_list
+  # N = length(unique(data$kit_id)) 
+  
+  #Compare Health Controls to Type 2 Diabetes on no meds
+  data_subset <- data %>%
+    filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
+    filter(medication=="no_med")
+  N1 = length(unique(data_subset$kit_id))
+  
+  # #Visualize the groups
+  # data_subset_ag <-  data_subset %>%
+  #   group_by(kit_id) %>%
+  #   summarise(across(c(group, medication), first)) %>%  # Use first() or another summary function
+  #   ungroup()
+  # table(data_subset_ag$group,data_subset_ag$medication)
+  data_subset$group <- factor(data_subset$group)
+  
+  #Filter out genes that are not expressed in the subset population
+  # for (gene in gene_list) {
+  #   data_subset1 <- data_subset %>% 
+  #     filter(sum(data_subset[[gene]])>0)
+  # }
+  
+  
+  #Prepare parallel execution
+  full_results <- foreach(gene = gene_list[1:48], .combine = rbind, .packages = c("lme4","lmerTest", "dplyr")) %dopar% {
+    # for (gene in gene_list) {
+    for (gene in gene_list[1:20]) { #tester genes
+      m0 <- as.formula(paste0(gene," ~ group + (1 | kit_id)"))
+      model <- lmer(m0,data=data_subset)
+      #Adjust for key covariates
+      m1 <- as.formula(paste0(gene," ~ group + age + sex + bmi + (1 | kit_id)"))
+      model1 <- lmer(m1,data=data_subset)
+      
+      
+      beta <- round(summary(model)$coef[2,1],3)
+      pval <-round(summary(model)$coef[2,5],5)
+      beta1 <- round(summary(model1)$coef[2,1],3)
+      pval1 <-round(summary(model1)$coef[2,5],5)
+      # }
+      # Collect results for each gene
+      # results <- data.frame(Gene=gene,Beta=beta1,PValue=pval1)
+      # return(results)
+      results <- data.frame(Gene=gene,Beta=beta1,PValue=pval1)
+      full_results <- rbind(full_results,results)
+      # # print(p)
+      # return(full_results)
+    }
+    #Make volcano plot of all gene results for group
+    full_results <- full_results %>%
+      mutate(fdr=p.adjust(PValue,method="fdr"))
+  }
+  
+  
+  # #log transform gene expression
+  # gene_expression <- gene_expression %>%
+  #   mutate(across(everything(),~log1p(.))) # log1p is log(x + 1)
+  # gene_expression$cellname <- rownames(gene_expression)
+  # rownames(gene_expression) <- NULL
+  
+  
+  unique(data$group)
+  data$group <- factor(data$group,levels = c("Lean_Control","Obese_Control","Type_1_Diabetes","Type_2_Diabetes"),labels=c("Lean_Control","Obese_Control","Type_1_Diabetes","Type_2_Diabetes"))
+  # length(data$hba1c)
+  # length(which(data$hba1c==".")) #7457 cells missing hba1c
+  # length(unique(data$kit_id[which(data$hba1c==".")])) #3 people missing HbA1c: "KL-0029407" "KL-0030607" "KL-0031456"
+  rm(gene_expression,metadata)
+  
+  #1. Medications among Type 2 Diabetes
+  #Filter to Type_2_Diabetes only since no other participants are on these main meds
+  length(unique(data$kit_id)) #81 partiucipants before filtering
+  data_diab <- data %>%
+    filter(group=="Type_2_Diabetes")  #32 participants with Typd 2
+  length(unique(data_diab$kit_id)) #32
+  #levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
+  #1. SLGT2i+/GLP-1ra+ vs. GLP1
+  data_subgroup <- data_diab %>%
+    filter(group2=="glp1_sglt2" | group2=="glp1")
+  length(unique(data_subgroup$kit_id)) #11
+  data_subgroup$medication <- factor(data_subgroup$medication)
+  all_genes <- rownames(data_subgroup)
+  data_subgroup <- data %>%
+    # filter(group=="Type_2_Diabetes" | group=="Obese_Control")
+    filter(group==ref | group==exp)
+  data_subgroup$group <- factor(data_subgroup$group)
+  data_subgroup$group <-relevel(data_subgroup$group, ref = ref)
+  # full_results <- data.frame()
+  # Prepare parallel execution of gene models
+  full_results <- foreach(gene = gene_list[1:48], .combine = rbind, .packages = c("glmmTMB", "dplyr")) %dopar% {
+    # for (gene in gene_list) {
+    # for (gene in gene_list[1:20]) { #tester genes
+    m0 <- as.formula(paste0(gene," ~ group + (1 | kit_id)"))
+    model <- glmmTMB(m0,data=data_subgroup,family = nbinom2,  # Negative Binomial with a log link
+                     ziformula = ~ 1)
+    #If doesnt fit, try nb
+    if(summary(model)$coef$zi[1,4]=="NaN") {
+      model2 <- glmmTMB(m0, data=data_subgroup,
+                        family = nbinom2)
+      foldchange <- round(exp(summary(model2)$coef$cond[2,1]) - 1,5)
+      pval <- summary(model2)$coef$cond[2,4]
+      model_name <- "Negative Binomial"
+    }
+    if(summary(model)$coef$zi[1,4]!="NaN") {
+      #Check if zero inflation component is non-significant, if non-sig, run nb
+      if(summary(model)$coef$zi[1,4]>=0.05) {
+        model2 <- glmmTMB(m0, data=data_subgroup,
+                          family = nbinom2)
+        foldchange <- round(exp(summary(model2)$coef$cond[2,1]) - 1,5)
+        pval <- summary(model2)$coef$cond[2,4]
+        model_name <- "Negative Binomial"
+      }
+      #If sig, pull estimates from zinb
+      if(summary(model)$coef$zi[1,4]<0.05) {
+        # foldchange <- round(exp(summary(model)$coef$cond[2,1]) - 1,5)
+        foldchange <- round(exp(summary(model)$coef$cond[2,1]) - 1,5)
+        pval <- summary(model)$coef$cond[2,4]
+        model_name <- "Zero-Inflated Negative Binomial"
+      }
+    }
+    # Collect results for each gene
+    results <- data.frame(Gene = gene, FoldChange = foldchange, PValue = pval,ModelName=model_name)
+    return(results)
+    # results <- data.frame(Gene=gene,FoldChange=foldchange,PValue=pval)
+    # full_results <- rbind(full_results,results)
+    # # print(p)
+    # # return(full_results)
+  }
+  #Make volcano plot of all gene results for group
+  full_results <- full_results %>%
+    mutate(fdr=p.adjust(PValue,method="fdr"))
+  
+  m_top <- full_results
+  
+  # Transform PValue into -log10(p-value) for the y-axis
+  m_top$logPValue <- -log10(m_top$PValue)
+  
+  # Calculate the log2 of the fold change (logFC)
+  m_top$logFC <- log2(m_top$FoldChange)
+  
+  # Create a new column for significance based on the p-value cutoff and FC cutoff
+  m_top$Significance <- ifelse(m_top$fdr<0.05, "Significant", "Not Significant")
+  
+  # Create a new column to combine both significance and direction (positive or negative)
+  m_top$Color <- ifelse(m_top$Significance == "Significant" & m_top$logFC > 0, "Positive Significant",
+                        ifelse(m_top$Significance == "Significant" & m_top$logFC < 0, "Negative Significant",
+                               "Non-Significant"))
+  
+  # Select the genes that are significant to label
+  m_top$Label <- ifelse(m_top$Significance == "Significant", as.character(m_top$Gene), NA)
+  
+  # Plot
+  p <- ggplot(m_top, aes(x = logFC, y = logPValue, color = Color)) +
+    geom_point(aes(shape = Color), size = 3, alpha = 0.7) +  # Set alpha for transparency
+    scale_color_manual(values = c("Positive Significant" = "red", "Negative Significant" = "blue", "Non-Significant" = "gray")) +  # Custom color scale
+    scale_shape_manual(values = c("Positive Significant" = 19, "Negative Significant" = 19, "Non-Significant" = 1)) +  # Same shape for all but Non-Sig
+    geom_text(aes(label = Label), size = 3, color = "black", vjust = 1, hjust = 1) +  # Add labels for significant genes in black
+    labs(x = "log2 Fold Change", y = "-log10(p-value)", title = "Volcano Plot") +
+    theme_minimal() +
+    theme(legend.position = "top") +
+    theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14))
+  
+  # Print the plot
+  print(p)
+  ```
+  
