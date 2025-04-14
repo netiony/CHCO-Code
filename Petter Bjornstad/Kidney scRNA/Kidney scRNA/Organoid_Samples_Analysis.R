@@ -76,6 +76,15 @@ library(glmmTMB)
 # library(DoubletFinder)
 # install.packages("emmeans")
 library(emmeans)
+library(enrichplot)
+library(enrichR)
+dbs <- c("GO_Biological_Process_2023", 
+         "KEGG_2021_Human",
+         # "Reactome_2022", 
+         "Reactome_Pathways_2024",
+         # "MSigDB_Oncogenic_Signatures",
+         # "MSigDB_Computational",
+         "MSigDB_Hallmark_2020")
 
 ##b. Set up directories ----
 dir.dat <- c("//Users/hhampson/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Biostatistics Core Shared Drive")
@@ -383,9 +392,10 @@ table1(~pah_clear_bsa + eGFR_CKD_epi +acr_u +mfm_1+insulin_1| study, data=dat)
 #3. Analysis ----
 #ROBO and FN1 genes DEGs and Pathways (IPA & GSEA)
 ##a. PT Cells ----
-#PT
+###i. Mixed Effect Model ----
+####a. Full Cov Set----
 so_celltype <- subset(so_kpmp_sc,celltype1=="PT")
-ncol(so_celltype) #2246 cells
+ncol(so_celltype) #74 cells
 nrow(so_celltype) #9196 genes
 # Extract the gene expression data for all genes
 gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
@@ -414,10 +424,11 @@ rm(metadata,gene_expression)
 
 #Compare Health Controls to Type 2 Diabetes on no meds
 data_subset <- data
-  # filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
-  # filter(medication=="no_med")
+# filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
+# filter(medication=="no_med")
 rm(data)
-data_subset$group <- factor(data_subset$medication)
+data_subset$medication <- factor(data_subset$medication)
+data_subset$group <- factor(data_subset$group)
 data_subset$group <- relevel(data_subset$group,ref="Lean_Control")
 #Select covariates to keep in the model: Acru, metformin/insulin,bmi,age,tg
 data_subset <- data_subset %>% 
@@ -498,7 +509,7 @@ full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0
 Nonconvergence_Rate <- paste0(round(((length(which(is.na(full_results$PValue)))+length(which(full_results$PValue=="NaN")))/length(full_results$Gene))*100,0),"%")
 # view(full_results)
 
-write.csv(full_results,fs::path(dir.results,"PT_Cells_No_Med_T2D_LC_adj_cov_lmm_no_zi.csv"))
+write.csv(full_results,fs::path(dir.results,"PT_Cells_T2D_LC_full_cov_set.csv"))
 # full_results <- read.csv(fs::path(dir.results,"Hep_5_Fibrosis_Steatosis.csv"))
 
 full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$Beta > 0, "lightcoral",
@@ -528,8 +539,8 @@ volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color))
   scale_color_identity() +  # Use the color column directly
   theme_minimal() +  # Minimal theme
   labs(
-    title = "Type 2 Diabetes vs. Lean Controls (All No Medication)",
-    subtitle = "PT Cells, Adjusted for Age, Sex & BMI",
+    title = "Type 2 Diabetes vs. Lean Controls",
+    subtitle = "PT Cells, Adjusted for Age, BMI, ACRu, TGs, Insulin & Metformin",
     x = "Fold Change",
     y = "-log10(P-Value)",
     color = "FC Direction Direction",
@@ -548,6 +559,2875 @@ volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color))
 #                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
 
 volcano_plot
-pdf(fs::path(dir.results,"Plot_PT_Cells_T2D_LC_NoMed.pdf"),width=10,height=7)
+pdf(fs::path(dir.results,"Plot_PT_Cells_T2D_LC_full_cov_set.pdf"),width=10,height=7)
 print(volcano_plot)
 dev.off()
+
+#### b. Crude Analysis ----
+so_celltype <- subset(so_kpmp_sc,celltype1=="PT")
+ncol(so_celltype) #2246 cells
+nrow(so_celltype) #9196 genes
+# Extract the gene expression data for all genes
+gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
+
+#Assign gene names as rownames, cell names as colnames
+# rownames(gene_expression) <- rownames(so_celltype) #Gene Names
+# colnames(gene_expression) <- colnames(so_celltype) #Cell Names
+#Transpose gene expression dataset to merge with metadata
+gene_expression <- t(gene_expression)
+gene_expression <- data.frame(gene_expression) #Make a dataframe again after transposing
+#Set gene list
+gene_list_total <- colnames(gene_expression)
+gene_expression$cellname <- rownames(gene_expression) 
+rownames(gene_expression) <- NULL
+
+# Extract the metadata
+metadata <- so_celltype@meta.data
+# metadata <- metadata %>%
+#   mutate(across(everything(),~ifelse(.==".",NA,.)))
+metadata$cellname <- rownames(metadata)
+rownames(metadata) <- NULL
+
+# Combine the gene expression data and metadata
+data <- tidylog::full_join(metadata,gene_expression,by="cellname")
+rm(metadata,gene_expression)
+
+#Compare Health Controls to Type 2 Diabetes on no meds
+data_subset <- data
+# filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
+# filter(medication=="no_med")
+rm(data)
+data_subset$medication <- factor(data_subset$medication)
+data_subset$group <- factor(data_subset$group)
+data_subset$group <- relevel(data_subset$group,ref="Lean_Control")
+#Select covariates to keep in the model: Acru, metformin/insulin,bmi,age,tg
+data_subset <- data_subset %>% 
+  dplyr::select(c("kit_id","group","medication","age","bmi","triglycerides","insulin_1","mfm_1","acr_u",all_of(gene_list_total)))
+
+#Try as batch loop
+# Set batch size
+batch_size <- 2000
+total_cores <- 50
+
+# Deduplicate gene list to avoid double-processing
+gene_list_total <- unique(gene_list_total)
+
+# Split the gene list into batches
+gene_batches <- split(gene_list_total, ceiling(seq_along(gene_list_total) / batch_size))
+
+# Define the function that processes a single gene
+process_gene <- function(gene) {
+  if (sum(data_subset[[gene]]) > 0) {
+    m1 <- as.formula(paste0(gene, " ~ group + (1 | kit_id)"))
+    
+    model1 <- tryCatch({
+      glmmTMB(m1, data = data_subset, family = gaussian)
+    }, error = function(e) {
+      return(NULL)
+    })
+    
+    if (!is.null(model1)) {
+      Beta <- summary(model1)$coef$cond[2,1]
+      PValue <- summary(model1)$coef$cond[2,4]
+    } else {
+      Beta <- NA
+      PValue <- NA
+    }
+  } else {
+    Beta <- NA
+    PValue <- NA
+  }
+  
+  return(data.frame(Gene = gene, Beta = Beta, PValue = PValue))
+}
+
+# Set number of cores
+total_cores <- parallel::detectCores() - 1
+
+# Initialize and register cluster
+cl <- makeCluster(total_cores)
+registerDoParallel(cl)
+
+# Run analysis per batch
+all_results <- lapply(seq_along(gene_batches), function(batch_idx) {
+  batch_genes <- gene_batches[[batch_idx]]
+  
+  batch_results <- foreach(
+    gene = batch_genes,
+    .combine = rbind,
+    .packages = c("glmmTMB", "lme4"),
+    .export = c("process_gene", "data_subset")
+  ) %dopar% {
+    process_gene(gene)
+  }
+  
+  cat("Processed batch", batch_idx, "with", length(batch_genes), "genes\n")
+  return(batch_results)
+})
+
+# Combine all batch results into a single data frame
+final_results <- do.call(rbind, all_results)
+# Stop cluster
+stopCluster(cl)
+
+# #Make volcano plot of all gene results for group
+full_results <- final_results %>%
+  mutate(fdr=p.adjust(PValue,method="fdr"))  
+# mutate(fdr3=p.adjust(PValue3,method="fdr"))
+full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
+# full_results$PValue10_3 <- -log10(pmax(full_results$PValue3, 1e-10))  # Avoid log(0)
+Nonconvergence_Rate <- paste0(round(((length(which(is.na(full_results$PValue)))+length(which(full_results$PValue=="NaN")))/length(full_results$Gene))*100,0),"%")
+# view(full_results)
+
+write.csv(full_results,fs::path(dir.results,"PT_Cells_T2D_LC_crude.csv"))
+# full_results <- read.csv(fs::path(dir.results,"Hep_5_Fibrosis_Steatosis.csv"))
+
+full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$Beta > 0, "lightcoral",
+                             ifelse(full_results$fdr < 0.05 & full_results$Beta < 0, "lightblue", "gray"))
+
+# Identify significant points (fdr < 0.05)
+significant_df <- full_results[full_results$fdr < 0.05, ]
+# 
+# full_results$color3 <- ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 > 0, "lightcoral",
+#                               ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 < 0, "lightblue", "gray"))
+# 
+# # Identify significant points (fdr < 0.05)
+# significant_df3 <- full_results[full_results$fdr3 < 0.2, ]
+
+Genes <- length(unique(full_results$Gene))
+Cells <- ncol(so_celltype)
+
+#Figure Range
+max <- max(significant_df$Beta,na.rm=T)
+min <- min(significant_df$Beta,na.rm=T)
+
+
+# full_results$Log2FC <- 2^(full_results$Beta)
+# Create the volcano plot using ggplot
+volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color)) +
+  geom_point(alpha = 0.7) +  # Plot points with transparency
+  scale_color_identity() +  # Use the color column directly
+  theme_minimal() +  # Minimal theme
+  labs(
+    title = "Type 2 Diabetes vs. Lean Controls",
+    subtitle = "PT Cells, Crude Analysis",
+    x = "Fold Change",
+    y = "-log10(P-Value)",
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,", Non-Convergence Rate: ",Nonconvergence_Rate)
+  ) +
+  xlim(min,max)+
+  theme(
+    plot.title = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 0, hjust = 1)
+  )+
+  # # Add labels for significant points
+  geom_text(data = significant_df, aes(label = Gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+
+volcano_plot
+pdf(fs::path(dir.results,"Plot_PT_Cells_T2D_LC_crude.pdf"),width=10,height=7)
+print(volcano_plot)
+dev.off()
+
+###ii. GSEA----
+#### a. Full Cov Set ----
+rm(figure,combined_plot,sig_pos,sig_neg,sig_pos_en_df,sig_neg_en_df,sig_pos_en,sig_neg_en,p1,p2,p3,p4,filtered_results)
+full_results <- read.csv(fs::path(dir.results,"PT_Cells_T2D_LC_full_cov_set.csv")) %>% 
+  dplyr::select(-X)
+sig_pos <- full_results %>% 
+  filter(Beta>0 & fdr<0.05)
+sig_neg <- full_results %>% 
+  filter(Beta<0 & fdr<0.05)
+
+#Run postive enricher analysis 
+sig_pos_en <- enrichr(as.character(sig_pos$Gene), dbs)
+#Plot results
+# Convert enrichment results to a dataframe
+sig_pos_en_df <- as.data.frame(sig_pos_en[[1]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - GO")
+p1 <- plotEnrich(filtered_results, title = "GO")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_go.jpeg"),width=10,height=7)
+
+# Convert enrichment results to a dataframe
+sig_pos_en_df <- as.data.frame(sig_pos_en[[2]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+p2 <- plotEnrich(filtered_results, title = "KEGG")
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Kegg")
+# plotEnrich(as.data.frame(sig_pos_en[[2]]), title = "Model 1 Positive Hepatocytes - Kegg")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_kegg.jpeg"),width=10,height=7)
+
+# sig_pos_en_df <- as.data.frame(sig_pos_en[[3]])
+# # Extract the number of overlapping genes
+# sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# # plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Reactome '22")
+# p3 <- plotEnrich(filtered_results, title = "Positive Hepatocytes - Reactome '22")
+# # plotEnrich(as.data.frame(sig_pos_en[[3]]), title = "Model 1 Positive Hepatocytes - Reactome '22")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome22.jpeg"),width=10,height=7)
+
+sig_pos_en_df <- as.data.frame(sig_pos_en[[3]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Reactome '24")
+p3 <- plotEnrich(filtered_results, title = "Reactome '24")
+# plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+# sig_pos_en_df <- as.data.frame(sig_pos_en[[5]])
+# # Extract the number of overlapping genes
+# sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# p5 <- plotEnrich(filtered_results, title = "Positive Hepatocytes - MsigDB Computational")
+# # plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - MsigDB Computational")
+# # plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+sig_pos_en_df <- as.data.frame(sig_pos_en[[4]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - MsigDB Hallmark '20")
+# plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+p4 <- plotEnrich(filtered_results, title = "MsigDB '20")
+
+# Arrange 6 plots in 3 rows x 2 columns
+combined_plot <- (p1 | p3) /
+(p3 | p4)
+
+# Display or save the plot
+figure <- combined_plot + 
+  plot_annotation(
+    title = "Positive Gene Set Enrichment Analysis for T2D vs. Lean Controls in PT cells",
+    theme = theme(
+      plot.title = element_text(
+        hjust = 0.5,         # Center title
+        size = 18,           # Bigger font
+        face = "bold"        # Bold text
+      )
+    )
+  )
+
+ggsave(fs::path(dir.results, "Positive_PT_T2D_LC_gsea_figure_full_cov.jpeg"), figure, width = 18, height = 5)
+
+#Run negative enricher analysis 
+sig_neg_en <- enrichr(as.character(sig_neg$Gene), dbs)
+#Plot results
+# Convert enrichment results to a dataframe
+sig_neg_en_df <- as.data.frame(sig_neg_en[[1]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - GO")
+p1 <- plotEnrich(filtered_results, title = "GO")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_go.jpeg"),width=10,height=7)
+
+# Convert enrichment results to a dataframe
+sig_neg_en_df <- as.data.frame(sig_neg_en[[2]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+p2 <- plotEnrich(filtered_results, title = "KEGG")
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Kegg")
+# plotEnrich(as.data.frame(sig_neg_en[[2]]), title = "Model 1 Negative Hepatocytes - Kegg")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_kegg.jpeg"),width=10,height=7)
+
+# sig_neg_en_df <- as.data.frame(sig_neg_en[[3]])
+# # Extract the number of overlapping genes
+# sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# # plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Reactome '22")
+# p3 <- plotEnrich(filtered_results, title = "Negative Hepatocytes - Reactome '22")
+# # plotEnrich(as.data.frame(sig_neg_en[[3]]), title = "Model 1 Negative Hepatocytes - Reactome '22")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome22.jpeg"),width=10,height=7)
+
+sig_neg_en_df <- as.data.frame(sig_neg_en[[3]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Reactome '24")
+p3 <- plotEnrich(filtered_results, title = "Reactome '24")
+# plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+# sig_neg_en_df <- as.data.frame(sig_neg_en[[5]])
+# # Extract the number of overlapping genes
+# sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# p5 <- plotEnrich(filtered_results, title = "Negative Hepatocytes - MsigDB Computational")
+# # plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - MsigDB Computational")
+# # plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+sig_neg_en_df <- as.data.frame(sig_neg_en[[4]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - MsigDB Hallmark '20")
+# plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+p4 <- plotEnrich(filtered_results, title = "MsigDB '20")
+
+# Arrange 6 plots in 3 rows x 2 columns
+combined_plot <- (p1 | p2) / 
+  (p3 | p4) 
+
+# Display or save the plot
+figure <- combined_plot + 
+  plot_annotation(
+    title = "Negative Gene Set Enrichment Analysis for T2D vs. Lean Controls in PT cells",
+    theme = theme(
+      plot.title = element_text(
+        hjust = 0.5,         # Center title
+        size = 18,           # Bigger font
+        face = "bold"        # Bold text
+      )
+    )
+  )
+
+ggsave(fs::path(dir.results, "Negative_PT_T2D_LC_gsea_figure_full_cov_set.jpeg"), figure, width = 18, height = 10)
+
+#### b. Crude Analysis ----
+rm(figure,combined_plot,sig_pos,sig_neg,sig_pos_en_df,sig_neg_en_df,sig_pos_en,sig_neg_en,p1,p2,p3,p4,filtered_results)
+full_results <- read.csv(fs::path(dir.results,"PT_Cells_T2D_LC_crude.csv")) %>% 
+  dplyr::select(-X)
+sig_pos <- full_results %>% 
+  filter(Beta>0 & fdr<0.05)
+sig_neg <- full_results %>% 
+  filter(Beta<0 & fdr<0.05)
+
+#Run postive enricher analysis 
+sig_pos_en <- enrichr(as.character(sig_pos$Gene), dbs)
+#Plot results
+# Convert enrichment results to a dataframe
+sig_pos_en_df <- as.data.frame(sig_pos_en[[1]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - GO")
+p1 <- plotEnrich(filtered_results, title = "GO")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_go.jpeg"),width=10,height=7)
+
+# Convert enrichment results to a dataframe
+sig_pos_en_df <- as.data.frame(sig_pos_en[[2]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+p2 <- plotEnrich(filtered_results, title = "KEGG")
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Kegg")
+# plotEnrich(as.data.frame(sig_pos_en[[2]]), title = "Model 1 Positive Hepatocytes - Kegg")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_kegg.jpeg"),width=10,height=7)
+
+# sig_pos_en_df <- as.data.frame(sig_pos_en[[3]])
+# # Extract the number of overlapping genes
+# sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# # plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Reactome '22")
+# p3 <- plotEnrich(filtered_results, title = "Positive Hepatocytes - Reactome '22")
+# # plotEnrich(as.data.frame(sig_pos_en[[3]]), title = "Model 1 Positive Hepatocytes - Reactome '22")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome22.jpeg"),width=10,height=7)
+
+sig_pos_en_df <- as.data.frame(sig_pos_en[[3]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Reactome '24")
+p3 <- plotEnrich(filtered_results, title = "Reactome '24")
+# plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+# sig_pos_en_df <- as.data.frame(sig_pos_en[[5]])
+# # Extract the number of overlapping genes
+# sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# p5 <- plotEnrich(filtered_results, title = "Positive Hepatocytes - MsigDB Computational")
+# # plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - MsigDB Computational")
+# # plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+sig_pos_en_df <- as.data.frame(sig_pos_en[[4]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - MsigDB Hallmark '20")
+# plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+p4 <- plotEnrich(filtered_results, title = "MsigDB '20")
+
+# Arrange 6 plots in 3 rows x 2 columns
+combined_plot <- (p1 + p2) / (p3+p4) 
+
+# Display or save the plot
+figure <- combined_plot + 
+  plot_annotation(
+    title = paste0("Positive Gene Set Enrichment Analysis"),
+    subtitle = paste0("T2D vs. Lean Controls in PT cells, Crude"),
+    theme = theme(
+      plot.title = element_text(
+        hjust = 0,         # Center title
+        size = 18,           # Bigger font
+        face = "bold"        # Bold text
+      )
+    )
+  )
+
+ggsave(fs::path(dir.results, "Positive_PT_T2D_LC_gsea_figure_crude.jpeg"), figure, width = 9, height = 15)
+
+#Run negative enricher analysis 
+sig_neg_en <- enrichr(as.character(sig_neg$Gene), dbs)
+#Plot results
+# Convert enrichment results to a dataframe
+sig_neg_en_df <- as.data.frame(sig_neg_en[[1]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - GO")
+p1 <- plotEnrich(filtered_results, title = "GO")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_go.jpeg"),width=10,height=7)
+
+# Convert enrichment results to a dataframe
+sig_neg_en_df <- as.data.frame(sig_neg_en[[2]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+p2 <- plotEnrich(filtered_results, title = "KEGG")
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Kegg")
+# plotEnrich(as.data.frame(sig_neg_en[[2]]), title = "Model 1 Negative Hepatocytes - Kegg")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_kegg.jpeg"),width=10,height=7)
+
+# sig_neg_en_df <- as.data.frame(sig_neg_en[[3]])
+# # Extract the number of overlapping genes
+# sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# # plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Reactome '22")
+# p3 <- plotEnrich(filtered_results, title = "Negative Hepatocytes - Reactome '22")
+# # plotEnrich(as.data.frame(sig_neg_en[[3]]), title = "Model 1 Negative Hepatocytes - Reactome '22")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome22.jpeg"),width=10,height=7)
+
+sig_neg_en_df <- as.data.frame(sig_neg_en[[3]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Reactome '24")
+p3 <- plotEnrich(filtered_results, title = "Reactome '24")
+# plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+# sig_neg_en_df <- as.data.frame(sig_neg_en[[5]])
+# # Extract the number of overlapping genes
+# sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# p5 <- plotEnrich(filtered_results, title = "Negative Hepatocytes - MsigDB Computational")
+# # plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - MsigDB Computational")
+# # plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+sig_neg_en_df <- as.data.frame(sig_neg_en[[4]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - MsigDB Hallmark '20")
+# plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+rm(p4)
+p4 <- plotEnrich(filtered_results, title = "MsigDB '20")
+
+# Arrange 6 plots in 3 rows x 2 columns
+combined_plot <- (p1 /p2 /p3) 
+
+# Display or save the plot
+figure <- combined_plot + 
+  plot_annotation(
+    title = "Negative Gene Set Enrichment Analysis for T2D vs. Lean Controls in PT cells, Crude",
+    theme = theme(
+      plot.title = element_text(
+        hjust = 0.5,         # Center title
+        size = 18,           # Bigger font
+        face = "bold"        # Bold text
+      )
+    )
+  )
+
+ggsave(fs::path(dir.results, "Negative_PT_T2D_LC_gsea_figure_crude.jpeg"), figure, width = 9, height = 15)
+
+##b. aPT ----
+### i. Mixed Effect Model ----
+#### a. Full Cov Set----
+so_celltype <- subset(so_kpmp_sc,KPMP_celltype=="aPT")
+ncol(so_celltype) #1489 cells
+nrow(so_celltype) #9196 genes
+# Extract the gene expression data for all genes
+gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
+
+#Assign gene names as rownames, cell names as colnames
+# rownames(gene_expression) <- rownames(so_celltype) #Gene Names
+# colnames(gene_expression) <- colnames(so_celltype) #Cell Names
+#Transpose gene expression dataset to merge with metadata
+gene_expression <- t(gene_expression)
+gene_expression <- data.frame(gene_expression) #Make a dataframe again after transposing
+#Set gene list
+gene_list_total <- colnames(gene_expression)
+gene_expression$cellname <- rownames(gene_expression) 
+rownames(gene_expression) <- NULL
+
+# Extract the metadata
+metadata <- so_celltype@meta.data
+# metadata <- metadata %>%
+#   mutate(across(everything(),~ifelse(.==".",NA,.)))
+metadata$cellname <- rownames(metadata)
+rownames(metadata) <- NULL
+
+# Combine the gene expression data and metadata
+data <- tidylog::full_join(metadata,gene_expression,by="cellname")
+rm(metadata,gene_expression)
+
+#Compare Health Controls to Type 2 Diabetes on no meds
+data_subset <- data
+# filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
+# filter(medication=="no_med")
+rm(data)
+data_subset$medication <- factor(data_subset$medication)
+data_subset$group <- factor(data_subset$group)
+data_subset$group <- relevel(data_subset$group,ref="Lean_Control")
+#Select covariates to keep in the model: Acru, metformin/insulin,bmi,age,tg
+data_subset <- data_subset %>% 
+  dplyr::select(c("kit_id","group","medication","age","bmi","triglycerides","insulin_1","mfm_1","acr_u",all_of(gene_list_total)))
+
+#Try as batch loop
+# Set batch size
+batch_size <- 2000
+total_cores <- 50
+
+# Deduplicate gene list to avoid double-processing
+gene_list_total <- unique(gene_list_total)
+
+# Split the gene list into batches
+gene_batches <- split(gene_list_total, ceiling(seq_along(gene_list_total) / batch_size))
+
+# Define the function that processes a single gene
+process_gene <- function(gene) {
+  if (sum(data_subset[[gene]]) > 0) {
+    m1 <- as.formula(paste0(gene, " ~ group + age + bmi + acr_u + triglycerides + insulin_1 + mfm_1 + (1 | kit_id)"))
+    
+    model1 <- tryCatch({
+      glmmTMB(m1, data = data_subset, family = gaussian)
+    }, error = function(e) {
+      return(NULL)
+    })
+    
+    if (!is.null(model1)) {
+      Beta <- summary(model1)$coef$cond[2,1]
+      PValue <- summary(model1)$coef$cond[2,4]
+    } else {
+      Beta <- NA
+      PValue <- NA
+    }
+  } else {
+    Beta <- NA
+    PValue <- NA
+  }
+  
+  return(data.frame(Gene = gene, Beta = Beta, PValue = PValue))
+}
+
+# Set number of cores
+total_cores <- parallel::detectCores() - 1
+
+# Initialize and register cluster
+cl <- makeCluster(total_cores)
+registerDoParallel(cl)
+
+# Run analysis per batch
+all_results <- lapply(seq_along(gene_batches), function(batch_idx) {
+  batch_genes <- gene_batches[[batch_idx]]
+  
+  batch_results <- foreach(
+    gene = batch_genes,
+    .combine = rbind,
+    .packages = c("glmmTMB", "lme4"),
+    .export = c("process_gene", "data_subset")
+  ) %dopar% {
+    process_gene(gene)
+  }
+  
+  cat("Processed batch", batch_idx, "with", length(batch_genes), "genes\n")
+  return(batch_results)
+})
+
+# Combine all batch results into a single data frame
+final_results <- do.call(rbind, all_results)
+# Stop cluster
+stopCluster(cl)
+
+# #Make volcano plot of all gene results for group
+full_results <- final_results %>%
+  mutate(fdr=p.adjust(PValue,method="fdr"))  
+# mutate(fdr3=p.adjust(PValue3,method="fdr"))
+full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
+# full_results$PValue10_3 <- -log10(pmax(full_results$PValue3, 1e-10))  # Avoid log(0)
+Nonconvergence_Rate <- paste0(round(((length(which(is.na(full_results$PValue)))+length(which(full_results$PValue=="NaN")))/length(full_results$Gene))*100,0),"%")
+# view(full_results)
+
+write.csv(full_results,fs::path(dir.results,"aPT_Cells_T2D_LC_full_cov_set.csv"))
+# full_results <- read.csv(fs::path(dir.results,"Hep_5_Fibrosis_Steatosis.csv"))
+
+full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$Beta > 0, "lightcoral",
+                             ifelse(full_results$fdr < 0.05 & full_results$Beta < 0, "lightblue", "gray"))
+
+# Identify significant points (fdr < 0.05)
+significant_df <- full_results[full_results$fdr < 0.05, ]
+# 
+# full_results$color3 <- ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 > 0, "lightcoral",
+#                               ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 < 0, "lightblue", "gray"))
+# 
+# # Identify significant points (fdr < 0.05)
+# significant_df3 <- full_results[full_results$fdr3 < 0.2, ]
+
+Genes <- length(unique(full_results$Gene))
+Cells <- ncol(so_celltype)
+
+#Figure Range
+max <- max(significant_df$Beta,na.rm=T)
+min <- min(significant_df$Beta,na.rm=T)
+
+
+# full_results$Log2FC <- 2^(full_results$Beta)
+# Create the volcano plot using ggplot
+volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color)) +
+  geom_point(alpha = 0.7) +  # Plot points with transparency
+  scale_color_identity() +  # Use the color column directly
+  theme_minimal() +  # Minimal theme
+  labs(
+    title = "Type 2 Diabetes vs. Lean Controls",
+    subtitle = "aPT Cells, Adjusted for Age, BMI, ACRu, TGs, Insulin & Metformin",
+    x = "Fold Change",
+    y = "-log10(P-Value)",
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,", Non-Convergence Rate: ",Nonconvergence_Rate)
+  ) +
+  xlim(min,max)+
+  theme(
+    plot.title = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 0, hjust = 1)
+  )+
+  # # Add labels for significant points
+  geom_text(data = significant_df, aes(label = Gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+
+volcano_plot
+pdf(fs::path(dir.results,"Plot_aPT_Cells_T2D_LC_full_cov_set.pdf"),width=10,height=7)
+print(volcano_plot)
+dev.off()
+
+#### b. Crude Analysis ----
+so_celltype <- subset(so_kpmp_sc,KPMP_celltype=="aPT")
+ncol(so_celltype) #1489 cells
+nrow(so_celltype) #9196 genes
+# Extract the gene expression data for all genes
+gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
+
+#Assign gene names as rownames, cell names as colnames
+# rownames(gene_expression) <- rownames(so_celltype) #Gene Names
+# colnames(gene_expression) <- colnames(so_celltype) #Cell Names
+#Transpose gene expression dataset to merge with metadata
+gene_expression <- t(gene_expression)
+gene_expression <- data.frame(gene_expression) #Make a dataframe again after transposing
+#Set gene list
+gene_list_total <- colnames(gene_expression)
+gene_expression$cellname <- rownames(gene_expression) 
+rownames(gene_expression) <- NULL
+
+# Extract the metadata
+metadata <- so_celltype@meta.data
+# metadata <- metadata %>%
+#   mutate(across(everything(),~ifelse(.==".",NA,.)))
+metadata$cellname <- rownames(metadata)
+rownames(metadata) <- NULL
+
+# Combine the gene expression data and metadata
+data <- tidylog::full_join(metadata,gene_expression,by="cellname")
+rm(metadata,gene_expression)
+
+#Compare Health Controls to Type 2 Diabetes on no meds
+data_subset <- data
+# filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
+# filter(medication=="no_med")
+rm(data)
+data_subset$medication <- factor(data_subset$medication)
+data_subset$group <- factor(data_subset$group)
+data_subset$group <- relevel(data_subset$group,ref="Lean_Control")
+#Select covariates to keep in the model: Acru, metformin/insulin,bmi,age,tg
+data_subset <- data_subset %>% 
+  dplyr::select(c("kit_id","group","medication","age","bmi","triglycerides","insulin_1","mfm_1","acr_u",all_of(gene_list_total)))
+
+#Try as batch loop
+# Set batch size
+batch_size <- 2000
+total_cores <- 50
+
+# Deduplicate gene list to avoid double-processing
+gene_list_total <- unique(gene_list_total)
+
+# Split the gene list into batches
+gene_batches <- split(gene_list_total, ceiling(seq_along(gene_list_total) / batch_size))
+
+# Define the function that processes a single gene
+process_gene <- function(gene) {
+  if (sum(data_subset[[gene]]) > 0) {
+    m1 <- as.formula(paste0(gene, " ~ group + (1 | kit_id)"))
+    
+    model1 <- tryCatch({
+      glmmTMB(m1, data = data_subset, family = gaussian)
+    }, error = function(e) {
+      return(NULL)
+    })
+    
+    if (!is.null(model1)) {
+      Beta <- summary(model1)$coef$cond[2,1]
+      PValue <- summary(model1)$coef$cond[2,4]
+    } else {
+      Beta <- NA
+      PValue <- NA
+    }
+  } else {
+    Beta <- NA
+    PValue <- NA
+  }
+  
+  return(data.frame(Gene = gene, Beta = Beta, PValue = PValue))
+}
+
+# Set number of cores
+total_cores <- parallel::detectCores() - 1
+
+# Initialize and register cluster
+cl <- makeCluster(total_cores)
+registerDoParallel(cl)
+
+# Run analysis per batch
+all_results <- lapply(seq_along(gene_batches), function(batch_idx) {
+  batch_genes <- gene_batches[[batch_idx]]
+  
+  batch_results <- foreach(
+    gene = batch_genes,
+    .combine = rbind,
+    .packages = c("glmmTMB", "lme4"),
+    .export = c("process_gene", "data_subset")
+  ) %dopar% {
+    process_gene(gene)
+  }
+  
+  cat("Processed batch", batch_idx, "with", length(batch_genes), "genes\n")
+  return(batch_results)
+})
+
+# Combine all batch results into a single data frame
+final_results <- do.call(rbind, all_results)
+# Stop cluster
+stopCluster(cl)
+
+# #Make volcano plot of all gene results for group
+full_results <- final_results %>%
+  mutate(fdr=p.adjust(PValue,method="fdr"))  
+# mutate(fdr3=p.adjust(PValue3,method="fdr"))
+full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
+# full_results$PValue10_3 <- -log10(pmax(full_results$PValue3, 1e-10))  # Avoid log(0)
+Nonconvergence_Rate <- paste0(round(((length(which(is.na(full_results$PValue)))+length(which(full_results$PValue=="NaN")))/length(full_results$Gene))*100,0),"%")
+# view(full_results)
+
+write.csv(full_results,fs::path(dir.results,"aPT_Cells_T2D_LC_crude.csv"))
+# full_results <- read.csv(fs::path(dir.results,"Hep_5_Fibrosis_Steatosis.csv"))
+
+full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$Beta > 0, "lightcoral",
+                             ifelse(full_results$fdr < 0.05 & full_results$Beta < 0, "lightblue", "gray"))
+
+# Identify significant points (fdr < 0.05)
+significant_df <- full_results[full_results$fdr < 0.05, ]
+# 
+# full_results$color3 <- ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 > 0, "lightcoral",
+#                               ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 < 0, "lightblue", "gray"))
+# 
+# # Identify significant points (fdr < 0.05)
+# significant_df3 <- full_results[full_results$fdr3 < 0.2, ]
+
+Genes <- length(unique(full_results$Gene))
+Cells <- ncol(so_celltype)
+
+#Figure Range
+max <- max(significant_df$Beta,na.rm=T)
+min <- min(significant_df$Beta,na.rm=T)
+
+
+# full_results$Log2FC <- 2^(full_results$Beta)
+# Create the volcano plot using ggplot
+volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color)) +
+  geom_point(alpha = 0.7) +  # Plot points with transparency
+  scale_color_identity() +  # Use the color column directly
+  theme_minimal() +  # Minimal theme
+  labs(
+    title = "Type 2 Diabetes vs. Lean Controls",
+    subtitle = "aPT Cells, Crude Analysis",
+    x = "Fold Change",
+    y = "-log10(P-Value)",
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,", Non-Convergence Rate: ",Nonconvergence_Rate)
+  ) +
+  xlim(min,max)+
+  theme(
+    plot.title = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 0, hjust = 1)
+  )+
+  # # Add labels for significant points
+  geom_text(data = significant_df, aes(label = Gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+
+volcano_plot
+pdf(fs::path(dir.results,"Plot_aPT_Cells_T2D_LC_crude.pdf"),width=10,height=7)
+print(volcano_plot)
+dev.off()
+
+###ii. GSEA----
+#### a. Full Cov Set ----
+rm(figure,combined_plot,sig_pos,sig_neg,sig_pos_en_df,sig_neg_en_df,sig_pos_en,sig_neg_en,p1,p2,p3,p4,filtered_results)
+full_results <- read.csv(fs::path(dir.results,"aPT_Cells_T2D_LC_full_cov_set.csv")) %>% 
+  dplyr::select(-X)
+sig_pos <- full_results %>% 
+  filter(Beta>0 & fdr<0.05)
+sig_neg <- full_results %>% 
+  filter(Beta<0 & fdr<0.05)
+
+#Run postive enricher analysis 
+sig_pos_en <- enrichr(as.character(sig_pos$Gene), dbs)
+#Plot results
+# Convert enrichment results to a dataframe
+sig_pos_en_df <- as.data.frame(sig_pos_en[[1]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - GO")
+p1 <- plotEnrich(filtered_results, title = "GO")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_go.jpeg"),width=10,height=7)
+
+# Convert enrichment results to a dataframe
+sig_pos_en_df <- as.data.frame(sig_pos_en[[2]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+p2 <- plotEnrich(filtered_results, title = "KEGG")
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Kegg")
+# plotEnrich(as.data.frame(sig_pos_en[[2]]), title = "Model 1 Positive Hepatocytes - Kegg")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_kegg.jpeg"),width=10,height=7)
+
+# sig_pos_en_df <- as.data.frame(sig_pos_en[[3]])
+# # Extract the number of overlapping genes
+# sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# # plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Reactome '22")
+# p3 <- plotEnrich(filtered_results, title = "Positive Hepatocytes - Reactome '22")
+# # plotEnrich(as.data.frame(sig_pos_en[[3]]), title = "Model 1 Positive Hepatocytes - Reactome '22")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome22.jpeg"),width=10,height=7)
+
+sig_pos_en_df <- as.data.frame(sig_pos_en[[3]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Reactome '24")
+p3 <- plotEnrich(filtered_results, title = "Reactome '24")
+# plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+# sig_pos_en_df <- as.data.frame(sig_pos_en[[5]])
+# # Extract the number of overlapping genes
+# sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# p5 <- plotEnrich(filtered_results, title = "Positive Hepatocytes - MsigDB Computational")
+# # plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - MsigDB Computational")
+# # plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+sig_pos_en_df <- as.data.frame(sig_pos_en[[4]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - MsigDB Hallmark '20")
+# plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+p4 <- plotEnrich(filtered_results, title = "MsigDB '20")
+
+# Arrange 6 plots in 3 rows x 2 columns
+combined_plot <- (p1 | p3) 
+# / 
+# (p3 | p4) 
+
+# Display or save the plot
+figure <- combined_plot + 
+  plot_annotation(
+    title = "Positive Gene Set Enrichment Analysis for T2D vs. Lean Controls in aPT cells",
+    theme = theme(
+      plot.title = element_text(
+        hjust = 0.5,         # Center title
+        size = 18,           # Bigger font
+        face = "bold"        # Bold text
+      )
+    )
+  )
+
+ggsave(fs::path(dir.results, "Positive_aPT_T2D_LC_gsea_figure_full_cov.jpeg"), figure, width = 18, height = 5)
+
+#Run negative enricher analysis 
+sig_neg_en <- enrichr(as.character(sig_neg$Gene), dbs)
+#Plot results
+# Convert enrichment results to a dataframe
+sig_neg_en_df <- as.data.frame(sig_neg_en[[1]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - GO")
+p1 <- plotEnrich(filtered_results, title = "GO")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_go.jpeg"),width=10,height=7)
+
+# Convert enrichment results to a dataframe
+sig_neg_en_df <- as.data.frame(sig_neg_en[[2]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+p2 <- plotEnrich(filtered_results, title = "KEGG")
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Kegg")
+# plotEnrich(as.data.frame(sig_neg_en[[2]]), title = "Model 1 Negative Hepatocytes - Kegg")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_kegg.jpeg"),width=10,height=7)
+
+# sig_neg_en_df <- as.data.frame(sig_neg_en[[3]])
+# # Extract the number of overlapping genes
+# sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# # plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Reactome '22")
+# p3 <- plotEnrich(filtered_results, title = "Negative Hepatocytes - Reactome '22")
+# # plotEnrich(as.data.frame(sig_neg_en[[3]]), title = "Model 1 Negative Hepatocytes - Reactome '22")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome22.jpeg"),width=10,height=7)
+
+sig_neg_en_df <- as.data.frame(sig_neg_en[[3]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Reactome '24")
+p3 <- plotEnrich(filtered_results, title = "Reactome '24")
+# plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+# sig_neg_en_df <- as.data.frame(sig_neg_en[[5]])
+# # Extract the number of overlapping genes
+# sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# p5 <- plotEnrich(filtered_results, title = "Negative Hepatocytes - MsigDB Computational")
+# # plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - MsigDB Computational")
+# # plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+sig_neg_en_df <- as.data.frame(sig_neg_en[[4]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - MsigDB Hallmark '20")
+# plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+p4 <- plotEnrich(filtered_results, title = "MsigDB '20")
+
+# Arrange 6 plots in 3 rows x 2 columns
+combined_plot <- (p1 | p2) / 
+  (p3 | p4) 
+
+# Display or save the plot
+figure <- combined_plot + 
+  plot_annotation(
+    title = "Negative Gene Set Enrichment Analysis for T2D vs. Lean Controls in aPT cells",
+    theme = theme(
+      plot.title = element_text(
+        hjust = 0.5,         # Center title
+        size = 18,           # Bigger font
+        face = "bold"        # Bold text
+      )
+    )
+  )
+
+ggsave(fs::path(dir.results, "Negative_aPT_T2D_LC_gsea_figure_full_cov_set.jpeg"), figure, width = 18, height = 10)
+
+#### b. Crude Analysis ----
+rm(figure,combined_plot,sig_pos,sig_neg,sig_pos_en_df,sig_neg_en_df,sig_pos_en,sig_neg_en,p1,p2,p3,p4,filtered_results)
+full_results <- read.csv(fs::path(dir.results,"aPT_Cells_T2D_LC_crude.csv")) %>% 
+  dplyr::select(-X)
+sig_pos <- full_results %>% 
+  filter(Beta>0 & fdr<0.05)
+sig_neg <- full_results %>% 
+  filter(Beta<0 & fdr<0.05)
+
+#Run postive enricher analysis 
+sig_pos_en <- enrichr(as.character(sig_pos$Gene), dbs)
+#Plot results
+# Convert enrichment results to a dataframe
+sig_pos_en_df <- as.data.frame(sig_pos_en[[1]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - GO")
+p1 <- plotEnrich(filtered_results, title = "GO")
+
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_go.jpeg"),width=10,height=7)
+
+# Convert enrichment results to a dataframe
+sig_pos_en_df <- as.data.frame(sig_pos_en[[2]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+p2 <- plotEnrich(filtered_results, title = "KEGG")
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Kegg")
+# plotEnrich(as.data.frame(sig_pos_en[[2]]), title = "Model 1 Positive Hepatocytes - Kegg")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_kegg.jpeg"),width=10,height=7)
+
+# sig_pos_en_df <- as.data.frame(sig_pos_en[[3]])
+# # Extract the number of overlapping genes
+# sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# # plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Reactome '22")
+# p3 <- plotEnrich(filtered_results, title = "Positive Hepatocytes - Reactome '22")
+# # plotEnrich(as.data.frame(sig_pos_en[[3]]), title = "Model 1 Positive Hepatocytes - Reactome '22")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome22.jpeg"),width=10,height=7)
+
+sig_pos_en_df <- as.data.frame(sig_pos_en[[3]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Reactome '24")
+p3 <- plotEnrich(filtered_results, title = "Reactome '24")
+# plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+# sig_pos_en_df <- as.data.frame(sig_pos_en[[5]])
+# # Extract the number of overlapping genes
+# sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# p5 <- plotEnrich(filtered_results, title = "Positive Hepatocytes - MsigDB Computational")
+# # plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - MsigDB Computational")
+# # plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+sig_pos_en_df <- as.data.frame(sig_pos_en[[4]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - MsigDB Hallmark '20")
+# plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+p4 <- plotEnrich(filtered_results, title = "MsigDB '20")
+
+# Arrange 6 plots in 3 rows x 2 columns
+combined_plot <- (p1 + p2 / 
+                    p3 + p4) 
+
+# Display or save the plot
+figure <- combined_plot + 
+  plot_annotation(
+    title = paste0("Positive Gene Set Enrichment Analysis"),
+    subtitle = paste0("T2D vs. Lean Controls in aPT cells, Crude"),
+    theme = theme(
+      plot.title = element_text(
+        hjust = 0,         # Center title
+        size = 18,           # Bigger font
+        face = "bold"        # Bold text
+      )
+    )
+  )
+
+ggsave(fs::path(dir.results, "Positive_aPT_T2D_LC_gsea_figure_crude.jpeg"), figure, width = 9, height = 15)
+
+#Run negative enricher analysis 
+sig_neg_en <- enrichr(as.character(sig_neg$Gene), dbs)
+#Plot results
+# Convert enrichment results to a dataframe
+sig_neg_en_df <- as.data.frame(sig_neg_en[[1]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - GO")
+p1 <- plotEnrich(filtered_results, title = "GO")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_go.jpeg"),width=10,height=7)
+
+# Convert enrichment results to a dataframe
+sig_neg_en_df <- as.data.frame(sig_neg_en[[2]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+p2 <- plotEnrich(filtered_results, title = "KEGG")
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Kegg")
+# plotEnrich(as.data.frame(sig_neg_en[[2]]), title = "Model 1 Negative Hepatocytes - Kegg")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_kegg.jpeg"),width=10,height=7)
+
+# sig_neg_en_df <- as.data.frame(sig_neg_en[[3]])
+# # Extract the number of overlapping genes
+# sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# # plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Reactome '22")
+# p3 <- plotEnrich(filtered_results, title = "Negative Hepatocytes - Reactome '22")
+# # plotEnrich(as.data.frame(sig_neg_en[[3]]), title = "Model 1 Negative Hepatocytes - Reactome '22")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome22.jpeg"),width=10,height=7)
+
+sig_neg_en_df <- as.data.frame(sig_neg_en[[3]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Reactome '24")
+p3 <- plotEnrich(filtered_results, title = "Reactome '24")
+# plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+# sig_neg_en_df <- as.data.frame(sig_neg_en[[5]])
+# # Extract the number of overlapping genes
+# sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# p5 <- plotEnrich(filtered_results, title = "Negative Hepatocytes - MsigDB Computational")
+# # plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - MsigDB Computational")
+# # plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+sig_neg_en_df <- as.data.frame(sig_neg_en[[4]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - MsigDB Hallmark '20")
+# plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+p4 <- plotEnrich(filtered_results, title = "MsigDB '20")
+
+# Arrange 6 plots in 3 rows x 2 columns
+combined_plot <- (p1 | p2) / 
+  (p3 | p4) 
+
+# Display or save the plot
+figure <- combined_plot + 
+  plot_annotation(
+    title = "Negative Gene Set Enrichment Analysis for T2D vs. Lean Controls in aPT cells, Crude",
+    theme = theme(
+      plot.title = element_text(
+        hjust = 0.5,         # Center title
+        size = 18,           # Bigger font
+        face = "bold"        # Bold text
+      )
+    )
+  )
+
+ggsave(fs::path(dir.results, "Negative_aPT_T2D_LC_gsea_figure_crude.jpeg"), figure, width = 18, height = 10)
+
+## c. PT-S1/S2 ----
+### i. Mixed Effect Modeling ----
+#### a. Full Cov Set----
+so_celltype <- subset(so_kpmp_sc,KPMP_celltype=="PT-S1/S2")
+ncol(so_celltype) #1489 cells
+nrow(so_celltype) #9196 genes
+# Extract the gene expression data for all genes
+gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
+
+#Assign gene names as rownames, cell names as colnames
+# rownames(gene_expression) <- rownames(so_celltype) #Gene Names
+# colnames(gene_expression) <- colnames(so_celltype) #Cell Names
+#Transpose gene expression dataset to merge with metadata
+gene_expression <- t(gene_expression)
+gene_expression <- data.frame(gene_expression) #Make a dataframe again after transposing
+#Set gene list
+gene_list_total <- colnames(gene_expression)
+gene_expression$cellname <- rownames(gene_expression) 
+rownames(gene_expression) <- NULL
+
+# Extract the metadata
+metadata <- so_celltype@meta.data
+# metadata <- metadata %>%
+#   mutate(across(everything(),~ifelse(.==".",NA,.)))
+metadata$cellname <- rownames(metadata)
+rownames(metadata) <- NULL
+
+# Combine the gene expression data and metadata
+data <- tidylog::full_join(metadata,gene_expression,by="cellname")
+rm(metadata,gene_expression)
+
+#Compare Health Controls to Type 2 Diabetes on no meds
+data_subset <- data
+# filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
+# filter(medication=="no_med")
+rm(data)
+data_subset$medication <- factor(data_subset$medication)
+data_subset$group <- factor(data_subset$group)
+data_subset$group <- relevel(data_subset$group,ref="Lean_Control")
+#Select covariates to keep in the model: Acru, metformin/insulin,bmi,age,tg
+data_subset <- data_subset %>% 
+  dplyr::select(c("kit_id","group","medication","age","bmi","triglycerides","insulin_1","mfm_1","acr_u",all_of(gene_list_total)))
+
+#Try as batch loop
+# Set batch size
+batch_size <- 2000
+total_cores <- 50
+
+# Deduplicate gene list to avoid double-processing
+gene_list_total <- unique(gene_list_total)
+
+# Split the gene list into batches
+gene_batches <- split(gene_list_total, ceiling(seq_along(gene_list_total) / batch_size))
+
+# Define the function that processes a single gene
+process_gene <- function(gene) {
+  if (sum(data_subset[[gene]]) > 0) {
+    m1 <- as.formula(paste0(gene, " ~ group + age + bmi + acr_u + triglycerides + insulin_1 + mfm_1 + (1 | kit_id)"))
+    
+    model1 <- tryCatch({
+      glmmTMB(m1, data = data_subset, family = gaussian)
+    }, error = function(e) {
+      return(NULL)
+    })
+    
+    if (!is.null(model1)) {
+      Beta <- summary(model1)$coef$cond[2,1]
+      PValue <- summary(model1)$coef$cond[2,4]
+    } else {
+      Beta <- NA
+      PValue <- NA
+    }
+  } else {
+    Beta <- NA
+    PValue <- NA
+  }
+  
+  return(data.frame(Gene = gene, Beta = Beta, PValue = PValue))
+}
+
+# Set number of cores
+total_cores <- parallel::detectCores() - 1
+
+# Initialize and register cluster
+cl <- makeCluster(total_cores)
+registerDoParallel(cl)
+
+# Run analysis per batch
+all_results <- lapply(seq_along(gene_batches), function(batch_idx) {
+  batch_genes <- gene_batches[[batch_idx]]
+  
+  batch_results <- foreach(
+    gene = batch_genes,
+    .combine = rbind,
+    .packages = c("glmmTMB", "lme4"),
+    .export = c("process_gene", "data_subset")
+  ) %dopar% {
+    process_gene(gene)
+  }
+  
+  cat("Processed batch", batch_idx, "with", length(batch_genes), "genes\n")
+  return(batch_results)
+})
+
+# Combine all batch results into a single data frame
+final_results <- do.call(rbind, all_results)
+# Stop cluster
+stopCluster(cl)
+
+# #Make volcano plot of all gene results for group
+full_results <- final_results %>%
+  mutate(fdr=p.adjust(PValue,method="fdr"))  
+# mutate(fdr3=p.adjust(PValue3,method="fdr"))
+full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
+# full_results$PValue10_3 <- -log10(pmax(full_results$PValue3, 1e-10))  # Avoid log(0)
+Nonconvergence_Rate <- paste0(round(((length(which(is.na(full_results$PValue)))+length(which(full_results$PValue=="NaN")))/length(full_results$Gene))*100,0),"%")
+# view(full_results)
+
+write.csv(full_results,fs::path(dir.results,"PT-S1_S2_Cells_T2D_LC_full_cov_set.csv"))
+# full_results <- read.csv(fs::path(dir.results,"Hep_5_Fibrosis_Steatosis.csv"))
+
+full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$Beta > 0, "lightcoral",
+                             ifelse(full_results$fdr < 0.05 & full_results$Beta < 0, "lightblue", "gray"))
+
+# Identify significant points (fdr < 0.05)
+significant_df <- full_results[full_results$fdr < 0.05, ]
+# 
+# full_results$color3 <- ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 > 0, "lightcoral",
+#                               ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 < 0, "lightblue", "gray"))
+# 
+# # Identify significant points (fdr < 0.05)
+# significant_df3 <- full_results[full_results$fdr3 < 0.2, ]
+
+Genes <- length(unique(full_results$Gene))
+Cells <- ncol(so_celltype)
+
+#Figure Range
+max <- max(significant_df$Beta,na.rm=T)
+min <- min(significant_df$Beta,na.rm=T)
+
+
+# full_results$Log2FC <- 2^(full_results$Beta)
+# Create the volcano plot using ggplot
+volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color)) +
+  geom_point(alpha = 0.7) +  # Plot points with transparency
+  scale_color_identity() +  # Use the color column directly
+  theme_minimal() +  # Minimal theme
+  labs(
+    title = "Type 2 Diabetes vs. Lean Controls",
+    subtitle = "PT-S1/S2 Cells, Adjusted for Age, BMI, ACRu, TGs, Insulin & Metformin",
+    x = "Fold Change",
+    y = "-log10(P-Value)",
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,", Non-Convergence Rate: ",Nonconvergence_Rate)
+  ) +
+  xlim(min,max)+
+  theme(
+    plot.title = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 0, hjust = 1)
+  )+
+  # # Add labels for significant points
+  geom_text(data = significant_df, aes(label = Gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+
+volcano_plot
+pdf(fs::path(dir.results,"Plot_PT-S1_S2_Cells_T2D_LC_full_cov_set.pdf"),width=10,height=7)
+print(volcano_plot)
+dev.off()
+
+#### b. Reduced Cov Set ----
+so_celltype <- subset(so_kpmp_sc,KPMP_celltype=="PT-S1/S2")
+ncol(so_celltype) #1489 cells
+nrow(so_celltype) #9196 genes
+# Extract the gene expression data for all genes
+gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
+
+#Assign gene names as rownames, cell names as colnames
+# rownames(gene_expression) <- rownames(so_celltype) #Gene Names
+# colnames(gene_expression) <- colnames(so_celltype) #Cell Names
+#Transpose gene expression dataset to merge with metadata
+gene_expression <- t(gene_expression)
+gene_expression <- data.frame(gene_expression) #Make a dataframe again after transposing
+#Set gene list
+gene_list_total <- colnames(gene_expression)
+gene_expression$cellname <- rownames(gene_expression) 
+rownames(gene_expression) <- NULL
+
+# Extract the metadata
+metadata <- so_celltype@meta.data
+# metadata <- metadata %>%
+#   mutate(across(everything(),~ifelse(.==".",NA,.)))
+metadata$cellname <- rownames(metadata)
+rownames(metadata) <- NULL
+
+# Combine the gene expression data and metadata
+data <- tidylog::full_join(metadata,gene_expression,by="cellname")
+rm(metadata,gene_expression)
+
+#Compare Health Controls to Type 2 Diabetes on no meds
+data_subset <- data
+# filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
+# filter(medication=="no_med")
+rm(data)
+data_subset$medication <- factor(data_subset$medication)
+data_subset$group <- factor(data_subset$group)
+data_subset$group <- relevel(data_subset$group,ref="Lean_Control")
+#Select covariates to keep in the model: Acru, metformin/insulin,bmi,age,tg
+data_subset <- data_subset %>% 
+  dplyr::select(c("kit_id","group","medication","age","bmi","triglycerides","insulin_1","mfm_1","acr_u",all_of(gene_list_total)))
+
+#Try as batch loop
+# Set batch size
+batch_size <- 2000
+total_cores <- 50
+
+# Deduplicate gene list to avoid double-processing
+gene_list_total <- unique(gene_list_total)
+
+# Split the gene list into batches
+gene_batches <- split(gene_list_total, ceiling(seq_along(gene_list_total) / batch_size))
+
+# Define the function that processes a single gene
+process_gene <- function(gene) {
+  if (sum(data_subset[[gene]]) > 0) {
+    m1 <- as.formula(paste0(gene, " ~ group + age + bmi + acr_u + triglycerides + (1 | kit_id)"))
+    
+    model1 <- tryCatch({
+      glmmTMB(m1, data = data_subset, family = gaussian)
+    }, error = function(e) {
+      return(NULL)
+    })
+    
+    if (!is.null(model1)) {
+      Beta <- summary(model1)$coef$cond[2,1]
+      PValue <- summary(model1)$coef$cond[2,4]
+    } else {
+      Beta <- NA
+      PValue <- NA
+    }
+  } else {
+    Beta <- NA
+    PValue <- NA
+  }
+  
+  return(data.frame(Gene = gene, Beta = Beta, PValue = PValue))
+}
+
+# Set number of cores
+total_cores <- parallel::detectCores() - 1
+
+# Initialize and register cluster
+cl <- makeCluster(total_cores)
+registerDoParallel(cl)
+
+# Run analysis per batch
+all_results <- lapply(seq_along(gene_batches), function(batch_idx) {
+  batch_genes <- gene_batches[[batch_idx]]
+  
+  batch_results <- foreach(
+    gene = batch_genes,
+    .combine = rbind,
+    .packages = c("glmmTMB", "lme4"),
+    .export = c("process_gene", "data_subset")
+  ) %dopar% {
+    process_gene(gene)
+  }
+  
+  cat("Processed batch", batch_idx, "with", length(batch_genes), "genes\n")
+  return(batch_results)
+})
+
+# Combine all batch results into a single data frame
+final_results <- do.call(rbind, all_results)
+# Stop cluster
+stopCluster(cl)
+
+# #Make volcano plot of all gene results for group
+full_results <- final_results %>%
+  mutate(fdr=p.adjust(PValue,method="fdr"))  
+# mutate(fdr3=p.adjust(PValue3,method="fdr"))
+full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
+# full_results$PValue10_3 <- -log10(pmax(full_results$PValue3, 1e-10))  # Avoid log(0)
+Nonconvergence_Rate <- paste0(round(((length(which(is.na(full_results$PValue)))+length(which(full_results$PValue=="NaN")))/length(full_results$Gene))*100,0),"%")
+# view(full_results)
+
+write.csv(full_results,fs::path(dir.results,"PT-S1_S2_Cells_T2D_LC_reduced_cov_set.csv"))
+# full_results <- read.csv(fs::path(dir.results,"Hep_5_Fibrosis_Steatosis.csv"))
+
+full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$Beta > 0, "lightcoral",
+                             ifelse(full_results$fdr < 0.05 & full_results$Beta < 0, "lightblue", "gray"))
+
+# Identify significant points (fdr < 0.05)
+significant_df <- full_results[full_results$fdr < 0.05, ]
+# 
+# full_results$color3 <- ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 > 0, "lightcoral",
+#                               ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 < 0, "lightblue", "gray"))
+# 
+# # Identify significant points (fdr < 0.05)
+# significant_df3 <- full_results[full_results$fdr3 < 0.2, ]
+
+Genes <- length(unique(full_results$Gene))
+Cells <- ncol(so_celltype)
+
+#Figure Range
+max <- max(significant_df$Beta,na.rm=T)
+min <- min(significant_df$Beta,na.rm=T)
+
+
+# full_results$Log2FC <- 2^(full_results$Beta)
+# Create the volcano plot using ggplot
+volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color)) +
+  geom_point(alpha = 0.7) +  # Plot points with transparency
+  scale_color_identity() +  # Use the color column directly
+  theme_minimal() +  # Minimal theme
+  labs(
+    title = "Type 2 Diabetes vs. Lean Controls",
+    subtitle = "PT-S1/S2 Cells, Adjusted for Age, BMI, ACRu, TGs",
+    x = "Fold Change",
+    y = "-log10(P-Value)",
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,", Non-Convergence Rate: ",Nonconvergence_Rate)
+  ) +
+  xlim(min,max)+
+  theme(
+    plot.title = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 0, hjust = 1)
+  )+
+  # # Add labels for significant points
+  geom_text(data = significant_df, aes(label = Gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+
+volcano_plot
+pdf(fs::path(dir.results,"Plot_PT-S1_S2_Cells_T2D_LC_reduced_cov_set.pdf"),width=10,height=7)
+print(volcano_plot)
+dev.off()
+
+#### c. Crude Analysis ----
+so_celltype <- subset(so_kpmp_sc,KPMP_celltype=="PT-S1/S2")
+ncol(so_celltype) #1489 cells
+nrow(so_celltype) #9196 genes
+# Extract the gene expression data for all genes
+gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
+
+#Assign gene names as rownames, cell names as colnames
+# rownames(gene_expression) <- rownames(so_celltype) #Gene Names
+# colnames(gene_expression) <- colnames(so_celltype) #Cell Names
+#Transpose gene expression dataset to merge with metadata
+gene_expression <- t(gene_expression)
+gene_expression <- data.frame(gene_expression) #Make a dataframe again after transposing
+#Set gene list
+gene_list_total <- colnames(gene_expression)
+gene_expression$cellname <- rownames(gene_expression) 
+rownames(gene_expression) <- NULL
+
+# Extract the metadata
+metadata <- so_celltype@meta.data
+# metadata <- metadata %>%
+#   mutate(across(everything(),~ifelse(.==".",NA,.)))
+metadata$cellname <- rownames(metadata)
+rownames(metadata) <- NULL
+
+# Combine the gene expression data and metadata
+data <- tidylog::full_join(metadata,gene_expression,by="cellname")
+rm(metadata,gene_expression)
+
+#Compare Health Controls to Type 2 Diabetes on no meds
+data_subset <- data
+# filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
+# filter(medication=="no_med")
+rm(data)
+data_subset$medication <- factor(data_subset$medication)
+data_subset$group <- factor(data_subset$group)
+data_subset$group <- relevel(data_subset$group,ref="Lean_Control")
+#Select covariates to keep in the model: Acru, metformin/insulin,bmi,age,tg
+data_subset <- data_subset %>% 
+  dplyr::select(c("kit_id","group","medication","age","bmi","triglycerides","insulin_1","mfm_1","acr_u",all_of(gene_list_total)))
+
+#Try as batch loop
+# Set batch size
+batch_size <- 2000
+total_cores <- 50
+
+# Deduplicate gene list to avoid double-processing
+gene_list_total <- unique(gene_list_total)
+
+# Split the gene list into batches
+gene_batches <- split(gene_list_total, ceiling(seq_along(gene_list_total) / batch_size))
+
+# Define the function that processes a single gene
+process_gene <- function(gene) {
+  if (sum(data_subset[[gene]]) > 0) {
+    m1 <- as.formula(paste0(gene, " ~ group + (1 | kit_id)"))
+    
+    model1 <- tryCatch({
+      glmmTMB(m1, data = data_subset, family = gaussian)
+    }, error = function(e) {
+      return(NULL)
+    })
+    
+    if (!is.null(model1)) {
+      Beta <- summary(model1)$coef$cond[2,1]
+      PValue <- summary(model1)$coef$cond[2,4]
+    } else {
+      Beta <- NA
+      PValue <- NA
+    }
+  } else {
+    Beta <- NA
+    PValue <- NA
+  }
+  
+  return(data.frame(Gene = gene, Beta = Beta, PValue = PValue))
+}
+
+# Set number of cores
+total_cores <- parallel::detectCores() - 1
+
+# Initialize and register cluster
+cl <- makeCluster(total_cores)
+registerDoParallel(cl)
+
+# Run analysis per batch
+all_results <- lapply(seq_along(gene_batches), function(batch_idx) {
+  batch_genes <- gene_batches[[batch_idx]]
+  
+  batch_results <- foreach(
+    gene = batch_genes,
+    .combine = rbind,
+    .packages = c("glmmTMB", "lme4"),
+    .export = c("process_gene", "data_subset")
+  ) %dopar% {
+    process_gene(gene)
+  }
+  
+  cat("Processed batch", batch_idx, "with", length(batch_genes), "genes\n")
+  return(batch_results)
+})
+
+# Combine all batch results into a single data frame
+final_results <- do.call(rbind, all_results)
+# Stop cluster
+stopCluster(cl)
+
+# #Make volcano plot of all gene results for group
+full_results <- final_results %>%
+  mutate(fdr=p.adjust(PValue,method="fdr"))  
+# mutate(fdr3=p.adjust(PValue3,method="fdr"))
+full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
+# full_results$PValue10_3 <- -log10(pmax(full_results$PValue3, 1e-10))  # Avoid log(0)
+Nonconvergence_Rate <- paste0(round(((length(which(is.na(full_results$PValue)))+length(which(full_results$PValue=="NaN")))/length(full_results$Gene))*100,0),"%")
+# view(full_results)
+
+write.csv(full_results,fs::path(dir.results,"PT-S1_S2_Cells_T2D_LC_crude.csv"))
+# full_results <- read.csv(fs::path(dir.results,"Hep_5_Fibrosis_Steatosis.csv"))
+
+full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$Beta > 0, "lightcoral",
+                             ifelse(full_results$fdr < 0.05 & full_results$Beta < 0, "lightblue", "gray"))
+
+# Identify significant points (fdr < 0.05)
+significant_df <- full_results[full_results$fdr < 0.05, ]
+# 
+# full_results$color3 <- ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 > 0, "lightcoral",
+#                               ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 < 0, "lightblue", "gray"))
+# 
+# # Identify significant points (fdr < 0.05)
+# significant_df3 <- full_results[full_results$fdr3 < 0.2, ]
+
+Genes <- length(unique(full_results$Gene))
+Cells <- ncol(so_celltype)
+
+#Figure Range
+max <- max(significant_df$Beta,na.rm=T)
+min <- min(significant_df$Beta,na.rm=T)
+
+
+# full_results$Log2FC <- 2^(full_results$Beta)
+# Create the volcano plot using ggplot
+volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color)) +
+  geom_point(alpha = 0.7) +  # Plot points with transparency
+  scale_color_identity() +  # Use the color column directly
+  theme_minimal() +  # Minimal theme
+  labs(
+    title = "Type 2 Diabetes vs. Lean Controls",
+    subtitle = "PT-S1/S2 Cells, Crude Analysis",
+    x = "Fold Change",
+    y = "-log10(P-Value)",
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,", Non-Convergence Rate: ",Nonconvergence_Rate)
+  ) +
+  xlim(min,max)+
+  theme(
+    plot.title = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 0, hjust = 1)
+  )+
+  # # Add labels for significant points
+  geom_text(data = significant_df, aes(label = Gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+
+volcano_plot
+pdf(fs::path(dir.results,"Plot_PT-S1_S2_Cells_T2D_LC_crude.pdf"),width=10,height=7)
+print(volcano_plot)
+dev.off()
+
+###ii. GSEA----
+#### a. Full Cov Set ----
+full_results <- read.csv(fs::path(dir.results,"PT-S1_S2_Cells_T2D_LC_full_cov_set.csv")) %>% 
+  dplyr::select(-X)
+sig_pos <- full_results %>% 
+  filter(Beta>0 & fdr<0.05)
+sig_neg <- full_results %>% 
+  filter(Beta<0 & fdr<0.05)
+
+#Run postive enricher analysis 
+sig_pos_en <- enrichr(as.character(sig_pos$Gene), dbs)
+#Plot results
+# Convert enrichment results to a dataframe
+sig_pos_en_df <- as.data.frame(sig_pos_en[[1]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - GO")
+p1 <- plotEnrich(filtered_results, title = "GO")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_go.jpeg"),width=10,height=7)
+
+# Convert enrichment results to a dataframe
+sig_pos_en_df <- as.data.frame(sig_pos_en[[2]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+p2 <- plotEnrich(filtered_results, title = "KEGG")
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Kegg")
+# plotEnrich(as.data.frame(sig_pos_en[[2]]), title = "Model 1 Positive Hepatocytes - Kegg")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_kegg.jpeg"),width=10,height=7)
+
+# sig_pos_en_df <- as.data.frame(sig_pos_en[[3]])
+# # Extract the number of overlapping genes
+# sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# # plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Reactome '22")
+# p3 <- plotEnrich(filtered_results, title = "Positive Hepatocytes - Reactome '22")
+# # plotEnrich(as.data.frame(sig_pos_en[[3]]), title = "Model 1 Positive Hepatocytes - Reactome '22")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome22.jpeg"),width=10,height=7)
+
+sig_pos_en_df <- as.data.frame(sig_pos_en[[3]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Reactome '24")
+p3 <- plotEnrich(filtered_results, title = "Reactome '24")
+# plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+# sig_pos_en_df <- as.data.frame(sig_pos_en[[5]])
+# # Extract the number of overlapping genes
+# sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# p5 <- plotEnrich(filtered_results, title = "Positive Hepatocytes - MsigDB Computational")
+# # plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - MsigDB Computational")
+# # plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+sig_pos_en_df <- as.data.frame(sig_pos_en[[4]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - MsigDB Hallmark '20")
+# plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+p4 <- plotEnrich(filtered_results, title = "MsigDB '20")
+
+# Arrange 6 plots in 3 rows x 2 columns
+combined_plot <- (p1 | p2) / 
+  (p3 | p4) 
+
+# Display or save the plot
+figure <- combined_plot + 
+  plot_annotation(
+    title = "Positive Gene Set Enrichment Analysis for T2D vs. Lean Controls in PT-S1/S2 cells",
+    theme = theme(
+      plot.title = element_text(
+        hjust = 0.5,         # Center title
+        size = 18,           # Bigger font
+        face = "bold"        # Bold text
+      )
+    )
+  )
+
+ggsave(fs::path(dir.results, "Positive_PT_S1_S2_T2D_LC_gsea_figure_full_cov.jpeg"), figure, width = 18, height = 10)
+
+#Run negative enricher analysis 
+sig_neg_en <- enrichr(as.character(sig_neg$Gene), dbs)
+#Plot results
+# Convert enrichment results to a dataframe
+sig_neg_en_df <- as.data.frame(sig_neg_en[[1]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - GO")
+p1 <- plotEnrich(filtered_results, title = "GO")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_go.jpeg"),width=10,height=7)
+
+# Convert enrichment results to a dataframe
+sig_neg_en_df <- as.data.frame(sig_neg_en[[2]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+p2 <- plotEnrich(filtered_results, title = "KEGG")
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Kegg")
+# plotEnrich(as.data.frame(sig_neg_en[[2]]), title = "Model 1 Negative Hepatocytes - Kegg")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_kegg.jpeg"),width=10,height=7)
+
+# sig_neg_en_df <- as.data.frame(sig_neg_en[[3]])
+# # Extract the number of overlapping genes
+# sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# # plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Reactome '22")
+# p3 <- plotEnrich(filtered_results, title = "Negative Hepatocytes - Reactome '22")
+# # plotEnrich(as.data.frame(sig_neg_en[[3]]), title = "Model 1 Negative Hepatocytes - Reactome '22")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome22.jpeg"),width=10,height=7)
+
+sig_neg_en_df <- as.data.frame(sig_neg_en[[3]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Reactome '24")
+p3 <- plotEnrich(filtered_results, title = "Reactome '24")
+# plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+# sig_neg_en_df <- as.data.frame(sig_neg_en[[5]])
+# # Extract the number of overlapping genes
+# sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# p5 <- plotEnrich(filtered_results, title = "Negative Hepatocytes - MsigDB Computational")
+# # plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - MsigDB Computational")
+# # plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+sig_neg_en_df <- as.data.frame(sig_neg_en[[4]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - MsigDB Hallmark '20")
+# plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+p4 <- plotEnrich(filtered_results, title = "MsigDB '20")
+
+# Arrange 6 plots in 3 rows x 2 columns
+combined_plot <- (p1 | p2) / 
+  (p3 | p4) 
+
+# Display or save the plot
+figure <- combined_plot + 
+  plot_annotation(
+    title = "Negative Gene Set Enrichment Analysis for T2D vs. Lean Controls in PT-S1/S2 cells",
+    theme = theme(
+      plot.title = element_text(
+        hjust = 0.5,         # Center title
+        size = 18,           # Bigger font
+        face = "bold"        # Bold text
+      )
+    )
+  )
+
+ggsave(fs::path(dir.results, "Negative_PT_S1_S2_T2D_LC_gsea_figure_full_cov_set.jpeg"), figure, width = 18, height = 10)
+
+#### b. Crude Analysis ----
+full_results <- read.csv(fs::path(dir.results,"PT-S1_S2_Cells_T2D_LC_crude.csv")) %>% 
+  dplyr::select(-X)
+sig_pos <- full_results %>% 
+  filter(Beta>0 & fdr<0.05)
+sig_neg <- full_results %>% 
+  filter(Beta<0 & fdr<0.05)
+
+#Run postive enricher analysis 
+sig_pos_en <- enrichr(as.character(sig_pos$Gene), dbs)
+#Plot results
+# Convert enrichment results to a dataframe
+sig_pos_en_df <- as.data.frame(sig_pos_en[[1]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - GO")
+p1 <- plotEnrich(filtered_results, title = "GO")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_go.jpeg"),width=10,height=7)
+
+# Convert enrichment results to a dataframe
+sig_pos_en_df <- as.data.frame(sig_pos_en[[2]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+p2 <- plotEnrich(filtered_results, title = "KEGG")
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Kegg")
+# plotEnrich(as.data.frame(sig_pos_en[[2]]), title = "Model 1 Positive Hepatocytes - Kegg")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_kegg.jpeg"),width=10,height=7)
+
+# sig_pos_en_df <- as.data.frame(sig_pos_en[[3]])
+# # Extract the number of overlapping genes
+# sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# # plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Reactome '22")
+# p3 <- plotEnrich(filtered_results, title = "Positive Hepatocytes - Reactome '22")
+# # plotEnrich(as.data.frame(sig_pos_en[[3]]), title = "Model 1 Positive Hepatocytes - Reactome '22")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome22.jpeg"),width=10,height=7)
+
+sig_pos_en_df <- as.data.frame(sig_pos_en[[3]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Reactome '24")
+p3 <- plotEnrich(filtered_results, title = "Reactome '24")
+# plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+# sig_pos_en_df <- as.data.frame(sig_pos_en[[5]])
+# # Extract the number of overlapping genes
+# sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# p5 <- plotEnrich(filtered_results, title = "Positive Hepatocytes - MsigDB Computational")
+# # plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - MsigDB Computational")
+# # plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+sig_pos_en_df <- as.data.frame(sig_pos_en[[4]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - MsigDB Hallmark '20")
+# plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+p4 <- plotEnrich(filtered_results, title = "MsigDB '20")
+
+# Arrange 6 plots in 3 rows x 2 columns
+combined_plot <- (p1 | p2) / 
+  (p3 | p4) 
+
+# Display or save the plot
+figure <- combined_plot + 
+  plot_annotation(
+    title = "Positive Gene Set Enrichment Analysis for T2D vs. Lean Controls in PT-S1/S2 cells, Crude",
+    theme = theme(
+      plot.title = element_text(
+        hjust = 0.5,         # Center title
+        size = 18,           # Bigger font
+        face = "bold"        # Bold text
+      )
+    )
+  )
+
+ggsave(fs::path(dir.results, "Positive_PT_S1_S2_T2D_LC_gsea_figure_crude.jpeg"), figure, width = 18, height = 10)
+
+#Run negative enricher analysis 
+sig_neg_en <- enrichr(as.character(sig_neg$Gene), dbs)
+#Plot results
+# Convert enrichment results to a dataframe
+sig_neg_en_df <- as.data.frame(sig_neg_en[[1]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - GO")
+p1 <- plotEnrich(filtered_results, title = "GO")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_go.jpeg"),width=10,height=7)
+
+# Convert enrichment results to a dataframe
+sig_neg_en_df <- as.data.frame(sig_neg_en[[2]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+p2 <- plotEnrich(filtered_results, title = "KEGG")
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Kegg")
+# plotEnrich(as.data.frame(sig_neg_en[[2]]), title = "Model 1 Negative Hepatocytes - Kegg")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_kegg.jpeg"),width=10,height=7)
+
+# sig_neg_en_df <- as.data.frame(sig_neg_en[[3]])
+# # Extract the number of overlapping genes
+# sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# # plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Reactome '22")
+# p3 <- plotEnrich(filtered_results, title = "Negative Hepatocytes - Reactome '22")
+# # plotEnrich(as.data.frame(sig_neg_en[[3]]), title = "Model 1 Negative Hepatocytes - Reactome '22")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome22.jpeg"),width=10,height=7)
+
+sig_neg_en_df <- as.data.frame(sig_neg_en[[3]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Reactome '24")
+p3 <- plotEnrich(filtered_results, title = "Reactome '24")
+# plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+# sig_neg_en_df <- as.data.frame(sig_neg_en[[5]])
+# # Extract the number of overlapping genes
+# sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# p5 <- plotEnrich(filtered_results, title = "Negative Hepatocytes - MsigDB Computational")
+# # plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - MsigDB Computational")
+# # plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+sig_neg_en_df <- as.data.frame(sig_neg_en[[4]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - MsigDB Hallmark '20")
+# plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+p4 <- plotEnrich(filtered_results, title = "MsigDB '20")
+
+# Arrange 6 plots in 3 rows x 2 columns
+combined_plot <- (p1 | p2) / 
+  (p3 | p4) 
+
+# Display or save the plot
+figure <- combined_plot + 
+  plot_annotation(
+    title = "Negative Gene Set Enrichment Analysis for T2D vs. Lean Controls in PT-S1/S2 cells",
+    theme = theme(
+      plot.title = element_text(
+        hjust = 0.5,         # Center title
+        size = 18,           # Bigger font
+        face = "bold"        # Bold text
+      )
+    )
+  )
+
+ggsave(fs::path(dir.results, "Negative_PT_S1_S2_T2D_LC_gsea_figure_crude.jpeg"), figure, width = 18, height = 10)
+
+
+## d. PT-S3 ----
+###i. Mixed Effect Model ----
+####a. Full Cov Set----
+so_celltype <- subset(so_kpmp_sc,KPMP_celltype=="PT-S3")
+ncol(so_celltype) #74 cells
+nrow(so_celltype) #9196 genes
+# Extract the gene expression data for all genes
+gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
+
+#Assign gene names as rownames, cell names as colnames
+# rownames(gene_expression) <- rownames(so_celltype) #Gene Names
+# colnames(gene_expression) <- colnames(so_celltype) #Cell Names
+#Transpose gene expression dataset to merge with metadata
+gene_expression <- t(gene_expression)
+gene_expression <- data.frame(gene_expression) #Make a dataframe again after transposing
+#Set gene list
+gene_list_total <- colnames(gene_expression)
+gene_expression$cellname <- rownames(gene_expression) 
+rownames(gene_expression) <- NULL
+
+# Extract the metadata
+metadata <- so_celltype@meta.data
+# metadata <- metadata %>%
+#   mutate(across(everything(),~ifelse(.==".",NA,.)))
+metadata$cellname <- rownames(metadata)
+rownames(metadata) <- NULL
+
+# Combine the gene expression data and metadata
+data <- tidylog::full_join(metadata,gene_expression,by="cellname")
+rm(metadata,gene_expression)
+
+#Compare Health Controls to Type 2 Diabetes on no meds
+data_subset <- data
+# filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
+# filter(medication=="no_med")
+rm(data)
+data_subset$medication <- factor(data_subset$medication)
+data_subset$group <- factor(data_subset$group)
+data_subset$group <- relevel(data_subset$group,ref="Lean_Control")
+#Select covariates to keep in the model: Acru, metformin/insulin,bmi,age,tg
+data_subset <- data_subset %>% 
+  dplyr::select(c("kit_id","group","medication","age","bmi","triglycerides","insulin_1","mfm_1","acr_u",all_of(gene_list_total)))
+
+#Try as batch loop
+# Set batch size
+batch_size <- 2000
+total_cores <- 50
+
+# Deduplicate gene list to avoid double-processing
+gene_list_total <- unique(gene_list_total)
+
+# Split the gene list into batches
+gene_batches <- split(gene_list_total, ceiling(seq_along(gene_list_total) / batch_size))
+
+# Define the function that processes a single gene
+process_gene <- function(gene) {
+  if (sum(data_subset[[gene]]) > 0) {
+    m1 <- as.formula(paste0(gene, " ~ group + age + bmi + acr_u + triglycerides + insulin_1 + mfm_1 + (1 | kit_id)"))
+    
+    model1 <- tryCatch({
+      glmmTMB(m1, data = data_subset, family = gaussian)
+    }, error = function(e) {
+      return(NULL)
+    })
+    
+    if (!is.null(model1)) {
+      Beta <- summary(model1)$coef$cond[2,1]
+      PValue <- summary(model1)$coef$cond[2,4]
+    } else {
+      Beta <- NA
+      PValue <- NA
+    }
+  } else {
+    Beta <- NA
+    PValue <- NA
+  }
+  
+  return(data.frame(Gene = gene, Beta = Beta, PValue = PValue))
+}
+
+# Set number of cores
+total_cores <- parallel::detectCores() - 1
+
+# Initialize and register cluster
+cl <- makeCluster(total_cores)
+registerDoParallel(cl)
+
+# Run analysis per batch
+all_results <- lapply(seq_along(gene_batches), function(batch_idx) {
+  batch_genes <- gene_batches[[batch_idx]]
+  
+  batch_results <- foreach(
+    gene = batch_genes,
+    .combine = rbind,
+    .packages = c("glmmTMB", "lme4"),
+    .export = c("process_gene", "data_subset")
+  ) %dopar% {
+    process_gene(gene)
+  }
+  
+  cat("Processed batch", batch_idx, "with", length(batch_genes), "genes\n")
+  return(batch_results)
+})
+
+# Combine all batch results into a single data frame
+final_results <- do.call(rbind, all_results)
+# Stop cluster
+stopCluster(cl)
+
+# #Make volcano plot of all gene results for group
+full_results <- final_results %>%
+  mutate(fdr=p.adjust(PValue,method="fdr"))  
+# mutate(fdr3=p.adjust(PValue3,method="fdr"))
+full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
+# full_results$PValue10_3 <- -log10(pmax(full_results$PValue3, 1e-10))  # Avoid log(0)
+Nonconvergence_Rate <- paste0(round(((length(which(is.na(full_results$PValue)))+length(which(full_results$PValue=="NaN")))/length(full_results$Gene))*100,0),"%")
+# view(full_results)
+
+write.csv(full_results,fs::path(dir.results,"PT-S3_Cells_T2D_LC_full_cov_set.csv"))
+# full_results <- read.csv(fs::path(dir.results,"Hep_5_Fibrosis_Steatosis.csv"))
+
+full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$Beta > 0, "lightcoral",
+                             ifelse(full_results$fdr < 0.05 & full_results$Beta < 0, "lightblue", "gray"))
+
+# Identify significant points (fdr < 0.05)
+significant_df <- full_results[full_results$fdr < 0.05, ]
+# 
+# full_results$color3 <- ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 > 0, "lightcoral",
+#                               ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 < 0, "lightblue", "gray"))
+# 
+# # Identify significant points (fdr < 0.05)
+# significant_df3 <- full_results[full_results$fdr3 < 0.2, ]
+
+Genes <- length(unique(full_results$Gene))
+Cells <- ncol(so_celltype)
+
+#Figure Range
+max <- max(significant_df$Beta,na.rm=T)
+min <- min(significant_df$Beta,na.rm=T)
+
+
+# full_results$Log2FC <- 2^(full_results$Beta)
+# Create the volcano plot using ggplot
+volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color)) +
+  geom_point(alpha = 0.7) +  # Plot points with transparency
+  scale_color_identity() +  # Use the color column directly
+  theme_minimal() +  # Minimal theme
+  labs(
+    title = "Type 2 Diabetes vs. Lean Controls",
+    subtitle = "PT-S3 Cells, Adjusted for Age, BMI, ACRu, TGs, Insulin & Metformin",
+    x = "Fold Change",
+    y = "-log10(P-Value)",
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,", Non-Convergence Rate: ",Nonconvergence_Rate)
+  ) +
+  xlim(min,max)+
+  theme(
+    plot.title = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 0, hjust = 1)
+  )+
+  # # Add labels for significant points
+  geom_text(data = significant_df, aes(label = Gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+
+volcano_plot
+pdf(fs::path(dir.results,"Plot_PT-S3_Cells_T2D_LC_full_cov_set.pdf"),width=10,height=7)
+print(volcano_plot)
+dev.off()
+
+#### b. Crude Analysis ----
+so_celltype <- subset(so_kpmp_sc,KPMP_celltype=="PT-S3")
+ncol(so_celltype) #1489 cells
+nrow(so_celltype) #9196 genes
+# Extract the gene expression data for all genes
+gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
+
+#Assign gene names as rownames, cell names as colnames
+# rownames(gene_expression) <- rownames(so_celltype) #Gene Names
+# colnames(gene_expression) <- colnames(so_celltype) #Cell Names
+#Transpose gene expression dataset to merge with metadata
+gene_expression <- t(gene_expression)
+gene_expression <- data.frame(gene_expression) #Make a dataframe again after transposing
+#Set gene list
+gene_list_total <- colnames(gene_expression)
+gene_expression$cellname <- rownames(gene_expression) 
+rownames(gene_expression) <- NULL
+
+# Extract the metadata
+metadata <- so_celltype@meta.data
+# metadata <- metadata %>%
+#   mutate(across(everything(),~ifelse(.==".",NA,.)))
+metadata$cellname <- rownames(metadata)
+rownames(metadata) <- NULL
+
+# Combine the gene expression data and metadata
+data <- tidylog::full_join(metadata,gene_expression,by="cellname")
+rm(metadata,gene_expression)
+
+#Compare Health Controls to Type 2 Diabetes on no meds
+data_subset <- data
+# filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
+# filter(medication=="no_med")
+rm(data)
+data_subset$medication <- factor(data_subset$medication)
+data_subset$group <- factor(data_subset$group)
+data_subset$group <- relevel(data_subset$group,ref="Lean_Control")
+#Select covariates to keep in the model: Acru, metformin/insulin,bmi,age,tg
+data_subset <- data_subset %>% 
+  dplyr::select(c("kit_id","group","medication","age","bmi","triglycerides","insulin_1","mfm_1","acr_u",all_of(gene_list_total)))
+
+#Try as batch loop
+# Set batch size
+batch_size <- 2000
+total_cores <- 50
+
+# Deduplicate gene list to avoid double-processing
+gene_list_total <- unique(gene_list_total)
+
+# Split the gene list into batches
+gene_batches <- split(gene_list_total, ceiling(seq_along(gene_list_total) / batch_size))
+
+# Define the function that processes a single gene
+process_gene <- function(gene) {
+  if (sum(data_subset[[gene]]) > 0) {
+    m1 <- as.formula(paste0(gene, " ~ group + (1 | kit_id)"))
+    
+    model1 <- tryCatch({
+      glmmTMB(m1, data = data_subset, family = gaussian)
+    }, error = function(e) {
+      return(NULL)
+    })
+    
+    if (!is.null(model1)) {
+      Beta <- summary(model1)$coef$cond[2,1]
+      PValue <- summary(model1)$coef$cond[2,4]
+    } else {
+      Beta <- NA
+      PValue <- NA
+    }
+  } else {
+    Beta <- NA
+    PValue <- NA
+  }
+  
+  return(data.frame(Gene = gene, Beta = Beta, PValue = PValue))
+}
+
+# Set number of cores
+total_cores <- parallel::detectCores() - 1
+
+# Initialize and register cluster
+cl <- makeCluster(total_cores)
+registerDoParallel(cl)
+
+# Run analysis per batch
+all_results <- lapply(seq_along(gene_batches), function(batch_idx) {
+  batch_genes <- gene_batches[[batch_idx]]
+  
+  batch_results <- foreach(
+    gene = batch_genes,
+    .combine = rbind,
+    .packages = c("glmmTMB", "lme4"),
+    .export = c("process_gene", "data_subset")
+  ) %dopar% {
+    process_gene(gene)
+  }
+  
+  cat("Processed batch", batch_idx, "with", length(batch_genes), "genes\n")
+  return(batch_results)
+})
+
+# Combine all batch results into a single data frame
+final_results <- do.call(rbind, all_results)
+# Stop cluster
+stopCluster(cl)
+
+# #Make volcano plot of all gene results for group
+full_results <- final_results %>%
+  mutate(fdr=p.adjust(PValue,method="fdr"))  
+# mutate(fdr3=p.adjust(PValue3,method="fdr"))
+full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
+# full_results$PValue10_3 <- -log10(pmax(full_results$PValue3, 1e-10))  # Avoid log(0)
+Nonconvergence_Rate <- paste0(round(((length(which(is.na(full_results$PValue)))+length(which(full_results$PValue=="NaN")))/length(full_results$Gene))*100,0),"%")
+# view(full_results)
+
+write.csv(full_results,fs::path(dir.results,"PT_S3_Cells_T2D_LC_crude.csv"))
+# full_results <- read.csv(fs::path(dir.results,"Hep_5_Fibrosis_Steatosis.csv"))
+
+full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$Beta > 0, "lightcoral",
+                             ifelse(full_results$fdr < 0.05 & full_results$Beta < 0, "lightblue", "gray"))
+
+# Identify significant points (fdr < 0.05)
+significant_df <- full_results[full_results$fdr < 0.05, ]
+# 
+# full_results$color3 <- ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 > 0, "lightcoral",
+#                               ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 < 0, "lightblue", "gray"))
+# 
+# # Identify significant points (fdr < 0.05)
+# significant_df3 <- full_results[full_results$fdr3 < 0.2, ]
+
+Genes <- length(unique(full_results$Gene))
+Cells <- ncol(so_celltype)
+
+#Figure Range
+max <- max(significant_df$Beta,na.rm=T)
+min <- min(significant_df$Beta,na.rm=T)
+
+
+# full_results$Log2FC <- 2^(full_results$Beta)
+# Create the volcano plot using ggplot
+volcano_plot <- ggplot(full_results, aes(x = Beta, y = PValue10, color = color)) +
+  geom_point(alpha = 0.7) +  # Plot points with transparency
+  scale_color_identity() +  # Use the color column directly
+  theme_minimal() +  # Minimal theme
+  labs(
+    title = "Type 2 Diabetes vs. Lean Controls",
+    subtitle = "PT-S3 Cells, Crude Analysis",
+    x = "Fold Change",
+    y = "-log10(P-Value)",
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,", Non-Convergence Rate: ",Nonconvergence_Rate)
+  ) +
+  xlim(min,max)+
+  theme(
+    plot.title = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 0, hjust = 1)
+  )+
+  # # Add labels for significant points
+  geom_text(data = significant_df, aes(label = Gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+
+volcano_plot
+pdf(fs::path(dir.results,"Plot_PT_S3_Cells_T2D_LC_crude.pdf"),width=10,height=7)
+print(volcano_plot)
+dev.off()
+
+###ii. GSEA----
+#### a. Full Cov Set ----
+rm(figure,combined_plot,sig_pos,sig_neg,sig_pos_en_df,sig_neg_en_df,sig_pos_en,sig_neg_en,p1,p2,p3,p4,filtered_results)
+full_results <- read.csv(fs::path(dir.results,"PT-S3_Cells_T2D_LC_full_cov_set.csv")) %>% 
+  dplyr::select(-X)
+sig_pos <- full_results %>% 
+  filter(Beta>0 & fdr<0.05)
+sig_neg <- full_results %>% 
+  filter(Beta<0 & fdr<0.05)
+
+#Run postive enricher analysis 
+sig_pos_en <- enrichr(as.character(sig_pos$Gene), dbs)
+#Plot results
+# Convert enrichment results to a dataframe
+sig_pos_en_df <- as.data.frame(sig_pos_en[[1]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - GO")
+p1 <- plotEnrich(filtered_results, title = "GO")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_go.jpeg"),width=10,height=7)
+
+# Convert enrichment results to a dataframe
+sig_pos_en_df <- as.data.frame(sig_pos_en[[2]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+p2 <- plotEnrich(filtered_results, title = "KEGG")
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Kegg")
+# plotEnrich(as.data.frame(sig_pos_en[[2]]), title = "Model 1 Positive Hepatocytes - Kegg")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_kegg.jpeg"),width=10,height=7)
+
+# sig_pos_en_df <- as.data.frame(sig_pos_en[[3]])
+# # Extract the number of overlapping genes
+# sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# # plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Reactome '22")
+# p3 <- plotEnrich(filtered_results, title = "Positive Hepatocytes - Reactome '22")
+# # plotEnrich(as.data.frame(sig_pos_en[[3]]), title = "Model 1 Positive Hepatocytes - Reactome '22")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome22.jpeg"),width=10,height=7)
+
+sig_pos_en_df <- as.data.frame(sig_pos_en[[3]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Reactome '24")
+p3 <- plotEnrich(filtered_results, title = "Reactome '24")
+# plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+# sig_pos_en_df <- as.data.frame(sig_pos_en[[5]])
+# # Extract the number of overlapping genes
+# sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# p5 <- plotEnrich(filtered_results, title = "Positive Hepatocytes - MsigDB Computational")
+# # plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - MsigDB Computational")
+# # plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+sig_pos_en_df <- as.data.frame(sig_pos_en[[4]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - MsigDB Hallmark '20")
+# plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+p4 <- plotEnrich(filtered_results, title = "MsigDB '20")
+
+# Arrange 6 plots in 3 rows x 2 columns
+combined_plot <- (p1 | p3) 
+# / 
+# (p3 | p4) 
+
+# Display or save the plot
+figure <- combined_plot + 
+  plot_annotation(
+    title = "Positive Gene Set Enrichment Analysis for T2D vs. Lean Controls in PT-S3 cells",
+    theme = theme(
+      plot.title = element_text(
+        hjust = 0.5,         # Center title
+        size = 18,           # Bigger font
+        face = "bold"        # Bold text
+      )
+    )
+  )
+
+ggsave(fs::path(dir.results, "Positive_PT_S3_T2D_LC_gsea_figure_full_cov.jpeg"), figure, width = 18, height = 5)
+
+#Run negative enricher analysis 
+sig_neg_en <- enrichr(as.character(sig_neg$Gene), dbs)
+#Plot results
+# Convert enrichment results to a dataframe
+sig_neg_en_df <- as.data.frame(sig_neg_en[[1]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - GO")
+p1 <- plotEnrich(filtered_results, title = "GO")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_go.jpeg"),width=10,height=7)
+
+# Convert enrichment results to a dataframe
+sig_neg_en_df <- as.data.frame(sig_neg_en[[2]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+p2 <- plotEnrich(filtered_results, title = "KEGG")
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Kegg")
+# plotEnrich(as.data.frame(sig_neg_en[[2]]), title = "Model 1 Negative Hepatocytes - Kegg")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_kegg.jpeg"),width=10,height=7)
+
+# sig_neg_en_df <- as.data.frame(sig_neg_en[[3]])
+# # Extract the number of overlapping genes
+# sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# # plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Reactome '22")
+# p3 <- plotEnrich(filtered_results, title = "Negative Hepatocytes - Reactome '22")
+# # plotEnrich(as.data.frame(sig_neg_en[[3]]), title = "Model 1 Negative Hepatocytes - Reactome '22")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome22.jpeg"),width=10,height=7)
+
+sig_neg_en_df <- as.data.frame(sig_neg_en[[3]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Reactome '24")
+p3 <- plotEnrich(filtered_results, title = "Reactome '24")
+# plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+# sig_neg_en_df <- as.data.frame(sig_neg_en[[5]])
+# # Extract the number of overlapping genes
+# sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# p5 <- plotEnrich(filtered_results, title = "Negative Hepatocytes - MsigDB Computational")
+# # plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - MsigDB Computational")
+# # plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+sig_neg_en_df <- as.data.frame(sig_neg_en[[4]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - MsigDB Hallmark '20")
+# plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+p4 <- plotEnrich(filtered_results, title = "MsigDB '20")
+
+# Arrange 6 plots in 3 rows x 2 columns
+combined_plot <- (p1 | p2) / 
+  (p3 | p4) 
+
+# Display or save the plot
+figure <- combined_plot + 
+  plot_annotation(
+    title = "Negative Gene Set Enrichment Analysis for T2D vs. Lean Controls in PT-S3 cells",
+    theme = theme(
+      plot.title = element_text(
+        hjust = 0.5,         # Center title
+        size = 18,           # Bigger font
+        face = "bold"        # Bold text
+      )
+    )
+  )
+
+ggsave(fs::path(dir.results, "Negative_PT_S3_T2D_LC_gsea_figure_full_cov_set.jpeg"), figure, width = 18, height = 10)
+
+#### b. Crude Analysis ----
+rm(figure,combined_plot,sig_pos,sig_neg,sig_pos_en_df,sig_neg_en_df,sig_pos_en,sig_neg_en,p1,p2,p3,p4,filtered_results)
+full_results <- read.csv(fs::path(dir.results,"PT_S3_Cells_T2D_LC_crude.csv")) %>% 
+  dplyr::select(-X)
+sig_pos <- full_results %>% 
+  filter(Beta>0 & fdr<0.05)
+sig_neg <- full_results %>% 
+  filter(Beta<0 & fdr<0.05)
+
+#Run postive enricher analysis 
+sig_pos_en <- enrichr(as.character(sig_pos$Gene), dbs)
+#Plot results
+# Convert enrichment results to a dataframe
+sig_pos_en_df <- as.data.frame(sig_pos_en[[1]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - GO")
+p1 <- plotEnrich(filtered_results, title = "GO")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_go.jpeg"),width=10,height=7)
+
+# Convert enrichment results to a dataframe
+sig_pos_en_df <- as.data.frame(sig_pos_en[[2]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+p2 <- plotEnrich(filtered_results, title = "KEGG")
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Kegg")
+# plotEnrich(as.data.frame(sig_pos_en[[2]]), title = "Model 1 Positive Hepatocytes - Kegg")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_kegg.jpeg"),width=10,height=7)
+
+# sig_pos_en_df <- as.data.frame(sig_pos_en[[3]])
+# # Extract the number of overlapping genes
+# sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# # plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Reactome '22")
+# p3 <- plotEnrich(filtered_results, title = "Positive Hepatocytes - Reactome '22")
+# # plotEnrich(as.data.frame(sig_pos_en[[3]]), title = "Model 1 Positive Hepatocytes - Reactome '22")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome22.jpeg"),width=10,height=7)
+
+sig_pos_en_df <- as.data.frame(sig_pos_en[[3]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - Reactome '24")
+p3 <- plotEnrich(filtered_results, title = "Reactome '24")
+# plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+# sig_pos_en_df <- as.data.frame(sig_pos_en[[5]])
+# # Extract the number of overlapping genes
+# sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# p5 <- plotEnrich(filtered_results, title = "Positive Hepatocytes - MsigDB Computational")
+# # plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - MsigDB Computational")
+# # plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+sig_pos_en_df <- as.data.frame(sig_pos_en[[4]])
+# Extract the number of overlapping genes
+sig_pos_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_pos_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_pos_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Positive Hepatocytes - MsigDB Hallmark '20")
+# plotEnrich(as.data.frame(sig_pos_en[[4]]), title = "Model 1 Positive Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+p4 <- plotEnrich(filtered_results, title = "MsigDB '20")
+
+# Arrange 6 plots in 3 rows x 2 columns
+combined_plot <- (p1 / p2 / p3) 
+
+# Display or save the plot
+figure <- combined_plot + 
+  plot_annotation(
+    title = paste0("Positive Gene Set Enrichment Analysis"),
+    subtitle = paste0("T2D vs. Lean Controls in PT-S3 cells, Crude"),
+    theme = theme(
+      plot.title = element_text(
+        hjust = 0,         # Center title
+        size = 18,           # Bigger font
+        face = "bold"        # Bold text
+      )
+    )
+  )
+
+ggsave(fs::path(dir.results, "Positive_PT_S3_T2D_LC_gsea_figure_crude.jpeg"), figure, width = 9, height = 15)
+
+#Run negative enricher analysis 
+sig_neg_en <- enrichr(as.character(sig_neg$Gene), dbs)
+#Plot results
+# Convert enrichment results to a dataframe
+sig_neg_en_df <- as.data.frame(sig_neg_en[[1]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - GO")
+p1 <- plotEnrich(filtered_results, title = "GO")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_go.jpeg"),width=10,height=7)
+
+# Convert enrichment results to a dataframe
+sig_neg_en_df <- as.data.frame(sig_neg_en[[2]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+p2 <- plotEnrich(filtered_results, title = "KEGG")
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Kegg")
+# plotEnrich(as.data.frame(sig_neg_en[[2]]), title = "Model 1 Negative Hepatocytes - Kegg")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_kegg.jpeg"),width=10,height=7)
+
+# sig_neg_en_df <- as.data.frame(sig_neg_en[[3]])
+# # Extract the number of overlapping genes
+# sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# # plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Reactome '22")
+# p3 <- plotEnrich(filtered_results, title = "Negative Hepatocytes - Reactome '22")
+# # plotEnrich(as.data.frame(sig_neg_en[[3]]), title = "Model 1 Negative Hepatocytes - Reactome '22")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome22.jpeg"),width=10,height=7)
+
+sig_neg_en_df <- as.data.frame(sig_neg_en[[3]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - Reactome '24")
+p3 <- plotEnrich(filtered_results, title = "Reactome '24")
+# plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+# sig_neg_en_df <- as.data.frame(sig_neg_en[[5]])
+# # Extract the number of overlapping genes
+# sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# # Filter pathways with at least 3 overlapping genes
+# filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# # Plot the filtered results
+# p5 <- plotEnrich(filtered_results, title = "Negative Hepatocytes - MsigDB Computational")
+# # plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - MsigDB Computational")
+# # plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# # ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+
+sig_neg_en_df <- as.data.frame(sig_neg_en[[4]])
+# Extract the number of overlapping genes
+sig_neg_en_df$Num_Genes <- as.numeric(sub("/.*", "", sig_neg_en_df$Overlap))
+# Filter pathways with at least 3 overlapping genes
+filtered_results <- subset(sig_neg_en_df, Num_Genes >= 3)
+# Plot the filtered results
+# plotEnrich(filtered_results, title = "Model 1 Negative Hepatocytes - MsigDB Hallmark '20")
+# plotEnrich(as.data.frame(sig_neg_en[[4]]), title = "Model 1 Negative Hepatocytes - Reactome '24")
+# ggsave(fs::path(dir.results,"All_Cell_Types_pos_gsea_reactome24.jpeg"),width=10,height=7)
+p4 <- plotEnrich(filtered_results, title = "MsigDB '20")
+
+# Arrange 6 plots in 3 rows x 2 columns
+combined_plot <- (p1 | p2) / 
+  (p3 | p4) 
+
+# Display or save the plot
+figure <- combined_plot + 
+  plot_annotation(
+    title = "Negative Gene Set Enrichment Analysis for T2D vs. Lean Controls in PT-S3 cells, Crude",
+    theme = theme(
+      plot.title = element_text(
+        hjust = 0.5,         # Center title
+        size = 18,           # Bigger font
+        face = "bold"        # Bold text
+      )
+    )
+  )
+
+ggsave(fs::path(dir.results, "Negative_PT_S3_T2D_LC_gsea_figure_crude.jpeg"), figure, width = 18, height = 10)
