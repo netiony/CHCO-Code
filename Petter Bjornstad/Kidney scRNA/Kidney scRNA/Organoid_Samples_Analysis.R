@@ -374,7 +374,7 @@ dat$eGFR_CKD_epi <- as.numeric(dat$eGFR_CKD_epi)
 
 #Table 1. 
 table1(~ age + sex + race_ethnicity  + bmi + triglycerides + hba1c + medication| study, data=dat)
-table1(~pah_clear_bsa + eGFR_CKD_epi +acr_u +metformin_timepoint+insulin_med_timepoint| study, data=dat)
+table1(~pah_clear_bsa + eGFR_CKD_epi +acr_u +mfm_1+insulin_1| study, data=dat)
 
 #Covariates to adjust for: 
 #Acru, metformin/insulin,bmi,age,tg
@@ -413,14 +413,15 @@ data <- tidylog::full_join(metadata,gene_expression,by="cellname")
 rm(metadata,gene_expression)
 
 #Compare Health Controls to Type 2 Diabetes on no meds
-data_subset <- data %>%
-  filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
-  filter(medication=="no_med")
+data_subset <- data
+  # filter(group=="Type_2_Diabetes" | group=="Lean_Control") %>%
+  # filter(medication=="no_med")
 rm(data)
-data_subset$group <- factor(data_subset$group)
+data_subset$group <- factor(data_subset$medication)
 data_subset$group <- relevel(data_subset$group,ref="Lean_Control")
+#Select covariates to keep in the model: Acru, metformin/insulin,bmi,age,tg
 data_subset <- data_subset %>% 
-  dplyr::select(c("kit_id","group","age","sex","bmi",all_of(gene_list_total)))
+  dplyr::select(c("kit_id","group","medication","age","bmi","triglycerides","insulin_1","mfm_1","acr_u",all_of(gene_list_total)))
 
 #Try as batch loop
 # Set batch size
@@ -436,7 +437,7 @@ gene_batches <- split(gene_list_total, ceiling(seq_along(gene_list_total) / batc
 # Define the function that processes a single gene
 process_gene <- function(gene) {
   if (sum(data_subset[[gene]]) > 0) {
-    m1 <- as.formula(paste0(gene, " ~ group + age + sex + bmi + (1 | kit_id)"))
+    m1 <- as.formula(paste0(gene, " ~ group + age + bmi + acr_u + triglycerides + insulin_1 + mfm_1 + (1 | kit_id)"))
     
     model1 <- tryCatch({
       glmmTMB(m1, data = data_subset, family = gaussian)
@@ -483,11 +484,10 @@ all_results <- lapply(seq_along(gene_batches), function(batch_idx) {
   return(batch_results)
 })
 
-# Stop cluster
-stopCluster(cl)
-
 # Combine all batch results into a single data frame
 final_results <- do.call(rbind, all_results)
+# Stop cluster
+stopCluster(cl)
 
 # #Make volcano plot of all gene results for group
 full_results <- final_results %>%
