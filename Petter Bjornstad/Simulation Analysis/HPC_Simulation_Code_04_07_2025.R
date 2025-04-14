@@ -11,6 +11,135 @@ library(MASS)
 library(parallel)
 library(fs)
 
+# 1. Set up 
+## a. Libraries & Directores
+# library(reprex)
+# install.packages("reticulate")
+library(reticulate)
+#reticulate::use_python("/mmfs1/gscratch/scrubbed/hhampson/pytorch-cuda11/bin/python") 
+library(tidyverse)
+library(BiocManager)        
+library(arsenal)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(Seurat)
+library(future)
+# library(colorspace)
+# library(patchwork)
+# library(ggdendro)
+# library(cowplot)
+# library(ggpubr)
+# library(venn)
+# library(rstatix)
+# library(table1)
+# library(Biobase)
+# library(ReactomeGSA)
+# library(GSEABase)
+# library(msigdbr)
+library(kableExtra)
+library(knitr)
+# library(SingleCellExperiment)
+# library(fgsea)
+# library(EnhancedVolcano)
+# library(openxlsx)
+# library(MAST)
+# # library(qpcR)
+# library(ggpubr)
+# library(openxlsx)
+# library(GGally)
+# library(GSEABase)
+# library(limma)
+# library(reshape2)
+# library(data.table)
+# library(knitr)
+# library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(stringr)
+#library(NMF)
+# library(rsvd)
+# library(RColorBrewer)
+# library(devtools)
+# install_github("Sun-lab/ideas",force=T)
+#library(ideas)
+library(foreach)
+library(parallel)
+library(doRNG)
+library(doParallel)
+# library(fs)
+# registerDoParallel(cores = 6)
+# library(VennDiagram)
+# library(janitor)
+# devtools::install_github('immunogenomics/presto')
+# library(presto)
+# library(knitr)
+library(lme4)
+library(lmerTest)
+#install.packages("glmmTMB")
+# Reinstall glmmTMB from source
+#install.packages("glmmTMB", type = "source")
+# library(glmmTMB)
+# Install DoubletFinder (if not already installed)
+# devtools::install_github("chris-mcginnis-ucsf/DoubletFinder",force=T)
+# Load the package
+# Install DoubletFinder from GitHub (use devtools to install)
+# if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+# devtools::install_github("chris-mcginnis-ucsf/DoubletFinder",force=T)
+# library(DoubletFinder)
+#install.packages("gitcreds")
+library(gitcreds)
+library(jsonlite)
+
+#Set number of cores for parallellization
+#maxCores <- detectCores()
+#numCores <- maxCores-1
+#cl <- makeCluster(numCores)  # Create a cluster with the desired number of cores
+#registerDoParallel(cl) 
+
+#Local file path
+#dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
+#dir.dat2 <- c("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean")
+#dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+#dir.results <- c("/Volumes/Peds Endo/Petter Bjornstad/Kidney Project/Results")
+
+# #Lambda file path
+# dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
+# dir.code <- c("/home/Github_Repo/CHCO-Code/Petter Bjornstad/Kidney scRNA/Kidney scRNA")
+# dir.results <- c(fs::path(dir.dat,"Kidney Project/Results"))
+
+# #Mac Studio File Path
+# dir.dat <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive")
+# dir.results <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Kidney scRNAseq Project/Results")
+# dir.ipa <- c("/Users/hhampson/Documents/IPA/Results")
+
+#Hyak File Paths
+dir.dat <- c("/mmfs1/home/hhampson/CHCO-Code/Petter Bjornstad")
+
+#Load functions
+source("Kidney_functions_sc.R")
+#source(fs::path(dir.dat,"Data Processing and Analysis","Standard_Functions.R"))
+
+## b. Kopah
+## Load boto3 and pandas
+boto3 <- reticulate::import("boto3")
+pd <- reticulate::import("pandas")
+
+## Create an S3 client
+keys <- fromJSON("/mmfs1/home/hhampson/keys.json") # replace with your UW ID
+session <- boto3$session$Session(
+  aws_access_key_id = keys$MY_ACCESS_KEY,
+  aws_secret_access_key = keys$MY_SECRET_KEY
+)
+
+## Create an S3 client with the session
+s3 <- session$client("s3", endpoint_url = "https://s3.kopah.uw.edu")
+
+# read file
+bucket <- "bucketname" # bucket name in Kopah
+temp_file <- tempfile(fileext = ".csv") # need to create a temporary file
+s3$download_file(bucket, "filename.csv", temp_file)
+df <- read.csv(temp_file)
+
+
 #Load functions----
 source("HPC_Simulation_Functions_03_12.R")
 
