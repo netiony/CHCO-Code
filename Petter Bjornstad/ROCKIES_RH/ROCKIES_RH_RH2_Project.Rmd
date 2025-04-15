@@ -1,0 +1,442 @@
+---
+title: "ROCKIES_RH_RH2_Project"
+author: "Hailey Hampson"
+date: "2025-04-15"
+output: html_document
+---
+
+#Analysis Plan
+# Within T2D and T2D/OB: TCA and oxphos transcripts SGLT2i y/n
+# Ye Ji and Hailey you have done most of this, we just need to run the new mixed models and also determine if we should adjust for any covariates
+# Evaluate associations between TCA and oxphos transcripts and K2 and K2/F in a mixed models. We will likely have better power looking at this in a linear model with continuous K2 and K2/F in lieu of groups (i.e., above and below median / tertiles), but can try both.
+
+# 1. Set up 
+## a. Libraries & Directores
+```{r, include=F}
+library(reprex)
+# library(tidyverse)
+library(BiocManager)        
+library(arsenal)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(Seurat)
+library(future)
+library(colorspace)
+library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggpubr)
+library(venn)
+library(rstatix)
+library(table1)
+# BiocManager::install("Biobase")
+library(Biobase)
+# BiocManager::install("ReactomeGSA")
+library(ReactomeGSA)
+# BiocManager::install("GSEABase")
+library(GSEABase)
+# install.packages('msigdbdf', repos = 'https://igordot.r-universe.dev')
+library(msigdbr)
+# library(kableExtra)
+library(knitr)
+# BiocManager::install("SingleCellExperiment")
+library(SingleCellExperiment)
+# BiocManager::install("fgsea")
+library(fgsea)
+# BiocManager::install("EnhancedVolcano")
+library(EnhancedVolcano)
+library(openxlsx)
+library(BiocManager)
+# library(MAST)
+library(ggrepel)
+# library(qpcR)
+library(ggpubr)
+library(openxlsx)
+library(ggplot2)
+library(GGally)
+library(GSEABase)
+# library(limma)
+library(reshape2)
+library(data.table)
+library(knitr)
+# BiocManager::install("TxDb.Hsapiens.UCSC.hg19.knownGene")
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(stringr)
+# library(NMF)
+library(rsvd)
+library(RColorBrewer)
+# BiocManager::install("devtools")
+# library(devtools)
+# install_github("Sun-lab/ideas",force=T)
+# library(ideas)
+library(foreach)
+library(doRNG)
+library(doParallel)
+library(fs)
+library(future)
+# registerDoParallel(cores = 6)
+library(VennDiagram)
+#install.packages("survival")
+library(survival)
+#install.packages("lme4")  # If not already installed
+library(lme4)
+#install.packages("lmerTest")
+library(lmerTest)
+# install.packages("emmeans")
+library(emmeans)
+# install.packages("glmmTMB")
+library(glmmTMB)
+library(ggrepel)
+# library(qpcR)
+library(ggpubr)
+#install.packages("glmmTMB")
+# Reinstall glmmTMB from source
+#install.packages("glmmTMB", type = "source")
+# library(glmmTMB)
+# Install DoubletFinder (if not already installed)
+# devtools::install_github("chris-mcginnis-ucsf/DoubletFinder",force=T)
+# Load the package
+# Install DoubletFinder from GitHub (use devtools to install)
+# if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+# devtools::install_github("chris-mcginnis-ucsf/DoubletFinder",force=T)
+# library(DoubletFinder)
+# install.packages("emmeans")
+library(emmeans)
+library(ggrepel)
+# library(qpcR)
+# BiocManager::install("enrichplot")
+library(enrichplot)
+library(enrichR)
+dbs <- c("GO_Biological_Process_2023",
+         "KEGG_2021_Human",
+         "Reactome_2022",
+         "Reactome_Pathways_2024")
+
+
+#Set number of cores for parallellization
+#maxCores <- detectCores()
+#numCores <- maxCores-1
+#cl <- makeCluster(numCores)  # Create a cluster with the desired number of cores
+#registerDoParallel(cl) 
+
+#Local file path
+#dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
+#dir.dat2 <- c("/Volumes/Peds Endo/Petter Bjornstad/scRNA/data_clean")
+#dir.code <- c("/Users/hhampson/Documents/CHCO-Code/Petter Bjornstad/Liver analysis/Liver scRNAseq")
+#dir.results <- c("/Volumes/Peds Endo/Petter Bjornstad/Kidney Project/Results")
+
+# #Lambda file path
+# dir.dat <- c("/run/user/1026/gvfs/smb-share:server=ucdenver.pvt,share=som/PEDS/RI Biostatistics Core/Shared/Shared Projects/Laura/Peds Endo/Petter Bjornstad")
+# dir.code <- c("/home/Github_Repo/CHCO-Code/Petter Bjornstad/Kidney scRNA/Kidney scRNA")
+# dir.results <- c(fs::path(dir.dat,"Kidney Project/Results"))
+
+# #Mac Studio File Path
+dir.dat <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive")
+dir.results <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Kidney scRNAseq Project/Results")
+dir.ipa <- c("/Users/hhampson/Documents/IPA/Results")
+
+#Load functions
+# source("Kidney_functions_sc.R")
+# source("/Users/hhampson/CHCO-Code/Petter Bjornstad/Data Processing and Analysis/Standard_Functions.R")
+# dir.results <- c("/home/hailey/Documents/Results")
+
+```
+
+## b. Data Cleaning, QC & Preprocessing
+```{r, echo=F, warning=F, fig.width=15, fig.height=15}
+s3$download_file(bucket, "Kidney transcriptomics/Single cell RNA seq/PB_90_RPCAFix_Metadata_LR_RM_kpmpV1labelled.rds", temp_file)
+so_kpmp_sc <- readRDS(temp_file)
+#Fix Typos in kit ids in PB90
+so_kpmp_sc$kit_id[which(so_kpmp_sc$kit_id=="KI-0014643")] <- "KL-0014643"
+so_kpmp_sc$kit_id[which(so_kpmp_sc$kit_id=="kl-0023998")] <- "KL-0023998"
+
+#Load harmonized data that has been filtered from 90 to the 83 participants that have baseline single cell data
+# harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney scRNAseq Project","Data","harmonized_data_kidney_sc_all_metadata2.csv"))
+invisible(gc())
+bucket <- "scrna" # bucket name in Kopah
+temp_file <- tempfile(fileext = ".csv") # need to create a temporary file
+s3$download_file(bucket, "data_clean/harmonized_data_kidney_sc_all_metadata2.csv", temp_file)
+harm_meta_data <- read.csv(temp_file)
+invisible(gc())
+
+harm_meta_data <- harm_meta_data %>%
+  dplyr::select(-X)
+
+#Select metadata from seurat object to facilitate merge of new metadata into seurat object
+meta_kidney_sc <-  so_kpmp_sc@meta.data
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+
+#Merge metadata from 83 participants at baseline into seurat object metadata
+meta_kidney_sc <- meta_kidney_sc %>%
+  left_join(harm_meta_data,by="kit_id")
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+
+#Pull ids from 83 participants at baseline to filter seurat object to these participants only 
+ids <- harm_meta_data$kit_id
+
+#Merge metadata back into seurat object
+so_kpmp_sc <- AddMetaData(so_kpmp_sc, meta_kidney_sc)
+
+#Check number of unique ids
+length(unique(so_kpmp_sc$kit_id)) #should be 90
+
+#Filter seurat object to only IDs that have the metadata & sc data (83 individuals at baseline)
+so_kpmp_sc <- subset(so_kpmp_sc, kit_id %in% ids)
+
+#Check number of unique ids after filtering
+length(unique(so_kpmp_sc$kit_id)) #should be 83
+
+#Remove metadatasets
+rm(meta_kidney_sc,harm_meta_data)
+
+#Remove two coenrolled IDs
+so_kpmp_sc <- subset(so_kpmp_sc,kit_id!="KL-0030621")
+so_kpmp_sc <- subset(so_kpmp_sc,kit_id!="KL-0029535")
+#Check unique number of kit ids now (should be 81)
+length(unique(so_kpmp_sc$kit_id)) #Should be 81
+
+#Load in most up to date medication data to update medication information
+# med <- read.xlsx(fs::path(dir.dat,"Kidney scRNAseq Project/Data/Biopsies_w_mrn_Oct3.xlsx"))
+invisible(gc())
+bucket <- "scrna" # bucket name in Kopah
+temp_file <- tempfile(fileext = ".xlsx") # need to create a temporary file
+s3$download_file(bucket, "data_clean/Biopsies_w_mrn_Oct3.xlsx", temp_file)
+med <- read.xlsx(temp_file)
+invisible(gc())
+rm(s3,session,keys)
+
+#Select Metformin, RASSI, Insulin data
+med <- med %>%
+  dplyr::select(all_of(c("record_id","mrn","raasi_1","insulin_1","mfm_1")))
+#Pull seurat object metadata to help harmoinize in new metadata
+meta_kidney_sc <-  so_kpmp_sc@meta.data
+#Filter to only those with a unique identifier id in the seurat object metadata
+med <- med %>%
+  filter(mrn %in% as.character(meta_kidney_sc$mrn)) 
+length(unique(med$mrn)) #95 total rows remain, 81 unique individual ids
+#Filter to only those that have a unique record id in the seurat object
+med <- med %>%
+  filter(record_id %in% meta_kidney_sc$record_id) 
+length(unique(med$mrn)) #81 remain
+length(unique(med$record_id)) #81
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+med$mrn <- as.numeric(med$mrn) #Make numeric to merge
+#Merge med data with seurat metadata
+meta_kidney_sc <- meta_kidney_sc %>%
+  left_join(med,by=c("mrn","record_id"))
+rownames(meta_kidney_sc) <- rownames(so_kpmp_sc@meta.data)
+length(unique(meta_kidney_sc$mrn)) #81 remain
+length(unique(meta_kidney_sc$record_id)) #81
+
+#Add Med Meta Data to Seurat object
+so_kpmp_sc <- AddMetaData(so_kpmp_sc, meta_kidney_sc)
+#Remove med metadatset
+rm(med,meta_kidney_sc)
+
+#Create medication & disease status groups of interest
+so_kpmp_sc@meta.data <- so_kpmp_sc@meta.data %>%
+  mutate(glp1_sglt2=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>%
+  mutate(sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>%
+  mutate(glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>%
+  mutate(no_med=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+
+#Define 4 exposure groups:
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
+invisible(gc())
+so_kpmp_sc@meta.data <- so_kpmp_sc@meta.data %>%
+  mutate(medication = case_when(glp1_sglt2 == "Yes" ~ "glp1_sglt2",
+                                sglt2 == "Yes" ~ "sglt2",
+                                glp1 == "Yes" ~ "glp1",
+                                no_med == "Yes" ~ "no_med"))
+so_kpmp_sc@meta.data$medication <- factor(so_kpmp_sc@meta.data$medication, levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
+
+#Ensure default assay in seurat object to RNA
+DefaultAssay(so_kpmp_sc) <- "RNA"
+invisible(gc())
+
+#Before filtering
+ncol(so_kpmp_sc)
+#186125 cells
+nrow(so_kpmp_sc)
+#31332 genes
+
+#YE JI's filtering code for percent expression 
+#Filter out rare genes expressed in less than "gene_pct" of cells
+# expr_matrix <- as.matrix(GetAssayData(so_kpmp_sc, layer = "counts"))
+expr_matrix <- as.matrix(GetAssayData(so_kpmp_sc, assay = "RNA", layer = "counts"))
+# expr_matrix <- so_kpmp_sc@assays$RNA@counts
+# Calculate the proportion of cells expressing each gene
+num_cells_per_gene <- rowSums(expr_matrix > 0)  # Count nonzero cells per gene
+total_cells <- ncol(expr_matrix)  # Total number of cells
+gene_proportion <- num_cells_per_gene / total_cells  # Fraction of cells expressing each gene
+remove(expr_matrix)
+# Keep genes expressed in at least "gene_pct" of cells
+genes_to_keep <- names(gene_proportion[gene_proportion >= 0.01])
+so_kpmp_sc <- subset(so_kpmp_sc, features = genes_to_keep)
+#After filtering
+ncol(so_kpmp_sc) #186125 nuclei
+nrow(so_kpmp_sc) # 14627 genes
+
+# Step 2: Remove mitochondrial genes (those starting with "MT")
+mito_genes <- grep("^MT-", rownames(so_kpmp_sc), value = TRUE)
+# mito_genes2 <- grep("^MT.", rownames(so_kpmp_sc), value = TRUE)
+#Filter out all mitochondrial genes
+
+#keep_ids <- unique(rownames(so_kpmp_sc)[which(!rownames(so_kpmp_sc) %in% mito_genes)])
+# so_kpmp_sc <- subset(so_kpmp_sc, features = setdiff(rownames(so_kpmp_sc), mito_genes))
+# so_kpmp_sc <- subset(so_kpmp_sc,kit_id!="KL-0029535")
+#so_kpmp_sc$Gene <- rownames(so_kpmp_sc)
+#so_kpmp_sc <- subset(so_kpmp_sc, Gene %in% keep_ids)
+so_kpmp_sc <- subset(so_kpmp_sc, features = setdiff(rownames(so_kpmp_sc), mito_genes))
+#so_kpmp_sc <- subset(so_kpmp_sc, features = setdiff(rownames(so_kpmp_sc@assays$RNA@counts), mito_genes))
+# so_kpmp_sc <- subset(so_kpmp_sc, !rownames(so_kpmp_sc) %in% mito_genes)
+# grep("^MT-", rownames(so_kpmp_sc@assays$RNA@counts), value = TRUE)
+# dim(so_kpmp_sc@assays$RNA@counts) #9276 186125
+# dim(so_kpmp_sc@assays$RNA@data) #9276 186125
+# dim(so_kpmp_sc@assays$RNA)#9276 186125
+sum(grepl("^MT-", rownames(so_kpmp_sc))) #0
+rownames(so_kpmp_sc)[(grepl("^MT", rownames(so_kpmp_sc)))] #0
+ncol(so_kpmp_sc) #186125 cells
+nrow(so_kpmp_sc) #14614 genes
+
+#Renormalize & Scale after filtering
+so_kpmp_sc <- NormalizeData(so_kpmp_sc)
+so_kpmp_sc <- ScaleData(so_kpmp_sc, features = VariableFeatures(so_kpmp_sc))
+
+#Create general hepatocyte cell type variable
+#Create PT and TAL pseudobulk cell type variable
+so_kpmp_sc$celltype1 <- case_when(grepl("PT-",so_kpmp_sc$celltype_rpca)~"PT",
+                                  grepl("TAL-",so_kpmp_sc$celltype_rpca)~"TAL",
+                                  grepl("EC-",so_kpmp_sc$celltype_rpca)~"EC",
+                                  grepl("POD",so_kpmp_sc$celltype_rpca)~"POD",
+                                  grepl("MAC",so_kpmp_sc$celltype_rpca)~"MAC",
+                                  grepl("MON",so_kpmp_sc$celltype_rpca)~"MON",
+                                  grepl("PC-",so_kpmp_sc$celltype_rpca)~"PC",
+                                  grepl("FIB",so_kpmp_sc$celltype_rpca)~"FIB_MC_VSMC",
+                                  grepl("DTL",so_kpmp_sc$celltype_rpca)~"DTL",
+                                  so_kpmp_sc$celltype_rpca=="DCT"~"DCT",
+                                  so_kpmp_sc$celltype_rpca=="ATL"~"ATL",
+                                  so_kpmp_sc$celltype_rpca=="B"~"B",
+                                  so_kpmp_sc$celltype_rpca=="T"~"T")
+so_kpmp_sc$celltype1 <- as.character(so_kpmp_sc$celltype1)
+
+so_kpmp_sc$KPMP_celltype2 <- as.character(so_kpmp_sc$KPMP_celltype)
+so_kpmp_sc$celltype2 <- ifelse(so_kpmp_sc$KPMP_celltype=="aPT" | 
+                                 so_kpmp_sc$KPMP_celltype=="PT-S1/S2" | 
+                                 so_kpmp_sc$KPMP_celltype == "PT-S3","PT",
+                               ifelse(grepl("TAL",so_kpmp_sc$KPMP_celltype),"TAL",
+                                      ifelse(grepl("EC-",so_kpmp_sc$KPMP_celltype),"EC",so_kpmp_sc$KPMP_celltype2)))
+# so_kpmp_sc$celltype2 <- factor(so_kpmp_sc$celltype2)
+```
+
+## c. Visualizations 
+```{r}
+# PCA
+so_kpmp_sc <- FindVariableFeatures(object = so_kpmp_sc)
+so_kpmp_sc <- RunPCA(so_kpmp_sc, features = VariableFeatures(object = so_kpmp_sc),assay="RNA")
+ElbowPlot(so_kpmp_sc)
+
+# # Find neighbors and clusters (again using integrated data)
+so_kpmp_sc <- FindNeighbors(so_kpmp_sc, assay = "RNA", dims = 1:20)
+so_kpmp_sc <- FindClusters(so_kpmp_sc, resolution = 0.5)
+
+# Perform UMAP and tSNE
+# so_liver_sc <- RunUMAP(so_liver_sc, dims = 1:15)
+so_kpmp_sc@reductions
+DimPlot(so_kpmp_sc, reduction = "umap.harmony", raster = F)
+DimPlot(so_kpmp_sc, reduction = "umap.harmony", group.by = "KPMP_celltype", raster = FALSE)
+DimPlot(so_kpmp_sc, reduction = "umap", group.by = "celltype",raster = FALSE, label = TRUE, label.size = 4)+
+  ggtitle("UMAP Plot with Cell Type Labels")
+
+so_kpmp_sc$group <- factor(so_kpmp_sc$group)
+DimPlot(so_kpmp_sc, reduction = "umap",group.by = "steatosis_cat",label=F,raster=F) +
+  ggtitle(paste0("UMAP by Steatosis Category"))
+
+so_kpmp_sc$fibrosis_cat <- factor(so_kpmp_sc$fibrosis_cat)
+DimPlot(so_kpmp_sc, reduction = "umap",group.by = "fibrosis_cat",label=F,raster=F) +
+  ggtitle(paste0("UMAP by Fibrosis Category"))
+
+
+#Barcharts of proportions
+# By PT subtypes
+cellcount <- so_kpmp_sc@meta.data %>% 
+  filter(celltype2 == "PT")
+
+label(cellcount$group) <- "Disease Status"
+# label(cellcount$steatosis_cat) <- "Steatosis Category"
+# cellcount$group <- ifelse(cellcount$group=="0+1", "Low Steatosis (0+1)","High Steatosis (2+3)")
+cellcount$group <- factor(cellcount$group,levels=c("Lean_Control","Obese_Control","Type_1_Diabetes","Type_2_Diabetes"),labels=c("Lean Controls","Obese Controls","Type 1 Diabetes","Type 2 Diabetes"))
+cellcount$KPMP_celltype2 <- factor(cellcount$KPMP_celltype2,levels=c("PT-S1/S2","PT-S3","aPT"),labels=c("PT-S1/S2","PT-S3","aPT"))
+cellcount <- cellcount %>% 
+  filter(group!="Obese Controls")
+
+prop_plot1 <- ggplot(data=cellcount,aes(group, fill = KPMP_celltype)) + 
+  geom_bar(stat = "count", position = "fill") +
+  theme_classic() +
+  labs(x = NULL,
+       y = "Proportion of Cells",
+       fill = "Cell type") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  theme(plot.title = element_text(hjust=0.5, face="bold"),
+        text = element_text(size = 20)) +
+  ggtitle("Disease Status") +
+  scale_fill_manual(values = c("#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51","darkred"))
+
+prop_plot1 
+
+#Barcharts of proportions
+# By PT subtypes
+cellcount <- so_kpmp_sc@meta.data %>% 
+  filter(celltype2 == "TAL")
+
+label(cellcount$group) <- "Disease Status"
+# label(cellcount$steatosis_cat) <- "Steatosis Category"
+# cellcount$group <- ifelse(cellcount$group=="0+1", "Low Steatosis (0+1)","High Steatosis (2+3)")
+cellcount$group <- factor(cellcount$group,levels=c("Lean_Control","Obese_Control","Type_1_Diabetes","Type_2_Diabetes"),labels=c("Lean Controls","Obese Controls","Type 1 Diabetes","Type 2 Diabetes"))
+# cellcount$KPMP_celltype2 <- factor(cellcount$KPMP_celltype2,levels=c("PT-S1/S2","PT-S3","aPT"),labels=c("PT-S1/S2","PT-S3","aPT"))
+cellcount <- cellcount %>%
+  filter(group!="Obese Controls")
+
+prop_plot1 <- ggplot(data=cellcount,aes(group, fill = KPMP_celltype)) + 
+  geom_bar(stat = "count", position = "fill") +
+  theme_classic() +
+  labs(x = NULL,
+       y = "Proportion of Cells",
+       fill = "Cell type") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  theme(plot.title = element_text(hjust=0.5, face="bold"),
+        text = element_text(size = 20)) +
+  ggtitle("Disease Status") +
+  scale_fill_manual(values = c("#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51","darkred"))
+
+prop_plot1 
+
+#Barcharts of proportions
+# By PT subtypes
+cellcount <- so_kpmp_sc@meta.data %>% 
+  filter(grepl("EC-",KPMP_celltype) | grepl("EC/VSMC",KPMP_celltype))
+
+label(cellcount$group) <- "Disease Status"
+# label(cellcount$steatosis_cat) <- "Steatosis Category"
+# cellcount$group <- ifelse(cellcount$group=="0+1", "Low Steatosis (0+1)","High Steatosis (2+3)")
+cellcount$group <- factor(cellcount$group,levels=c("Lean_Control","Obese_Control","Type_1_Diabetes","Type_2_Diabetes"),labels=c("Lean Controls","Obese Controls","Type 1 Diabetes","Type 2 Diabetes"))
+# cellcount$KPMP_celltype2 <- factor(cellcount$KPMP_celltype2,levels=c("PT-S1/S2","PT-S3","aPT"),labels=c("PT-S1/S2","PT-S3","aPT"))
+cellcount <- cellcount %>%
+  filter(group!="Obese Controls")
+
+prop_plot1 <- ggplot(data=cellcount,aes(group, fill = KPMP_celltype)) + 
+  geom_bar(stat = "count", position = "fill") +
+  theme_classic() +
+  labs(x = NULL,
+       y = "Proportion of Cells",
+       fill = "Cell type") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  theme(plot.title = element_text(hjust=0.5, face="bold"),
+        text = element_text(size = 20)) +
+  ggtitle("Disease Status") +
+  scale_fill_manual(values = c("#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51","darkred"))
+
+prop_plot1
+
+```
