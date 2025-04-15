@@ -1,0 +1,975 @@
+---
+title: "CROCODILE Lipidomics Analysis"
+author: "Henry Ram Mangalapalli"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    theme: default
+    page-layout: full
+    embed-resources: true
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r libraries}
+#| include: false
+library(tidyverse)
+library(magrittr)
+library(table1)
+library(emmeans)
+library(broom)
+library(kableExtra)
+library(arsenal)
+library(olsrr)
+library(data.table)
+library(lipidr)
+library(rgoslin)
+library(LipidMS)
+library(limma)
+library(SummarizedExperiment)
+library(labelled)
+library(plotly)
+library(knitr)
+library(ggrepel)
+library(data.table)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(tidyr)
+library(ggrepel)
+library(kableExtra)
+library(lipidomeR)
+source("C:/Users/Henry Mangalapalli/Documents/GitHub/CHCO-Code/Petter Bjornstad/CROCODILE/lipidr_unadj_function_R.R")
+
+
+# library(MetaboAnalystR)
+```
+
+```{r, include=F}
+dat <- read.csv("C:/Users/Henry Mangalapalli/UW/Laura Pyle - Biostatistics Core Shared Drive/Data Harmonization/Data Clean/harmonized_dataset.csv")
+lipids_raw <- read.csv("C:/Users/Henry Mangalapalli/UW/Laura Pyle - Biostatistics Core Shared Drive/CROCODILE/Data_Raw/crocodile_lipidomics.csv")
+lipids_name <- read.csv("C:/Users/Henry Mangalapalli/UW/Laura Pyle - Biostatistics Core Shared Drive/CROCODILE/Data_Raw/crocodile_lipidomics_name.csv")
+
+# Harmonized dataset contains data from ALL studies, thus why we have to separate out by Crocodile later on
+dict <- read.csv("C:/Users/Henry Mangalapalli/UW/Laura Pyle - Biostatistics Core Shared Drive/Data Harmonization/data_dictionary_master.csv", na.strings = c(" ", "", "-9999",-9999)) %>%
+  select(variable_name, label)
+lipids_name %<>% filter(variable_name != "co_q10_nh4")
+lipids_raw <- lipids_raw %>%
+  select(-co_q10_nh4) %>%
+  select(-contains(c("_k", "_na", "_2h2o", "complete"))) %>%
+  select(-starts_with("oahfa"))
+
+# Converting lipids_raw into a transposed data frame. 
+# Removing 1st column from lipids_raw in lipids_dat & setting column names to come from that 1st column.
+# Converting row names to column called "variable_name"
+# Joining lipids_name & lipids_raw at "variable_name" and "standardized_name_w_adduct" column
+lipids_dat <- setnames(data.frame(t(lipids_raw[ , - 1])), lipids_raw[ , 1]) %>% 
+  tibble::rownames_to_column("variable_name") %>%
+  left_join(subset(lipids_name, select = c("variable_name", "standardized_name_w_adduct"))) 
+
+# Parsing out lipid names from the standardized_name_w_adduct column in lipids_name
+parsed <- parseLipidNames(lipids_dat$standardized_name_w_adduct)
+
+###Need dplyr to do anything with %>%
+# Joining lipids_dat with a subset of the parsed dataframe (the Original.Name & Normalized.Name columns)
+# After joining, removing the variable_name & standardized_w_adduct columns
+# Relocate Normalied.Name to front of dataframe & remove all NA or empty ("") strings
+lipids_dat %<>%
+  left_join(subset(parsed, select = c("Original.Name", "Normalized.Name")), 
+            by= c("standardized_name_w_adduct" = "Original.Name")) %>%
+  select(-c("variable_name", "standardized_name_w_adduct")) %>% 
+  # rename("Lipid.Maps.Main.Class" = "Class",
+  #        "Lipid.Maps.Category" = "Category",
+  #        "Normalized.Name" = "Molecule",
+  #        "Species.Name" = "LipidSpecies",
+  #        "Mass" = "Mass",
+  #        "Sum.Formula" = "SumFormula") %>%
+  relocate("Normalized.Name") %>%
+  select_if(~!(all(is.na(.)) | all(. == ""))) 
+# All lipids_dat values <100 are "NA" (in this dataset, I didn't find any)
+lipids_dat[lipids_dat<100] <- NA
+
+# Convert lipids_dat into a lipidomics experiment object
+lipids_exp_raw <- as_lipidomics_experiment(lipids_dat)
+```
+
+## Use ONE of the next two chunks. First one uses new_names, which generates unique names for data frame variables to ensure they're not already present. Second one cleans up the names as a function.
+```{r, include=F}
+## At this point, lipid names are listed like "Cer 18:1;O3/24:0." Some are duplicate names & don't follow the format CLS xx:x/yy:y. ##
+# Extracts non-parsed molecules (those not matched to known standards) from lipidomics experiment object
+non_parsed <- non_parsed_molecules(lipids_exp_raw)
+# Transform names starting with "Cer " to include a "(d" — likely prepping for sphingoid base format like "Cer (d18:1/16:0)"
+new_names <- sub("Cer ", "Cer (d", non_parsed)
+# Remove a digit that follows "O" using a lookbehind. E.g., O16 → O.
+new_names <- sub("(?<=O)\\d", "", new_names, perl = T)
+# Remove ";O" — possibly to clean up extra oxidation annotations.
+new_names <- sub(";O", "", new_names)
+# Append a closing parenthesis at the end — probably to match an earlier ( you’ve inserted.
+new_names <- sub("$", ")", new_names)
+# Convert shorthand ether/alkenyl lipid classes into a Glycerophospho naming format (GPC, GPE, etc.)
+new_names <- sub("PC O", "GPC (O", new_names)
+new_names <- sub("PE O", "GPE (O", new_names)
+new_names <- sub("PE P", "GPE (P", new_names)
+# Replace underscores with slashes in fatty acyl chain descriptions. E.g., "18:1_16:0" → "18:1/16:0"
+new_names <- sub("_", "/", new_names)
+# Redundant with earlier line — but still safely removes any lingering ;O.
+new_names <- sub(";O", "", new_names)
+# Reformat O-ether prefixes in glyco/conjugated lipids (e.g., "G O-18:1" → "G (O18:1").
+new_names <- sub("G O-", "G (O", new_names)
+new_names <- sub("I O-", "I (O", new_names)
+new_names <- sub("S O-", "S (O", new_names)
+# Insert parentheses before single-digit numbers preceded by a space — careful here: it might hit unintended places unless digits are always chain descriptors.
+new_names <- sub(" \\d", " (\\d", new_names)
+# Assign the newly standardized names back into your lipidomics experiment object
+lipids_exp_raw <- update_molecule_names(lipids_exp_raw, old = non_parsed, new = new_names)
+```
+
+```{r}
+## At this point, lipid names are listed like "Cer 18:1;O3/24:0." Some are duplicate names & don't follow the format CLS xx:x/yy:y. ##
+standardize_lipid_names <- function(names_vec) {
+  names_vec %>%
+    sub("Cer ", "Cer (d", .) %>%
+    sub("(?<=O)\\d", "", ., perl = TRUE) %>%
+    sub(";O", "", .) %>%
+    sub("$", ")", ., perl = TRUE) %>%
+    sub("PC O", "GPC (O", .) %>%
+    sub("PE O", "GPE (O", .) %>%
+    sub("PE P", "GPE (P", .) %>%
+    sub("_", "/", .) %>%
+    sub(";O", "", .) %>%
+    sub("G O-", "G (O", .) %>%
+    sub("I O-", "I (O", .) %>%
+    sub("S O-", "S (O", .) %>%
+    sub(" \\d", " (\\d", .)
+}
+# Assign the newly standardized names back into your lipidomics experiment object
+lipids_exp_raw <- update_molecule_names(lipids_exp_raw, old = non_parsed, new = new_names)
+
+```
+
+
+```{r, include=F}
+dat <- dat %>%
+# Filter by "Crocodile" study
+  filter(study == "CROCODILE") %>%
+# Group by individual (record_id) and summarize: Characters → max (alphabetically), Factors → last non-NA, Numerics → mean per person  
+  group_by(record_id) %>% 
+  summarise(across(where(is.character),~max(na.omit(.x))),
+            across(where(is.factor),~last(na.omit(.x))),
+            across(where(is.numeric),~mean(.x,na.rm = T)),.groups = "drop") %>%
+# Recode race/ethnicity into a simplified group
+  mutate(race_ethnicity_condensed = case_when(race == "White" & startsWith(ethnicity, "Not") ~ "Non-Hispanic White",
+                                              race == "Black or African American" & startsWith(ethnicity, "Not") ~ "Non-Hispanic Black",
+                                              ethnicity == "Hispanic or Latino" ~ "Hispanic",
+                                              T ~ "Other")) %>%
+## Rowwise operations ##
+# Average left and right adc values
+   rowwise() %>%
+  mutate(adc_avg = mean(c(adc_left, adc_right), na.rm=T)) %>%
+# Create albuminuria status flag
+  mutate(elevated_albuminuria = case_when(acr_u >=30 ~ "Yes",
+                                          acr_u <30 ~ "No")) %>%
+# Create a renamed/mirrored numeric column for the m-value
+  mutate(combined_m_value = p2_raw_m) %>%
+
+  
+# might need mutate(combined_m_value = case_when(is.na(p2_raw_m) ~ raw_m, is.na(raw_m) ~ p2_raw_m)) %>%
+  # if m-value is called something different (m-value = mean of logarithmic transformation)
+    
+  mutate(ht_adj_tkv = total_kidney_volume_ml / (height/100)) %>%
+  mutate(pcasl3d_avg = mean(c(pcasl3d_left, pcasl3d_right), na.rm = T)) %>%
+  mutate(bold_avg_bl_cortex = mean(c(bold_l_bl_cortex, bold_r_bl_cortex), na.rm = T)) %>%
+  mutate(bold_avg_bl_kidney = mean(c(bold_l_bl_kidney, bold_r_bl_kidney), na.rm = T)) %>%
+  mutate(bold_avg_bl_medulla = mean(c(bold_l_bl_medulla, bold_r_bl_medulla), na.rm = T)) %>%
+  mutate(bold_avg_pf_cortex = mean(c(bold_l_pf_cortex, bold_r_pf_cortex), na.rm = T)) %>%
+  mutate(bold_avg_pf_kidney = mean(c(bold_l_pf_kidney, bold_r_pf_kidney), na.rm = T)) %>%
+  mutate(bold_avg_pf_medulla = mean(c(bold_l_pf_medulla, bold_r_pf_medulla), na.rm = T)) %>%
+  mutate(fsoc_avg_cortex = mean(c(fsoc_l_cortex, fsoc_r_cortex), na.rm = T)) %>%
+  mutate(fsoc_avg_kidney = mean(c(fsoc_l_kidney, fsoc_r_kidney), na.rm = T)) %>%
+  mutate(fsoc_avg_medulla = mean(c(fsoc_l_medulla, fsoc_r_medulla), na.rm = T)) %>%
+  mutate(m_i = p2_raw_m / steady_state_insulin) %>%
+  left_join(lipids_raw) %>%
+  filter(!is.na(acca_14_1_h)) %>%
+  mutate(group = case_when(group == "Lean Control" ~ "Lean_Control",
+                           group == "Type 1 Diabetes" ~ "Type_1_Diabetes")) %>%
+  relocate(record_id, group) 
+
+# Create different tertiles/med
+m_tertiles <- quantile(dat$p2_raw_leanm, seq(0, 1, 1/3), na.rm = TRUE)
+dat$m_cat <- cut(dat$p2_raw_leanm, m_tertiles, c('Low', 'Medium', 'High'), include.lowest = TRUE)
+m_med <- quantile(dat$p2_raw_leanm, seq(0, 1, 1/2), na.rm = TRUE)
+dat$m_cat_2 <- cut(dat$p2_raw_leanm, m_med, c('Low', 'High'), include.lowest = TRUE)
+
+hba1c_tertiles <- quantile(dat$hba1c, seq(0, 1, 1/3), na.rm = TRUE)
+dat$hba1c_cat <- cut(dat$hba1c, hba1c_tertiles, c('Low', 'Medium', 'High'), include.lowest = TRUE)
+hba1c_med <- quantile(dat$hba1c, seq(0, 1, 1/2), na.rm = TRUE)
+dat$hba1c_cat_2 <- cut(dat$hba1c, hba1c_med, c('Low', 'High'), include.lowest = TRUE)
+
+ffa_sup_tertiles <- quantile(dat$p2_ffa_suppression, seq(0, 1, 1/3), na.rm = TRUE)
+dat$ffa_sup_cat <- cut(dat$p2_ffa_suppression, ffa_sup_tertiles, c('Low', 'Medium', 'High'), include.lowest = TRUE)
+ffa_sup_med <- quantile(dat$p2_ffa_suppression, seq(0, 1, 1/2), na.rm = TRUE)
+dat$ffa_sup_cat_2 <- cut(dat$p2_ffa_suppression, ffa_sup_med, c('Low', 'High'), include.lowest = TRUE)
+
+p1_m_tertiles <- quantile(dat$p1_raw_leanm, seq(0, 1, 1/3), na.rm = TRUE)
+dat$p1_m_cat <- cut(dat$p1_raw_leanm, p1_m_tertiles, c('Low', 'Medium', 'High'), include.lowest = TRUE)
+p1_m_med <- quantile(dat$p1_raw_leanm, seq(0, 1, 1/2), na.rm = TRUE)
+dat$p1_m_cat_2 <- cut(dat$p1_raw_leanm, p1_m_med, c('Low', 'High'), include.lowest = TRUE)
+
+# Main group comparison
+clin_dat <- dat %>%
+  select(record_id, group, m_cat, m_cat_2, p1_m_cat, p1_m_cat_2, hba1c_cat, hba1c_cat_2, ffa_sup_cat, ffa_sup_cat_2, age, sex, race, weight, height, bmi,  hba1c, diabetes_duration, sbp, dbp, pulse, creatinine_s, eGFR_fas_cr,  acr_u, metformin_timepoint, insulin_med_timepoint,  sglti_timepoint, tzd_timepoint, raasi_timepoint, statin, dexa_body_fat, dexa_fat_kg, dexa_lean_kg, dexa_trunk_kg, p2_raw_m, p2_raw_leanm, p1_ffa_suppression, p2_ffa_suppression, dexa_lean_kg, dexa_fat_kg, dexa_body_fat, dexa_trunk_kg, fasting_ffa, fasting_insulin, p1_raw_leanm, p1_raw_m)
+
+# Add clinical metadata (clin_dat) as sample-level annotation to your lipidomics experiment object
+lipids_exp <- add_sample_annotation(lipids_exp_raw, clin_dat)
+# Creates a logical vector to filter out features with missing or "NA" lipid classes.
+lipid_classes <- rowData(lipids_exp)$Class %nin% c("NA", NA)
+lipids_exp <- lipids_exp[lipid_classes,]
+```
+
+```{r include = F}
+# Label variables for descriptives. Remove first column of dict & transpose rows/columns.
+dict <- setNames(data.frame(t(dict[ , - 1])), dict[ , 1])
+# Add three new columns to dict, each with a string value ("Average ADC", "Elevated albuminuria", and "M-value") for all rows in the data frame.
+dict %<>%
+  mutate(adc_avg = "Average ADC") %>%
+  mutate(elevated_albuminuria = "Elevated albuminuria") %>%
+  mutate(combined_m_value = "M-value")
+# Ensure that dict only contains columns that also exist in dat
+dict <- dict[intersect(names(dat), names(dict))]
+# Ensure that dict contains all the columns of dat & that if dict is missing any dat columns, they'll be filled with "" (empty string)
+dict[setdiff(names(dat), names(dict))] <- ""
+# Assign appropriate values from dict as labels to the columns in dat. The match() function ensures that the labels from dict are assigned to the columns of dat in the correct order.
+Hmisc::label(dat) = dict[match(names(dat), names(dict))] # Somehow, this won't work if you use the function version of standardizing lipid names
+rowData(lipids_exp)
+
+# distribution check (need ggplot2 & tidyr)
+
+dat %>%
+  select(adc_left, adc_right, adc_avg, age, bmi, hba1c, eGFR_fas_cr, sbp, dbp, acr_u, diabetes_duration, p2_raw_leanm) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram()
+```
+
+# Descriptive tables
+
+```{r, warning=F}
+#| echo: false
+descriptive1 <- tableby(group ~ age + sex + fe(race) + weight + height + kwt(bmi, "Nmiss", "median", "q1q3", "range") +  hba1c + diabetes_duration + sbp + dbp + pulse + creatinine_s + eGFR_fas_cr +  kwt(acr_u, "Nmiss", "median", "q1q3", "range") + + fe(metformin_timepoint) + fe(insulin_med_timepoint) +  fe(sglti_timepoint) + fe(tzd_timepoint) + fe(raasi_timepoint) + fe(statin) + dexa_body_fat + dexa_fat_kg + dexa_lean_kg + dexa_trunk_kg + p2_raw_m + p2_raw_leanm + kwt(p1_ffa_suppression, "Nmiss", "median", "q1q3", "range") + kwt(p2_ffa_suppression, "Nmiss", "median", "q1q3", "range") + dexa_lean_kg + dexa_fat_kg + dexa_body_fat + dexa_trunk_kg + fasting_ffa + kwt(fasting_insulin, "Nmiss", "median", "q1q3", "range") + p2_raw_m + p2_raw_leanm +kwt(triglycerides, "Nmiss", "median", "q1q3", "range") + hdl + ldl, data = dat, total=F)
+```
+
+```{r results='asis'}
+#| echo: false
+summary(descriptive1, pfootnote = T)
+```
+
+# ```{r, warning=F}
+# #| echo: false
+# descriptive2 <- tableby(group ~ lc_f + rc_f + lm_f + rm_f + lc_k1 + rc_k1 + lm_k1 + rm_k1 + kidney_side + kidney_location +gloms+fia + glom_tuft_area + mes_index, data = dat, total=F)
+# ```
+# 
+# ```{r results='asis'}
+# #| echo: false
+# summary(descriptive2, pfootnote = T)
+# ```
+```{r, warning=F, include = F}
+#| echo: false
+# QC Total Ion Concentration visual
+# plot_samples(lipids_exp, "tic")
+# plot_samples(lipids_exp, "boxplot")
+
+# plot_lipidclass(lipids_exp, "boxplot")
+
+# Normalize data (Probablistic Quotient Normalization for intensities)
+lipids_normalized = normalize_pqn(lipids_exp, measure = "Area",  log = TRUE)
+
+# plot_samples(lipids_normalized, "boxplot")
+# plot_lipidclass(lipids_normalized, "boxplot")
+```
+
+# Pooled Analysis
+
+## Comparing between T1D vs. LC
+
+### Univariate
+```{r, warning=F}
+#| echo: false
+# trace(plot_results_volcano, edit=TRUE)
+# trace(significant_molecules, edit=TRUE)
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+    Type_1_Diabetes - Lean_Control,
+    measure="Area")
+# Need ggrepel
+png("Type 1 Diabetes Univariate Volcano Plot.png")
+plot_results_volcano_unadj(de_results, show.labels = TRUE)
+significant_molecules_unadj(de_results)
+
+enrich_results = lsea(de_results, rank.by = "logFC")
+significant_lipidsets(enrich_results)
+
+png("Type 1 Diabetes Lean Control Lipid Class.png")
+plot_enrichment(de_results, significant_lipidsets(enrich_results), annotation="class")
+png("Type 1 Diabetes Lean Control Unsaturation.png")
+plot_enrichment(de_results, significant_lipidsets(enrich_results), annotation="unsat")
+```
+### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+
+```{r warning = F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method="OPLS-DA")
+png("Supervised OPLS-DA Control vs T1D Multivariate.png")
+plot_mva(mvaresults, color_by="group")
+png("Supervised OPLS-DA by Lipid Class Multivariate.png")
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+``` 
+
+
+## Comparing between T1D vs. LC (Adjusted)
+
+Adjusting for:
+
+-   age,
+
+-   BMI,
+
+-   HbA1c,
+
+-   M-Value (lean),
+
+-   fasting FFA,
+
+-   fasting insulin
+
+### Univariate
+```{r warning = F}
+#| echo: false
+factorial_de <- de_design(lipids_normalized, ~ group + age + bmi + hba1c + p2_raw_leanm + fasting_ffa + fasting_insulin, coef = "groupType_1_Diabetes")
+#png("Type 1 Diabetes by Lipid Class Univariate Volcano Plot.png")
+plot_results_volcano_unadj(factorial_de, show.labels = TRUE)
+significant_molecules_unadj(factorial_de)
+
+enrich_results = lsea(factorial_de, rank.by = "logFC")
+significant_lipidsets(enrich_results)
+
+png("Type 1 Diabetes Lipid Class.png")
+plot_enrichment(factorial_de, significant_lipidsets(enrich_results), annotation="class")
+png("Type 1 Diabetes Unsaturation.png")
+plot_enrichment(factorial_de, significant_lipidsets(enrich_results), annotation="unsat")
+
+```
+
+## Comparing between Phase 2 M-value
+### By tertiles
+#### Univariate
+```{r, warning=F}
+#| echo: false
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+                         group_col = "m_cat",
+    Low - High,
+    measure="Area")
+
+png(file="C:\\Users\\Henry Mangalapalli\\Documents\\GitHub\\CHCO-Code\\Petter Bjornstad\\Lipidomics\\Henry's Lipidomics Analysis\\Low vs. High M-Value by Lipid Class Univariate Volcano Plot.png",
+width=600, height=350)
+plot_results_volcano_unadj(de_results, show.labels = TRUE)
+significant_molecules_unadj(de_results)
+
+enrich_results = lsea(de_results, rank.by = "logFC")
+significant_lipidsets(enrich_results)
+
+png(file="C:\\Users\\Henry Mangalapalli\\Documents\\GitHub\\CHCO-Code\\Petter Bjornstad\\Lipidomics\\Henry's Lipidomics Analysis\\Phase 2 M Value Lipid Class.png",
+width=600, height=350)
+plot_enrichment(de_results, significant_lipidsets(enrich_results), annotation="class")
+
+png(file="C:\\Users\\Henry Mangalapalli\\Documents\\GitHub\\CHCO-Code\\Petter Bjornstad\\Lipidomics\\Henry's Lipidomics Analysis\\Phase 2 M Value Unsaturation.png",
+width=600, height=350)
+plot_enrichment(de_results, significant_lipidsets(enrich_results), annotation="unsat")
+
+```
+#### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+
+```{r, warning=F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method = "OPLS-DA", group_col = "m_cat", groups=c("Low", "High"))
+png("Low vs. High M-Cat OLPS-DA Multivariate.png")
+plot_mva(mvaresults, color_by="m_cat")
+png("Low vs. High M-Cat OLPS-DA Multivariate.png")
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+
+### Supervised OPLS with M-value as a continuous variable
+```{r warning = F}
+#| echo: false
+# Multivariate analysis by M-value
+d_filtered <- lipids_normalized[, !is.na(lipids_normalized$p2_raw_leanm)]
+p2_raw_leanm <- lipids_normalized$p2_raw_leanm[!is.na(lipids_normalized$p2_raw_leanm)]
+
+mvaresults = mva(d_filtered, method = "OPLS", group_col = p2_raw_leanm )
+
+png("Supervised OPLS with M-value as a Continuous Variable by Lipid Class Multivariate PCA.png")
+plot_mva(mvaresults)
+png("Supervised OPLS with M-value as a Continuous Variable by Lipid Class Multivariate.png")
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+### By median
+#### Univariate
+```{r, warning=F}
+#| echo: false
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+                         group_col = "m_cat_2",
+    Low - High,
+    measure="Area")
+png("Supervised OPLS with M-value as a continuous variable by median")
+plot_results_volcano_unadj(de_results, show.labels = TRUE)
+significant_molecules_unadj(de_results)
+
+enrich_results = lsea((de_results), rank.by = "logFC")
+significant_lipidsets(enrich_results)
+
+png("Supervised OPLS with M-value as a continuous variable Median by Class.png", width = 800, height = 600)
+print(plot_enrichment(de_results, significant_lipidsets(enrich_results), annotation="class"))
+print("Supervised OPLS with M-value as a continuous variable Median by Class")  # This is important for ggplot
+dev.off()
+
+enrich_results = lsea((de_results), rank.by = "logFC")
+significant_lipidsets(enrich_results)
+
+plot_1 <- plot_enrichment(de_results, significant_lipidsets(enrich_results), annotation="unsat")
+png(file="C:\\Users\\Henry Mangalapalli\\Documents\\GitHub\\CHCO-Code\\Petter Bjornstad\\Lipidomics\\Henry's Lipidomics Analysis\\Supervised OPLS with M-value as a continuous variable Median Unsaturation.png",
+width=600, height=350)
+print(plot_1)
+dev.off()
+```
+#### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+
+```{r, warning=F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method = "OPLS-DA", group_col = "m_cat_2", groups=c("Low", "High"))
+plot_mva(mvaresults, color_by="m_cat_2")
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+
+## Comparing between Phase 1 M-value
+### By tertiles
+#### Univariate
+```{r, warning=F}
+#| echo: false
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+    group_col = "p1_m_cat",
+    Low - High,
+    measure="Area")
+plot_results_volcano_unadj(de_results, show.labels = TRUE)
+significant_molecules_unadj(de_results)
+```
+#### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+
+```{r, warning=F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method = "OPLS-DA", group_col = "p1_m_cat", groups=c("Low", "High"))
+plot_mva(mvaresults, color_by="p1_m_cat")
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+
+### Supervised OPLS with M-value as a continuous variable
+```{r warning = F}
+#| echo: false
+# Multivariate analysis by M-value
+d_filtered <- lipids_normalized[, !is.na(lipids_normalized$p1_raw_leanm)]
+p1_raw_leanm <- lipids_normalized$p1_raw_leanm[!is.na(lipids_normalized$p1_raw_leanm)]
+
+mvaresults = mva(d_filtered, method = "OPLS", group_col = p1_raw_leanm)
+plot_mva(mvaresults)
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+
+### By median
+#### Univariate
+```{r, warning=F}
+#| echo: false
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+    group_col ="p1_m_cat_2",
+    Low - High, 
+    measure="Area")
+plot_results_volcano_unadj(de_results, show.labels = TRUE)
+significant_molecules_unadj(de_results)
+```
+
+#### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+```{r, warning=F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method = "OPLS-DA", group_col = "p1_m_cat_2", groups=c("Low", "High"))
+plot_mva(mvaresults, color_by="p1_m_cat_2")
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+
+## Comparing between FFA Suppression
+### By tertiles
+#### Univariate
+```{r, warning=F}
+#| echo: false
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+                         group_col = "ffa_sup_cat", 
+    Low - High,
+    measure="Area")
+
+plot_results_volcano_unadj(de_results, show.labels = TRUE)
+significant_molecules_unadj(de_results)
+```
+#### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+
+```{r, warning=F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method = "OPLS-DA", group_col = "ffa_sup_cat", groups=c("Low", "High"))
+plot_mva(mvaresults, color_by="ffa_sup_cat")
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+### Supervised OPLS with FFA suppression as a continuous variable
+```{r warning = F}
+#| echo: false
+# Multivariate analysis by FFA suppression
+d_filtered <- lipids_normalized[, !is.na(lipids_normalized$p2_ffa_suppression)]
+p2_ffa_suppression <- lipids_normalized$p2_ffa_suppression[!is.na(lipids_normalized$p2_ffa_suppression)]
+
+mvaresults = mva(d_filtered, method = "OPLS", group_col = p2_ffa_suppression)
+plot_mva(mvaresults)
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+### By median
+#### Univariate
+```{r, warning=F}
+#| echo: false
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+    group_col = "ffa_sup_cat_2",
+    Low - High,
+    measure="Area")
+
+plot_results_volcano_unadj(de_results, show.labels = TRUE)
+significant_molecules_unadj(de_results)
+```
+#### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+
+```{r, warning=F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method = "OPLS-DA", group_col = "ffa_sup_cat_2", groups=c("Low", "High"))
+plot_mva(mvaresults, color_by="ffa_sup_cat_2")
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+
+## Comparing between HbA1c
+### By tertiles
+#### Univariate
+```{r}
+#| echo: false
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+                         group_col = "hba1c_cat",
+                         Low - High,
+                         measure="Area")
+
+plot_results_volcano_unadj(de_results, show.labels = TRUE)
+significant_molecules_unadj(de_results)
+```
+#### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+```{r, warning=F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method = "OPLS-DA", group_col = "hba1c_cat", groups=c("Low", "High"))
+plot_mva(mvaresults, color_by="hba1c_cat")
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+### Supervised OPLS with HbA1c as a continuous variable
+```{r warning = F}
+#| echo: false
+# Multivariate analysis by HbA1c suppression
+d_filtered <- lipids_normalized[, !is.na(lipids_normalized$hba1c)]
+hba1c <- lipids_normalized$hba1c[!is.na(lipids_normalized$hba1c)]
+
+mvaresults = mva(d_filtered, method = "OPLS", group_col = hba1c)
+plot_mva(mvaresults)
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+### By median
+#### Univariate
+```{r}
+#| echo: false
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+                         group_col = "hba1c_cat_2",
+                         Low - High,
+                         measure="Area")
+
+plot_results_volcano_unadj(de_results, show.labels = TRUE)
+significant_molecules_unadj(de_results)
+```
+#### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+```{r, warning=F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method = "OPLS-DA", group_col = "hba1c_cat_2", groups=c("Low", "High"))
+plot_mva(mvaresults, color_by="hba1c_cat_2")
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+
+
+# T1D only analysis
+```{r warning = F}
+#| echo: false
+clear.labels <- function(x) {
+  if(is.list(x)) {
+    for(i in seq_along(x)) {
+      class(x[[i]]) <- setdiff(class(x[[i]]), 'labelled') 
+      attr(x[[i]],"label") <- NULL
+    } 
+  } else {
+    class(x) <- setdiff(class(x), "labelled")
+    attr(x, "label") <- NULL
+  }
+  return(x)
+}
+dat <- clear.labels(dat)
+dat_t1d <- dat %>% filter(group =="Type_1_Diabetes")
+lipids_dat_t1d <- lipids_dat %>%  select(Normalized.Name, dat_t1d$record_id)
+
+lipids_exp_raw <- as_lipidomics_experiment(lipids_dat_t1d)
+
+non_parsed <- non_parsed_molecules(lipids_exp_raw)
+new_names <- sub("Cer ", "Cer (d", non_parsed)
+new_names <- sub("(?<=O)\\d", "", new_names, perl = T)
+new_names <- sub(";O", "", new_names)
+new_names <- sub("$", ")", new_names)
+new_names <- sub("PC O", "GPC (O", new_names)
+new_names <- sub("PE O", "GPE (O", new_names)
+new_names <- sub("PE P", "GPE (P", new_names)
+new_names <- sub("_", "/", new_names)
+new_names <- sub(";O", "", new_names)
+new_names <- sub("G O-", "G (O", new_names)
+new_names <- sub("I O-", "I (O", new_names)
+new_names <- sub("S O-", "S (O", new_names)
+new_names <- sub(" \\d", " (\\d", new_names)
+
+lipids_exp_raw <- update_molecule_names(lipids_exp_raw, old = non_parsed, new = new_names)
+```
+
+```{r warning = F}
+#| echo: false
+# Main group comparison
+clin_dat <- subset(clin_dat, group == "Type_1_Diabetes")
+
+lipids_exp <- add_sample_annotation(lipids_exp_raw, clin_dat)
+lipid_classes <- rowData(lipids_exp)$Class %nin% c("NA", NA)
+lipids_exp <- lipids_exp[lipid_classes,]
+
+# Normalize data (Probablistic Quotient Normalization for intensities)
+lipids_normalized = normalize_pqn(lipids_exp, measure = "Area",  log = TRUE)
+```
+
+## Comparing between Phase 2 M-value
+### By tertiles
+#### Univariate
+```{r, warning=F}
+#| echo: false
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+                         group_col = "m_cat",
+    Low - High,
+    measure="Area")
+
+plot_results_volcano_unadj(de_results, show.labels = F)
+significant_molecules_unadj(de_results)
+```
+#### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+
+```{r, warning=F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method = "OPLS-DA", group_col = "m_cat", groups=c("Low", "High"))
+plot_mva(mvaresults, color_by="m_cat")
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+
+### Supervised OPLS with M-value as a continuous variable
+```{r warning = F}
+#| echo: false
+# Multivariate analysis by M-value
+d_filtered <- lipids_normalized[, !is.na(lipids_normalized$p2_raw_leanm)]
+p2_raw_leanm <- lipids_normalized$p2_raw_leanm[!is.na(lipids_normalized$p2_raw_leanm)]
+
+mvaresults = mva(d_filtered, method = "OPLS", group_col = p2_raw_leanm )
+plot_mva(mvaresults)
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+### By median
+#### Univariate
+```{r, warning=F}
+#| echo: false
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+                         group_col = "m_cat_2",
+    Low - High,
+    measure="Area")
+
+plot_results_volcano_unadj(de_results, show.labels = TRUE)
+significant_molecules_unadj(de_results)
+```
+#### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+
+```{r, warning=F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method = "OPLS-DA", group_col = "m_cat_2", groups=c("Low", "High"))
+plot_mva(mvaresults, color_by="m_cat_2")
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+
+## Comparing between Phase 1 M-value
+### By tertiles
+#### Univariate
+```{r, warning=F}
+#| echo: false
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+    group_col = "p1_m_cat",
+    Low - High,
+    measure="Area")
+plot_results_volcano_unadj(de_results, show.labels = TRUE)
+significant_molecules_unadj(de_results)
+```
+#### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+
+```{r, warning=F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method = "OPLS-DA", group_col = "p1_m_cat", groups=c("Low", "High"))
+plot_mva(mvaresults, color_by="p1_m_cat")
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+
+### Supervised OPLS with M-value as a continuous variable
+```{r warning = F}
+#| echo: false
+# Multivariate analysis by M-value
+d_filtered <- lipids_normalized[, !is.na(lipids_normalized$p1_raw_leanm)]
+p1_raw_leanm <- lipids_normalized$p1_raw_leanm[!is.na(lipids_normalized$p1_raw_leanm)]
+
+mvaresults = mva(d_filtered, method = "OPLS", group_col = p1_raw_leanm)
+plot_mva(mvaresults)
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+
+### By median
+#### Univariate
+```{r, warning=F}
+#| echo: false
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+    group_col ="p1_m_cat_2",
+    Low - High, 
+    measure="Area")
+plot_results_volcano_unadj(de_results, show.labels = TRUE)
+significant_molecules_unadj(de_results)
+```
+
+#### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+```{r, warning=F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method = "OPLS-DA", group_col = "p1_m_cat_2", groups=c("Low", "High"))
+plot_mva(mvaresults, color_by="p1_m_cat_2")
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+
+## Comparing between FFA Suppression
+### By tertiles
+#### Univariate
+```{r, warning=F}
+#| echo: false
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+                         group_col = "ffa_sup_cat", 
+    Low - High,
+    measure="Area")
+
+plot_results_volcano_unadj(de_results, show.labels = TRUE)
+significant_molecules_unadj(de_results)
+```
+#### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+
+```{r, warning=F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method = "OPLS-DA", group_col = "ffa_sup_cat", groups=c("Low", "High"))
+plot_mva(mvaresults, color_by="ffa_sup_cat")
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+### Supervised OPLS with FFA suppression as a continuous variable
+```{r warning = F}
+#| echo: false
+# Multivariate analysis by FFA suppression
+d_filtered <- lipids_normalized[, !is.na(lipids_normalized$p2_ffa_suppression)]
+p2_ffa_suppression <- lipids_normalized$p2_ffa_suppression[!is.na(lipids_normalized$p2_ffa_suppression)]
+
+mvaresults = mva(d_filtered, method = "OPLS", group_col = p2_ffa_suppression)
+plot_mva(mvaresults)
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+### By median
+#### Univariate
+```{r, warning=F}
+#| echo: false
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+    group_col = "ffa_sup_cat_2",
+    Low - High,
+    measure="Area")
+
+plot_results_volcano_unadj(de_results, show.labels = TRUE)
+significant_molecules_unadj(de_results)
+```
+#### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+
+```{r, warning=F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method = "OPLS-DA", group_col = "ffa_sup_cat_2", groups=c("Low", "High"))
+plot_mva(mvaresults, color_by="ffa_sup_cat_2")
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+
+## Comparing between HbA1c
+### By tertiles
+#### Univariate
+"Low" HbA1c not present in T1D cohort
+```{r}
+#| echo: false
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+                         group_col = "hba1c_cat",
+                         Medium - High,
+                         measure="Area")
+
+plot_results_volcano_unadj(de_results, show.labels = TRUE)
+significant_molecules_unadj(de_results)
+```
+#### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+```{r, warning=F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method = "OPLS-DA", group_col = "hba1c_cat", groups=c("Medium", "High"))
+plot_mva(mvaresults, color_by="hba1c_cat")
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+### Supervised OPLS with HbA1c as a continuous variable
+```{r warning = F}
+#| echo: false
+# Multivariate analysis by HbA1c suppression
+d_filtered <- lipids_normalized[, !is.na(lipids_normalized$hba1c)]
+hba1c <- lipids_normalized$hba1c[!is.na(lipids_normalized$hba1c)]
+
+mvaresults = mva(d_filtered, method = "OPLS", group_col = hba1c)
+plot_mva(mvaresults)
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
+### By median
+#### Univariate
+```{r}
+#| echo: false
+# Univariate analysis
+de_results = de_analysis(data=lipids_normalized, 
+                         group_col = "hba1c_cat_2",
+                         Low - High,
+                         measure="Area")
+
+plot_results_volcano_unadj(de_results, show.labels = TRUE)
+significant_molecules_unadj(de_results)
+```
+#### Multivariate
+(Supervised OPLS-DA (Orthogonal partial least squares discriminant analysis)
+```{r, warning=F}
+#| echo: false
+mvaresults = mva(lipids_normalized, method = "OPLS-DA", group_col = "hba1c_cat_2", groups=c("Low", "High"))
+plot_mva(mvaresults, color_by="hba1c_cat_2")
+
+plot_mva_loadings(mvaresults, color_by="Class", top.n=10)
+
+kbl(top_lipids(mvaresults), caption="List of lipids contributing to the separation between groups") %>% kable_styling()
+```
