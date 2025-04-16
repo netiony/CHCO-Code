@@ -74,5 +74,19 @@ boldmri <- read_xlsx('/Users/pylell/Library/CloudStorage/OneDrive-SharedLibrarie
 boldmri <- boldmri %>% select(-c(site, date_visit))
 
 # merge by ID and visit
-attempt_clinical <- left_join(demo, anthro, by = c("subject_id", "visit"))
-attempt_clinical <- left_join(attempt_clinical, anthro, by = c("subject_id", "visit"))
+attempt_clinical <- full_join(demo, anthro, by = c("subject_id", "visit"))
+attempt_clinical <- full_join(attempt_clinical, anthro, by = c("subject_id", "visit"))
+attempt_clinical <- full_join(attempt_clinical, famhx, by = c("subject_id", "visit"))
+attempt_clinical <- full_join(attempt_clinical, dm, by = c("subject_id", "visit"))
+attempt_clinical <- full_join(attempt_clinical, gm, by = c("subject_id", "visit"))
+attempt_clinical <- full_join(attempt_clinical, urinelabs, by = c("subject_id", "visit"))
+attempt_clinical <- full_join(attempt_clinical, urine24, by = c("subject_id", "visit"))
+attempt_clinical <- full_join(attempt_clinical, urineemu, by = c("subject_id", "visit"))
+attempt_clinical <- full_join(attempt_clinical, localblood, by = c("subject_id", "visit"))
+attempt_clinical <- full_join(attempt_clinical, centralblood, by = c("subject_id", "visit"))
+attempt_clinical <- full_join(attempt_clinical, compliance, by = c("subject_id", "visit"))
+attempt_clinical <- full_join(attempt_clinical, egfr, by = c("subject_id", "visit"))
+attempt_clinical <- full_join(attempt_clinical, mgfr, by = c("subject_id", "visit"))
+attempt_clinical <- full_join(attempt_clinical, boldmri, by = c("subject_id", "visit"))
+
+attempt_clinical <- attempt_clinical %>% arrange(subject_id, visit)
