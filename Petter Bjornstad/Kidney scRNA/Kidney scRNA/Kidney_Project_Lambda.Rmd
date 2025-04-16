@@ -4613,7 +4613,7 @@ cl <- makeCluster(num_cores)
 registerDoParallel(cl)
 
 # List of genes to process
-genes <- gene_list_total[1:5000]  # Assuming gene_hold is your full list of genes
+genes <- gene_list_total  # Assuming gene_hold is your full list of genes
 # genes <- gene_list_total[which(!gene_list_total %in% results2$Gene)]
 # Process genes in chunks of 1000
 chunk_size <- 1000
@@ -4653,7 +4653,7 @@ for (i in 1:num_chunks) {
 final_results <- do.call(rbind, all_results)
 #results2 <- final_results
 # final_results <- rbind(final_results,results2)
-rm(results2)
+# rm(results2)
 # Save the final combined results
 write.csv(final_results, file = fs::path(dir.results,"All_TAL_Cells_T2D_Medication_Full_results_all_genes_04_07_2025.csv"))
 
@@ -5559,6 +5559,207 @@ dev.off()
 ```
 
 ###iii. EC
+```{r}
+so_celltype <- subset(so_kpmp_sc,celltype1=="EC")
+ncol(so_celltype) #37948 cells
+nrow(so_celltype) #14627 genes
+# Extract the gene expression data for all genes
+gene_expression <- as.data.frame(GetAssayData(so_celltype, layer = "data"))
+
+gene_expression <- t(gene_expression)
+gene_expression <- data.frame(gene_expression) #Make a dataframe again after transposing
+#Set gene list
+gene_list_total <- colnames(gene_expression)
+gene_expression$cellname <- rownames(gene_expression) 
+rownames(gene_expression) <- NULL
+
+# Extract the metadata
+metadata <- so_celltype@meta.data
+# metadata <- metadata %>%
+#   mutate(across(everything(),~ifelse(.==".",NA,.)))
+metadata$cellname <- rownames(metadata)
+rownames(metadata) <- NULL
+
+# Combine the gene expression data and metadata
+data <- tidylog::full_join(metadata,gene_expression,by="cellname")
+rm(metadata,gene_expression)
+
+#Compare Health Controls to Type 2 Diabetes on no meds
+data_subset <- data %>%
+  filter(group=="Type_2_Diabetes") 
+# filter(medication=="no_med")
+
+data_subset$medication <- factor(data_subset$medication)
+data_subset <- data_subset %>% 
+  dplyr::select(c("kit_id","medication","group","age","sex","bmi",all_of(gene_list_total)))
+rm(data)
+gc()
+rm(so_celltype)
+
+# Define your function for processing a gene
+process_gene <- function(gene) {
+  # Use tryCatch to handle errors
+  result <- tryCatch({
+    # Define the formula for the linear mixed-effects model
+    formula <- as.formula(paste0(gene, " ~ medication + age + sex + bmi + (1 | kit_id)"))
+    
+    # Fit the model
+    model <- suppressWarnings(lmer(formula, data = data_subset))
+    
+    # Compute emmeans
+    emm <- emmeans(model, ~ medication, lmerTest.limit = 19037, pbkrtest.limit = 19037)
+    
+    # Define the contrasts to test
+    contrast_results <- contrast(emm, list(
+      "GLP1 vs No Med"        = c(0, 1, 0, -1),
+      "SGT2 vs No Med"        = c(0, 0, 1, -1),
+      "GLP1+SGT2 vs No Med"   = c(0, 0, 0, 1),
+      "GLP1+SGT2 vs GLP1"     = c(0, -1, 1, 0),
+      "GLP1+SGT2 vs SGT2"     = c(0, 0, -1, 1)
+    ))
+    
+    # Convert the contrast results to a data frame and add PValue and Gene columns
+    contrast_df <- as.data.frame(confint(contrast_results))
+    contrast_df$PValue <- summary(contrast_results)$p.value
+    contrast_df$Gene <- gene
+    contrast_df <- as.data.frame(contrast_df)
+    
+    return(contrast_df)
+  }, error = function(e) {
+    # If there's an error, return NULL and print the error message
+    message(paste("Error processing gene:", gene, "\n", e))
+    return(NULL)  # Return NULL if an error occurs
+  })
+  
+  return(result)
+}
+
+# Set up parallel backend (use maximum available cores)
+num_cores <- detectCores() - 1  # Reserve one core for the system, adjust as needed
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+# List of genes to process
+genes <- gene_list_total  # Assuming gene_hold is your full list of genes
+# genes <- gene_list_total[which(!gene_list_total %in% results2$Gene)]
+# Process genes in chunks of 1000
+chunk_size <- 1000
+num_chunks <- ceiling(length(genes) / chunk_size)
+
+# Initialize an empty list to store all results
+all_results <- list()
+
+# Loop over each chunk
+for (i in 1:num_chunks) {
+  # Determine the start and end indices for the current chunk
+  start_idx <- ((i - 1) * chunk_size) + 1
+  end_idx <- min(i * chunk_size, length(genes))
+  
+  # Get the current chunk of genes
+  current_genes <- genes[start_idx:end_idx]
+  
+  # Run the analysis for this chunk in parallel
+  chunk_results <- foreach(gene = current_genes, .combine = rbind, .packages = c("lme4", "emmeans", "dplyr")) %dopar% {
+    process_gene(gene)
+  }
+  
+  # Remove any NULL results (in case of errors)
+  chunk_results <- chunk_results[!sapply(chunk_results, is.null), ]
+  
+  # Add the results of the current chunk to the list of all results
+  all_results[[i]] <- chunk_results
+  
+  # Save the current chunk's results to a CSV file
+  # write.csv(chunk_results, file = fs::path(dir.results,paste0("Full_results_chunk_", i, "_04_07_2025.csv")))
+  
+  # Optionally, print progress
+  cat("Finished chunk", i, "out of", num_chunks, "\n")
+}
+
+# Combine all chunks into a single data frame
+final_results <- do.call(rbind, all_results)
+#results2 <- final_results
+# final_results <- rbind(final_results,results2)
+# rm(results2)
+# Save the final combined results
+write.csv(final_results, file = fs::path(dir.results,"All_EC_Cells_T2D_Medication_Full_results_all_genes_04_07_2025.csv"))
+
+# Stop the parallel cluster
+stopCluster(cl)
+Nonconvergence_Rate <- paste0(round((1-length(unique(final_results$Gene))/length(gene_list_total))*100,3),"%")
+rm(data_subset,cl,all_results)
+
+#Visulaize the results
+# #Make volcano plot of all gene results for group
+full_results <- final_results %>%
+  mutate(fdr=p.adjust(PValue,method="fdr"))  
+# group_by(contrast) %>% 
+# mutate(fdr=p.adjust(PValue,method="fdr"))  %>% 
+# ungroup()
+# mutate(fdr3=p.adjust(PValue3,method="fdr"))
+full_results$PValue10 <- -log10(pmax(full_results$PValue, 1e-10))  # Avoid log(0)
+
+# full_results <- read.csv(fs::path(dir.results,"Hep_5_Fibrosis_Steatosis.csv"))
+
+full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$estimate > 0, "lightcoral",
+                             ifelse(full_results$fdr < 0.05 & full_results$estimate < 0, "lightblue", "gray"))
+
+# Identify significant points (fdr < 0.05)
+significant_df <- full_results[full_results$fdr < 0.05, ]
+
+# 
+# full_results$color3 <- ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 > 0, "lightcoral",
+#                               ifelse(full_results$fdr3 < 0.2 & full_results$Beta3 < 0, "lightblue", "gray"))
+# 
+# # Identify significant points (fdr < 0.05)
+# significant_df3 <- full_results[full_results$fdr3 < 0.2, ]
+
+Genes <- length(unique(full_results$Gene))
+Cells <- ncol(so_celltype)
+
+#Figure Range
+# max <- max(significant_df$Beta,na.rm=T)
+# min <- min(significant_df$Beta,na.rm=T)
+
+max <- max(full_results$estimate,na.rm=T)
+min <- min(full_results$estimate,na.rm=T)
+
+full_results$contrast <- factor(full_results$contrast)
+# Reorder the contrast variable
+full_results$contrast <- factor(full_results$contrast, levels = c("GLP1 vs No Med", "SGT2 vs No Med", "GLP1+SGT2 vs No Med","GLP1+SGT2 vs GLP1","GLP1+SGT2 vs SGT2"))
+significant_df$contrast <- factor(significant_df$contrast, levels = c("GLP1 vs No Med", "SGT2 vs No Med", "GLP1+SGT2 vs No Med","GLP1+SGT2 vs GLP1","GLP1+SGT2 vs SGT2"))
+
+# Create the volcano plot using ggplot
+volcano_plot <- ggplot(full_results, aes(x = estimate, y = PValue10, color = color)) +
+  geom_point(alpha = 0.7) +  # Plot points with transparency
+facet_wrap(~ contrast, nrow = 2, ncol = 3)+
+  scale_color_identity() +  # Use the color column directly
+  theme_minimal() +  # Minimal theme
+  labs(
+    title = "Comparison of Medication Status among Youth with T2D",
+    subtitle = "EC, Adjusted for Age, Sex & BMI",
+    x = "Fold Change",
+    y = "-log10(P-Value)",
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,", Non-Convergence Rate: ",Nonconvergence_Rate)
+  ) +
+  # xlim(min,max)+
+  theme(
+    plot.title = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 0, hjust = 1)
+  )+
+  # # Add labels for significant points
+  geom_text(data = significant_df, aes(label = Gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+
+volcano_plot
+pdf(fs::path(dir.results,"Plot_PT_S1_S2_T2D_Medications_lmm_no_zi.pdf"),width=12,height=10)
+print(volcano_plot)
+dev.off()
+```
 ####i. EC-AVR
 ```{r}
 so_celltype <- subset(so_kpmp_sc,KPMP_celltype2=="EC-AVR")
