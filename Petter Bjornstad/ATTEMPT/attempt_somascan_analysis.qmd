@@ -1,6 +1,6 @@
 ---
 title: "ATTEMPT SOMA Scan Analysis"
-author: "Ye Ji Choi"
+author: "Ye Ji Choi and Laura Pyle"
 date: "`r lubridate::today()`"
 format: 
   html:
@@ -23,9 +23,13 @@ library(tidyverse)
 library(limma)
 library(arsenal)
 library(fgsea)
+library(correlation)
+library(psych)
+library(openxlsx)
 
 #bg_path <- "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/GSEA/"
 bg_path <- "/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/GSEA/"
+load("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/KNIGHT/Somalogic data/analytes.Rdata")
 ```
 
 ```{r echo = F, include = F}
@@ -529,8 +533,6 @@ plot_fgsea(kegg_legacy_res_soma_DiD, title = "SOMA DiD Top 30 KEGG", xlim= 20)
 
 #ggsave("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Pathways/SOMA_DiD_KEGG.jpeg",
 #       width = 27.5, height = 14, scale = 1)
-ggsave("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Pathways/SOMA_DiD_KEGG.jpeg",
-       width = 27.5, height = 14, scale = 1)
 
 
 ```
@@ -555,5 +557,118 @@ plot_fgsea(go_res_soma_DiD, title = "SOMA DiD Top 30 GO", xlimit = 30)
 ggsave("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Figures/Pathways/SOMA_DiD_GO.jpeg",
        width = 27.5, height = 14, scale = 1)
 
+
+```
+
+# Correlations with clinical variables
+```{r echo = F}
+is_seq <- function(.x) grepl("seq", .x)
+
+# read in clinical variables
+attempt_clin <- read.csv('/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Data Raw/ATTEMPT_DenverDataRequest_20250314.csv')
+attempt_clin <- attempt_clin %>% filter(visit %in% c("V1 Screening", "V4 Final"))
+attempt_clin$record_id <- attempt_clin$subject_id
+
+# reshape to wide
+attempt_clin_keep <- attempt_clin %>% select(record_id, visit, mgfr_si, mgfr_si_adjusted, PWV, hba1c_percent)
+attempt_clin_wide <- reshape(attempt_clin_keep, timevar = "visit", idvar = "record_id", direction = "wide")
+# calculate deltas
+attempt_clin_wide$delta_mgfr_si <- attempt_clin_wide$`mgfr_si.V4 Final` - attempt_clin_wide$`mgfr_si.V1 Screening`
+attempt_clin_wide$delta_mgfr_si_adjusted <- attempt_clin_wide$`mgfr_si_adjusted.V4 Final` - attempt_clin_wide$`mgfr_si_adjusted.V1 Screening`
+attempt_clin_wide$delta_PWV <- attempt_clin_wide$`PWV.V4 Final` - attempt_clin_wide$`PWV.V1 Screening`
+attempt_clin_wide$delta_hba1c_percent <- attempt_clin_wide$`hba1c_percent.V4 Final` - attempt_clin_wide$`hba1c_percent.V1 Screening`
+attempt_clin_wide <- attempt_clin_wide %>% select(record_id, delta_mgfr_si, delta_mgfr_si_adjusted, delta_PWV, delta_hba1c_percent)
+
+# reshape the soma data to wide
+seq <- names(soma)[is_seq(names(soma))]
+soma_keep <- soma %>% select(record_id, visit, starts_with("seq"))
+soma_wide <- reshape(soma_keep, timevar = "visit", idvar = "record_id", direction = "wide")
+#predictors <- colnames(base_log[seq])
+for (i in 1:length(seq)) {
+  soma_wide[,paste0("delta_",seq[i])] <- soma_wide[,paste0(seq[i],".POST")] - soma_wide[,paste0(seq[i],".PRE")]
+}
+
+# calculate correlation between change in mGFR, HbA1c, UACR, PWV
+# create CSV with all results as well as volcano plot
+source("/Users/pylell/Documents/GitHub/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/correlation_function.R")
+
+# mGFR adjusted
+y <- soma_wide %>%
+  dplyr::select(contains("delta")) 
+x <- attempt_clin_wide %>% 
+  dplyr::select(delta_mgfr_si_adjusted)
+corr_delta_mgfr_si_adjusted <- corr.test(x = x, y = y, method = "spearman", adjust = "BH")
+corr_delta_mgfr_si_adjusted_r <- data.frame(spearman_delta_mgfr_si_adjusted = (corr_delta_mgfr_si_adjusted$r %>% t() ))
+corr_delta_mgfr_si_adjusted_p <- data.frame(p.value = (corr_delta_mgfr_si_adjusted$p.adj %>% t() ))
+corr_delta_mgfr_si_adjusted_mat <- cbind(corr_delta_mgfr_si_adjusted_r, corr_delta_mgfr_si_adjusted_p)
+colnames(corr_delta_mgfr_si_adjusted_mat) <- c("spearman_delta_mgfr_si_adjusted", "q.value")
+corr_delta_mgfr_si_adjusted_mat$AptName <- rownames(corr_delta_mgfr_si_adjusted_mat)
+corr_delta_mgfr_si_adjusted_mat$AptName <- str_remove(corr_delta_mgfr_si_adjusted_mat$AptName, "delta_")
+corr_delta_mgfr_si_adjusted_mat <- corr_delta_mgfr_si_adjusted_mat %>%
+  left_join(analytes_attempt, by = "AptName") 
+  # column_to_rownames("Target") %>%
+  #dplyr::select(spearman_delta_testosterone, p.value, Target)
+corr_delta_mgfr_si_adjusted_mat$Target_apt <- paste0(corr_delta_mgfr_si_adjusted_mat$Target, " (", corr_delta_mgfr_si_adjusted_mat$AptName, ")")
+corr_delta_mgfr_si_adjusted_mat <- corr_delta_mgfr_si_adjusted_mat %>%
+  column_to_rownames("Target_apt") 
+
+# HbA1c
+y <- soma_wide %>%
+  dplyr::select(contains("delta")) 
+x <- attempt_clin_wide %>% 
+  dplyr::select(delta_hba1c_percent)
+corr_delta_hba1c_percent <- corr.test(x = x, y = y, method = "spearman", adjust = "BH")
+corr_delta_hba1c_percent_r <- data.frame(spearman_delta_hba1c_percent = (corr_delta_hba1c_percent$r %>% t() ))
+corr_delta_hba1c_percent_p <- data.frame(p.value = (corr_delta_hba1c_percent$p.adj %>% t() ))
+corr_delta_hba1c_percent_mat <- cbind(corr_delta_hba1c_percent_r, corr_delta_hba1c_percent_p)
+colnames(corr_delta_hba1c_percent_mat) <- c("spearman_delta_hba1c_percent", "q.value")
+corr_delta_hba1c_percent_mat$AptName <- rownames(corr_delta_hba1c_percent_mat)
+corr_delta_hba1c_percent_mat$AptName <- str_remove(corr_delta_hba1c_percent_mat$AptName, "delta_")
+corr_delta_hba1c_percent_mat <- corr_delta_hba1c_percent_mat %>%
+  left_join(analytes_attempt, by = "AptName") 
+  # column_to_rownames("Target") %>%
+  #dplyr::select(spearman_delta_testosterone, p.value, Target)
+corr_delta_hba1c_percent_mat$Target_apt <- paste0(corr_delta_hba1c_percent_mat$Target, " (", corr_delta_hba1c_percent_mat$AptName, ")")
+corr_delta_hba1c_percent_mat <- corr_delta_hba1c_percent_mat %>%
+  column_to_rownames("Target_apt") 
+
+# PWV
+y <- soma_wide %>%
+  dplyr::select(contains("delta")) 
+x <- attempt_clin_wide %>% 
+  dplyr::select(delta_PWV)
+corr_delta_PWV <- corr.test(x = x, y = y, method = "spearman", adjust = "BH")
+corr_delta_PWV_r <- data.frame(spearman_delta_PWV = (corr_delta_PWV$r %>% t() ))
+corr_delta_PWV_p <- data.frame(p.value = (corr_delta_PWV$p.adj %>% t() ))
+corr_delta_PWV_mat <- cbind(corr_delta_PWV_r, corr_delta_PWV_p)
+colnames(corr_delta_PWV_mat) <- c("spearman_delta_PWV", "q.value")
+corr_delta_PWV_mat$AptName <- rownames(corr_delta_PWV_mat)
+corr_delta_PWV_mat$AptName <- str_remove(corr_delta_PWV_mat$AptName, "delta_")
+corr_delta_PWV_mat <- corr_delta_PWV_mat %>%
+  left_join(analytes_attempt, by = "AptName") 
+  # column_to_rownames("Target") %>%
+  #dplyr::select(spearman_delta_testosterone, p.value, Target)
+corr_delta_PWV_mat$Target_apt <- paste0(corr_delta_PWV_mat$Target, " (", corr_delta_PWV_mat$AptName, ")")
+corr_delta_PWV_mat <- corr_delta_PWV_mat %>%
+  column_to_rownames("Target_apt") 
+
+# sort
+corr_delta_mgfr_si_mat <- corr_delta_mgfr_si_mat %>% arrange(q.value)
+corr_delta_mgfr_si_adjusted_mat <- corr_delta_mgfr_si_adjusted_mat %>% arrange(q.value)
+corr_delta_hba1c_percent_mat <- corr_delta_hba1c_percent_mat %>% arrange(q.value)
+corr_delta_PWV_mat <- corr_delta_PWV_mat %>% arrange(q.value)
+
+# write correlation results to file
+wb <- createWorkbook()
+addWorksheet(wb,"Change in mgfr_si")
+writeData(wb,"Change in mgfr_si",corr_delta_mgfr_si_mat,rowNames = F)
+addWorksheet(wb,"Change in mgfr_si_adjusted")
+writeData(wb,"Change in mgfr_si_adjusted",corr_delta_mgfr_si_adjusted_mat,rowNames = F)
+addWorksheet(wb,"Change in HbA1c")
+writeData(wb,"Change in HbA1c",corr_delta_hba1c_percent_mat,rowNames = F)
+addWorksheet(wb,"Change in PWV")
+writeData(wb,"Change in PWV",corr_delta_PWV_mat,rowNames = F)
+saveWorkbook(wb,"/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/ATTEMPT/Results/Somascan/Somascan_clinical_correlations.xlsx",overwrite = TRUE)
+```
 
 ```

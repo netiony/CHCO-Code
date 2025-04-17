@@ -136,4 +136,4 @@ final_df2 <- final_df %>%
   ungroup()
 
 # Save
-write.csv(final_df2, "mixed_model_results_summary.csv", row.names = FALSE)
+write.csv(final_df2, "/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/VSG/Results/mixed_model_results_summary.csv", row.names = FALSE)
