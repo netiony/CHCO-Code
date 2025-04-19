@@ -26,10 +26,165 @@ library(fgsea)
 library(correlation)
 library(psych)
 library(openxlsx)
+library(SomaPlotr)
 
 #bg_path <- "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/GSEA/"
 bg_path <- "/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/GSEA/"
 load("/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/KNIGHT/Somalogic data/analytes.Rdata")
+```
+
+```{r functions, include=FALSE}
+volcano <- function(data, lab = "Target", xcol = "logFC", ycol = "adj.P.Val",
+                    top = 14,
+                    xlimit = c(-1, 1), ylimit = c(0, -log10(10e-7)),
+                    xlabel = "logFC", pCutoff = 0.05, overlaps = 20,
+                    log_t = F) {
+  data <- as.data.frame(data)
+  data <- data %>% arrange(adj.P.Val)
+  t <- data[data[, "adj.P.Val"] <= pCutoff, ]
+  if (log_t) {
+    t <- t[order(abs(log(t[, "adj.P.Val"])), decreasing = F), ]
+  } else {
+    t <- t[order(abs(t[, "adj.P.Val"]), decreasing = F), ]
+  }
+  data$top <- data[, "AptName"] %in% t[1:top, "AptName"]
+  data$logp <- -log10(data[, ycol])
+  data$fc <- data[, xcol]
+  data$sig <- data[, ycol] <= pCutoff
+  p <- ggplot(data = data, aes(x = fc, y = logp, color = sig)) +
+    geom_hline(yintercept = -log10(pCutoff), linetype = "dashed") +
+    geom_point(size = 2) +
+    geom_label_repel(
+      data = data[data$top, ], aes(label = Target), color = "black",
+      max.overlaps = overlaps
+    ) +
+    scale_color_manual(values = c("grey", "#3e6dbf")) +
+    xlab(xlabel) +
+    ylab(bquote(~ -Log[10] ~ italic(Q))) +
+    theme_bw() +
+    theme(legend.position = "none")
+  return(p)
+}
+
+plotVolcano_mod <- function (data, FC, p.value, labels, identify = FALSE, fc.cutoff = 1, 
+  pt.size = 2.5, text.size = 3, cutoff = 0.05/nrow(data), sig_fc_lab = "Significant & Fold-Change",
+  sig_lab = "Significant", fc_lab = "Fold-Change", ns_lab = "Non-Significant", 
+  sig_fc_lab_col = "#f28482", sig_lab_col = "#f6bd60",
+  fc_lab_col = "#84a59d", ns_lab_col = "#dad7cd",
+  main = NULL, x.lab = NULL, ...) 
+{
+  .fc <- enquo(FC)
+  .p <- enquo(p.value)
+  if (all(pull(data, !!.fc) >= 0)) {
+    warning("It appears you are not passing log2-transformed ", 
+      "fold-change values. Please check.", call. = FALSE)
+  }
+  if (is.null(main)) {
+    main <- "Volcano Plot of Significant Fold Changes"
+  }
+  if (is.null(x.lab)) {
+    x.lab <- bquote(italic(log)[2] ~ (Fold ~ Change))
+  }
+  y.lab <- bquote(-italic(log)[10] ~ (p - value))
+  plot_df <- dplyr::mutate(data, group = case_when((-log10(!!.p) >= 
+    -log10(cutoff)) & (abs(!!.fc) >= fc.cutoff) ~ sig_fc_lab, 
+    -log10(!!.p) >= -log10(cutoff) ~ sig_lab, abs(!!.fc) >= 
+      fc.cutoff ~ fc_lab, TRUE ~ ns_lab), 
+    type = grepl(paste0("^", sig_lab, "|", sig_fc_lab, "|Significant"), group))
+
+  create_col_vector <- function(label_values, colors) {
+    cols <- setNames(colors, label_values)
+    return(cols)
+  }
+  
+  label_values = c(ns_lab, fc_lab, sig_lab, sig_fc_lab)
+  label_colors = c(ns_lab_col, fc_lab_col, sig_lab_col, sig_fc_lab_col)
+  cols <- create_col_vector(label_values, label_colors)
+
+  p <- ggplot(plot_df, aes(x = !!.fc, y = -log10(!!.p), color = group)) + 
+    geom_point(alpha = 0.5, size = pt.size, ...) + scale_color_manual(values = cols, 
+    name = "") + labs(x = x.lab, y = y.lab, title = main) + 
+    geom_vline(xintercept = c(-1, 1) * fc.cutoff, color = "grey", 
+      linetype = "longdash", alpha = 0.75) + geom_vline(xintercept = 0, 
+    color = "grey50", linetype = "solid") + theme_soma() + 
+    NULL
+  if (identify) {
+    p <- p + geom_text(data = dplyr::filter(plot_df, type), 
+      aes(label = !!enquo(labels)), hjust = 0, nudge_x = 0.05, 
+      size = text.size, color = "black", check_overlap = TRUE)
+  }
+  p
+}
+
+plotVolcano_mod_new <- function (data, FC, p.value, labels, identify = FALSE, identify_manual = NULL, fc.cutoff = 1, 
+  label_apt = F, pt.size = 2.5, text.size = 3, cutoff = 0.05/nrow(data), 
+  sig_fc_pos_lab = "Significant & Fold-Change (+)",
+  sig_fc_neg_lab = "Significant & Fold-Change (-)", 
+  sig_lab = "Significant", 
+  fc_lab = "Fold-Change", ns_lab = "Non-Significant", 
+  sig_fc_pos_lab_col = "#f28482", sig_fc_neg_lab_col = "#8ecae6", sig_lab_col = "#f6bd60",
+  fc_lab_col = "#84a59d", ns_lab_col = "#dad7cd",
+  main = NULL, x.lab = NULL, sig_fc_lab = NULL, overlaps = 10, ...) 
+{
+  .fc <- enquo(FC)
+  .p <- enquo(p.value)
+  .label <- enquo(labels)
+  
+  if (all(pull(data, !!.fc) >= 0)) {
+    warning("It appears you are not passing log2-transformed ", 
+      "fold-change values. Please check.", call. = FALSE)
+  }
+  if (is.null(main)) {
+    main <- "Volcano Plot of Significant Fold Changes"
+  }
+  if (is.null(x.lab)) {
+    x.lab <- bquote(italic(log)[2] ~ (Fold ~ Change))
+  }
+  y.lab <- bquote(-italic(log)[10] ~ (p - value))
+  plot_df <- dplyr::mutate(data, 
+                           group = case_when((-log10(!!.p) >= -log10(cutoff)) & (abs(!!.fc) >= fc.cutoff & !!.fc > 0) ~ sig_fc_pos_lab, 
+                                             (-log10(!!.p) >= -log10(cutoff)) & (abs(!!.fc) >= fc.cutoff & !!.fc < 0) ~ sig_fc_neg_lab, 
+                                             -log10(!!.p) >= -log10(cutoff) ~ sig_lab, abs(!!.fc) >= fc.cutoff ~ fc_lab, 
+                                             TRUE ~ ns_lab), 
+    type = grepl(paste0("^", sig_lab, "|", sig_fc_lab, "|Significant"), group))
+
+  create_col_vector <- function(label_values, colors) {
+    cols <- setNames(colors, label_values)
+    return(cols)
+  }
+  
+  label_values = c(ns_lab, fc_lab, sig_lab, sig_fc_pos_lab, sig_fc_neg_lab)
+  label_colors = c(ns_lab_col, fc_lab_col, sig_lab_col, sig_fc_pos_lab_col, sig_fc_neg_lab_col)
+  cols <- create_col_vector(label_values, label_colors)
+
+  p <- ggplot(plot_df, aes(x = !!.fc, y = -log10(!!.p), color = group)) + 
+    geom_point(alpha = 0.5, size = pt.size) + scale_color_manual(values = cols, 
+    name = "") + labs(x = x.lab, y = y.lab, title = main) + 
+    geom_vline(xintercept = c(-1, 1) * fc.cutoff, color = "grey", 
+      linetype = "longdash", alpha = 0.75, ...) + geom_vline(xintercept = 0, 
+    color = "grey50", linetype = "solid") + theme_soma() + 
+    NULL
+  if (identify) {
+    p <- p + geom_text(data = dplyr::filter(plot_df, type), 
+      aes(label = !!enquo(labels)), hjust = "inward", vjust = 0, nudge_x = 0.05, 
+      size = text.size, color = "black", check_overlap = TRUE)
+  }
+  if (!is.null(identify_manual) & label_apt) {
+    plot_df <- plot_df %>%
+        dplyr::mutate(label_col = rownames(plot_df))
+    p <- p + geom_label_repel(
+      data = dplyr::filter(plot_df, !!.label %in% identify_manual & !!.p < 0.05), aes(label = Target), color = "black", min.segment.length = 0,
+      max.overlaps = overlaps, nudge_x = -0.3, force = 6,
+    ) 
+  }
+  if (!is.null(identify_manual) & !label_apt) {
+    p <- p + geom_text(data = dplyr::filter(plot_df, !!.label %in% identify_manual & !!.p < 0.05), 
+      aes(label = !!enquo(label_apt)), hjust = "inward", vjust = 0, nudge_x = 0.05, 
+      size = text.size, color = "black", check_overlap = TRUE)
+  }
+  p
+}
+
 ```
 
 ```{r echo = F, include = F}
@@ -611,6 +766,25 @@ corr_delta_mgfr_si_mat <- corr_delta_mgfr_si_mat %>%
 corr_delta_mgfr_si_mat$Target_apt <- paste0(corr_delta_mgfr_si_mat$Target, " (", corr_delta_mgfr_si_mat$AptName, ")")
 corr_delta_mgfr_si_mat <- corr_delta_mgfr_si_mat %>%
   column_to_rownames("Target_apt") 
+corr_delta_mgfr_si_mat <- corr_delta_mgfr_si_mat %>% arrange(p.value)
+
+p <- plotVolcano_mod_new(data = corr_delta_mgfr_si_mat, 
+            FC = spearman_delta_mgfr_si, 
+            p.value = p.value, 
+            labels = Target, 
+            label_apt = T, 
+            identify = F,
+            identify_manual = corr_delta_mgfr_si_mat[1:20, "Target"],
+            fc.cutoff = 0,
+            cutoff = 0.05,
+            x.lab = "Correlation",
+            main = "",
+            pt.size = 1,
+            fc_lab = "p > 0.05",
+            fc_lab_col = "#dad7cd",
+            sig_fc_pos_lab = "p < 0.05 (Positive correlation)",
+            sig_fc_neg_lab = "p < 0.05 (Negative correlation)") 
+p
 
 # mGFR adjusted
 y <- soma_wide %>%
@@ -631,6 +805,25 @@ corr_delta_mgfr_si_adjusted_mat <- corr_delta_mgfr_si_adjusted_mat %>%
 corr_delta_mgfr_si_adjusted_mat$Target_apt <- paste0(corr_delta_mgfr_si_adjusted_mat$Target, " (", corr_delta_mgfr_si_adjusted_mat$AptName, ")")
 corr_delta_mgfr_si_adjusted_mat <- corr_delta_mgfr_si_adjusted_mat %>%
   column_to_rownames("Target_apt") 
+corr_delta_mgfr_si_adjusted_mat <- corr_delta_mgfr_si_adjusted_mat %>% arrange(p.value)
+
+p <- plotVolcano_mod_new(data = corr_delta_mgfr_si_adjusted_mat, 
+            FC = spearman_delta_mgfr_si_adjusted, 
+            p.value = p.value, 
+            labels = Target, 
+            label_apt = T, 
+            identify = F,
+            identify_manual = corr_delta_mgfr_si_mat[1:20, "Target"],
+            fc.cutoff = 0,
+            cutoff = 0.05,
+            x.lab = "Correlation",
+            main = "",
+            pt.size = 1,
+            fc_lab = "p > 0.05",
+            fc_lab_col = "#dad7cd",
+            sig_fc_pos_lab = "p < 0.05 (Positive correlation)",
+            sig_fc_neg_lab = "p < 0.05 (Negative correlation)") 
+p
 
 # HbA1c
 y <- soma_wide %>%
@@ -651,6 +844,25 @@ corr_delta_hba1c_percent_mat <- corr_delta_hba1c_percent_mat %>%
 corr_delta_hba1c_percent_mat$Target_apt <- paste0(corr_delta_hba1c_percent_mat$Target, " (", corr_delta_hba1c_percent_mat$AptName, ")")
 corr_delta_hba1c_percent_mat <- corr_delta_hba1c_percent_mat %>%
   column_to_rownames("Target_apt") 
+corr_delta_hba1c_percent_mat <- corr_delta_hba1c_percent_mat %>% arrange(p.value)
+
+p <- plotVolcano_mod_new(data = corr_delta_hba1c_percent_mat, 
+            FC = spearman_delta_hba1c_percent, 
+            p.value = p.value, 
+            labels = Target, 
+            label_apt = T, 
+            identify = F,
+            identify_manual = corr_delta_hba1c_percent_mat[1:20, "Target"],
+            fc.cutoff = 0,
+            cutoff = 0.05,
+            x.lab = "Correlation",
+            main = "",
+            pt.size = 1,
+            fc_lab = "p > 0.05",
+            fc_lab_col = "#dad7cd",
+            sig_fc_pos_lab = "p < 0.05 (Positive correlation)",
+            sig_fc_neg_lab = "p < 0.05 (Negative correlation)") 
+p
 
 # PWV
 y <- soma_wide %>%
@@ -672,11 +884,25 @@ corr_delta_PWV_mat$Target_apt <- paste0(corr_delta_PWV_mat$Target, " (", corr_de
 corr_delta_PWV_mat <- corr_delta_PWV_mat %>%
   column_to_rownames("Target_apt") 
 
-# sort
-corr_delta_mgfr_si_mat <- corr_delta_mgfr_si_mat %>% arrange(p.value)
-corr_delta_mgfr_si_adjusted_mat <- corr_delta_mgfr_si_adjusted_mat %>% arrange(p.value)
-corr_delta_hba1c_percent_mat <- corr_delta_hba1c_percent_mat %>% arrange(p.value)
 corr_delta_PWV_mat <- corr_delta_PWV_mat %>% arrange(p.value)
+
+p <- plotVolcano_mod_new(data = corr_delta_PWV_mat, 
+            FC = spearman_delta_PWV, 
+            p.value = p.value, 
+            labels = Target, 
+            label_apt = T, 
+            identify = F,
+            identify_manual = corr_delta_PWV_mat[1:20, "Target"],
+            fc.cutoff = 0,
+            cutoff = 0.05,
+            x.lab = "Correlation",
+            main = "",
+            pt.size = 1,
+            fc_lab = "p > 0.05",
+            fc_lab_col = "#dad7cd",
+            sig_fc_pos_lab = "p < 0.05 (Positive correlation)",
+            sig_fc_neg_lab = "p < 0.05 (Negative correlation)") 
+p
 
 # write correlation results to file
 wb <- createWorkbook()
