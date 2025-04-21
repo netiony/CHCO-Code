@@ -33,6 +33,7 @@ library(limma)
 ```{r load-data, echo = F, include = F}
 # Load SOMAScan analytes data
 load("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Combined SomaScan/analytes.Rdata")
+write.csv(analytes, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Combined SomaScan/analytes.csv", row.names = F)
 # Load dictionary function and file
 source("/Users/choiyej/GitHub/YC_CHCO/R Functions/label_harmonized_function.R")
 source("/Users/choiyej/GitHub/CHCO-Code/Petter Bjornstad/Resources/YC/R Functions/correlation_function.R")
@@ -43,12 +44,14 @@ source("/Users/choiyej/GitHub/CHCO-Code/Petter Bjornstad/Resources/YC/R Function
 harm_dat <- read.csv("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/Data Harmonization/Data Clean/soma_harmonized_dataset.csv", na.strings = "")
 exclude <- read.csv("/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/PANTHER/Data_Cleaned/panther_withdrew_ltfu_list.csv")$record_id
 
-dat <- harm_dat %>% filter((study == "PANTHER" & visit == "baseline")|study == "RENAL-HEIR"|
+dat <- harm_dat %>% filter((study == "PANTHER" & visit %in% c("baseline", "screening"))|study == "RENAL-HEIR"|
                              study == "RENAL-HEIRitage" | (study == "IMPROVE" & visit == "baseline")) %>%
+  mutate(visit = case_when(visit == "screening" ~ "baseline", T ~ visit),
+         mrn = case_when(study != "PANTHER" ~ paste0(as.character(mrn), as.character(screen_date)), T~ as.character(mrn))) %>%
   # filter(record_id %nin% exclude) %>% # Not removing anyone with proteomics data
   dplyr::summarise(across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
                    across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
-                   .by = c(mrn, screen_date)) %>%
+                   .by = c(mrn, visit)) %>%
   # filter(participation_status!="Removed"|is.na(participation_status)) %>%
   dplyr::mutate(race_ethnicity_condensed = case_when(race == "White" & 
                                                 ethnicity == "Not Hispanic or Latino" ~ "Not Hispanic or Latino White",
@@ -89,12 +92,14 @@ dat <- harm_dat %>% filter((study == "PANTHER" & visit == "baseline")|study == "
          mm_di = case_when(mm_di > 0 & mm_di < 10000 ~ mm_di),
          mm_ir = case_when(mm_ir > 0 ~ mm_ir),
          mm_si = case_when(mm_si > 0 & mm_si < 500 ~ mm_si),
+         birthweight = gsub(" kg", "", birthweight),
          birthweight = as.numeric(birthweight),
          glp1_agonist_timepoint = case_when(is.na(glp1_agonist_timepoint) ~ "No", T ~ glp1_agonist_timepoint)) %>%
   arrange(record_id) %>%
   filter(!is.na(dexa_body_fat)) %>% # filter based on DEXA (to filter those who may just be screen fails)
-  filter(!is.na(male_ind)) # RH2-54-T is currently missing all data excpet MRI
-  #filter(!is.na(seq.10000.28)) # no need to subset to proteomics yet...
+  filter(!is.na(male_ind)) 
+# %>% # RH2-54-T is currently missing all data except MRI
+#   filter(!is.na(seq.10000.28)) # no need to subset to proteomics yet...
 
 dat$tanner_stage_comp <- as.factor(dat$tanner_stage_comp)
 
@@ -180,7 +185,8 @@ dict <- label_harmonized_dict(dat, dict) %>%
                 log_free_test = "ln(free testosterone)",
                 log_lh = "ln(LH)",
                 log_estrad = "ln(estradiol)",
-                race_ethnicity_condensed = "Race/Ethnicity")%>%
+                race_ethnicity_condensed = "Race/Ethnicity", 
+                eGFR_CKiD_U25_CystatinC = "eGFR CKiD U25 CystC")%>%
   dplyr::select(-starts_with("seq."))
 
 analytes_dict <- analytes %>%
@@ -240,17 +246,16 @@ sens_dat <- label_harmonized(sens_dat, dict)
 # subset(panther, mm_di > 10000)$mm_di
 # subset(panther, mm_si > 100)$mm_si
 # 
-# summary(tableby(group_risk ~ kwt(mm_di, "Nmiss", "medianq1q3", "range"), data = subset(panther, mm_di < 10000), total = T, test = F))
-# summary(tableby(group_risk ~ kwt(mm_si, "Nmiss", "medianq1q3", "range"), data = subset(panther, mm_si < 100), total = T, test = F))
+summary(tableby(group_risk ~ kwt(mm_di, "Nmiss", "medianq1q3", "range"), data = subset(panther, mm_di < 10000), total = T, test = F))
+summary(tableby(group_risk ~ kwt(mm_si, "Nmiss", "medianq1q3", "range"), data = subset(panther, mm_si < 100), total = T, test = F))
 
-
-summary(tableby(group_risk ~ age + height + weight + bmi + group + eGFR_CKD_epi + eGFR_fas_cr + sbp + dbp + hba1c + gotast_base + gptalt_base + kwt(acr_u, "Nmiss", "medianq1q3", "range") + kwt(lh, "Nmiss", "medianq1q3", "range") + kwt(estrad, "Nmiss", "medianq1q3", "range") + kwt(tot_test, "Nmiss", "medianq1q3", "range") + kwt(free_test, "Nmiss", "medianq1q3", "range") + bl_dheas + igf_1 + igf1_z_score + race_ethnicity_condensed + metformin_timepoint + insulin_med_timepoint + glp1_agonist_timepoint + sglti_timepoint + dexa_lean_mass + dexa_body_fat + dexa_fat_kg + dexa_trunk_mass + total_kidney_volume_ml + ht_adj_tkv + mm_si + mm_ir + mm_bcell+ mm_di + gfr_raw_plasma + erpf_raw_plasma + erpf_bsa_plasma + ra + re + rvr + glomerular_pressure, data = panther, total = T, test = F))
+summary(tableby(group_risk ~ age + sex +height + weight + bmi + bmiz + group + eGFR_CKD_epi + eGFR_fas_cr + eGFR_CKiD_U25_CystatinC + sbp + dbp + hba1c + gotast_base + gptalt_base + kwt(acr_u, "medianq1q3") + kwt(lh, "medianq1q3") + kwt(estrad, "medianq1q3") + kwt(tot_test, "medianq1q3") + kwt(free_test, "medianq1q3") + bl_dheas + igf_1 + igf1_z_score + race_ethnicity_condensed + metformin_timepoint + insulin_med_timepoint + glp1_agonist_timepoint + sglti_timepoint + dexa_lean_mass + dexa_body_fat + dexa_fat_kg + dexa_trunk_mass + total_kidney_volume_ml + ht_adj_tkv + mm_si + mm_ir + mm_bcell+ mm_di + gfr_raw_plasma + erpf_raw_plasma + erpf_bsa_plasma + ra + re + rvr + glomerular_pressure, data = panther, total = T, test = F,  numeric.simplify = T, numeric.stats = c("meansd"), digits = 1))
 ```
 
-```{r desc-risk, results = 'asis', echo = F}
+```{r, results = 'asis', echo = F}
 # Descriptive tables
 ## By risk
-summary(tableby(group_risk ~ age + height + weight + bmi + bmiz + birthweight + group + eGFR_CKD_epi + eGFR_fas_cr + sbp + dbp + hba1c + gotast_base + gptalt_base + acr_u + kwt(lh, "Nmiss", "medianq1q3", "range") + kwt(estrad, "Nmiss", "medianq1q3", "range") + kwt(tot_test, "Nmiss", "medianq1q3", "range") + kwt(free_test, "Nmiss", "medianq1q3", "range") + bl_dheas + igf_1 + igf1_z_score + race_ethnicity_condensed + metformin_timepoint + insulin_med_timepoint + glp1_agonist_timepoint + sglti_timepoint + dexa_lean_mass + dexa_body_fat + dexa_fat_kg + dexa_trunk_mass + avg_c_r2 + avg_k_r2 + avg_c_t1 + avg_pcascl + avg_c_adc + total_kidney_volume_ml + ht_adj_tkv + mm_si + mm_ir + mm_bcell+ mm_di + gfr_raw_plasma + erpf_raw_plasma + erpf_bsa_plasma + ra + re + rvr + glomerular_pressure, data = panther, total = T, test = F))
+summary(tableby(group_risk ~ age + height + weight + bmi + bmiz + birthweight + group + eGFR_CKD_epi + eGFR_fas_cr + sbp + dbp + hba1c + gotast_base + gptalt_base + acr_u + kwt(lh, "Nmiss", "medianq1q3", "range") + kwt(estrad, "Nmiss", "medianq1q3", "range") + kwt(tot_test, "Nmiss", "medianq1q3", "range") + kwt(free_test, "Nmiss", "medianq1q3", "range") + bl_dheas + igf_1 + igf1_z_score + race_ethnicity_condensed + metformin_timepoint + insulin_med_timepoint + glp1_agonist_timepoint + sglti_timepoint + dexa_lean_mass + dexa_body_fat + dexa_fat_kg + dexa_trunk_mass + avg_c_r2 + avg_k_r2 + avg_c_t1 + avg_pcascl + avg_c_adc + total_kidney_volume_ml + ht_adj_tkv + mm_si + mm_ir + mm_bcell+ mm_di + gfr_raw_plasma + erpf_raw_plasma + erpf_bsa_plasma + ra + re + rvr + glomerular_pressure, data = panther, total = T, test = F, ))
 ```
 
 #### Sex & risk
@@ -910,9 +915,10 @@ run_corr <- function(var, sig_vars) {
 ```
 
 #### mGFR (raw plasma)
+
 ```{r echo = F}
 # Find significant lm results w/ gfr_raw_plasma
-# tbl_lm_top <- run_lm("gfr_raw_plasma") 
+# tbl_lm_top <- run_lm("gfr_raw_plasma")
 
 # Pearson correlations 
 pearson_cor_mat <- run_corr("gfr_raw_plasma", analytes$AptName) %>%
@@ -924,10 +930,12 @@ pearson_cor_mat <- run_corr("gfr_raw_plasma", analytes$AptName) %>%
 
 negative_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(gfr_raw_plasma < 0) 
+  filter(gfr_raw_plasma < 0) %>%
+  distinct(Target, .keep_all = T)
 positive_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(gfr_raw_plasma > 0) 
+  filter(gfr_raw_plasma > 0)  %>%
+  distinct(Target, .keep_all = T)
 top_10_correlations <- c(negative_correlations$Target[1:10], 
                          positive_correlations$Target[1:10])
 
@@ -966,10 +974,12 @@ pearson_cor_mat <- run_corr("erpf_raw_plasma", analytes$AptName) %>%
 
 negative_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(erpf_raw_plasma < 0) 
+  filter(erpf_raw_plasma < 0) %>%
+  distinct(Target, .keep_all = T)
 positive_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(erpf_raw_plasma > 0) 
+  filter(erpf_raw_plasma > 0) %>%
+  distinct(Target, .keep_all = T)
 top_10_correlations <- c(negative_correlations$Target[1:10], 
                          positive_correlations$Target[1:10])
 
@@ -1009,10 +1019,12 @@ pearson_cor_mat <- run_corr("eGFR_CKD_epi", analytes$AptName) %>%
 
 negative_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(eGFR_CKD_epi < 0) 
+  filter(eGFR_CKD_epi < 0) %>%
+  distinct(Target, .keep_all = T)
 positive_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(eGFR_CKD_epi > 0) 
+  filter(eGFR_CKD_epi > 0) %>%
+  distinct(Target, .keep_all = T)
 top_10_correlations <- c(negative_correlations$Target[1:10], 
                          positive_correlations$Target[1:10])
 
@@ -1052,10 +1064,12 @@ pearson_cor_mat <- run_corr("glomerular_pressure", analytes$AptName) %>%
 
 negative_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(glomerular_pressure < 0) 
+  filter(glomerular_pressure < 0) %>%
+  distinct(Target, .keep_all = T)
 positive_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(glomerular_pressure > 0) 
+  filter(glomerular_pressure > 0) %>%
+  distinct(Target, .keep_all = T)
 top_10_correlations <- c(negative_correlations$Target[1:10], 
                          positive_correlations$Target[1:10])
 
@@ -1095,10 +1109,12 @@ pearson_cor_mat <- run_corr("ra", analytes$AptName) %>%
 
 negative_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(ra < 0) 
+  filter(ra < 0) %>%
+  distinct(Target, .keep_all = T)
 positive_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(ra > 0) 
+  filter(ra > 0) %>%
+  distinct(Target, .keep_all = T)
 top_10_correlations <- c(negative_correlations$Target[1:10], 
                          positive_correlations$Target[1:10])
 
@@ -1138,10 +1154,12 @@ pearson_cor_mat <- run_corr("rvr", analytes$AptName) %>%
 
 negative_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(rvr < 0) 
+  filter(rvr < 0) %>%
+  distinct(Target, .keep_all = T)
 positive_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(rvr > 0) 
+  filter(rvr > 0) %>%
+  distinct(Target, .keep_all = T)
 top_10_correlations <- c(negative_correlations$Target[1:10], 
                          positive_correlations$Target[1:10])
 
@@ -1181,10 +1199,12 @@ pearson_cor_mat <- run_corr("total_kidney_volume_ml", analytes$AptName) %>%
 
 negative_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(total_kidney_volume_ml < 0) 
+  filter(total_kidney_volume_ml < 0) %>%
+  distinct(Target, .keep_all = T)
 positive_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(total_kidney_volume_ml > 0) 
+  filter(total_kidney_volume_ml > 0) %>%
+  distinct(Target, .keep_all = T)
 top_10_correlations <- c(negative_correlations$Target[1:10], 
                          positive_correlations$Target[1:10])
 
@@ -1224,10 +1244,12 @@ pearson_cor_mat <- run_corr("ht_adj_tkv", analytes$AptName) %>%
 
 negative_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(ht_adj_tkv < 0) 
+  filter(ht_adj_tkv < 0) %>%
+  distinct(Target, .keep_all = T)
 positive_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(ht_adj_tkv > 0) 
+  filter(ht_adj_tkv > 0) %>%
+  distinct(Target, .keep_all = T)
 top_10_correlations <- c(negative_correlations$Target[1:10], 
                          positive_correlations$Target[1:10])
 
@@ -1267,10 +1289,12 @@ pearson_cor_mat <- run_corr("avg_pcascl", analytes$AptName) %>%
 
 negative_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(avg_pcascl < 0) 
+  filter(avg_pcascl < 0) %>%
+  distinct(Target, .keep_all = T)
 positive_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(avg_pcascl > 0) 
+  filter(avg_pcascl > 0) %>%
+  distinct(Target, .keep_all = T)
 top_10_correlations <- c(negative_correlations$Target[1:10], 
                          positive_correlations$Target[1:10])
 
@@ -1310,10 +1334,12 @@ pearson_cor_mat <- run_corr("avg_c_adc", analytes$AptName) %>%
 
 negative_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(avg_c_adc < 0) 
+  filter(avg_c_adc < 0) %>%
+  distinct(Target, .keep_all = T)
 positive_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(avg_c_adc > 0) 
+  filter(avg_c_adc > 0) %>%
+  distinct(Target, .keep_all = T)
 top_10_correlations <- c(negative_correlations$Target[1:10], 
                          positive_correlations$Target[1:10])
 
@@ -1353,10 +1379,12 @@ pearson_cor_mat <- run_corr("mm_si", analytes$AptName) %>%
 
 negative_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(mm_si < 0) 
+  filter(mm_si < 0) %>%
+  distinct(Target, .keep_all = T)
 positive_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(mm_si > 0) 
+  filter(mm_si > 0) %>%
+  distinct(Target, .keep_all = T)
 top_10_correlations <- c(negative_correlations$Target[1:10], 
                          positive_correlations$Target[1:10])
 
@@ -1396,10 +1424,12 @@ pearson_cor_mat <- run_corr("dexa_fat_kg", analytes$AptName) %>%
 
 negative_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(dexa_fat_kg < 0) 
+  filter(dexa_fat_kg < 0) %>%
+  distinct(Target, .keep_all = T)
 positive_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(dexa_fat_kg > 0) 
+  filter(dexa_fat_kg > 0) %>%
+  distinct(Target, .keep_all = T)
 top_10_correlations <- c(negative_correlations$Target[1:10], 
                          positive_correlations$Target[1:10])
 
@@ -1439,10 +1469,12 @@ pearson_cor_mat <- run_corr("dexa_trunk_mass", analytes$AptName) %>%
 
 negative_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(dexa_trunk_mass < 0) 
+  filter(dexa_trunk_mass < 0) %>%
+  distinct(Target, .keep_all = T)
 positive_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(dexa_trunk_mass > 0) 
+  filter(dexa_trunk_mass > 0) %>%
+  distinct(Target, .keep_all = T)
 top_10_correlations <- c(negative_correlations$Target[1:10], 
                          positive_correlations$Target[1:10])
 
@@ -1482,10 +1514,12 @@ pearson_cor_mat <- run_corr("dexa_bone_mineral_density", analytes$AptName) %>%
 
 negative_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(dexa_bone_mineral_density < 0) 
+  filter(dexa_bone_mineral_density < 0) %>%
+  distinct(Target, .keep_all = T)
 positive_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(dexa_bone_mineral_density > 0) 
+  filter(dexa_bone_mineral_density > 0) %>%
+  distinct(Target, .keep_all = T)
 top_10_correlations <- c(negative_correlations$Target[1:10], 
                          positive_correlations$Target[1:10])
 
@@ -1525,10 +1559,12 @@ pearson_cor_mat <- run_corr("weight", analytes$AptName) %>%
 
 negative_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(weight < 0) 
+  filter(weight < 0) %>%
+  distinct(Target, .keep_all = T)
 positive_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(weight > 0) 
+  filter(weight > 0) %>%
+  distinct(Target, .keep_all = T)
 top_10_correlations <- c(negative_correlations$Target[1:10], 
                          positive_correlations$Target[1:10])
 
@@ -1568,10 +1604,12 @@ pearson_cor_mat <- run_corr("height", analytes$AptName) %>%
 
 negative_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(height < 0) 
+  filter(height < 0) %>%
+  distinct(Target, .keep_all = T)
 positive_correlations <- arrange(pearson_cor_mat, p.value) %>%
   filter(p.value < 0.05) %>%
-  filter(height > 0) 
+  filter(height > 0) %>%
+  distinct(Target, .keep_all = T)
 top_10_correlations <- c(negative_correlations$Target[1:10], 
                          positive_correlations$Target[1:10])
 

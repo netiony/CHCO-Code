@@ -28,7 +28,7 @@ clean <- clean %>%
   full_join(attempt) %>%
   dplyr::group_by(record_id, visit) %>% 
   dplyr::mutate(across(where(is.character), ~ na_if(., ""))) %>%
-  dplyr::mutate(screen_date = case_when(procedure == "screening" ~ date)) %>%
+  dplyr::mutate(screen_date = case_when(procedure == "screening" | visit == "screening" ~ date)) %>%
   fill(screen_date, .direction = "updown") %>%
   dplyr::mutate(screen_date = case_when(is.na(screen_date) ~ min(date, na.rm = T), 
                                  T ~ screen_date)) %>%

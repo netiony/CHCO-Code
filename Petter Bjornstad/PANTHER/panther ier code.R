@@ -26,6 +26,7 @@ ier <- dat %>%
                                    T ~ "Currently enrolled"),
                 age = case_when(record_id == "PAN-18-O" ~ 10, T ~ age)) %>% # 10 at 2025, manually editing because no date of consent?
   filter(visit == "baseline") %>%
+  filter(record_id %nin% exclude) %>%
   dplyr::select(race, ethnicity, sex, age, status) %>%
   dplyr::rename(Race = race,
                 Ethnicity = ethnicity,
@@ -37,3 +38,12 @@ ier <- dat %>%
   arrange(Status)
 
 write.csv(ier, "/Users/choiyej/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Bjornstad/Biostatistics Core Shared Drive/PANTHER/Data_Cleaned/2025_panther_ier.csv", row.names = F)
+
+summary_table <- ier %>%
+  group_by(Race, Ethnicity, Gender) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  pivot_wider(
+    names_from = c(Ethnicity, Gender),
+    values_from = count,
+    values_fill = 0
+  )
