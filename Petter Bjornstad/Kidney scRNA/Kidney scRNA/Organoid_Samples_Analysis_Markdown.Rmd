@@ -5,10 +5,8 @@ date: "2025-04-16"
 output: html_document
 ---
 
-
-#DEG Analysis for Organoid Samples 
 #1.Set Up 
-```{r}
+```{r,include=FALSE}
 library(reprex)
 library(tidyverse)
 library(BiocManager)        
@@ -93,6 +91,8 @@ dbs <- c("GO_Biological_Process_2023",
          # "MSigDB_Oncogenic_Signatures",
          # "MSigDB_Computational",
          "MSigDB_Hallmark_2020")
+# BiocManager::install("edgeR",force=T)
+library(edgeR)
 
 dir.dat <- c("//Users/hhampson/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Biostatistics Core Shared Drive")
 dir.dat2 <- c("/Users/hhampson/Library/CloudStorage/OneDrive-SharedLibraries-UW/Laura Pyle - Biostatistics Core Shared Drive/scRNA")
@@ -103,7 +103,8 @@ dir.results <- c("/Users/hhampson/Library/CloudStorage/OneDrive-SharedLibraries-
 source("Kidney_functions_sc.R")
 ```
 
-# 2. Load Data
+# 2. Pre-Processing & Qualtiy Control
+## a. Load Data
 ```{r}
 #Set ids for organoid samples
 ids <- c("CRC-10","CRC-11","CRC-03","RH-50-T","RH-72-T","RH-62-T")
@@ -261,6 +262,87 @@ so_kpmp_sc$celltype2 <- ifelse(so_kpmp_sc$KPMP_celltype=="aPT" |
                                  so_kpmp_sc$KPMP_celltype == "PT-S3","PT",
                                ifelse(grepl("TAL",so_kpmp_sc$KPMP_celltype),"TAL",
                                       ifelse(grepl("EC-",so_kpmp_sc$KPMP_celltype),"EC",so_kpmp_sc$KPMP_celltype2)))
+
+```
+
+
+## b. Explore Distribution & Zero-Inflation
+```{r}
+#Check if data have been normalized 
+so_kpmp_sc@assays  # Should show e.g., "RNA" with "counts" and "data"
+head(GetAssayData(so_kpmp_sc, layer = "counts")[, 1:5])  # Raw counts
+head(GetAssayData(so_kpmp_sc, layer = "data")[, 1:5])    # Normalized data
+
+#Check for normality
+# Open a PDF device (all plots go here)
+pdf(fs::path(dir.results,"Normalization_gene_expression_histograms.pdf"), width = 8, height = 6)
+
+# Randomly select 100 genes from the Seurat object
+genes <- sample(rownames(so_kpmp_sc), 100)
+
+# Set up a 2x3 plotting layout so you can plot multiple histograms in one figure
+par(mfrow = c(2, 3))
+
+# Loop over each randomly selected gene
+for (g in genes) {
+  
+  # Plot a histogram of the expression values for gene 'g'
+  # using normalized expression values from the "data" slot
+  hist(GetAssayData(so_kpmp_sc, layer = "data")[g, ],
+       main = g,                # Title of the plot = gene name
+       xlab = "Expression")     # Label for x-axis
+}
+
+# Close the PDF device — this writes the file to disk
+dev.off()
+
+#Check for zero inflation
+pdf(fs::path(dir.results,"Zero_Inflation_Visualization.pdf"), width = 8, height = 6)
+counts <- GetAssayData(so_kpmp_sc, layer = "counts")
+zero_prop <- rowMeans(counts == 0)
+hist(zero_prop, main = "Proportion of Zeros for Genes", xlab = "Zero Proportion")
+# Add a vertical line at 50%
+abline(v = 0.5, col = "red", lwd = 2, lty = 2)
+dev.off()
+
+#Check for overdispersion
+# y <- DGEList(counts = as.matrix(counts))
+# y <- estimateDisp(y)
+# plotBCV(y)  # Dispersion vs mean
+# Calculate library sizes
+subset_counts <- counts[1:500, ]  # or use sample() for random subset
+lib_sizes <- colSums(counts)
+
+# Identify samples with zero library size
+zero_libs <- which(lib_sizes == 0)
+
+# Remove those samples
+subset_counts_filtered <- counts[, lib_sizes > 0]
+
+# Now re-run the analysis
+y <- DGEList(counts = as.matrix(subset_counts_filtered))
+y <- estimateDisp(y)
+
+# subset_counts <- counts[1:100, ]  # or use sample() for random subset
+# y <- DGEList(counts = as.matrix(subset_counts))
+# y <- estimateDisp(y)
+# plotBCV(y)
+plotBCV(y)
+
+y$common.dispersion
+summary(y$common.dispersion)
+#>0 = overdispersion
+#>
+#># Check for overdispersion based on common dispersion
+if (exists("y") && !is.null(y$common.dispersion)) {
+  if (y$common.dispersion > 0) {
+    cat("There is overdispersion, use a Negative Binomial model.\n")
+  } else {
+    cat("There is not overdispersion, use a Gaussian model.\n")
+  }
+} else {
+  cat("DGEList object 'y' or common dispersion not found. Run estimateDisp(y) first.\n")
+}
 
 ```
 
