@@ -200,7 +200,8 @@ label(df[, grep("___unk", colnames(df))]) <-
     "choice=NA", "choice=Unknown/Not recorded",
     label(df[, grep("___unk", colnames(df))])
   ))
-label(df$cv_age) = "Age at Clinic Visit"
+label(df$cv_age) <- "Age at Clinic Visit"
+label(df$cv_bmi) <- "BMI (kg/m2)"
 # Drop unused levels
 l <- label(df)
 df <- droplevels(df)

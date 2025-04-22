@@ -39,60 +39,104 @@ def calc_egfr(df, age="age", serum_creatinine="creatinine_s",
     # Make a copy of the dataframe
     data = df.copy()
     # Format input
-    sex = data[sex].copy()
-    sex.replace({male: "M", female: "F", "Other": np.nan, "": np.nan}, inplace=True)
+    sex_data = data[sex].copy()
+    sex_data.replace({male: "M", female: "F", "Other": np.nan, "": np.nan}, inplace=True)
     qcr = np.floor(data[age])
     serum_creatinine = pd.to_numeric(data[serum_creatinine], errors="coerce")
     cystatin_c = pd.to_numeric(data[cystatin_c], errors="coerce")
     height = pd.to_numeric(data[height], errors="coerce")
     bun = pd.to_numeric(data[bun], errors="coerce")
-    age = pd.to_numeric(data[age], errors="coerce")
+    age_data = pd.to_numeric(data[age], errors="coerce")
+
     # Younger participants
     qcr.replace({8: 0.46, 9: 0.49, 10: 0.51, 11: 0.53,
                 12: 0.57, 13: 0.59, 14: 0.61}, inplace=True)
     # Females
-    qcr.loc[(qcr == 15) & (sex == "F")] = 0.64
-    qcr.loc[(qcr == 16) & (sex == "F")] = 0.67
-    qcr.loc[(qcr == 17) & (sex == "F")] = 0.69
-    qcr.loc[(qcr == 18) & (sex == "F")] = 0.69
-    qcr.loc[(qcr >= 19) & (sex == "F")] = 0.70
+    qcr.loc[(qcr == 15) & (sex_data == "F")] = 0.64
+    qcr.loc[(qcr == 16) & (sex_data == "F")] = 0.67
+    qcr.loc[(qcr == 17) & (sex_data == "F")] = 0.69
+    qcr.loc[(qcr == 18) & (sex_data == "F")] = 0.69
+    qcr.loc[(qcr >= 19) & (sex_data == "F")] = 0.70
     # Males
-    qcr.loc[(qcr == 15) & (sex == "M")] = 0.72
-    qcr.loc[(qcr == 16) & (sex == "M")] = 0.78
-    qcr.loc[(qcr == 17) & (sex == "M")] = 0.82
-    qcr.loc[(qcr == 18) & (sex == "M")] = 0.85
-    qcr.loc[(qcr == 19) & (sex == "M")] = 0.88
-    qcr.loc[(qcr > 19) & (sex == "M")] = 0.90
-    # Calculate final metrics
+    qcr.loc[(qcr == 15) & (sex_data == "M")] = 0.72
+    qcr.loc[(qcr == 16) & (sex_data == "M")] = 0.78
+    qcr.loc[(qcr == 17) & (sex_data == "M")] = 0.82
+    qcr.loc[(qcr == 18) & (sex_data == "M")] = 0.85
+    qcr.loc[(qcr == 19) & (sex_data == "M")] = 0.88
+    qcr.loc[(qcr > 19) & (sex_data == "M")] = 0.90
+
+    # FAS and other equations
     eGFR_fas_cr = 107.3 / (serum_creatinine / qcr)
-    # eGFR FAS combined creatinine and cystatin-C
     f1 = serum_creatinine / qcr
     f2 = 1 - alpha
     f3 = cystatin_c / 0.82
     eGFR_fas_cr_cysc = 107.3 / ((0.5 * f1) + (f2 * f3))
-    # eGFR Zappitelli
     eGFR_Zap = (507.76 * np.exp((0.003 * height)) /
                 ((cystatin_c ** 0.635) * ((serum_creatinine * 88.4) ** 0.547)))
-    # eGFR Schwartz
-    m = sex.replace({"M": 1, "F": 0})
+    m = sex_data.replace({"M": 1, "F": 0})
     eGFR_Schwartz = 39.1 * ((height / serum_creatinine) ** 0.516) * ((1.8 / cystatin_c) ** 0.294) * ((30 / bun) ** 0.169) * \
         (1.099 ** m) * ((height / 1.4) ** 0.188)
-    # eGFR bedside Schwartz
     eGFR_bedside_Schwartz = (41.3 * (height / 100)) / serum_creatinine
-    # CKD-EPI Creatinine 2021 https://www.kidney.org/content/ckd-epi-creatinine-equation-2021
-    f = sex.replace({"M": 0, "F": 1})
-    a = sex.replace({"M": -0.302, "F": -0.241})
-    k = sex.replace({"M": 0.9, "F": 0.7})
-    # Calculate
+    f = sex_data.replace({"M": 0, "F": 1})
+    a = sex_data.replace({"M": -0.302, "F": -0.241})
+    k = sex_data.replace({"M": 0.9, "F": 0.7})
     eGFR_CKD_epi = 142 * (np.minimum(serum_creatinine / k, 1)**a) * \
         (np.maximum(serum_creatinine / k, 1)**-1.200) * \
-        (0.9938**age) * (1.012 * f + (1 - f))
-    # Add results to dataframe
+        (0.9938**age_data) * (1.012 * f + (1 - f))
+
+    # CKiD U25 eGFR (Pierce CB, Muñoz A, Ng DK, Warady BA, Furth SL, Schwartz GJ. “Age- and sex-dependent clinical equations to estimate glomerular filtration rates in children and young adults with chronic kidney disease.” Kidney International. 2021;99(4):948-956.)
+    def kappa_creat(age, sex):
+        if sex == "F":
+            if age < 12:
+                return 36.1 * (1.008**(age - 12))
+            elif age < 18:
+                return 36.1 * (1.023**(age - 12))
+            else:
+                return 41.4
+        else:
+            if age < 12:
+                return 39.0 * (1.008**(age - 12))
+            elif age < 18:
+                return 39.0 * (1.045**(age - 12))
+            else:
+                return 50.8
+
+    def kappa_cys(age, sex):
+        if sex == "F":
+            if age < 12:
+                return 79.9 * (1.004**(age - 12))
+            elif age < 18:
+                return 79.9 * (0.974**(age - 12))
+            else:
+                return 68.3
+        else:
+            if age < 15:
+                return 87.2 * (1.011**(age - 15))
+            elif age < 18:
+                return 87.2 * (0.960**(age - 15))
+            else:
+                return 77.1
+
+    kappa_cr = [kappa_creat(a, s) for a, s in zip(age_data, sex_data)]
+    kappa_cysc = [kappa_cys(a, s) for a, s in zip(age_data, sex_data)]
+    kappa_cr = pd.Series(kappa_cr, index=df.index)
+    kappa_cysc = pd.Series(kappa_cysc, index=df.index)
+    eGFR_CKiD_U25_Creat = kappa_cr * ((height/100) / serum_creatinine)
+    eGFR_CKiD_U25_CystatinC = kappa_cysc * (1 / cystatin_c)
+    eGFR_CKiD_U25_avg = (eGFR_CKiD_U25_Creat + eGFR_CKiD_U25_CystatinC) / 2
+
+    # Combine results
     egfr = pd.concat(
-        [eGFR_Schwartz, eGFR_bedside_Schwartz, eGFR_Zap, eGFR_fas_cr, eGFR_fas_cr_cysc, eGFR_CKD_epi], axis=1)
+        [eGFR_Schwartz, eGFR_bedside_Schwartz, eGFR_Zap, eGFR_fas_cr,
+         eGFR_fas_cr_cysc, eGFR_CKD_epi,
+         eGFR_CKiD_U25_Creat, eGFR_CKiD_U25_CystatinC, eGFR_CKiD_U25_avg], axis=1)
+
     egfr.columns = ["eGFR_Schwartz", "eGFR_bedside_Schwartz", "eGFR_Zap",
-                    "eGFR_fas_cr", "eGFR_fas_cr_cysc", "eGFR_CKD_epi"]
+                    "eGFR_fas_cr", "eGFR_fas_cr_cysc", "eGFR_CKD_epi",
+                    "eGFR_CKiD_U25_Creat", "eGFR_CKiD_U25_CystatinC", "eGFR_CKiD_U25_avg"]
+
     data = pd.concat([data, egfr], axis=1)
+    
     # Return
     return data
   

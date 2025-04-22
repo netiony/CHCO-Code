@@ -1,0 +1,1883 @@
+---
+title: "ATTEMPT to CROCODILE"
+author: "Ye Ji Choi"
+date: "`r lubridate::today()`"
+format: 
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    code-fold: true
+    embed-resources: true
+---
+
+```{r libraries, message = F, warning=F}
+#| include: false
+library(future)
+library(future.apply)
+library(tidyverse)
+library(colorspace)
+library(patchwork)
+library(ggdendro)
+library(cowplot)
+library(ggpubr)
+library(rstatix)
+library(arsenal)
+library(Biobase)
+library(msigdbr)
+library(kableExtra)
+library(knitr)
+library(REDCapR)
+library(data.table)
+library(emmeans)
+library(NMF)
+library(pheatmap)
+library(UpSetR)
+library(enrichR)
+library(WriteXLS)
+library(SAVER)
+library(readxl)
+library(limma)
+library(edgeR)
+library(BiocGenerics)
+library(GSEABase)
+library(slingshot)
+library(SingleCellExperiment)
+library(MAST)
+library(muscat)
+library(scater)
+library(Seurat)
+library(jsonlite)
+library(dplyr)
+library(glmmTMB)
+library(reshape2)
+library(broom.mixed) 
+```
+
+
+```{r include = F}
+reticulate::use_python("/mmfs1/gscratch/scrubbed/yejichoi/mypy/bin/python", required = T)
+reticulate::repl_python()
+reticulate::py_config()
+# set up Kopah connection
+## Load boto3 and pandas
+boto3 <- reticulate::import("boto3")
+pd <- reticulate::import("pandas")
+
+## Create an S3 client
+keys <- fromJSON("/mmfs1/home/yejichoi/keys.json")
+session <- boto3$session$Session(
+  aws_access_key_id = keys$MY_ACCESS_KEY,
+  aws_secret_access_key = keys$MY_SECRET_KEY
+)
+
+## Create an S3 client with the session
+s3 <- session$client("s3", endpoint_url = "https://s3.kopah.uw.edu")
+
+reticulate::py_run_string("
+import boto3, botocore
+print('boto3 version:', boto3.__version__)
+print('botocore version:', botocore.__version__)
+")
+example_data <- data.frame(
+  id = 1:5,
+  name = c("Alice", "Bob", "Charlie", "David", "Eve"),
+  score = c(92, 85, 88, 91, 87)
+)
+
+# Save it to a temporary .rds file
+temp_file <- tempfile(fileext = ".rds")
+saveRDS(example_data, temp_file)
+
+s3$upload_file(
+  Filename = temp_file,
+  Bucket = "test",
+  Key = "test_data_upload.rds"
+)
+```
+
+```{r echo = F, include=F}
+# read ATTEMPT Seurat file
+temp_file <- tempfile(fileext = ".RDS")
+s3$download_file("scrna", "Kidney transcriptomics/Single cell RNA seq/PB_attempt_harmony_rpca_RM_kpmpV1labelled_Sept2024.RDS", temp_file)
+attempt_so <- readRDS(temp_file)
+
+# Identify mitochondrial genes
+mito_genes <- grep("^MT-", rownames(attempt_so), value = TRUE)
+
+# Calculate the percentage of mitochondrial transcripts per cell
+attempt_so[["percent.mt"]] <- PercentageFeatureSet(attempt_so, pattern = "^MT-")
+hist(attempt_so$percent.mt)
+
+# attempt_so <- subset(attempt_so, subset = percent.mt < 50) # keep as 50%, it's how it's done with KPMP
+FeaturePlot(attempt_so, reduction = "umap.harmony", features = "percent.mt", cols = c("lightgray", "blue"), raster = F)
+DimPlot(attempt_so, reduction = "umap.harmony", group.by = "KPMP_celltype", raster = F, alpha = 0.2, label = T)
+DimPlot(attempt_so, reduction = "umap.harmony", group.by = "celltype", raster = F, alpha = 0.2, label = T)
+
+attempt_so <- subset(attempt_so, features = setdiff(rownames(attempt_so), mito_genes)) # remove MT- genes
+
+expr_matrix <- as.matrix(GetAssayData(attempt_so, layer = "data"))
+# Calculate the proportion of cells expressing each gene
+num_cells_per_gene <- rowSums(expr_matrix > 0)  # Count nonzero cells per gene
+total_cells <- ncol(expr_matrix)  # Total number of cells
+gene_proportion <- num_cells_per_gene / total_cells  # Fraction of cells expressing each gene
+length(gene_proportion) # 30715
+# Keep genes expressed in at least 10 cells
+genes_to_keep <- names(num_cells_per_gene[num_cells_per_gene >= 10])
+
+length(genes_to_keep)
+
+# marker_genes <- c(
+#   # Proximal Tubule (PT) Markers
+#   "LRP2", "SLC34A1", "CUBN", "AQP1",
+# 
+#   # Thick Ascending Limb (TAL) Markers
+#   "UMOD", "SLC12A1", "CLCNKB", "ROMK",
+# 
+#   # Distal Convoluted Tubule (DCT) Markers
+#   "SLC12A3", "NCC", "KLHL3", "FXYD2",
+# 
+#   # Collecting Duct Markers
+#   "AQP2",  # Principal Cells (PC)
+#   "ATP6V1B1", "ATP6V0D2",  # Intercalated Cells (IC)
+# 
+#   # Loop of Henle Markers
+#   "SLC14A2", "AQP6", "UMOD", "SLC12A2",
+# 
+#   # Podocyte Markers
+#   "NPHS1", "NPHS2", "PODXL", "WT1",
+# 
+#   # Parietal Epithelial Cell (PEC) Markers
+#   "CDH6", "SFRP1", "S100A10",
+# 
+#   # Endothelial Cell Markers
+#   "PECAM1", "VWF", "KDR", "FLT1",
+# 
+#   # Mesangial Cell (MC) Markers
+#   "PDGFRB", "ACTA2", "ITGA8", "FN1",
+# 
+#   # Fibroblast Markers
+#   "DCN", "COL1A1", "PDGFRA", "FBN1",
+# 
+#   # Vascular Smooth Muscle Cell (VSMC) Markers
+#   "MYH11", "ACTA2", "CNN1", "TAGLN",
+# 
+#   # Macrophage / Monocyte Markers
+#   "LYZ", "CD68", "C1QA", "C1QB", "C1QC",
+# 
+#   # T Cell Markers
+#   "CD3E", "CD4", "CD8A", "IL7R",
+# 
+#   # B Cell Markers
+#   "MS4A1", "CD79A", "CD19", "IGHM",
+# 
+#   # NK / NKT Cell Markers
+#   "NCAM1", "NKG7", "KLRD1", "TYROBP")
+
+# marker_genes[!(marker_genes %in% genes_to_keep)] # which of the marker genes are being filtered?
+# marker_genes[!(marker_genes %in% genes_to_keep)] %in% rownames(attempt_so) # are they even in our dataset?
+
+remove(expr_matrix)
+attempt_so <- subset(attempt_so, features = genes_to_keep)
+```
+
+```{r echo = F}
+# read ATTEMPT clinical data file
+temp_file <- tempfile(fileext = ".RDS")
+s3$download_file("harmonized.dataset", "attempt_clinical_data.RDS", temp_file)
+attempt_dat <- readRDS(temp_file)
+
+attempt_so_meta <- attempt_so@meta.data %>%
+  mutate(subject_id = Subject.ID,
+         visit = case_when(Visit == "BL" ~ "PRE", 
+                           Visit == "4M" ~ "POST"))
+attempt_so_meta <- left_join(attempt_so_meta, attempt_dat, by = c("subject_id", "visit"))
+rownames(attempt_so_meta) <- attempt_so_meta$barcode
+attempt_so <- AddMetaData(attempt_so, attempt_so_meta)
+options(future.globals.maxSize = 3000 * 1024^3)
+```
+
+```{r echo = F, include=F}
+# read PB90 Seurat file for CROCODILE
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("scrna", "Kidney transcriptomics/Single cell RNA seq/PB_90_RPCAFix_Metadata_LR_RM_kpmpV1labelled.rds", temp_file)
+so <- readRDS(temp_file)
+
+# Identify mitochondrial genes
+mito_genes <- grep("^MT-", rownames(so), value = TRUE)
+
+# Calculate the percentage of mitochondrial transcripts per cell
+so[["percent.mt"]] <- PercentageFeatureSet(so, pattern = "^MT-")
+hist(so$percent.mt)
+
+# so <- subset(so, subset = percent.mt < 50) # keep as 50%, it's how it's done with KPMP
+FeaturePlot(so, reduction = "umap.harmony", features = "percent.mt", cols = c("lightgray", "blue"), raster = F)
+DimPlot(so, reduction = "umap.harmony", group.by = "KPMP_celltype", raster = F, alpha = 0.2, label = T)
+DimPlot(so, reduction = "umap.harmony", group.by = "celltype_harmony", raster = F, alpha = 0.2, label = T)
+
+so <- subset(so, features = setdiff(rownames(so), mito_genes)) # remove MT- genes
+
+expr_matrix <- as.matrix(GetAssayData(so, layer = "data"))
+# Calculate the proportion of cells expressing each gene
+num_cells_per_gene <- rowSums(expr_matrix > 0)  # Count nonzero cells per gene
+total_cells <- ncol(expr_matrix)  # Total number of cells
+gene_proportion <- num_cells_per_gene / total_cells  # Fraction of cells expressing each gene
+length(gene_proportion) # 30715
+# Keep genes expressed in at least 10 cells
+genes_to_keep <- names(num_cells_per_gene[num_cells_per_gene >= 10])
+
+length(genes_to_keep)
+
+remove(expr_matrix)
+so <- subset(so, features = genes_to_keep)
+so_croc <- subset(so, cohort == "CROCODILE")
+```
+
+```{r echo = F}
+# read clinical data file for CROC
+temp_file <- tempfile(fileext = ".csv")
+s3$download_file("harmonized.dataset", "harmonized_dataset.csv", temp_file)
+pb90_dat_raw <- read.csv(temp_file, na = "")
+croc_dat <- pb90_dat_raw %>%
+  filter(study == "CROCODILE") %>%
+  dplyr::summarise(dplyr::across(where(negate(is.numeric)), ~ ifelse(all(is.na(.x)), NA_character_, last(na.omit(.x)))),
+                   dplyr::across(where(is.numeric), ~ ifelse(all(is.na(.x)), NA_real_, mean(.x, na.rm = TRUE))),
+                   .by = c(record_id))
+```
+
+```{r echo = F}
+# CROCODILE functions
+# Removed zero inflation
+fit_model_croc <- function(gene, sc_dat) {
+  # Subset data (use data.table for speed)
+  sc_dat_sub <- sc_dat[sc_dat$Gene == gene, ]
+
+  # Fit the model with glmmTMB, handling errors
+  model <- tryCatch({
+    glmmTMB(Expression ~ Group + (1 | Subject),
+            data = sc_dat_sub, family = gaussian)
+  }, error = function(e) return(NULL))
+
+  if (is.null(model)) return(NULL)
+
+  # Extract fixed effect results
+  model_summary <- summary(model)
+
+  dt <- as.data.table(model_summary$coefficients$cond)
+  dt[, Gene := gene]
+  setnames(dt, c("Std. Error", "Pr(>|z|)"), c("StdError", "PValue"))
+  dt <- dt[, .(Gene, Variable = rownames(model_summary$coefficients$cond), Estimate, StdError, PValue)]
+
+  # Extract emmeans
+  emmeans_dt <- as.data.table(emmeans(model, ~ Group))
+  emmeans_dt[, Gene := gene]
+
+  # Return a named list where the gene is the top-level name
+  return(list(model = dt, emmeans = emmeans_dt))
+}
+
+```
+
+
+
+## PT
+### Untargeted approach with CROC (HC vs. T1D)
+```{r echo = F}
+so_croc$celltype_pt <- ifelse(grepl("PT-", so_croc$celltype_harmony),
+                                 "PT", as.character(so$celltype_harmony))
+so_croc_pt <- subset(so_croc, celltype_pt == "PT" & celltype_harmony != "PT_lowQuality")
+```
+
+```{r echo = F}
+# Subset Seurat object to retain only these genes
+pt_expr_matrix <- as.matrix(GetAssayData(so_croc_pt, layer = "data"))
+pt_expr_df <- as.data.frame(as.table(as.matrix(pt_expr_matrix)))
+colnames(pt_expr_df) <- c("Gene", "Cell", "Expression")
+
+pt_croc_sc_data <- data.frame(Gene = pt_expr_df$Gene,
+                              Cell = pt_expr_df$Cell,
+                              Group = so_croc_pt@meta.data$group,
+                              Subject = so_croc_pt@meta.data$record_id,
+                              Expression = as.vector(pt_expr_df$Expression))
+```
+
+```{r echo = F}
+# set up batches (of 1000)
+genes_list <- list()
+batch_size <- 1000
+breakpoints <- c(seq(1, 29001, by = batch_size), length(genes_to_keep) + 1)
+for (i in 1:30) {
+  genes_list[[i]] <- genes_to_keep[breakpoints[i]:(breakpoints[i + 1] - 1)]
+}
+names(genes_list) <- paste0("genes_", 1:30)
+list2env(genes_list, envir = .GlobalEnv)
+remove(genes_list)
+
+pt_croc_sc_data_list <- list()
+for (i in 1:30) {
+  pt_croc_sc_data_list[[i]] <- subset(pt_croc_sc_data, Gene %in% get(paste0("genes_", i)))
+}
+names(pt_croc_sc_data_list) <- paste0("pt_croc_sc_data_", 1:30)
+list2env(pt_croc_sc_data_list, envir = .GlobalEnv)
+remove(pt_croc_sc_data_list)
+```
+
+```{r echo = F}
+plan(multisession, workers = 120)
+
+# Define the number of batches
+num_batches <- 30
+
+# Initialize lists
+pt_croc_results_list <- vector("list", num_batches)
+# Start loop
+for (i in 1:num_batches) {
+
+  start_time <- Sys.time()
+  print(start_time)
+
+  # Apply the model function to the genes in the current batch
+  pt_croc_results_list[[i]] <- future_lapply(get(paste0("genes_", i)), fit_model_croc, sc_dat = get(paste0("pt_croc_sc_data_", i)))
+
+  # Save results temporarily
+  temp_file <- tempfile(fileext = ".rds")
+  saveRDS(pt_croc_results_list[[i]], temp_file)
+  
+  # Upload results to S3 with dynamic file naming
+  s3$upload_file(Filename = temp_file, 
+                 Bucket = "attempt", 
+                 Key = paste0("CROCODILE comparison analysis/PT/pt_croc_scrna_mm_results_", i, ".rds"))
+  unlink(temp_file)
+  
+  end_time <- Sys.time()
+  print(paste0("Batch: ",i,", Time elapsed: ", end_time - start_time))  # Print time taken for each batch
+}
+
+```
+
+```{r echo = F}
+# Combine all model data tables into one
+pt_croc_model_df_list <- lapply(pt_croc_results_list, function(x) rbindlist(lapply(x, function(y) y$model), fill = TRUE))
+pt_croc_model_df_combined <- rbindlist(pt_croc_model_df_list, fill = TRUE)
+
+# Combine all emmeans data tables into one
+pt_croc_emmeans_df_list <- lapply(pt_croc_results_list, function(x) rbindlist(lapply(x, function(y) y$emmeans), fill = TRUE))
+pt_croc_emmeans_df_combined <- rbindlist(pt_croc_emmeans_df_list, fill = TRUE)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pt_croc_model_df_combined, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PT/pt_attempt_scrna_mm_model_combined.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pt_croc_emmeans_df_combined, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PT/pt_attempt_scrna_mm_emmeans_combined.rds')
+
+## keep converged model results only
+pt_croc_model_filtered <- pt_croc_model_df_combined %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+pt_croc_emmeans_filtered <- pt_croc_emmeans_df_combined %>%
+  filter(Gene %in% pt_croc_model_filtered$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## non-converged genes percentage
+pt_croc_nonconverged_genes <- unique((pt_croc_model_df_combined %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene)
+pt_croc_nonconverged_percentage <- (length(unique(pt_croc_nonconverged_genes))/length(unique(pt_croc_model_df_combined$Gene)))*100
+print(paste0("PT, CROC, nonconverged: ", pt_croc_nonconverged_percentage, "%"))
+```
+
+### Targeted approach (using CROCODILE HC vs. CROCODILE T1D)
+#### Model 3
+```{r echo = F}
+# ATTEMPT model output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "PT/3/pt_attempt_scrna_mm_model_combined_3.rds", temp_file)
+pt_attempt_model_df_mod3 <- readRDS(temp_file)
+
+# ATTEMPT emmeans output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "PT/3/pt_attempt_scrna_mm_emmeans_combined_3.rds", temp_file)
+pt_attempt_emmeans_df_mod3 <- readRDS(temp_file)
+
+## keep converged model results only
+pt_attempt_model_filtered_mod3 <- pt_attempt_model_df_mod3 %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+pt_attempt_emmeans_filtered_mod3 <- pt_attempt_emmeans_df_mod3 %>%
+  filter(Gene %in% pt_attempt_model_filtered_mod3$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+pt_croc_sig_mod3 <- subset(pt_croc_model_filtered, Variable == "GroupType_1_Diabetes" & PValue < 0.05)
+pt_croc_sig_genes_mod3 <- pt_croc_sig_mod3$Gene
+
+pt_attempt_sig_mod3 <- subset(pt_attempt_model_filtered_mod3, Gene %in% pt_croc_sig_genes_mod3 )
+pt_attempt_sig_emmeans_mod3 <- subset(pt_attempt_emmeans_filtered_mod3, Gene %in% pt_croc_sig_genes_mod3)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pt_attempt_sig_mod3, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PT/pt_attempt_croc_sig_mod3.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pt_attempt_sig_emmeans_mod3, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PT/pt_attempt_croc_sig_emmeans_mod3.rds')
+```
+
+#### Model 4
+```{r echo = F}
+# ATTEMPT model output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "PT/4/pt_attempt_scrna_mm_model_combined_4.rds", temp_file)
+pt_attempt_model_df_mod4 <- readRDS(temp_file)
+
+# ATTEMPT emmeans output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "PT/4/pt_attempt_scrna_mm_emmeans_combined_4.rds", temp_file)
+pt_attempt_emmeans_df_mod4 <- readRDS(temp_file)
+
+## keep converged model results only
+pt_attempt_model_filtered_mod4 <- pt_attempt_model_df_mod4 %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+pt_attempt_emmeans_filtered_mod4 <- pt_attempt_emmeans_df_mod4 %>%
+  filter(Gene %in% pt_attempt_model_filtered_mod4$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+pt_croc_sig_mod4 <- subset(pt_croc_model_filtered, Variable == "GroupType_1_Diabetes" & PValue < 0.05)
+pt_croc_sig_genes_mod4 <- pt_croc_sig_mod4$Gene
+
+pt_attempt_sig_mod4 <- subset(pt_attempt_model_filtered_mod4, Gene %in% pt_croc_sig_genes_mod4 )
+pt_attempt_sig_emmeans_mod4 <- subset(pt_attempt_emmeans_filtered_mod4, Gene %in% pt_croc_sig_genes_mod4)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pt_attempt_sig_mod4, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PT/pt_attempt_croc_sig_mod4.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pt_attempt_sig_emmeans_mod4, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PT/pt_attempt_croc_sig_emmeans_mod4.rds')
+```
+
+### Targeted approach with ATTEMPT (HC vs. baseline T1D)
+
+#### Model 3
+```{r echo = F}
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+pt_attempt_sig_mod3 <- subset(pt_attempt_model_filtered_mod3, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)
+pt_attempt_sig_genes_mod3 <- pt_attempt_sig_mod3$Gene
+
+pt_croc_sig_target_subset <- subset(pt_croc_model_filtered, Gene %in% pt_attempt_sig_genes_mod3)
+pt_croc_sig_emmeans_target_subset <- subset(pt_croc_emmeans_filtered, Gene %in% pt_attempt_sig_genes_mod3)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pt_croc_sig_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PT/pt_attempt_croc_sig_target_subset_mod3.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pt_croc_sig_emmeans_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PT/pt_attempt_croc_sig_emmeans_target_subset_mod3.rds')
+
+rm(list = ls(pattern = "^pt_croc_sc_data_"))
+```
+
+#### Model 4
+```{r echo = F}
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+pt_attempt_sig_mod4 <- subset(pt_attempt_model_filtered_mod4, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)
+pt_attempt_sig_genes_mod4 <- pt_attempt_sig_mod4$Gene
+
+pt_croc_sig_target_subset <- subset(pt_croc_model_filtered, Gene %in% pt_attempt_sig_genes_mod4)
+pt_croc_sig_emmeans_target_subset <- subset(pt_croc_emmeans_filtered, Gene %in% pt_attempt_sig_genes_mod4)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pt_croc_sig_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PT/pt_attempt_croc_sig_target_subset_mod4.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pt_croc_sig_emmeans_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PT/pt_attempt_croc_sig_emmeans_target_subset_mod4.rds')
+
+rm(list = ls(pattern = "^pt_croc_sc_data_"))
+```
+## TAL
+### Untargeted approach with CROC (HC vs. T1D)
+```{r echo = F}
+so_croc$celltype_tal <- ifelse(grepl("TAL-", so_croc$celltype_harmony),
+                                 "TAL", as.character(so$celltype_harmony))
+so_croc_tal <- subset(so_croc, celltype_tal == "TAL" & celltype_harmony != "TAL_highUMI")
+```
+
+```{r echo = F}
+# Subset Seurat object to retain only these genes
+tal_expr_matrix <- as.matrix(GetAssayData(so_croc_tal, layer = "data"))
+tal_expr_df <- as.data.frame(as.table(as.matrix(tal_expr_matrix)))
+colnames(tal_expr_df) <- c("Gene", "Cell", "Expression")
+
+tal_croc_sc_data <- data.frame(Gene = tal_expr_df$Gene,
+                              Cell = tal_expr_df$Cell,
+                              Group = so_croc_tal@meta.data$group,
+                              Subject = so_croc_tal@meta.data$record_id,
+                              Expression = as.vector(tal_expr_df$Expression))
+```
+
+```{r echo = F}
+# set up batches (of 1000)
+genes_list <- list()
+batch_size <- 1000
+breakpoints <- c(seq(1, 29001, by = batch_size), length(genes_to_keep) + 1)
+for (i in 1:30) {
+  genes_list[[i]] <- genes_to_keep[breakpoints[i]:(breakpoints[i + 1] - 1)]
+}
+names(genes_list) <- paste0("genes_", 1:30)
+list2env(genes_list, envir = .GlobalEnv)
+remove(genes_list)
+
+tal_croc_sc_data_list <- list()
+for (i in 1:30) {
+  tal_croc_sc_data_list[[i]] <- subset(tal_croc_sc_data, Gene %in% get(paste0("genes_", i)))
+}
+names(tal_croc_sc_data_list) <- paste0("tal_croc_sc_data_", 1:30)
+list2env(tal_croc_sc_data_list, envir = .GlobalEnv)
+remove(tal_croc_sc_data_list)
+```
+
+```{r echo = F}
+plan(multisession, workers = 120)
+
+# Define the number of batches
+num_batches <- 30
+
+# Initialize lists
+tal_croc_results_list <- vector("list", num_batches)
+# Start loop
+for (i in 1:num_batches) {
+
+  start_time <- Sys.time()
+  print(start_time)
+
+  # Apply the model function to the genes in the current batch
+  tal_croc_results_list[[i]] <- future_lapply(get(paste0("genes_", i)), fit_model_croc, sc_dat = get(paste0("tal_croc_sc_data_", i)))
+
+  # Save results temporarily
+  temp_file <- tempfile(fileext = ".rds")
+  saveRDS(tal_croc_results_list[[i]], temp_file)
+  
+  # Upload results to S3 with dynamic file naming
+  s3$upload_file(Filename = temp_file, 
+                 Bucket = "attempt", 
+                 Key = paste0("CROCODILE comparison analysis/TAL/tal_croc_scrna_mm_results_", i, ".rds"))
+  unlink(temp_file)
+  
+  end_time <- Sys.time()
+  print(paste0("Batch: ",i,", Time elapsed: ", end_time - start_time))  # Print time taken for each batch
+}
+
+```
+
+```{r echo = F}
+# Combine all model data tables into one
+tal_croc_model_df_list <- lapply(tal_croc_results_list, function(x) rbindlist(lapply(x, function(y) y$model), fill = TRUE))
+tal_croc_model_df_combined <- rbindlist(tal_croc_model_df_list, fill = TRUE)
+
+# Combine all emmeans data tables into one
+tal_croc_emmeans_df_list <- lapply(tal_croc_results_list, function(x) rbindlist(lapply(x, function(y) y$emmeans), fill = TRUE))
+tal_croc_emmeans_df_combined <- rbindlist(tal_croc_emmeans_df_list, fill = TRUE)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(tal_croc_model_df_combined, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/TAL/tal_attempt_scrna_mm_model_combined.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(tal_croc_emmeans_df_combined, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/TAL/tal_attempt_scrna_mm_emmeans_combined.rds')
+
+## keep converged model results only
+tal_croc_model_filtered <- tal_croc_model_df_combined %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+tal_croc_emmeans_filtered <- tal_croc_emmeans_df_combined %>%
+  filter(Gene %in% tal_croc_model_filtered$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## non-converged genes percentage
+tal_croc_nonconverged_genes <- unique((tal_croc_model_df_combined %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene)
+tal_croc_nonconverged_percentage <- (length(unique(tal_croc_nonconverged_genes))/length(unique(tal_croc_model_df_combined$Gene)))*100
+print(paste0("TAL, CROC, nonconverged: ", tal_croc_nonconverged_percentage, "%"))
+```
+
+### Targeted approach (using CROCODILE HC vs. CROCODILE T1D)
+#### Model 3
+```{r echo = F}
+# ATTEMPT model output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "TAL/3/tal_attempt_scrna_mm_model_combined_3.rds", temp_file)
+tal_attempt_model_df_mod3 <- readRDS(temp_file)
+
+# ATTEMPT emmeans output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "TAL/3/tal_attempt_scrna_mm_emmeans_combined_3.rds", temp_file)
+tal_attempt_emmeans_df_mod3 <- readRDS(temp_file)
+
+## keep converged model results only
+tal_attempt_model_filtered_mod3 <- tal_attempt_model_df_mod3 %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+tal_attempt_emmeans_filtered_mod3 <- tal_attempt_emmeans_df_mod3 %>%
+  filter(Gene %in% tal_attempt_model_filtered_mod3$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+tal_croc_sig_mod3 <- subset(tal_croc_model_filtered, Variable == "GroupType_1_Diabetes" & PValue < 0.05)
+tal_croc_sig_genes_mod3 <- tal_croc_sig_mod3$Gene
+
+tal_attempt_sig_mod3 <- subset(tal_attempt_model_filtered_mod3, Gene %in% tal_croc_sig_genes_mod3 )
+tal_attempt_sig_emmeans_mod3 <- subset(tal_attempt_emmeans_filtered_mod3, Gene %in% tal_croc_sig_genes_mod3)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(tal_attempt_sig_mod3, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/TAL/tal_attempt_croc_sig_mod3.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(tal_attempt_sig_emmeans_mod3, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/TAL/tal_attempt_croc_sig_emmeans_mod3.rds')
+```
+
+#### Model 4
+```{r echo = F}
+# ATTEMPT model output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "TAL/4/tal_attempt_scrna_mm_model_combined_4.rds", temp_file)
+tal_attempt_model_df_mod4 <- readRDS(temp_file)
+
+# ATTEMPT emmeans output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "TAL/4/tal_attempt_scrna_mm_emmeans_combined_4.rds", temp_file)
+tal_attempt_emmeans_df_mod4 <- readRDS(temp_file)
+
+## keep converged model results only
+tal_attempt_model_filtered_mod4 <- tal_attempt_model_df_mod4 %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+tal_attempt_emmeans_filtered_mod4 <- tal_attempt_emmeans_df_mod4 %>%
+  filter(Gene %in% tal_attempt_model_filtered_mod4$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+tal_croc_sig_mod4 <- subset(tal_croc_model_filtered, Variable == "GroupType_1_Diabetes" & PValue < 0.05)
+tal_croc_sig_genes_mod4 <- tal_croc_sig_mod4$Gene
+
+tal_attempt_sig_mod4 <- subset(tal_attempt_model_filtered_mod4, Gene %in% tal_croc_sig_genes_mod4 )
+tal_attempt_sig_emmeans_mod4 <- subset(tal_attempt_emmeans_filtered_mod4, Gene %in% tal_croc_sig_genes_mod4)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(tal_attempt_sig_mod4, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/TAL/tal_attempt_croc_sig_mod4.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(tal_attempt_sig_emmeans_mod4, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/TAL/tal_attempt_croc_sig_emmeans_mod4.rds')
+```
+
+### Targeted approach with ATTEMPT (HC vs. baseline T1D)
+
+#### Model 3
+```{r echo = F}
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+tal_attempt_sig_mod3 <- subset(tal_attempt_model_filtered_mod3, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)
+tal_attempt_sig_genes_mod3 <- tal_attempt_sig_mod3$Gene
+
+tal_croc_sig_target_subset <- subset(tal_croc_model_filtered, Gene %in% tal_attempt_sig_genes_mod3)
+tal_croc_sig_emmeans_target_subset <- subset(tal_croc_emmeans_filtered, Gene %in% tal_attempt_sig_genes_mod3)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(tal_croc_sig_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/TAL/tal_attempt_croc_sig_target_subset_mod3.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(tal_croc_sig_emmeans_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/TAL/tal_attempt_croc_sig_emmeans_target_subset_mod3.rds')
+
+rm(list = ls(pattern = "^tal_croc_sc_data_"))
+```
+
+#### Model 4
+```{r echo = F}
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+tal_attempt_sig_mod4 <- subset(tal_attempt_model_filtered_mod4, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)
+tal_attempt_sig_genes_mod4 <- tal_attempt_sig_mod4$Gene
+
+tal_croc_sig_target_subset <- subset(tal_croc_model_filtered, Gene %in% tal_attempt_sig_genes_mod4)
+tal_croc_sig_emmeans_target_subset <- subset(tal_croc_emmeans_filtered, Gene %in% tal_attempt_sig_genes_mod4)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(tal_croc_sig_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/TAL/tal_attempt_croc_sig_target_subset_mod4.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(tal_croc_sig_emmeans_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/TAL/tal_attempt_croc_sig_emmeans_target_subset_mod4.rds')
+
+rm(list = ls(pattern = "^tal_croc_sc_data_"))
+```
+
+## PC
+### Untargeted approach with CROC (HC vs. T1D)
+```{r echo = F}
+so_croc$celltype_pc <- ifelse(so_croc$celltype_harmony %in% c("PC-1", "PC-2", "tPC-IC"), 
+                                     "PC", as.character(so_croc$celltype_harmony)) 
+so_croc_pc <- subset(so_croc, celltype_pc == "PC")
+```
+
+```{r echo = F}
+# Subset Seurat object to retain only these genes
+pc_expr_matrix <- as.matrix(GetAssayData(so_croc_pc, layer = "data"))
+pc_expr_df <- as.data.frame(as.table(as.matrix(pc_expr_matrix)))
+colnames(pc_expr_df) <- c("Gene", "Cell", "Expression")
+
+pc_croc_sc_data <- data.frame(Gene = pc_expr_df$Gene,
+                              Cell = pc_expr_df$Cell,
+                              Group = so_croc_pc@meta.data$group,
+                              Subject = so_croc_pc@meta.data$record_id,
+                              Expression = as.vector(pc_expr_df$Expression))
+```
+
+```{r echo = F}
+# set up batches (of 1000)
+genes_list <- list()
+batch_size <- 1000
+breakpoints <- c(seq(1, 29001, by = batch_size), length(genes_to_keep) + 1)
+for (i in 1:30) {
+  genes_list[[i]] <- genes_to_keep[breakpoints[i]:(breakpoints[i + 1] - 1)]
+}
+names(genes_list) <- paste0("genes_", 1:30)
+list2env(genes_list, envir = .GlobalEnv)
+remove(genes_list)
+
+pc_croc_sc_data_list <- list()
+for (i in 1:30) {
+  pc_croc_sc_data_list[[i]] <- subset(pc_croc_sc_data, Gene %in% get(paste0("genes_", i)))
+}
+names(pc_croc_sc_data_list) <- paste0("pc_croc_sc_data_", 1:30)
+list2env(pc_croc_sc_data_list, envir = .GlobalEnv)
+remove(pc_croc_sc_data_list)
+```
+
+```{r echo = F}
+plan(multisession, workers = 120)
+
+# Define the number of batches
+num_batches <- 30
+
+# Initialize lists
+pc_croc_results_list <- vector("list", num_batches)
+# Start loop
+for (i in 1:num_batches) {
+
+  start_time <- Sys.time()
+  print(start_time)
+
+  # Apply the model function to the genes in the current batch
+  pc_croc_results_list[[i]] <- future_lapply(get(paste0("genes_", i)), fit_model_croc, sc_dat = get(paste0("pc_croc_sc_data_", i)))
+
+  # Save results temporarily
+  temp_file <- tempfile(fileext = ".rds")
+  saveRDS(pc_croc_results_list[[i]], temp_file)
+  
+  # Upload results to S3 with dynamic file naming
+  s3$upload_file(Filename = temp_file, 
+                 Bucket = "attempt", 
+                 Key = paste0("CROCODILE comparison analysis/PC/pc_croc_scrna_mm_results_", i, ".rds"))
+  unlink(temp_file)
+  
+  end_time <- Sys.time()
+  print(paste0("Batch: ",i,", Time elapsed: ", end_time - start_time))  # Print time taken for each batch
+}
+
+```
+
+```{r echo = F}
+# Combine all model data tables into one
+pc_croc_model_df_list <- lapply(pc_croc_results_list, function(x) rbindlist(lapply(x, function(y) y$model), fill = TRUE))
+pc_croc_model_df_combined <- rbindlist(pc_croc_model_df_list, fill = TRUE)
+
+# Combine all emmeans data tables into one
+pc_croc_emmeans_df_list <- lapply(pc_croc_results_list, function(x) rbindlist(lapply(x, function(y) y$emmeans), fill = TRUE))
+pc_croc_emmeans_df_combined <- rbindlist(pc_croc_emmeans_df_list, fill = TRUE)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pc_croc_model_df_combined, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PC/pc_attempt_scrna_mm_model_combined.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pc_croc_emmeans_df_combined, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PC/pc_attempt_scrna_mm_emmeans_combined.rds')
+
+## keep converged model results only
+pc_croc_model_filtered <- pc_croc_model_df_combined %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+pc_croc_emmeans_filtered <- pc_croc_emmeans_df_combined %>%
+  filter(Gene %in% pc_croc_model_filtered$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## non-converged genes percentage
+pc_croc_nonconverged_genes <- unique((pc_croc_model_df_combined %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene)
+pc_croc_nonconverged_percentage <- (length(unique(pc_croc_nonconverged_genes))/length(unique(pc_croc_model_df_combined$Gene)))*100
+print(paste0("PC, CROC, nonconverged: ", pc_croc_nonconverged_percentage, "%"))
+```
+
+### Targeted approach (using CROCODILE HC vs. CROCODILE T1D)
+#### Model 3
+```{r echo = F}
+# ATTEMPT model output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "PC/3/pc_attempt_scrna_mm_model_combined_3.rds", temp_file)
+pc_attempt_model_df_mod3 <- readRDS(temp_file)
+
+# ATTEMPT emmeans output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "PC/3/pc_attempt_scrna_mm_emmeans_combined_3.rds", temp_file)
+pc_attempt_emmeans_df_mod3 <- readRDS(temp_file)
+
+## keep converged model results only
+pc_attempt_model_filtered_mod3 <- pc_attempt_model_df_mod3 %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+pc_attempt_emmeans_filtered_mod3 <- pc_attempt_emmeans_df_mod3 %>%
+  filter(Gene %in% pc_attempt_model_filtered_mod3$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+pc_croc_sig_mod3 <- subset(pc_croc_model_filtered, Variable == "GroupType_1_Diabetes" & PValue < 0.05)
+pc_croc_sig_genes_mod3 <- pc_croc_sig_mod3$Gene
+
+pc_attempt_sig_mod3 <- subset(pc_attempt_model_filtered_mod3, Gene %in% pc_croc_sig_genes_mod3 )
+pc_attempt_sig_emmeans_mod3 <- subset(pc_attempt_emmeans_filtered_mod3, Gene %in% pc_croc_sig_genes_mod3)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pc_attempt_sig_mod3, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PC/pc_attempt_croc_sig_mod3.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pc_attempt_sig_emmeans_mod3, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PC/pc_attempt_croc_sig_emmeans_mod3.rds')
+```
+
+#### Model 4
+```{r echo = F}
+# ATTEMPT model output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "PC/4/pc_attempt_scrna_mm_model_combined_4.rds", temp_file)
+pc_attempt_model_df_mod4 <- readRDS(temp_file)
+
+# ATTEMPT emmeans output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "PC/4/pc_attempt_scrna_mm_emmeans_combined_4.rds", temp_file)
+pc_attempt_emmeans_df_mod4 <- readRDS(temp_file)
+
+## keep converged model results only
+pc_attempt_model_filtered_mod4 <- pc_attempt_model_df_mod4 %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+pc_attempt_emmeans_filtered_mod4 <- pc_attempt_emmeans_df_mod4 %>%
+  filter(Gene %in% pc_attempt_model_filtered_mod4$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+pc_croc_sig_mod4 <- subset(pc_croc_model_filtered, Variable == "GroupType_1_Diabetes" & PValue < 0.05)
+pc_croc_sig_genes_mod4 <- pc_croc_sig_mod4$Gene
+
+pc_attempt_sig_mod4 <- subset(pc_attempt_model_filtered_mod4, Gene %in% pc_croc_sig_genes_mod4 )
+pc_attempt_sig_emmeans_mod4 <- subset(pc_attempt_emmeans_filtered_mod4, Gene %in% pc_croc_sig_genes_mod4)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pc_attempt_sig_mod4, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PC/pc_attempt_croc_sig_mod4.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pc_attempt_sig_emmeans_mod4, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PC/pc_attempt_croc_sig_emmeans_mod4.rds')
+```
+
+### Targeted approach with ATTEMPT (HC vs. baseline T1D)
+
+#### Model 3
+```{r echo = F}
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+pc_attempt_sig_mod3 <- subset(pc_attempt_model_filtered_mod3, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)
+pc_attempt_sig_genes_mod3 <- pc_attempt_sig_mod3$Gene
+
+pc_croc_sig_target_subset <- subset(pc_croc_model_filtered, Gene %in% pc_attempt_sig_genes_mod3)
+pc_croc_sig_emmeans_target_subset <- subset(pc_croc_emmeans_filtered, Gene %in% pc_attempt_sig_genes_mod3)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pc_croc_sig_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PC/pc_attempt_croc_sig_target_subset_mod3.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pc_croc_sig_emmeans_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PC/pc_attempt_croc_sig_emmeans_target_subset_mod3.rds')
+
+rm(list = ls(pattern = "^pc_croc_sc_data_"))
+```
+
+#### Model 4
+```{r echo = F}
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+pc_attempt_sig_mod4 <- subset(pc_attempt_model_filtered_mod4, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)
+pc_attempt_sig_genes_mod4 <- pc_attempt_sig_mod4$Gene
+
+pc_croc_sig_target_subset <- subset(pc_croc_model_filtered, Gene %in% pc_attempt_sig_genes_mod4)
+pc_croc_sig_emmeans_target_subset <- subset(pc_croc_emmeans_filtered, Gene %in% pc_attempt_sig_genes_mod4)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pc_croc_sig_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PC/pc_attempt_croc_sig_target_subset_mod4.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(pc_croc_sig_emmeans_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PC/pc_attempt_croc_sig_emmeans_target_subset_mod4.rds')
+
+rm(list = ls(pattern = "^pc_croc_sc_data_"))
+```
+
+## EC
+### Untargeted approach with CROC (HC vs. T1D)
+```{r echo = F}
+so_croc$celltype_ec <- ifelse(so_croc$celltype_harmony %in% c("EC-PTC", "EC-GC", "EC-AEA", "EC-LYM"),
+                                     "EC", as.character(so_croc$celltype_harmony))
+so_croc_ec <- subset(so_croc, celltype_ec == "EC")
+```
+
+```{r echo = F}
+# Subset Seurat object to retain only these genes
+ec_expr_matrix <- as.matrix(GetAssayData(so_croc_ec, layer = "data"))
+ec_expr_df <- as.data.frame(as.table(as.matrix(ec_expr_matrix)))
+colnames(ec_expr_df) <- c("Gene", "Cell", "Expression")
+
+ec_croc_sc_data <- data.frame(Gene = ec_expr_df$Gene,
+                              Cell = ec_expr_df$Cell,
+                              Group = so_croc_ec@meta.data$group,
+                              Subject = so_croc_ec@meta.data$record_id,
+                              Expression = as.vector(ec_expr_df$Expression))
+```
+
+```{r echo = F}
+# set up batches (of 1000)
+genes_list <- list()
+batch_size <- 1000
+breakpoints <- c(seq(1, 29001, by = batch_size), length(genes_to_keep) + 1)
+for (i in 1:30) {
+  genes_list[[i]] <- genes_to_keep[breakpoints[i]:(breakpoints[i + 1] - 1)]
+}
+names(genes_list) <- paste0("genes_", 1:30)
+list2env(genes_list, envir = .GlobalEnv)
+remove(genes_list)
+
+ec_croc_sc_data_list <- list()
+for (i in 1:30) {
+  ec_croc_sc_data_list[[i]] <- subset(ec_croc_sc_data, Gene %in% get(paste0("genes_", i)))
+}
+names(ec_croc_sc_data_list) <- paste0("ec_croc_sc_data_", 1:30)
+list2env(ec_croc_sc_data_list, envir = .GlobalEnv)
+remove(ec_croc_sc_data_list)
+```
+
+```{r echo = F}
+plan(multisession, workers = 120)
+
+# Define the number of batches
+num_batches <- 30
+
+# Initialize lists
+ec_croc_results_list <- vector("list", num_batches)
+# Start loop
+for (i in 1:num_batches) {
+
+  start_time <- Sys.time()
+  print(start_time)
+
+  # Apply the model function to the genes in the current batch
+  ec_croc_results_list[[i]] <- future_lapply(get(paste0("genes_", i)), fit_model_croc, sc_dat = get(paste0("ec_croc_sc_data_", i)))
+
+  # Save results temporarily
+  temp_file <- tempfile(fileext = ".rds")
+  saveRDS(ec_croc_results_list[[i]], temp_file)
+  
+  # Upload results to S3 with dynamic file naming
+  s3$upload_file(Filename = temp_file, 
+                 Bucket = "attempt", 
+                 Key = paste0("CROCODILE comparison analysis/EC/ec_croc_scrna_mm_results_", i, ".rds"))
+  unlink(temp_file)
+  
+  end_time <- Sys.time()
+  print(paste0("Batch: ",i,", Time elapsed: ", end_time - start_time))  # Print time taken for each batch
+}
+
+```
+
+```{r echo = F}
+# Combine all model data tables into one
+ec_croc_model_df_list <- lapply(ec_croc_results_list, function(x) rbindlist(lapply(x, function(y) y$model), fill = TRUE))
+ec_croc_model_df_combined <- rbindlist(ec_croc_model_df_list, fill = TRUE)
+
+# Combine all emmeans data tables into one
+ec_croc_emmeans_df_list <- lapply(ec_croc_results_list, function(x) rbindlist(lapply(x, function(y) y$emmeans), fill = TRUE))
+ec_croc_emmeans_df_combined <- rbindlist(ec_croc_emmeans_df_list, fill = TRUE)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ec_croc_model_df_combined, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/EC/ec_attempt_scrna_mm_model_combined.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ec_croc_emmeans_df_combined, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/EC/ec_attempt_scrna_mm_emmeans_combined.rds')
+
+## keep converged model results only
+ec_croc_model_filtered <- ec_croc_model_df_combined %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+ec_croc_emmeans_filtered <- ec_croc_emmeans_df_combined %>%
+  filter(Gene %in% ec_croc_model_filtered$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## non-converged genes percentage
+ec_croc_nonconverged_genes <- unique((ec_croc_model_df_combined %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene)
+ec_croc_nonconverged_percentage <- (length(unique(ec_croc_nonconverged_genes))/length(unique(ec_croc_model_df_combined$Gene)))*100
+print(paste0("EC, CROC, nonconverged: ", ec_croc_nonconverged_percentage, "%"))
+```
+
+### Targeted approach (using CROCODILE HC vs. CROCODILE T1D)
+#### Model 3
+```{r echo = F}
+# ATTEMPT model output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "EC/3/ec_attempt_scrna_mm_model_combined_3.rds", temp_file)
+ec_attempt_model_df_mod3 <- readRDS(temp_file)
+
+# ATTEMPT emmeans output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "EC/3/ec_attempt_scrna_mm_emmeans_combined_3.rds", temp_file)
+ec_attempt_emmeans_df_mod3 <- readRDS(temp_file)
+
+## keep converged model results only
+ec_attempt_model_filtered_mod3 <- ec_attempt_model_df_mod3 %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+ec_attempt_emmeans_filtered_mod3 <- ec_attempt_emmeans_df_mod3 %>%
+  filter(Gene %in% ec_attempt_model_filtered_mod3$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+ec_croc_sig_mod3 <- subset(ec_croc_model_filtered, Variable == "GroupType_1_Diabetes" & PValue < 0.05)
+ec_croc_sig_genes_mod3 <- ec_croc_sig_mod3$Gene
+
+ec_attempt_sig_mod3 <- subset(ec_attempt_model_filtered_mod3, Gene %in% ec_croc_sig_genes_mod3 )
+ec_attempt_sig_emmeans_mod3 <- subset(ec_attempt_emmeans_filtered_mod3, Gene %in% ec_croc_sig_genes_mod3)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ec_attempt_sig_mod3, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/EC/ec_attempt_croc_sig_mod3.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ec_attempt_sig_emmeans_mod3, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/EC/ec_attempt_croc_sig_emmeans_mod3.rds')
+```
+
+#### Model 4
+```{r echo = F}
+# ATTEMPT model output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "EC/4/ec_attempt_scrna_mm_model_combined_4.rds", temp_file)
+ec_attempt_model_df_mod4 <- readRDS(temp_file)
+
+# ATTEMPT emmeans output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "EC/4/ec_attempt_scrna_mm_emmeans_combined_4.rds", temp_file)
+ec_attempt_emmeans_df_mod4 <- readRDS(temp_file)
+
+## keep converged model results only
+ec_attempt_model_filtered_mod4 <- ec_attempt_model_df_mod4 %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+ec_attempt_emmeans_filtered_mod4 <- ec_attempt_emmeans_df_mod4 %>%
+  filter(Gene %in% ec_attempt_model_filtered_mod4$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+ec_croc_sig_mod4 <- subset(ec_croc_model_filtered, Variable == "GroupType_1_Diabetes" & PValue < 0.05)
+ec_croc_sig_genes_mod4 <- ec_croc_sig_mod4$Gene
+
+ec_attempt_sig_mod4 <- subset(ec_attempt_model_filtered_mod4, Gene %in% ec_croc_sig_genes_mod4 )
+ec_attempt_sig_emmeans_mod4 <- subset(ec_attempt_emmeans_filtered_mod4, Gene %in% ec_croc_sig_genes_mod4)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ec_attempt_sig_mod4, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/EC/ec_attempt_croc_sig_mod4.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ec_attempt_sig_emmeans_mod4, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/EC/ec_attempt_croc_sig_emmeans_mod4.rds')
+```
+
+### Targeted approach with ATTEMPT (HC vs. baseline T1D)
+
+#### Model 3
+```{r echo = F}
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+ec_attempt_sig_mod3 <- subset(ec_attempt_model_filtered_mod3, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)
+ec_attempt_sig_genes_mod3 <- ec_attempt_sig_mod3$Gene
+
+ec_croc_sig_target_subset <- subset(ec_croc_model_filtered, Gene %in% ec_attempt_sig_genes_mod3)
+ec_croc_sig_emmeans_target_subset <- subset(ec_croc_emmeans_filtered, Gene %in% ec_attempt_sig_genes_mod3)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ec_croc_sig_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/EC/ec_attempt_croc_sig_target_subset_mod3.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ec_croc_sig_emmeans_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/EC/ec_attempt_croc_sig_emmeans_target_subset_mod3.rds')
+
+rm(list = ls(pattern = "^ec_croc_sc_data_"))
+```
+
+#### Model 4
+```{r echo = F}
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+ec_attempt_sig_mod4 <- subset(ec_attempt_model_filtered_mod4, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)
+ec_attempt_sig_genes_mod4 <- ec_attempt_sig_mod4$Gene
+
+ec_croc_sig_target_subset <- subset(ec_croc_model_filtered, Gene %in% ec_attempt_sig_genes_mod4)
+ec_croc_sig_emmeans_target_subset <- subset(ec_croc_emmeans_filtered, Gene %in% ec_attempt_sig_genes_mod4)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ec_croc_sig_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/EC/ec_attempt_croc_sig_target_subset_mod4.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ec_croc_sig_emmeans_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/EC/ec_attempt_croc_sig_emmeans_target_subset_mod4.rds')
+
+rm(list = ls(pattern = "^ec_croc_sc_data_"))
+```
+
+## IC
+### Untargeted approach with CROC (HC vs. T1D)
+```{r echo = F}
+so_croc$celltype_ic <- ifelse(so_croc$celltype_harmony %in% c("IC-A", "IC-B"),
+                                     "IC", as.character(so_croc$celltype_harmony))
+so_croc_ic <- subset(so_croc, celltype_ic == "IC")
+```
+
+```{r echo = F}
+# Subset Seurat object to retain only these genes
+ic_expr_matrix <- as.matrix(GetAssayData(so_croc_ic, layer = "data"))
+ic_expr_df <- as.data.frame(as.table(as.matrix(ic_expr_matrix)))
+colnames(ic_expr_df) <- c("Gene", "Cell", "Expression")
+
+ic_croc_sc_data <- data.frame(Gene = ic_expr_df$Gene,
+                              Cell = ic_expr_df$Cell,
+                              Group = so_croc_ic@meta.data$group,
+                              Subject = so_croc_ic@meta.data$record_id,
+                              Expression = as.vector(ic_expr_df$Expression))
+```
+
+```{r echo = F}
+# set up batches (of 1000)
+genes_list <- list()
+batch_size <- 1000
+breakpoints <- c(seq(1, 29001, by = batch_size), length(genes_to_keep) + 1)
+for (i in 1:30) {
+  genes_list[[i]] <- genes_to_keep[breakpoints[i]:(breakpoints[i + 1] - 1)]
+}
+names(genes_list) <- paste0("genes_", 1:30)
+list2env(genes_list, envir = .GlobalEnv)
+remove(genes_list)
+
+ic_croc_sc_data_list <- list()
+for (i in 1:30) {
+  ic_croc_sc_data_list[[i]] <- subset(ic_croc_sc_data, Gene %in% get(paste0("genes_", i)))
+}
+names(ic_croc_sc_data_list) <- paste0("ic_croc_sc_data_", 1:30)
+list2env(ic_croc_sc_data_list, envir = .GlobalEnv)
+remove(ic_croc_sc_data_list)
+```
+
+```{r echo = F}
+plan(multisession, workers = 120)
+
+# Define the number of batches
+num_batches <- 30
+
+# Initialize lists
+ic_croc_results_list <- vector("list", num_batches)
+# Start loop
+for (i in 1:num_batches) {
+
+  start_time <- Sys.time()
+  print(start_time)
+
+  # Apply the model function to the genes in the current batch
+  ic_croc_results_list[[i]] <- future_lapply(get(paste0("genes_", i)), fit_model_croc, sc_dat = get(paste0("ic_croc_sc_data_", i)))
+
+  # Save results temporarily
+  temp_file <- tempfile(fileext = ".rds")
+  saveRDS(ic_croc_results_list[[i]], temp_file)
+  
+  # Upload results to S3 with dynamic file naming
+  s3$upload_file(Filename = temp_file, 
+                 Bucket = "attempt", 
+                 Key = paste0("CROCODILE comparison analysis/IC/ic_croc_scrna_mm_results_", i, ".rds"))
+  unlink(temp_file)
+  
+  end_time <- Sys.time()
+  print(paste0("Batch: ",i,", Time elapsed: ", end_time - start_time))  # Print time taken for each batch
+}
+
+```
+
+```{r echo = F}
+# Combine all model data tables into one
+ic_croc_model_df_list <- lapply(ic_croc_results_list, function(x) rbindlist(lapply(x, function(y) y$model), fill = TRUE))
+ic_croc_model_df_combined <- rbindlist(ic_croc_model_df_list, fill = TRUE)
+
+# Combine all emmeans data tables into one
+ic_croc_emmeans_df_list <- lapply(ic_croc_results_list, function(x) rbindlist(lapply(x, function(y) y$emmeans), fill = TRUE))
+ic_croc_emmeans_df_combined <- rbindlist(ic_croc_emmeans_df_list, fill = TRUE)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ic_croc_model_df_combined, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/IC/ic_attempt_scrna_mm_model_combined.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ic_croc_emmeans_df_combined, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/IC/ic_attempt_scrna_mm_emmeans_combined.rds')
+
+## keep converged model results only
+ic_croc_model_filtered <- ic_croc_model_df_combined %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+ic_croc_emmeans_filtered <- ic_croc_emmeans_df_combined %>%
+  filter(Gene %in% ic_croc_model_filtered$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## non-converged genes percentage
+ic_croc_nonconverged_genes <- unique((ic_croc_model_df_combined %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene)
+ic_croc_nonconverged_percentage <- (length(unique(ic_croc_nonconverged_genes))/length(unique(ic_croc_model_df_combined$Gene)))*100
+print(paste0("IC, CROC, nonconverged: ", ic_croc_nonconverged_percentage, "%"))
+```
+
+### Targeted approach (using CROCODILE HC vs. CROCODILE T1D)
+#### Model 3
+```{r echo = F}
+# ATTEMPT model output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "IC/3/ic_attempt_scrna_mm_model_combined_3.rds", temp_file)
+ic_attempt_model_df_mod3 <- readRDS(temp_file)
+
+# ATTEMPT emmeans output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "IC/3/ic_attempt_scrna_mm_emmeans_combined_3.rds", temp_file)
+ic_attempt_emmeans_df_mod3 <- readRDS(temp_file)
+
+## keep converged model results only
+ic_attempt_model_filtered_mod3 <- ic_attempt_model_df_mod3 %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+ic_attempt_emmeans_filtered_mod3 <- ic_attempt_emmeans_df_mod3 %>%
+  filter(Gene %in% ic_attempt_model_filtered_mod3$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+ic_croc_sig_mod3 <- subset(ic_croc_model_filtered, Variable == "GroupType_1_Diabetes" & PValue < 0.05)
+ic_croc_sig_genes_mod3 <- ic_croc_sig_mod3$Gene
+
+ic_attempt_sig_mod3 <- subset(ic_attempt_model_filtered_mod3, Gene %in% ic_croc_sig_genes_mod3 )
+ic_attempt_sig_emmeans_mod3 <- subset(ic_attempt_emmeans_filtered_mod3, Gene %in% ic_croc_sig_genes_mod3)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ic_attempt_sig_mod3, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/IC/ic_attempt_croc_sig_mod3.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ic_attempt_sig_emmeans_mod3, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/IC/ic_attempt_croc_sig_emmeans_mod3.rds')
+```
+
+#### Model 4
+```{r echo = F}
+# ATTEMPT model output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "IC/4/ic_attempt_scrna_mm_model_combined_4.rds", temp_file)
+ic_attempt_model_df_mod4 <- readRDS(temp_file)
+
+# ATTEMPT emmeans output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "IC/4/ic_attempt_scrna_mm_emmeans_combined_4.rds", temp_file)
+ic_attempt_emmeans_df_mod4 <- readRDS(temp_file)
+
+## keep converged model results only
+ic_attempt_model_filtered_mod4 <- ic_attempt_model_df_mod4 %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+ic_attempt_emmeans_filtered_mod4 <- ic_attempt_emmeans_df_mod4 %>%
+  filter(Gene %in% ic_attempt_model_filtered_mod4$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+ic_croc_sig_mod4 <- subset(ic_croc_model_filtered, Variable == "GroupType_1_Diabetes" & PValue < 0.05)
+ic_croc_sig_genes_mod4 <- ic_croc_sig_mod4$Gene
+
+ic_attempt_sig_mod4 <- subset(ic_attempt_model_filtered_mod4, Gene %in% ic_croc_sig_genes_mod4 )
+ic_attempt_sig_emmeans_mod4 <- subset(ic_attempt_emmeans_filtered_mod4, Gene %in% ic_croc_sig_genes_mod4)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ic_attempt_sig_mod4, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/IC/ic_attempt_croc_sig_mod4.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ic_attempt_sig_emmeans_mod4, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/IC/ic_attempt_croc_sig_emmeans_mod4.rds')
+```
+
+### Targeted approach with ATTEMPT (HC vs. baseline T1D)
+
+#### Model 3
+```{r echo = F}
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+ic_attempt_sig_mod3 <- subset(ic_attempt_model_filtered_mod3, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)
+ic_attempt_sig_genes_mod3 <- ic_attempt_sig_mod3$Gene
+
+ic_croc_sig_target_subset <- subset(ic_croc_model_filtered, Gene %in% ic_attempt_sig_genes_mod3)
+ic_croc_sig_emmeans_target_subset <- subset(ic_croc_emmeans_filtered, Gene %in% ic_attempt_sig_genes_mod3)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ic_croc_sig_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/IC/ic_attempt_croc_sig_target_subset_mod3.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ic_croc_sig_emmeans_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/IC/ic_attempt_croc_sig_emmeans_target_subset_mod3.rds')
+
+rm(list = ls(pattern = "^ic_croc_sc_data_"))
+```
+
+#### Model 4
+```{r echo = F}
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+ic_attempt_sig_mod4 <- subset(ic_attempt_model_filtered_mod4, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)
+ic_attempt_sig_genes_mod4 <- ic_attempt_sig_mod4$Gene
+
+ic_croc_sig_target_subset <- subset(ic_croc_model_filtered, Gene %in% ic_attempt_sig_genes_mod4)
+ic_croc_sig_emmeans_target_subset <- subset(ic_croc_emmeans_filtered, Gene %in% ic_attempt_sig_genes_mod4)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ic_croc_sig_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/IC/ic_attempt_croc_sig_target_subset_mod4.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(ic_croc_sig_emmeans_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/IC/ic_attempt_croc_sig_emmeans_target_subset_mod4.rds')
+
+rm(list = ls(pattern = "^ic_croc_sc_data_"))
+```
+
+## Immune
+### Untargeted approach with CROC (HC vs. T1D)
+```{r echo = F}
+so_croc$celltype_immune <- ifelse(so_croc$celltype_harmony %in% c("MON", "MAC", "T", "B", "NKT/NKC"),
+                                     "Immune", as.character(so_croc$celltype_harmony))
+so_croc_immune <- subset(so_croc, celltype_immune == "Immune")
+```
+
+```{r echo = F}
+# Subset Seurat object to retain only these genes
+immune_expr_matrix <- as.matrix(GetAssayData(so_croc_immune, layer = "data"))
+immune_expr_df <- as.data.frame(as.table(as.matrix(immune_expr_matrix)))
+colnames(immune_expr_df) <- c("Gene", "Cell", "Expression")
+
+immune_croc_sc_data <- data.frame(Gene = immune_expr_df$Gene,
+                              Cell = immune_expr_df$Cell,
+                              Group = so_croc_immune@meta.data$group,
+                              Subject = so_croc_immune@meta.data$record_id,
+                              Expression = as.vector(immune_expr_df$Expression))
+```
+
+```{r echo = F}
+# set up batches (of 1000)
+genes_list <- list()
+batch_size <- 1000
+breakpoints <- c(seq(1, 29001, by = batch_size), length(genes_to_keep) + 1)
+for (i in 1:30) {
+  genes_list[[i]] <- genes_to_keep[breakpoints[i]:(breakpoints[i + 1] - 1)]
+}
+names(genes_list) <- paste0("genes_", 1:30)
+list2env(genes_list, envir = .GlobalEnv)
+remove(genes_list)
+
+immune_croc_sc_data_list <- list()
+for (i in 1:30) {
+  immune_croc_sc_data_list[[i]] <- subset(immune_croc_sc_data, Gene %in% get(paste0("genes_", i)))
+}
+names(immune_croc_sc_data_list) <- paste0("immune_croc_sc_data_", 1:30)
+list2env(immune_croc_sc_data_list, envir = .GlobalEnv)
+remove(immune_croc_sc_data_list)
+```
+
+```{r echo = F}
+plan(multisession, workers = 120)
+
+# Define the number of batches
+num_batches <- 30
+
+# Initialize lists
+immune_croc_results_list <- vector("list", num_batches)
+# Start loop
+for (i in 1:num_batches) {
+
+  start_time <- Sys.time()
+  print(start_time)
+
+  # Apply the model function to the genes in the current batch
+  immune_croc_results_list[[i]] <- future_lapply(get(paste0("genes_", i)), fit_model_croc, sc_dat = get(paste0("immune_croc_sc_data_", i)))
+
+  # Save results temporarily
+  temp_file <- tempfile(fileext = ".rds")
+  saveRDS(immune_croc_results_list[[i]], temp_file)
+  
+  # Upload results to S3 with dynamic file naming
+  s3$upload_file(Filename = temp_file, 
+                 Bucket = "attempt", 
+                 Key = paste0("CROCODILE comparison analysis/Immune/immune_croc_scrna_mm_results_", i, ".rds"))
+  unlink(temp_file)
+  
+  end_time <- Sys.time()
+  print(paste0("Batch: ",i,", Time elapsed: ", end_time - start_time))  # Print time taken for each batch
+}
+
+```
+
+```{r echo = F}
+# Combine all model data tables into one
+immune_croc_model_df_list <- lapply(immune_croc_results_list, function(x) rbindlist(lapply(x, function(y) y$model), fill = TRUE))
+immune_croc_model_df_combined <- rbindlist(immune_croc_model_df_list, fill = TRUE)
+
+# Combine all emmeans data tables into one
+immune_croc_emmeans_df_list <- lapply(immune_croc_results_list, function(x) rbindlist(lapply(x, function(y) y$emmeans), fill = TRUE))
+immune_croc_emmeans_df_combined <- rbindlist(immune_croc_emmeans_df_list, fill = TRUE)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(immune_croc_model_df_combined, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/Immune/immune_attempt_scrna_mm_model_combined.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(immune_croc_emmeans_df_combined, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/Immune/immune_attempt_scrna_mm_emmeans_combined.rds')
+
+## keep converged model results only
+immune_croc_model_filtered <- immune_croc_model_df_combined %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+immune_croc_emmeans_filtered <- immune_croc_emmeans_df_combined %>%
+  filter(Gene %in% immune_croc_model_filtered$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## non-converged genes percentage
+immune_croc_nonconverged_genes <- unique((immune_croc_model_df_combined %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene)
+immune_croc_nonconverged_percentage <- (length(unique(immune_croc_nonconverged_genes))/length(unique(immune_croc_model_df_combined$Gene)))*100
+print(paste0("Immune, CROC, nonconverged: ", immune_croc_nonconverged_percentage, "%"))
+```
+
+### Targeted approach (using CROCODILE HC vs. CROCODILE T1D)
+#### Model 3
+```{r echo = F}
+# ATTEMPT model output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "Immune/3/immune_attempt_scrna_mm_model_combined_3.rds", temp_file)
+immune_attempt_model_df_mod3 <- readRDS(temp_file)
+
+# ATTEMPT emmeans output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "Immune/3/immune_attempt_scrna_mm_emmeans_combined_3.rds", temp_file)
+immune_attempt_emmeans_df_mod3 <- readRDS(temp_file)
+
+## keep converged model results only
+immune_attempt_model_filtered_mod3 <- immune_attempt_model_df_mod3 %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+immune_attempt_emmeans_filtered_mod3 <- immune_attempt_emmeans_df_mod3 %>%
+  filter(Gene %in% immune_attempt_model_filtered_mod3$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+immune_croc_sig_mod3 <- subset(immune_croc_model_filtered, Variable == "GroupType_1_Diabetes" & PValue < 0.05)
+immune_croc_sig_genes_mod3 <- immune_croc_sig_mod3$Gene
+
+immune_attempt_sig_mod3 <- subset(immune_attempt_model_filtered_mod3, Gene %in% immune_croc_sig_genes_mod3 )
+immune_attempt_sig_emmeans_mod3 <- subset(immune_attempt_emmeans_filtered_mod3, Gene %in% immune_croc_sig_genes_mod3)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(immune_attempt_sig_mod3, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/Immune/immune_attempt_croc_sig_mod3.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(immune_attempt_sig_emmeans_mod3, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/Immune/immune_attempt_croc_sig_emmeans_mod3.rds')
+```
+
+#### Model 4
+```{r echo = F}
+# ATTEMPT model output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "Immune/4/immune_attempt_scrna_mm_model_combined_4.rds", temp_file)
+immune_attempt_model_df_mod4 <- readRDS(temp_file)
+
+# ATTEMPT emmeans output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "Immune/4/immune_attempt_scrna_mm_emmeans_combined_4.rds", temp_file)
+immune_attempt_emmeans_df_mod4 <- readRDS(temp_file)
+
+## keep converged model results only
+immune_attempt_model_filtered_mod4 <- immune_attempt_model_df_mod4 %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+immune_attempt_emmeans_filtered_mod4 <- immune_attempt_emmeans_df_mod4 %>%
+  filter(Gene %in% immune_attempt_model_filtered_mod4$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+immune_croc_sig_mod4 <- subset(immune_croc_model_filtered, Variable == "GroupType_1_Diabetes" & PValue < 0.05)
+immune_croc_sig_genes_mod4 <- immune_croc_sig_mod4$Gene
+
+immune_attempt_sig_mod4 <- subset(immune_attempt_model_filtered_mod4, Gene %in% immune_croc_sig_genes_mod4 )
+immune_attempt_sig_emmeans_mod4 <- subset(immune_attempt_emmeans_filtered_mod4, Gene %in% immune_croc_sig_genes_mod4)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(immune_attempt_sig_mod4, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/Immune/immune_attempt_croc_sig_mod4.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(immune_attempt_sig_emmeans_mod4, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/Immune/immune_attempt_croc_sig_emmeans_mod4.rds')
+```
+
+### Targeted approach with ATTEMPT (HC vs. baseline T1D)
+
+#### Model 3
+```{r echo = F}
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+immune_attempt_sig_mod3 <- subset(immune_attempt_model_filtered_mod3, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)
+immune_attempt_sig_genes_mod3 <- immune_attempt_sig_mod3$Gene
+
+immune_croc_sig_target_subset <- subset(immune_croc_model_filtered, Gene %in% immune_attempt_sig_genes_mod3)
+immune_croc_sig_emmeans_target_subset <- subset(immune_croc_emmeans_filtered, Gene %in% immune_attempt_sig_genes_mod3)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(immune_croc_sig_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/Immune/immune_attempt_croc_sig_target_subset_mod3.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(immune_croc_sig_emmeans_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/Immune/immune_attempt_croc_sig_emmeans_target_subset_mod3.rds')
+
+rm(list = ls(pattern = "^immune_croc_sc_data_"))
+```
+
+#### Model 4
+```{r echo = F}
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+immune_attempt_sig_mod4 <- subset(immune_attempt_model_filtered_mod4, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)
+immune_attempt_sig_genes_mod4 <- immune_attempt_sig_mod4$Gene
+
+immune_croc_sig_target_subset <- subset(immune_croc_model_filtered, Gene %in% immune_attempt_sig_genes_mod4)
+immune_croc_sig_emmeans_target_subset <- subset(immune_croc_emmeans_filtered, Gene %in% immune_attempt_sig_genes_mod4)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(immune_croc_sig_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/Immune/immune_attempt_croc_sig_target_subset_mod4.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(immune_croc_sig_emmeans_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/Immune/immune_attempt_croc_sig_emmeans_target_subset_mod4.rds')
+
+rm(list = ls(pattern = "^immune_croc_sc_data_"))
+```
+
+## VSMC/MC/FIB
+### Untargeted approach with CROC (HC vs. T1D)
+```{r echo = F}
+so_croc$celltype_fibvsmc <- ifelse(so_croc$celltype_harmony %in% c("VSMC/MC/FIB"),
+                                     "FIBVSMC", as.character(so_croc$celltype_harmony))
+so_croc_fibvsmcp <- subset(so_croc, celltype_fibvsmc == "FIBVSMC")
+```
+
+```{r echo = F}
+# Subset Seurat object to retain only these genes
+fibvsmcp_expr_matrix <- as.matrix(GetAssayData(so_croc_fibvsmcp, layer = "data"))
+fibvsmcp_expr_df <- as.data.frame(as.table(as.matrix(fibvsmcp_expr_matrix)))
+colnames(fibvsmcp_expr_df) <- c("Gene", "Cell", "Expression")
+
+fibvsmcp_croc_sc_data <- data.frame(Gene = fibvsmcp_expr_df$Gene,
+                              Cell = fibvsmcp_expr_df$Cell,
+                              Group = so_croc_fibvsmcp@meta.data$group,
+                              Subject = so_croc_fibvsmcp@meta.data$record_id,
+                              Expression = as.vector(fibvsmcp_expr_df$Expression))
+```
+
+```{r echo = F}
+# set up batches (of 1000)
+genes_list <- list()
+batch_size <- 1000
+breakpoints <- c(seq(1, 29001, by = batch_size), length(genes_to_keep) + 1)
+for (i in 1:30) {
+  genes_list[[i]] <- genes_to_keep[breakpoints[i]:(breakpoints[i + 1] - 1)]
+}
+names(genes_list) <- paste0("genes_", 1:30)
+list2env(genes_list, envir = .GlobalEnv)
+remove(genes_list)
+
+fibvsmcp_croc_sc_data_list <- list()
+for (i in 1:30) {
+  fibvsmcp_croc_sc_data_list[[i]] <- subset(fibvsmcp_croc_sc_data, Gene %in% get(paste0("genes_", i)))
+}
+names(fibvsmcp_croc_sc_data_list) <- paste0("fibvsmcp_croc_sc_data_", 1:30)
+list2env(fibvsmcp_croc_sc_data_list, envir = .GlobalEnv)
+remove(fibvsmcp_croc_sc_data_list)
+```
+
+```{r echo = F}
+plan(multisession, workers = 120)
+
+# Define the number of batches
+num_batches <- 30
+
+# Initialize lists
+fibvsmcp_croc_results_list <- vector("list", num_batches)
+# Start loop
+for (i in 1:num_batches) {
+
+  start_time <- Sys.time()
+  print(start_time)
+
+  # Apply the model function to the genes in the current batch
+  fibvsmcp_croc_results_list[[i]] <- future_lapply(get(paste0("genes_", i)), fit_model_croc, sc_dat = get(paste0("fibvsmcp_croc_sc_data_", i)))
+
+  # Save results temporarily
+  temp_file <- tempfile(fileext = ".rds")
+  saveRDS(fibvsmcp_croc_results_list[[i]], temp_file)
+  
+  # Upload results to S3 with dynamic file naming
+  s3$upload_file(Filename = temp_file, 
+                 Bucket = "attempt", 
+                 Key = paste0("CROCODILE comparison analysis/FIBVSMCP/fibvsmcp_croc_scrna_mm_results_", i, ".rds"))
+  unlink(temp_file)
+  
+  end_time <- Sys.time()
+  print(paste0("Batch: ",i,", Time elapsed: ", end_time - start_time))  # Print time taken for each batch
+}
+
+```
+
+```{r echo = F}
+# Combine all model data tables into one
+fibvsmcp_croc_model_df_list <- lapply(fibvsmcp_croc_results_list, function(x) rbindlist(lapply(x, function(y) y$model), fill = TRUE))
+fibvsmcp_croc_model_df_combined <- rbindlist(fibvsmcp_croc_model_df_list, fill = TRUE)
+
+# Combine all emmeans data tables into one
+fibvsmcp_croc_emmeans_df_list <- lapply(fibvsmcp_croc_results_list, function(x) rbindlist(lapply(x, function(y) y$emmeans), fill = TRUE))
+fibvsmcp_croc_emmeans_df_combined <- rbindlist(fibvsmcp_croc_emmeans_df_list, fill = TRUE)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(fibvsmcp_croc_model_df_combined, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/FIBVSMCP/fibvsmcp_attempt_scrna_mm_model_combined.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(fibvsmcp_croc_emmeans_df_combined, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/FIBVSMCP/fibvsmcp_attempt_scrna_mm_emmeans_combined.rds')
+
+## keep converged model results only
+fibvsmcp_croc_model_filtered <- fibvsmcp_croc_model_df_combined %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+fibvsmcp_croc_emmeans_filtered <- fibvsmcp_croc_emmeans_df_combined %>%
+  filter(Gene %in% fibvsmcp_croc_model_filtered$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## non-converged genes percentage
+fibvsmcp_croc_nonconverged_genes <- unique((fibvsmcp_croc_model_df_combined %>%
+  group_by(Gene) %>%
+  filter(all(is.na(PValue))))$Gene)
+fibvsmcp_croc_nonconverged_percentage <- (length(unique(fibvsmcp_croc_nonconverged_genes))/length(unique(fibvsmcp_croc_model_df_combined$Gene)))*100
+print(paste0("FIBVSMCP, CROC, nonconverged: ", fibvsmcp_croc_nonconverged_percentage, "%"))
+```
+
+### Targeted approach (using CROCODILE HC vs. CROCODILE T1D)
+#### Model 3
+```{r echo = F}
+# ATTEMPT model output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "FIBVSMCP/3/fibvsmcp_attempt_scrna_mm_model_combined_3.rds", temp_file)
+fibvsmcp_attempt_model_df_mod3 <- readRDS(temp_file)
+
+# ATTEMPT emmeans output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "FIBVSMCP/3/fibvsmcp_attempt_scrna_mm_emmeans_combined_3.rds", temp_file)
+fibvsmcp_attempt_emmeans_df_mod3 <- readRDS(temp_file)
+
+## keep converged model results only
+fibvsmcp_attempt_model_filtered_mod3 <- fibvsmcp_attempt_model_df_mod3 %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+fibvsmcp_attempt_emmeans_filtered_mod3 <- fibvsmcp_attempt_emmeans_df_mod3 %>%
+  filter(Gene %in% fibvsmcp_attempt_model_filtered_mod3$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+fibvsmcp_croc_sig_mod3 <- subset(fibvsmcp_croc_model_filtered, Variable == "GroupType_1_Diabetes" & PValue < 0.05)
+fibvsmcp_croc_sig_genes_mod3 <- fibvsmcp_croc_sig_mod3$Gene
+
+fibvsmcp_attempt_sig_mod3 <- subset(fibvsmcp_attempt_model_filtered_mod3, Gene %in% fibvsmcp_croc_sig_genes_mod3 )
+fibvsmcp_attempt_sig_emmeans_mod3 <- subset(fibvsmcp_attempt_emmeans_filtered_mod3, Gene %in% fibvsmcp_croc_sig_genes_mod3)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(fibvsmcp_attempt_sig_mod3, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/FIBVSMCP/fibvsmcp_attempt_croc_sig_mod3.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(fibvsmcp_attempt_sig_emmeans_mod3, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/FIBVSMCP/fibvsmcp_attempt_croc_sig_emmeans_mod3.rds')
+```
+
+#### Model 4
+```{r echo = F}
+# ATTEMPT model output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "FIBVSMCP/4/fibvsmcp_attempt_scrna_mm_model_combined_4.rds", temp_file)
+fibvsmcp_attempt_model_df_mod4 <- readRDS(temp_file)
+
+# ATTEMPT emmeans output
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file("attempt", "FIBVSMCP/4/fibvsmcp_attempt_scrna_mm_emmeans_combined_4.rds", temp_file)
+fibvsmcp_attempt_emmeans_df_mod4 <- readRDS(temp_file)
+
+## keep converged model results only
+fibvsmcp_attempt_model_filtered_mod4 <- fibvsmcp_attempt_model_df_mod4 %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(PValue)))
+
+fibvsmcp_attempt_emmeans_filtered_mod4 <- fibvsmcp_attempt_emmeans_df_mod4 %>%
+  filter(Gene %in% fibvsmcp_attempt_model_filtered_mod4$Gene) %>%
+  group_by(Gene) %>%
+  filter(all(!is.na(SE)))
+
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+fibvsmcp_croc_sig_mod4 <- subset(fibvsmcp_croc_model_filtered, Variable == "GroupType_1_Diabetes" & PValue < 0.05)
+fibvsmcp_croc_sig_genes_mod4 <- fibvsmcp_croc_sig_mod4$Gene
+
+fibvsmcp_attempt_sig_mod4 <- subset(fibvsmcp_attempt_model_filtered_mod4, Gene %in% fibvsmcp_croc_sig_genes_mod4 )
+fibvsmcp_attempt_sig_emmeans_mod4 <- subset(fibvsmcp_attempt_emmeans_filtered_mod4, Gene %in% fibvsmcp_croc_sig_genes_mod4)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(fibvsmcp_attempt_sig_mod4, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/FIBVSMCP/fibvsmcp_attempt_croc_sig_mod4.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(fibvsmcp_attempt_sig_emmeans_mod4, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/FIBVSMCP/fibvsmcp_attempt_croc_sig_emmeans_mod4.rds')
+```
+
+### Targeted approach with ATTEMPT (HC vs. baseline T1D)
+
+#### Model 3
+```{r echo = F}
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+fibvsmcp_attempt_sig_mod3 <- subset(fibvsmcp_attempt_model_filtered_mod3, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)
+fibvsmcp_attempt_sig_genes_mod3 <- fibvsmcp_attempt_sig_mod3$Gene
+
+fibvsmcp_croc_sig_target_subset <- subset(fibvsmcp_croc_model_filtered, Gene %in% fibvsmcp_attempt_sig_genes_mod3)
+fibvsmcp_croc_sig_emmeans_target_subset <- subset(fibvsmcp_croc_emmeans_filtered, Gene %in% fibvsmcp_attempt_sig_genes_mod3)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(fibvsmcp_croc_sig_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/FIBVSMCP/fibvsmcp_attempt_croc_sig_target_subset_mod3.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(fibvsmcp_croc_sig_emmeans_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/FIBVSMCP/fibvsmcp_attempt_croc_sig_emmeans_target_subset_mod3.rds')
+
+rm(list = ls(pattern = "^fibvsmcp_croc_sc_data_"))
+```
+
+#### Model 4
+```{r echo = F}
+## subset the ATTEMPT model based on significance from CROCODILE (HC vs. T1D)
+fibvsmcp_attempt_sig_mod4 <- subset(fibvsmcp_attempt_model_filtered_mod4, Variable == "TreatmentDapagliflozin:VisitPOST" & PValue < 0.05)
+fibvsmcp_attempt_sig_genes_mod4 <- fibvsmcp_attempt_sig_mod4$Gene
+
+fibvsmcp_croc_sig_target_subset <- subset(fibvsmcp_croc_model_filtered, Gene %in% fibvsmcp_attempt_sig_genes_mod4)
+fibvsmcp_croc_sig_emmeans_target_subset <- subset(fibvsmcp_croc_emmeans_filtered, Gene %in% fibvsmcp_attempt_sig_genes_mod4)
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(fibvsmcp_croc_sig_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/FIBVSMCP/fibvsmcp_attempt_croc_sig_target_subset_mod4.rds')
+
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(fibvsmcp_croc_sig_emmeans_target_subset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/FIBVSMCP/fibvsmcp_attempt_croc_sig_emmeans_target_subset_mod4.rds')
+
+rm(list = ls(pattern = "^fibvsmcp_croc_sc_data_"))
+```
