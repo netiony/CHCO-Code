@@ -716,11 +716,225 @@ data$group <- relevel(data$group,ref="Lean_Control")
 
 ```
 
+#Marginal Means
+```{r}
+# Register parallel backend
+cores <- parallel::detectCores() - 1
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+
+# Gene list (already set in your script)
+gene_names <- unique(gene_list_total)
+
+# Function to calculate marginal logFC from ZINB model
+get_marginal_logfc <- function(model, group_levels = c("Lean_Control", "Type_2_Diabetes")) {
+  newdata <- data.frame(group = group_levels, kit_id = NA)
+  mu <- predict(model, newdata, type = "response", allow.new.levels = TRUE)
+  zi <- predict(model, newdata, type = "zprob", allow.new.levels = TRUE)
+  marg_means <- (1 - zi) * mu
+  log(marg_means[2] / marg_means[1])  # logFC = T2D vs. Control
+}
+
+# Bootstrap function for null model
+bootstrap_logfc <- function(model_null, data, gene, n_boot = 100) {
+  foreach(i = 1:n_boot, .combine = c, .packages = "glmmTMB") %dopar% {
+    sim_data <- data
+    sim_data[[gene]] <- simulate(model_null)[[1]]
+
+    tryCatch({
+      suppressWarnings({
+        model_boot <- glmmTMB(
+          as.formula(paste0(gene, " ~ group + (1 | kit_id)")),
+          ziformula = ~1,
+          family = nbinom2,
+          data = sim_data
+        )
+        if (!is.null(model_boot$sdr) && all(model_boot$sdr$pdHess, na.rm = TRUE)) {
+          get_marginal_logfc(model_boot)
+        } else {
+          NA
+        }
+      })
+    }, error = function(e) NA)
+  } %>% na.omit()
+}
+
+results <- foreach(gene = gene_names, .combine = rbind, .packages = c("glmmTMB", "dplyr","doParallel")) %dopar% {
+  formula_full <- as.formula(paste0(gene, " ~ group + (1 | kit_id)"))
+  formula_null <- as.formula(paste0(gene, " ~ 1 + (1 | kit_id)"))
+
+  model_full <- tryCatch(suppressWarnings(glmmTMB(
+    formula_full,
+    ziformula = ~1,
+    family = nbinom2,
+    data = data
+  )), error = function(e) NULL)
+
+  model_null <- tryCatch(suppressWarnings(glmmTMB(
+    formula_null,
+    ziformula = ~1,
+    family = nbinom2,
+    data = data
+  )), error = function(e) NULL)
+
+  if (!is.null(model_full) && !is.null(model_full$sdr) && all(model_full$sdr$pdHess, na.rm = TRUE) &&
+      !is.null(model_null) && !is.null(model_null$sdr) && all(model_null$sdr$pdHess, na.rm = TRUE)) {
+    
+    obs_logfc <- get_marginal_logfc(model_full)
+    boot_logfcs <- bootstrap_logfc(model_null, data, gene, n_boot = 100)
+
+    p_val <- if (length(boot_logfcs) > 0) {
+      mean(abs(boot_logfcs) >= abs(obs_logfc))
+    } else {
+      NA
+    }
+
+    data.frame(gene = gene, obs_logfc = obs_logfc, p_val = p_val)
+  } else {
+    data.frame(gene = gene, obs_logfc = NA, p_val = NA)
+  }
+}
+
+results$fdr <- p.adjust(results$p_val, method = "fdr")
+print(results)
+stopCluster(cl)
+
+#Save Results
+write.csv(results,fs::path(dir.results,"PT_Cells_zinb_unadj.csv"))
+
+#Format for volcano plot
+results$color <- ifelse(results$fdr < 0.05 & results$obs_logfc > 0, "lightcoral",
+                             ifelse(results$fdr < 0.05 & results$obs_logfc < 0, "lightblue", "gray"))
+
+# Identify significant points (fdr < 0.05)
+significant_df <- results[results$fdr < 0.05, ]
+
+
+Genes <- length(unique(results$gene))
+Cells <- ncol(so_celltype)
+
+Nonconvergence_Rate <- paste0((length(unique(results$gene[which(is.na(results$obs_logfc))],results$gene[which(is.na(results$p_val))]))/length(gene_names))*100,"%")
+
+#Figure Range
+max <- max(significant_df$obs_logfc,na.rm=T)
+min <- min(significant_df$obs_logfc,na.rm=T)
+
+# ggplot(results, aes(x = obs_logfc, y = -log10(fdr))) +
+volcano_plot <- ggplot(results, aes(x = obs_logfc, y = -log10(fdr), color = color)) +
+  geom_point(alpha = 0.7) +  # Plot points with transparency
+  scale_color_identity() +  # Use the color column directly
+  theme_minimal() +  # Minimal theme
+  labs(
+    title = "Type 2 Diabetes vs. Lean Controls",
+    subtitle = "PT Cells, Unadjusted Model",
+    x = "Fold Change",
+    y = "-log10(P-Value)",
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,", Non-Convergence Rate: ",Nonconvergence_Rate)
+  ) +
+  # xlim(min,max)+
+  # ylim(0,2)+
+  theme(
+    plot.title = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 0, hjust = 1)
+  )+
+  # # Add labels for significant points
+  geom_text(data = significant_df, aes(label = gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+
+volcano_plot
+pdf(fs::path(dir.results,"Plot_PT_Cells_T2D_LC_unadj_zinb.pdf"),width=10,height=7)
+print(volcano_plot)
+dev.off()
+
+```
+
+
 ```{r}
 
-plan(multisession, workers = parallel::detectCores() - 1)  # or `multicore` on Linux
+# plan(multisession, workers = parallel::detectCores() - 1)  # or `multicore` on Linux
+# 
+# fit_zinb_model <- function(gene, data) {
+#   if (sum(data[[gene]], na.rm = TRUE) > 0) {
+#     formula_str <- paste0(gene, " ~ group + (1 | kit_id)")
+#     model_formula <- as.formula(formula_str)
+# 
+#     model <- tryCatch({
+#       glmmTMB(
+#         model_formula,
+#         ziformula = ~1,
+#         family = nbinom2,
+#         data = data
+#       )
+#     }, error = function(e) NULL)
+# 
+#     return(list(gene = gene, model = model))
+#   } else {
+#     return(NULL)
+#   }
+# }
+# 
+# # Pick your gene list
+# gene_names <- unique(gene_list_total)[1:100]
+# 
+# # Run in parallel
+# zinb_model_list <- future_map(gene_names, fit_zinb_model, data = data, .progress = TRUE)
+# 
+# # Filter out NULLs and extract into a named list
+# zinb_models <- zinb_model_list %>%
+#   compact() %>%  # remove NULLs
+#   set_names(map_chr(., "gene")) %>%
+#   map("model")
+# 
+# predict_gene <- function(gene, model, data) {
+#   tryCatch({
+#     eta_count <- predict(model, type = "link")
+#     mu_hat <- exp(eta_count)
+# 
+#     eta_zero <- predict(model, type = "zlink")
+#     pi_hat <- plogis(eta_zero)
+# 
+#     expected_y <- (1 - pi_hat) * mu_hat
+# 
+#     tibble(
+#       sample = rownames(data),
+#       gene = gene,
+#       observed = data[[gene]],
+#       mu_hat = mu_hat,
+#       pi_hat = pi_hat,
+#       expected_y = expected_y
+#     )
+#   }, error = function(e) NULL)
+# }
+# 
+# genes <- names(zinb_models)
+# models <- zinb_models
+# 
+# prediction_results <- future_map2(
+#   genes,
+#   models,
+#   ~ predict_gene(.x, .y, data),
+#   .progress = TRUE
+# )
+# 
+# # Remove NULLs and bind results
+# zinb_predictions <- prediction_results %>%
+#   compact() %>%
+#   bind_rows()
+# # 
+# # 
 
-fit_zinb_model <- function(gene, data) {
+# Detect number of available cores
+n_cores <- parallel::detectCores(logical = FALSE)
+cl <- makeCluster(n_cores)
+registerDoParallel(cl)
+
+gene_names <- unique(gene_list_total)[1:20]
+
+zinb_models <- foreach(gene = gene_names, .combine = 'c', .packages = c('glmmTMB', 'dplyr')) %dopar% {
   if (sum(data[[gene]], na.rm = TRUE) > 0) {
     formula_str <- paste0(gene, " ~ group + (1 | kit_id)")
     model_formula <- as.formula(formula_str)
@@ -734,28 +948,99 @@ fit_zinb_model <- function(gene, data) {
       )
     }, error = function(e) NULL)
 
-    return(list(gene = gene, model = model))
-  } else {
-    return(NULL)
+    if (!is.null(model)) {
+      # Check convergence
+      if (all(model$sdr$pdHess, na.rm = TRUE)) {
+        return(setNames(list(model), gene))
+      }
+    }
   }
+
+  # Do not return anything if model failed or didn't converge
+  NULL
 }
 
-# Pick your gene list
-gene_names <- unique(gene_list_total)[1:500]
-
-# Run in parallel
-zinb_model_list <- future_map(gene_names, fit_zinb_model, data = data, .progress = TRUE)
-
-# Filter out NULLs and extract into a named list
-zinb_models <- zinb_model_list %>%
-  compact() %>%  # remove NULLs
-  set_names(map_chr(., "gene")) %>%
-  map("model")
 
 
-# 
-# 
-# # Get list of gene names 
+# Flatten named list
+# zinb_models2 <- do.call(c, zinb_models)
+# names(zinb_models)
+prediction_results <- foreach(gene = names(zinb_models), .combine = 'c', .packages = c('dplyr')) %dopar% {
+
+  # Unwrap the actual model object
+  model <- zinb_models[gene][[1]]
+
+  eta_count <- predict(model, type = "link")
+  mu_hat <- exp(eta_count)
+
+  eta_zero <- predict(model, type = "zlink")
+  pi_hat <- plogis(eta_zero)
+
+  expected_y <- (1 - pi_hat) * mu_hat
+
+  list(setNames(list(data.frame(
+    sample = rownames(data),
+    gene = gene,
+    observed = data[[gene]],
+    mu_hat = mu_hat,
+    pi_hat = pi_hat,
+    expected_y = expected_y
+  )), gene))
+}
+
+
+# Flatten prediction list
+prediction_results <- do.call(c, prediction_results)
+zinb_predictions <- bind_rows(prediction_results)
+
+# ---- Define globally BEFORE parallel section ----
+boot_fun <- function(data, i) {
+  d <- data[i, ]
+  mean(d$expected_y[d$group == "Type_2_Diabetes"]) -
+    mean(d$expected_y[d$group == "Lean_Control"])
+}
+
+bootstrap_gene <- function(gene_data, R = 1000) {
+  b <- boot(data = gene_data, statistic = boot_fun, R = R)
+
+  est_diff <- mean(gene_data$expected_y[gene_data$group == "Type_2_Diabetes"]) -
+              mean(gene_data$expected_y[gene_data$group == "Lean_Control"])
+
+  pval <- mean(abs(b$t) >= abs(est_diff))
+
+  ci <- tryCatch({
+    boot.ci(b, type = "perc")$percent[4:5]
+  }, error = function(e) c(NA, NA))
+
+  tibble(
+    gene = unique(gene_data$gene),
+    log2FoldChange = log2(
+      mean(gene_data$expected_y[gene_data$group == "Type_2_Diabetes"]) /
+      mean(gene_data$expected_y[gene_data$group == "Lean_Control"])
+    ),
+    pvalue = pval,
+    ci_lower = ci[1],
+    ci_upper = ci[2]
+  )
+}
+
+
+bootstrap_results <- foreach(
+  gene_data = group_split(group_by(zinb_predictions, gene)),
+  .combine = 'rbind',
+  .packages = c('boot', 'tibble', 'dplyr'),
+  .export = c('bootstrap_gene', 'boot_fun')  # 👈 explicitly export your functions
+) %dopar% {
+  bootstrap_gene(gene_data)
+}
+
+
+bootstrap_results <- bootstrap_results %>%
+  mutate(padj = p.adjust(pvalue, method = "fdr"))
+
+stopCluster(cl)
+
+# # Get list of gene names
 # gene_names <- unique(gene_list_total)[1:500]
 # # gene_names <- gene_list_total[1]
 # # Loop through each gene
@@ -779,53 +1064,33 @@ zinb_models <- zinb_model_list %>%
 #     }
 #   }
 # }
+# List to store prediction results
+prediction_results <- list()
 
-predict_gene <- function(gene, model, data) {
-  tryCatch({
-    eta_count <- predict(model, type = "link")
-    mu_hat <- exp(eta_count)
+for (gene in names(zinb_models)) {
+  model <- zinb_models[[gene]]
 
-    eta_zero <- predict(model, type = "zlink")
-    pi_hat <- plogis(eta_zero)
+  # Predictions
+  eta_count <- predict(model, type = "link")
+  mu_hat <- exp(eta_count)
 
-    expected_y <- (1 - pi_hat) * mu_hat
+  eta_zero <- predict(model, type = "zlink")
+  pi_hat <- plogis(eta_zero)
 
-    tibble(
-      sample = rownames(data),
-      gene = gene,
-      observed = data[[gene]],
-      mu_hat = mu_hat,
-      pi_hat = pi_hat,
-      expected_y = expected_y
-    )
-  }, error = function(e) NULL)
+  expected_y <- (1 - pi_hat) * mu_hat
+
+  # Save in a data frame
+  prediction_results[[gene]] <- data.frame(
+    sample = rownames(data),
+    gene = gene,
+    observed = data[[gene]],
+    mu_hat = mu_hat,
+    pi_hat = pi_hat,
+    expected_y = expected_y
+  )
 }
 
-# # List to store prediction results
-# prediction_results <- list()
-# 
-# for (gene in names(zinb_models)) {
-#   model <- zinb_models[[gene]]
-# 
-#   # Predictions
-#   eta_count <- predict(model, type = "link")
-#   mu_hat <- exp(eta_count)
-# 
-#   eta_zero <- predict(model, type = "zlink")
-#   pi_hat <- plogis(eta_zero)
-# 
-#   expected_y <- (1 - pi_hat) * mu_hat
-# 
-#   # Save in a data frame
-#   prediction_results[[gene]] <- data.frame(
-#     sample = rownames(data),
-#     gene = gene,
-#     observed = data[[gene]],
-#     mu_hat = mu_hat,
-#     pi_hat = pi_hat,
-#     expected_y = expected_y
-#   )
-# }
+
 
 # Combine predictions into a single data frame
 zinb_predictions <- bind_rows(prediction_results)
@@ -1931,6 +2196,231 @@ dev.off()
 
 ##b. aPT 
 ### i. Mixed Effect Model 
+```{r}
+#subset to just PT Cells
+so_celltype <- subset(so_kpmp_sc_hvg,KPMP_celltype=="aPT")
+ncol(so_celltype) #564 cells
+nrow(so_celltype) #2000 hvg genes
+
+#Access the raw count matrix
+raw_counts <- GetAssayData(so_celltype, layer = "counts")
+
+# Step 2: Apply ceiling manually for sparse matrix (dgCMatrix)
+raw_counts_rounded <- raw_counts
+raw_counts_rounded@x <- ceiling(raw_counts@x)
+
+# Step 3: Extract the full gene expression matrix (rounded up counts)
+expr_matrix <- as.matrix(raw_counts_rounded)
+
+# Optional: view subset
+expr_matrix[1:5, 1:5]
+
+#View how round up looks
+# Step 1: Randomly select a few genes for visualization (e.g., top 50 or random)
+selected_genes <- sample(rownames(raw_counts_rounded), 25)  # Random 50 genes
+
+# Step 2: Get the expression data for those genes (rounded counts)
+selected_data <- as.matrix(raw_counts_rounded[selected_genes, ])
+
+# Convert matrix to data.frame
+df_selected_data <- as.data.frame(t(selected_data))  # Transpose so that genes are columns
+
+# 2. **Boxplot** for raw counts of selected genes across cells (to see distribution)
+df_selected_data_long <- reshape2::melt(df_selected_data)  # Convert to long format
+
+ggplot(df_selected_data_long, aes(x = variable, y = value, fill = variable)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of Selected Genes' Counts", x = "Genes", y = "Count") +
+  theme_minimal()+
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+    # legend.position = "none"
+  )+
+  scale_fill_discrete(name = "Random 20 Genes")
+
+# 3. **Heatmap** of raw counts (scaled by genes) for a few cells (e.g., top 50 cells)
+top_cells <- sample(colnames(raw_counts_rounded), 50)  # Random 50 cells
+heatmap_data <- as.matrix(raw_counts_rounded[selected_genes, top_cells])
+
+# Plot heatmap
+pheatmap(heatmap_data, 
+         cluster_rows = FALSE, 
+         cluster_cols = FALSE, 
+         show_rownames = TRUE, 
+         show_colnames = FALSE,
+         main = "Heatmap of Gene Expression (Selected Genes & Cells)") 
+
+```
+
+```{r}
+#Check rownames and colnames: Rownames = genes, Colnames = cells
+# view(expr_matrix)
+#Transpose gene expression dataset to merge with metadata
+expr_matrix <- t(expr_matrix)
+expr_matrix <- data.frame(expr_matrix) #Make a dataframe again after transposing
+
+#Set gene list
+gene_list_total <- hvgs
+
+#Create cell variable to merge metadata in
+expr_matrix$cellname <- rownames(expr_matrix) 
+rownames(expr_matrix) <- NULL
+
+# Extract the metadata
+metadata <- so_celltype@meta.data
+
+#Create cell variable to merge metadata into gene expression data
+metadata$cellname <- rownames(metadata)
+rownames(metadata) <- NULL
+
+# Combine the gene expression data and metadata
+data <- tidylog::full_join(metadata,expr_matrix,by="cellname")
+rm(metadata,expr_matrix)
+
+#Prepare variables of interest for model
+data$medication <- factor(data$medication)
+data$group <- factor(data$group)
+data$group <- relevel(data$group,ref="Lean_Control")
+
+```
+
+#Marginal Means
+```{r}
+# Register parallel backend
+cores <- parallel::detectCores() - 1
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+
+# Gene list (already set in your script)
+gene_names <- unique(gene_list_total)
+
+# Function to calculate marginal logFC from ZINB model
+get_marginal_logfc <- function(model, group_levels = c("Lean_Control", "Type_2_Diabetes")) {
+  newdata <- data.frame(group = group_levels, kit_id = NA)
+  mu <- predict(model, newdata, type = "response", allow.new.levels = TRUE)
+  zi <- predict(model, newdata, type = "zprob", allow.new.levels = TRUE)
+  marg_means <- (1 - zi) * mu
+  log(marg_means[2] / marg_means[1])  # logFC = T2D vs. Control
+}
+
+# Bootstrap function for null model
+bootstrap_logfc <- function(model_null, data, gene, n_boot = 100) {
+  foreach(i = 1:n_boot, .combine = c, .packages = "glmmTMB") %dopar% {
+    sim_data <- data
+    sim_data[[gene]] <- simulate(model_null)[[1]]
+
+    tryCatch({
+      suppressWarnings({
+        model_boot <- glmmTMB(
+          as.formula(paste0(gene, " ~ group + (1 | kit_id)")),
+          ziformula = ~1,
+          family = nbinom2,
+          data = sim_data
+        )
+        if (!is.null(model_boot$sdr) && all(model_boot$sdr$pdHess, na.rm = TRUE)) {
+          get_marginal_logfc(model_boot)
+        } else {
+          NA
+        }
+      })
+    }, error = function(e) NA)
+  } %>% na.omit()
+}
+
+results <- foreach(gene = gene_names, .combine = rbind, .packages = c("glmmTMB", "dplyr","doParallel")) %dopar% {
+  formula_full <- as.formula(paste0(gene, " ~ group + (1 | kit_id)"))
+  formula_null <- as.formula(paste0(gene, " ~ 1 + (1 | kit_id)"))
+
+  model_full <- tryCatch(suppressWarnings(glmmTMB(
+    formula_full,
+    ziformula = ~1,
+    family = nbinom2,
+    data = data
+  )), error = function(e) NULL)
+
+  model_null <- tryCatch(suppressWarnings(glmmTMB(
+    formula_null,
+    ziformula = ~1,
+    family = nbinom2,
+    data = data
+  )), error = function(e) NULL)
+
+  if (!is.null(model_full) && !is.null(model_full$sdr) && all(model_full$sdr$pdHess, na.rm = TRUE) &&
+      !is.null(model_null) && !is.null(model_null$sdr) && all(model_null$sdr$pdHess, na.rm = TRUE)) {
+    
+    obs_logfc <- get_marginal_logfc(model_full)
+    boot_logfcs <- bootstrap_logfc(model_null, data, gene, n_boot = 100)
+
+    p_val <- if (length(boot_logfcs) > 0) {
+      mean(abs(boot_logfcs) >= abs(obs_logfc))
+    } else {
+      NA
+    }
+
+    data.frame(gene = gene, obs_logfc = obs_logfc, p_val = p_val)
+  } else {
+    data.frame(gene = gene, obs_logfc = NA, p_val = NA)
+  }
+}
+
+results$fdr <- p.adjust(results$p_val, method = "fdr")
+print(results)
+stopCluster(cl)
+
+#Save Results
+write.csv(results,fs::path(dir.results,"aPT_Cells_zinb_unadj.csv"))
+
+#Format for volcano plot
+results$color <- ifelse(results$fdr < 0.05 & results$obs_logfc > 0, "lightcoral",
+                             ifelse(results$fdr < 0.05 & results$obs_logfc < 0, "lightblue", "gray"))
+
+# Identify significant points (fdr < 0.05)
+significant_df <- results[results$fdr < 0.05, ]
+
+
+Genes <- length(unique(results$gene))
+Cells <- ncol(so_celltype)
+
+Nonconvergence_Rate <- paste0((length(unique(results$gene[which(is.na(results$obs_logfc))],results$gene[which(is.na(results$p_val))]))/length(gene_names))*100,"%")
+
+#Figure Range
+max <- max(significant_df$obs_logfc,na.rm=T)
+min <- min(significant_df$obs_logfc,na.rm=T)
+
+# ggplot(results, aes(x = obs_logfc, y = -log10(fdr))) +
+volcano_plot <- ggplot(results, aes(x = obs_logfc, y = -log10(fdr), color = color)) +
+  geom_point(alpha = 0.7) +  # Plot points with transparency
+  scale_color_identity() +  # Use the color column directly
+  theme_minimal() +  # Minimal theme
+  labs(
+    title = "Type 2 Diabetes vs. Lean Controls",
+    subtitle = "aPT Cells, Unadjusted Model",
+    x = "Fold Change",
+    y = "-log10(P-Value)",
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,", Non-Convergence Rate: ",Nonconvergence_Rate)
+  ) +
+  # xlim(min,max)+
+  # ylim(0,2)+
+  theme(
+    plot.title = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 0, hjust = 1)
+  )+
+  # # Add labels for significant points
+  geom_text(data = significant_df, aes(label = gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+
+volcano_plot
+pdf(fs::path(dir.results,"Plot_aPT_Cells_T2D_LC_unadj_zinb.pdf"),width=10,height=7)
+print(volcano_plot)
+dev.off()
+
+```
+
+
 #### a. Full Cov Set
 ```{r}
 so_celltype <- subset(so_kpmp_sc,KPMP_celltype=="aPT")
@@ -2939,6 +3429,231 @@ dev.off()
 
 ## c. PT-S1/S2 
 ### i. Mixed Effect Modeling 
+```{r}
+#subset to just PT Cells
+so_celltype <- subset(so_kpmp_sc_hvg,KPMP_celltype=="PT-S1/S2")
+ncol(so_celltype) #1489 cells
+nrow(so_celltype) #2000 hvg genes
+
+#Access the raw count matrix
+raw_counts <- GetAssayData(so_celltype, layer = "counts")
+
+# Step 2: Apply ceiling manually for sparse matrix (dgCMatrix)
+raw_counts_rounded <- raw_counts
+raw_counts_rounded@x <- ceiling(raw_counts@x)
+
+# Step 3: Extract the full gene expression matrix (rounded up counts)
+expr_matrix <- as.matrix(raw_counts_rounded)
+
+# Optional: view subset
+expr_matrix[1:5, 1:5]
+
+#View how round up looks
+# Step 1: Randomly select a few genes for visualization (e.g., top 50 or random)
+selected_genes <- sample(rownames(raw_counts_rounded), 25)  # Random 50 genes
+
+# Step 2: Get the expression data for those genes (rounded counts)
+selected_data <- as.matrix(raw_counts_rounded[selected_genes, ])
+
+# Convert matrix to data.frame
+df_selected_data <- as.data.frame(t(selected_data))  # Transpose so that genes are columns
+
+# 2. **Boxplot** for raw counts of selected genes across cells (to see distribution)
+df_selected_data_long <- reshape2::melt(df_selected_data)  # Convert to long format
+
+ggplot(df_selected_data_long, aes(x = variable, y = value, fill = variable)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of Selected Genes' Counts", x = "Genes", y = "Count") +
+  theme_minimal()+
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+    # legend.position = "none"
+  )+
+  scale_fill_discrete(name = "Random 20 Genes")
+
+# 3. **Heatmap** of raw counts (scaled by genes) for a few cells (e.g., top 50 cells)
+top_cells <- sample(colnames(raw_counts_rounded), 50)  # Random 50 cells
+heatmap_data <- as.matrix(raw_counts_rounded[selected_genes, top_cells])
+
+# Plot heatmap
+pheatmap(heatmap_data, 
+         cluster_rows = FALSE, 
+         cluster_cols = FALSE, 
+         show_rownames = TRUE, 
+         show_colnames = FALSE,
+         main = "Heatmap of Gene Expression (Selected Genes & Cells)") 
+
+```
+
+```{r}
+#Check rownames and colnames: Rownames = genes, Colnames = cells
+# view(expr_matrix)
+#Transpose gene expression dataset to merge with metadata
+expr_matrix <- t(expr_matrix)
+expr_matrix <- data.frame(expr_matrix) #Make a dataframe again after transposing
+
+#Set gene list
+gene_list_total <- hvgs
+
+#Create cell variable to merge metadata in
+expr_matrix$cellname <- rownames(expr_matrix) 
+rownames(expr_matrix) <- NULL
+
+# Extract the metadata
+metadata <- so_celltype@meta.data
+
+#Create cell variable to merge metadata into gene expression data
+metadata$cellname <- rownames(metadata)
+rownames(metadata) <- NULL
+
+# Combine the gene expression data and metadata
+data <- tidylog::full_join(metadata,expr_matrix,by="cellname")
+rm(metadata,expr_matrix)
+
+#Prepare variables of interest for model
+data$medication <- factor(data$medication)
+data$group <- factor(data$group)
+data$group <- relevel(data$group,ref="Lean_Control")
+
+```
+
+#Marginal Means
+```{r}
+# Register parallel backend
+cores <- parallel::detectCores() - 1
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+
+# Gene list (already set in your script)
+gene_names <- unique(gene_list_total)
+
+# Function to calculate marginal logFC from ZINB model
+get_marginal_logfc <- function(model, group_levels = c("Lean_Control", "Type_2_Diabetes")) {
+  newdata <- data.frame(group = group_levels, kit_id = NA)
+  mu <- predict(model, newdata, type = "response", allow.new.levels = TRUE)
+  zi <- predict(model, newdata, type = "zprob", allow.new.levels = TRUE)
+  marg_means <- (1 - zi) * mu
+  log(marg_means[2] / marg_means[1])  # logFC = T2D vs. Control
+}
+
+# Bootstrap function for null model
+bootstrap_logfc <- function(model_null, data, gene, n_boot = 100) {
+  foreach(i = 1:n_boot, .combine = c, .packages = "glmmTMB") %dopar% {
+    sim_data <- data
+    sim_data[[gene]] <- simulate(model_null)[[1]]
+
+    tryCatch({
+      suppressWarnings({
+        model_boot <- glmmTMB(
+          as.formula(paste0(gene, " ~ group + (1 | kit_id)")),
+          ziformula = ~1,
+          family = nbinom2,
+          data = sim_data
+        )
+        if (!is.null(model_boot$sdr) && all(model_boot$sdr$pdHess, na.rm = TRUE)) {
+          get_marginal_logfc(model_boot)
+        } else {
+          NA
+        }
+      })
+    }, error = function(e) NA)
+  } %>% na.omit()
+}
+
+results <- foreach(gene = gene_names, .combine = rbind, .packages = c("glmmTMB", "dplyr","doParallel")) %dopar% {
+  formula_full <- as.formula(paste0(gene, " ~ group + (1 | kit_id)"))
+  formula_null <- as.formula(paste0(gene, " ~ 1 + (1 | kit_id)"))
+
+  model_full <- tryCatch(suppressWarnings(glmmTMB(
+    formula_full,
+    ziformula = ~1,
+    family = nbinom2,
+    data = data
+  )), error = function(e) NULL)
+
+  model_null <- tryCatch(suppressWarnings(glmmTMB(
+    formula_null,
+    ziformula = ~1,
+    family = nbinom2,
+    data = data
+  )), error = function(e) NULL)
+
+  if (!is.null(model_full) && !is.null(model_full$sdr) && all(model_full$sdr$pdHess, na.rm = TRUE) &&
+      !is.null(model_null) && !is.null(model_null$sdr) && all(model_null$sdr$pdHess, na.rm = TRUE)) {
+    
+    obs_logfc <- get_marginal_logfc(model_full)
+    boot_logfcs <- bootstrap_logfc(model_null, data, gene, n_boot = 100)
+
+    p_val <- if (length(boot_logfcs) > 0) {
+      mean(abs(boot_logfcs) >= abs(obs_logfc))
+    } else {
+      NA
+    }
+
+    data.frame(gene = gene, obs_logfc = obs_logfc, p_val = p_val)
+  } else {
+    data.frame(gene = gene, obs_logfc = NA, p_val = NA)
+  }
+}
+
+results$fdr <- p.adjust(results$p_val, method = "fdr")
+print(results)
+stopCluster(cl)
+
+#Save Results
+write.csv(results,fs::path(dir.results,"PT_S1_S2_Cells_zinb_unadj.csv"))
+
+#Format for volcano plot
+results$color <- ifelse(results$fdr < 0.05 & results$obs_logfc > 0, "lightcoral",
+                             ifelse(results$fdr < 0.05 & results$obs_logfc < 0, "lightblue", "gray"))
+
+# Identify significant points (fdr < 0.05)
+significant_df <- results[results$fdr < 0.05, ]
+
+
+Genes <- length(unique(results$gene))
+Cells <- ncol(so_celltype)
+
+Nonconvergence_Rate <- paste0((length(unique(results$gene[which(is.na(results$obs_logfc))],results$gene[which(is.na(results$p_val))]))/length(gene_names))*100,"%")
+
+#Figure Range
+max <- max(significant_df$obs_logfc,na.rm=T)
+min <- min(significant_df$obs_logfc,na.rm=T)
+
+# ggplot(results, aes(x = obs_logfc, y = -log10(fdr))) +
+volcano_plot <- ggplot(results, aes(x = obs_logfc, y = -log10(fdr), color = color)) +
+  geom_point(alpha = 0.7) +  # Plot points with transparency
+  scale_color_identity() +  # Use the color column directly
+  theme_minimal() +  # Minimal theme
+  labs(
+    title = "Type 2 Diabetes vs. Lean Controls",
+    subtitle = "PT_S1_S2 Cells, Unadjusted Model",
+    x = "Fold Change",
+    y = "-log10(P-Value)",
+    color = "FC Direction Direction",
+    cPT_S1_S2ion = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,", Non-Convergence Rate: ",Nonconvergence_Rate)
+  ) +
+  # xlim(min,max)+
+  # ylim(0,2)+
+  theme(
+    plot.title = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 0, hjust = 1)
+  )+
+  # # Add labels for significant points
+  geom_text(data = significant_df, aes(label = gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+
+volcano_plot
+pdf(fs::path(dir.results,"Plot_PT_S1_S2_Cells_T2D_LC_unadj_zinb.pdf"),width=10,height=7)
+print(volcano_plot)
+dev.off()
+
+```
+
+
 #### a. Full Cov Set
 ```{r}
 so_celltype <- subset(so_kpmp_sc,KPMP_celltype=="PT-S1/S2")
@@ -4158,6 +4873,233 @@ dev.off()
 
 ## d. PT-S3 
 ###i. Mixed Effect Model 
+```{r}
+#subset to just PT Cells
+so_celltype <- subset(so_kpmp_sc_hvg,KPMP_celltype=="PT-S3")
+ncol(so_celltype) #564 cells
+nrow(so_celltype) #2000 hvg genes
+
+#Access the raw count matrix
+raw_counts <- GetAssayData(so_celltype, layer = "counts")
+
+# Step 2: Apply ceiling manually for sparse matrix (dgCMatrix)
+raw_counts_rounded <- raw_counts
+raw_counts_rounded@x <- ceiling(raw_counts@x)
+
+# Step 3: Extract the full gene expression matrix (rounded up counts)
+expr_matrix <- as.matrix(raw_counts_rounded)
+
+# Optional: view subset
+expr_matrix[1:5, 1:5]
+
+#View how round up looks
+# Step 1: Randomly select a few genes for visualization (e.g., top 50 or random)
+selected_genes <- sample(rownames(raw_counts_rounded), 25)  # Random 50 genes
+
+# Step 2: Get the expression data for those genes (rounded counts)
+selected_data <- as.matrix(raw_counts_rounded[selected_genes, ])
+
+# Convert matrix to data.frame
+df_selected_data <- as.data.frame(t(selected_data))  # Transpose so that genes are columns
+
+# 2. **Boxplot** for raw counts of selected genes across cells (to see distribution)
+df_selected_data_long <- reshape2::melt(df_selected_data)  # Convert to long format
+
+ggplot(df_selected_data_long, aes(x = variable, y = value, fill = variable)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of Selected Genes' Counts", x = "Genes", y = "Count") +
+  theme_minimal()+
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+    # legend.position = "none"
+  )+
+  scale_fill_discrete(name = "Random 20 Genes")
+
+# 3. **Heatmap** of raw counts (scaled by genes) for a few cells (e.g., top 50 cells)
+top_cells <- sample(colnames(raw_counts_rounded), 50)  # Random 50 cells
+heatmap_data <- as.matrix(raw_counts_rounded[selected_genes, top_cells])
+
+# Plot heatmap
+pheatmap(heatmap_data, 
+         cluster_rows = FALSE, 
+         cluster_cols = FALSE, 
+         show_rownames = TRUE, 
+         show_colnames = FALSE,
+         main = "Heatmap of Gene Expression (Selected Genes & Cells)") 
+
+```
+
+```{r}
+#Check rownames and colnames: Rownames = genes, Colnames = cells
+# view(expr_matrix)
+#Transpose gene expression dataset to merge with metadata
+expr_matrix <- t(expr_matrix)
+expr_matrix <- data.frame(expr_matrix) #Make a dataframe again after transposing
+
+#Set gene list
+gene_list_total <- hvgs
+
+#Create cell variable to merge metadata in
+expr_matrix$cellname <- rownames(expr_matrix) 
+rownames(expr_matrix) <- NULL
+
+# Extract the metadata
+metadata <- so_celltype@meta.data
+
+#Create cell variable to merge metadata into gene expression data
+metadata$cellname <- rownames(metadata)
+rownames(metadata) <- NULL
+
+# Combine the gene expression data and metadata
+data <- tidylog::full_join(metadata,expr_matrix,by="cellname")
+rm(metadata,expr_matrix)
+
+#Prepare variables of interest for model
+data$medication <- factor(data$medication)
+data$group <- factor(data$group)
+data$group <- relevel(data$group,ref="Lean_Control")
+
+```
+
+#Marginal Means
+```{r}
+# Register parallel backend
+cores <- parallel::detectCores() - 1
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+
+# Gene list (already set in your script)
+gene_names <- unique(gene_list_total)
+
+# Function to calculate marginal logFC from ZINB model
+get_marginal_logfc <- function(model, group_levels = c("Lean_Control", "Type_2_Diabetes")) {
+  newdata <- data.frame(group = group_levels, kit_id = NA)
+  mu <- predict(model, newdata, type = "response", allow.new.levels = TRUE)
+  zi <- predict(model, newdata, type = "zprob", allow.new.levels = TRUE)
+  marg_means <- (1 - zi) * mu
+  log(marg_means[2] / marg_means[1])  # logFC = T2D vs. Control
+}
+
+# Bootstrap function for null model
+bootstrap_logfc <- function(model_null, data, gene, n_boot = 100) {
+  foreach(i = 1:n_boot, .combine = c, .packages = "glmmTMB") %dopar% {
+    sim_data <- data
+    sim_data[[gene]] <- simulate(model_null)[[1]]
+
+    tryCatch({
+      suppressWarnings({
+        model_boot <- glmmTMB(
+          as.formula(paste0(gene, " ~ group + (1 | kit_id)")),
+          ziformula = ~1,
+          family = nbinom2,
+          data = sim_data
+        )
+        if (!is.null(model_boot$sdr) && all(model_boot$sdr$pdHess, na.rm = TRUE)) {
+          get_marginal_logfc(model_boot)
+        } else {
+          NA
+        }
+      })
+    }, error = function(e) NA)
+  } %>% na.omit()
+}
+
+results <- foreach(gene = gene_names, .combine = rbind, .packages = c("glmmTMB", "dplyr","doParallel")) %dopar% {
+  formula_full <- as.formula(paste0(gene, " ~ group + (1 | kit_id)"))
+  formula_null <- as.formula(paste0(gene, " ~ 1 + (1 | kit_id)"))
+
+  model_full <- tryCatch(suppressWarnings(glmmTMB(
+    formula_full,
+    ziformula = ~1,
+    family = nbinom2,
+    data = data
+  )), error = function(e) NULL)
+
+  model_null <- tryCatch(suppressWarnings(glmmTMB(
+    formula_null,
+    ziformula = ~1,
+    family = nbinom2,
+    data = data
+  )), error = function(e) NULL)
+
+  if (!is.null(model_full) && !is.null(model_full$sdr) && all(model_full$sdr$pdHess, na.rm = TRUE) &&
+      !is.null(model_null) && !is.null(model_null$sdr) && all(model_null$sdr$pdHess, na.rm = TRUE)) {
+    
+    obs_logfc <- get_marginal_logfc(model_full)
+    boot_logfcs <- bootstrap_logfc(model_null, data, gene, n_boot = 100)
+
+    p_val <- if (length(boot_logfcs) > 0) {
+      mean(abs(boot_logfcs) >= abs(obs_logfc))
+    } else {
+      NA
+    }
+
+    data.frame(gene = gene, obs_logfc = obs_logfc, p_val = p_val)
+  } else {
+    data.frame(gene = gene, obs_logfc = NA, p_val = NA)
+  }
+}
+
+results$fdr <- p.adjust(results$p_val, method = "fdr")
+print(results)
+stopCluster(cl)
+
+#Save Results
+write.csv(results,fs::path(dir.results,"PT_S3_Cells_zinb_unadj.csv"))
+
+results$log10fdr <- -log10(results$fdr)
+results$log10fdr <- ifelse(results$log10fdr=="Inf",0.08,results$log10fdr)
+
+#Format for volcano plot
+results$color <- ifelse(results$fdr < 0.05 & results$obs_logfc > 0, "lightcoral",
+                             ifelse(results$fdr < 0.05 & results$obs_logfc < 0, "lightblue", "gray"))
+
+# Identify significant points (fdr < 0.05)
+significant_df <- results[results$fdr < 0.05, ]
+
+
+Genes <- length(unique(results$gene))
+Cells <- ncol(so_celltype)
+
+Nonconvergence_Rate <- paste0((length(unique(results$gene[which(is.na(results$obs_logfc))],results$gene[which(is.na(results$p_val))]))/length(gene_names))*100,"%")
+
+#Figure Range
+max <- max(significant_df$obs_logfc,na.rm=T)
+min <- min(significant_df$obs_logfc,na.rm=T)
+
+# ggplot(results, aes(x = obs_logfc, y = -log10(fdr))) +
+volcano_plot <- ggplot(results, aes(x = obs_logfc, y = log10fdr, color = color)) +
+  geom_point(alpha = 0.7) +  # Plot points with transparency
+  scale_color_identity() +  # Use the color column directly
+  theme_minimal() +  # Minimal theme
+  labs(
+    title = "Type 2 Diabetes vs. Lean Controls",
+    subtitle = "PT_S3 Cells, Unadjusted Model",
+    x = "Fold Change",
+    y = "-log10(P-Value)",
+    color = "FC Direction Direction",
+    caption = paste0("FDR < 0.05, Genes = ",Genes,", Cells = ",Cells,", Non-Convergence Rate: ",Nonconvergence_Rate)
+  ) +
+  # xlim(min,max)+
+  # ylim(0,2)+
+  theme(
+    plot.title = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 0, hjust = 1)
+  )+
+  # # Add labels for significant points
+  geom_text(data = significant_df, aes(label = gene),
+            vjust = 1, hjust = 1, size = 3, check_overlap = TRUE, color = "black")
+# Add labels for significant points with ggrepel
+# geom_text_repel(data = significant_df, aes(label = Gene),
+#                 size = 3, color = "black", box.padding = 0.5, max.overlaps = 20)
+
+volcano_plot
+pdf(fs::path(dir.results,"Plot_PT_S3_Cells_T2D_LC_unadj_zinb.pdf"),width=10,height=7)
+print(volcano_plot)
+dev.off()
+
+```
+
 ####a. Full Cov Set
 ```{r}
 so_celltype <- subset(so_kpmp_sc,KPMP_celltype=="PT-S3")
