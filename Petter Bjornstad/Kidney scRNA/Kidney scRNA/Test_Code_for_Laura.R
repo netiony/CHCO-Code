@@ -65,29 +65,21 @@ for (i in seq(1, total_genes, by = batch_size)) {
     m1 <- as.formula(paste0(gene," ~ medication + age + sex + bmi + (1 | kit_id)"))
     model1 <- lmer(m1,data=data_subset)
     
+    emm_options(pbkrtest.limit = 4241)
     # Compute estimated marginal means
     emm <- emmeans(model1, ~ medication)
     
     # Define and test the contrasts
-    contrast(emm, list(
+    contrasts <- contrast(emm, list(
       "GLP1 vs No Med" = c(0, 1, 0, -1),  # GLP1 vs No Med
       "SGT2 vs No Med" = c(0, 0, 1, -1),  # SGT2 vs No Med
       "GLP1+SGT2 vs No Med" = c(0, 0, 0, 1),  # GLP1+SGT2 vs No Med
       "GLP1+SGT2 vs GLP1" = c(0, -1, 1, 0),  # GLP1+SGT2 vs GLP1
       "GLP1+SGT2 vs SGT2" = c(0, 0, -1, 1)  # GLP1+SGT2 vs SGT2
     ))
-    
-    
-    # beta <- round(summary(model)$coef[2,1],3)
-    # pval <-round(summary(model)$coef[2,5],5)
-    beta1 <- round(summary(model1)$coef[2,1],3)
-    pval1 <-round(summary(model1)$coef[2,5],5)
-    
-    result <- data.frame(Gene=gene,Beta=beta1,PValue=pval1)
-    full_results <- rbind(full_results,result)
+    print(contrasts)
+
   }
 }
-# #Make volcano plot of all gene results for group
-full_results <- full_results %>%
-  mutate(fdr=p.adjust(PValue,method="fdr"))
+
 
