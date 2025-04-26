@@ -8,7 +8,7 @@ library(tidyr)
 library(dplyr)
 
 #Load in subsetted data
-so <- readRDS("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Test_Seurat_Object_for_Laura.rds")
+so <- readRDS('/Users/pylell/Library/CloudStorage/OneDrive-SharedLibraries-UW/Bjornstad/Biostatistics Core Shared Drive/Test_Seurat_Object_for_Laura.rds')
 
 #Run Mixed Effect Model - 10 test genes in aPT cells only
 # Extract the gene expression data for all genes
@@ -79,6 +79,15 @@ for (i in seq(1, total_genes, by = batch_size)) {
     ))
     print(contrasts)
 
+    contrasts_new <- contrast(emm, list(
+      "GLP1 vs No Med" = c(-1, 0, 1, 0),  # GLP1 vs No Med
+      "SGT2 vs No Med" = c(-1, 1, 0, 0),  # SGT2 vs No Med
+      "GLP1+SGT2 vs No Med" = c(-1, 0, 0, 1),  # GLP1+SGT2 vs No Med
+      "GLP1+SGT2 vs GLP1" = c(0, 0, -1, 1),  # GLP1+SGT2 vs GLP1
+      "GLP1+SGT2 vs SGT2" = c(0, -1, 0, 1)  # GLP1+SGT2 vs SGT2
+    ))
+    print(contrasts_new)
+    
   }
 }
 
