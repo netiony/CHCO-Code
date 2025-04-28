@@ -72,6 +72,10 @@ library(glmmTMB)
 library(ggrepel)
 # library(qpcR)
 library(ggpubr)
+#install.packages("devtools")
+library(devtools)
+#install_github("lhe17/nebula")
+library(nebula)
 # BiocManager::install("enrichplot")
 # library(enrichplot)
 library(enrichR)
@@ -82,6 +86,7 @@ dbs <- c("GO_Biological_Process_2023",
          # "MSigDB_Oncogenic_Signatures",
          # "MSigDB_Computational",
          "MSigDB_Hallmark_2020")
+library(pheatmap)
 
 #Local file path
 # dir.dat <- c("/Volumes/Peds Endo/Petter Bjornstad")
@@ -328,6 +333,7 @@ so_liver_sn$celltype2 <- ifelse(grepl("Hep-",so_liver_sn$celltype) | grepl("dHep
 # table(so_liver_sn$celltype,so_liver_sn$celltype2)
 
 # rm(expression_data)
+DefaultAssay(so_liver_sn) <- "RNA" 
 ```
 
 ## b. Explore Distribution & Zero-Inflation
@@ -476,15 +482,6 @@ if (percent_overdispersed > 10) {
 rm(counts)
 ```
 
-## c. Select Highly Variable Genes (HVGs)
-```{r}
-so_liver_sn <- FindVariableFeatures(so_liver_sn, selection.method = "vst", nfeatures = 2000)
-hvgs <- VariableFeatures(so_liver_sn)
-
-# Subset Seurat object to only HVGs
-so_liver_sn_hvg <- subset(so_liver_sn, features = hvgs)
-```
-
 ## d. Evaluate Covariates before Adjustment
 ```{r}
 #Categorical Covariates
@@ -629,3 +626,114 @@ for (covariate in con_covariates) {
 # Display all plots together (adjust ncol/nrow as needed)
 wrap_plots(plot_list, ncol = 4)
 ```
+
+# 3. Analysis 
+## a. HEP Cells 
+```{r}
+#Filter to PT Cells
+so_celltype <- subset(so_liver_sn,celltype2=="Hep")
+DefaultAssay(so_celltype) <- "RNA" 
+
+nrow(so_celltype) #28964 genes
+ncol(so_celltype) #130124 nuclei
+
+## Select Highly Variable Genes (HVGs)
+so_celltype <- FindVariableFeatures(so_celltype, selection.method = "vst", nfeatures = 2000)
+hvgs <- VariableFeatures(so_celltype)
+
+# Subset Seurat object to only HVGs
+so_celltype_hvg <- subset(so_celltype, features = hvgs)
+DefaultAssay(so_celltype_hvg) <- "RNA" 
+```
+
+### i. NEBULA
+```{r}
+
+
+
+
+```
+
+### ii. glmmTMB
+```{r}
+#Access the raw count matrix
+raw_counts <- GetAssayData(so_celltype_hvg, layer = "counts")
+
+# Step 2: Round manually for sparse matrix (dgCMatrix)
+raw_counts_rounded <- raw_counts
+raw_counts_rounded@x <- round(raw_counts@x)
+
+# Step 3: Extract the full gene expression matrix (rounded counts)
+expr_matrix <- as.matrix(raw_counts_rounded)
+
+#View how rounded counts data looks
+#1. Randomly select a few genes for visualization (e.g., top 50 or random)
+selected_genes <- sample(rownames(raw_counts_rounded), 25)  # Random 50 genes
+
+#2. Get the expression data for those genes (rounded counts)
+selected_data <- as.matrix(raw_counts_rounded[selected_genes, ])
+
+# Convert matrix to data.frame
+df_selected_data <- as.data.frame(t(selected_data))  # Transpose so that genes are columns
+
+# 3. **Boxplot** for raw counts of selected genes across cells (to see distribution)
+df_selected_data_long <- reshape2::melt(df_selected_data)  # Convert to long format
+
+ggplot(df_selected_data_long, aes(x = variable, y = value, fill = variable)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of Selected Genes' Counts", x = "Genes", y = "Count") +
+  theme_minimal()+
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+    # legend.position = "none"
+  )
+
+# 4. **Heatmap** of raw counts (scaled by genes) for a few cells (e.g., top 50 cells)
+top_cells <- sample(colnames(raw_counts_rounded), 50)  # Random 50 cells
+heatmap_data <- as.matrix(raw_counts_rounded[selected_genes, top_cells])
+
+# Plot heatmap
+pheatmap(heatmap_data, 
+         cluster_rows = FALSE, 
+         cluster_cols = FALSE, 
+         show_rownames = TRUE, 
+         show_colnames = FALSE,
+         main = "Heatmap of Gene Expression (Selected Genes & Cells)") 
+
+#Check rownames and colnames: Rownames = genes, Colnames = cells
+#view(expr_matrix)
+#Transpose gene expression dataset to merge with metadata
+expr_matrix <- t(expr_matrix)
+expr_matrix <- data.frame(expr_matrix) #Make a dataframe again after transposing
+
+#Set gene list
+gene_list_total <- hvgs
+
+#Create cell variable to merge metadata in
+expr_matrix$cellname <- rownames(expr_matrix) 
+rownames(expr_matrix) <- NULL
+
+# Extract the metadata
+metadata <- so_celltype_hvg@meta.data
+
+#Create cell variable to merge metadata into gene expression data
+metadata$cellname <- rownames(metadata)
+rownames(metadata) <- NULL
+
+# Combine the gene expression data and metadata
+data <- tidylog::full_join(metadata,expr_matrix,by="cellname")
+rm(metadata,expr_matrix)
+
+#Make sure exposure/independent/x variable or group variable is a factor variable
+data$steatosis_cat <- factor(data$steatosis_cat)
+#Make sure to set reference level
+data$steatosis_cat <- relevel(data$steatosis_cat,ref="Low Steatosis (0+1)")
+
+
+
+
+```
+
+
+
+
