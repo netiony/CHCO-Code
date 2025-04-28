@@ -182,18 +182,99 @@ attempt_so <- subset(attempt_so, features = genes_to_keep)
 ```
 
 ```{r echo = F}
+# Randomly select 100 genes from the Seurat object
+genes <- sample(rownames(attempt_so), 100)
+
+# Set up a 2x3 plotting layout so you can plot multiple histograms in one figure
+par(mfrow = c(2, 3))
+
+# Loop over each randomly selected gene
+for (g in genes) {
+  
+  # Plot a histogram of the expression values for gene 'g'
+  # using normalized expression values from the "data" slot
+  hist(GetAssayData(attempt_so, layer = "data")[g, ],
+       main = g,                # Title of the plot = gene name
+       xlab = "Normalized Expression")     # Label for x-axis
+       
+  # using raw counts expression values from the "counts" slot
+  hist(GetAssayData(attempt_so, layer = "counts")[g, ],
+       main = g,                # Title of the plot = gene name
+       xlab = "Raw Counts Expression")     # Label for x-axis
+}
+
+log_data <- log1p(GetAssayData(attempt_so, layer = "data"))  # log(x + 1)
+
+
+# zero inflation check
+counts <- GetAssayData(attempt_so, layer = "counts")
+zero_prop <- rowMeans(counts == 0)
+hist(zero_prop, main = "Proportion of Zeros", xlab = "Zero Proportion")
+abline(v = 0.5, col="red")  # Poisson expectation
+
+# overdispersion check
+# Check for overdispersion
+# Use raw counts
+counts <- GetAssayData(attempt_so, layer = "counts")
+
+# Pick a few genes or do this genome-wide
+gene_means <- rowMeans(counts)
+gene_vars <- apply(counts, 1, var)
+
+# Dispersion estimate (Var / Mean)
+dispersion <- gene_vars / gene_means
+
+# Filter to only genes where mean > 0 (to avoid divide-by-zero)
+valid_genes <- gene_means > 0
+dispersion <- dispersion[valid_genes]
+
+# View distribution
+hist(dispersion, breaks=300, main="Dispersion across genes", xlab="Dispersion (Var / Mean)",xlim = c(0, 30))
+abline(v = 1, col="red")  # Poisson expectation
+
+# Check how many genes have dispersion > 1
+overdispersed_genes <- sum(dispersion > 1)
+total_genes <- length(dispersion)
+percent_overdispersed <- (overdispersed_genes / total_genes) * 100
+
+# Print summary and recommendation
+print(paste0("Overdispersed genes: ", 
+               overdispersed_genes, 
+               " out of ", 
+               total_genes, 
+               " (", 
+               round(percent_overdispersed, 3), 
+               "%)"))
+
+if (percent_overdispersed > 10) {
+  print("✅ Overdispersion detected. Consider using a Negative Binomial model.")
+} else {
+  print("ℹ️ Little evidence of overdispersion. Poisson model may be sufficient.")
+}
+```
+
+```{r echo = F}
+attempt_so <- FindVariableFeatures(attempt_so, selection.method = "vst", nfeatures = 2000)
+hvgs <- VariableFeatures(attempt_so)
+
+#Perform remaining steps on top 2000 hvgs
+# Subset Seurat object to only HVGs
+attempt_so_hvg <- subset(attempt_so, features = hvgs)
+```
+
+```{r echo = F}
 # read ATTEMPT clinical data file
 temp_file <- tempfile(fileext = ".RDS")
 s3$download_file("harmonized.dataset", "attempt_clinical_data.RDS", temp_file)
 attempt_dat <- readRDS(temp_file)
 
-attempt_so_meta <- attempt_so@meta.data %>%
+attempt_so_meta_hvg <- attempt_so_hvg@meta.data %>%
   mutate(subject_id = Subject.ID,
          visit = case_when(Visit == "BL" ~ "PRE", 
                            Visit == "4M" ~ "POST"))
-attempt_so_meta <- left_join(attempt_so_meta, attempt_dat, by = c("subject_id", "visit"))
-rownames(attempt_so_meta) <- attempt_so_meta$barcode
-attempt_so <- AddMetaData(attempt_so, attempt_so_meta)
+attempt_so_meta_hvg <- left_join(attempt_so_meta_hvg, attempt_dat, by = c("subject_id", "visit"))
+rownames(attempt_so_meta_hvg) <- attempt_so_meta_hvg$barcode
+attempt_so_hvg <- AddMetaData(attempt_so_hvg, attempt_so_meta_hvg)
 options(future.globals.maxSize = 3000 * 1024^3)
 ```
 
@@ -487,6 +568,12 @@ saveRDS(pt_croc_sig_emmeans_target_subset, temp_file) # save the temp file local
 s3$upload_file(temp_file, "attempt", 'CROCODILE comparison analysis/PT/pt_attempt_croc_sig_emmeans_target_subset_mod3.rds')
 
 rm(list = ls(pattern = "^pt_croc_sc_data_"))
+```
+
+#### Dot Plots
+```{r echo = F}
+combined_so_pt <- merge(so_attempt_pt, so_croc_pt)
+Seurat::DotPlot(so)
 ```
 
 #### Model 4
