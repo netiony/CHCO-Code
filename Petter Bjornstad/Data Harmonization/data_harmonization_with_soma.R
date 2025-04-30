@@ -18,7 +18,7 @@ attempt <- merged_data %>%
          study = "ATTEMPT",
          diabetes_duration = diabetes_dx_duration,
          procedure = "attempt_visit") %>%
-  select(names(merged_data)[names(merged_data) %in% names(clean)], group, study, PWV, treatment_arm, diabetes_duration, procedure, -diabetes_dx_duration)
+  dplyr::select(names(merged_data)[names(merged_data) %in% names(clean)], group, study, PWV, treatment_arm, diabetes_duration, procedure, -diabetes_dx_duration)
 attempt[] <- lapply(attempt, function(x) {
   if (is.numeric(x)) as.character(x) else x
 })
