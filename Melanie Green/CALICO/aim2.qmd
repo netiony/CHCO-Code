@@ -23,8 +23,6 @@ library(arsenal)
 library(lmerTest)
 library(performance)
 library(emmeans)
-library(gtsummary)
-library(gt)
 library(ggeffects)
 home_dir <- switch(Sys.info()["sysname"],
   "Darwin" = "/Users/timvigers/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/Vigers/BDC/Janet Snell-Bergeon/CALICO",
@@ -46,72 +44,85 @@ levels(df$combined_race) <- c(
   "Other"
 )
 df$combined_race <- relevel(df$combined_race, ref = "Caucasian")
-# Get time of medication start for EC, Metformin, "lifestyle", and baseline
-# weight
+# Get time of medication start for EC, Metformin, "Lifestyle", plus baseline
+# weight and BMI
 df <- df %>%
   arrange(record_number, cv_monthssincepcosdx) %>%
   group_by(record_number) %>%
   mutate(
-    time_of_first_ec = first(cv_monthssincepcosdx[ec == "Yes"], na_rm = T),
+    time_of_first_weight_loss = first(cv_monthssincepcosdx[weight_loss == "Yes"], na_rm = T),
+    time_from_first_weight_loss = cv_monthssincepcosdx - time_of_first_weight_loss,
+    time_of_first_progesterone = first(cv_monthssincepcosdx[progesterone == "Yes"], na_rm = T),
+    time_from_first_progesterone = cv_monthssincepcosdx - time_of_first_progesterone,
+    ec_diff = as.numeric(ec) - lead(as.numeric(ec)),
+    time_of_first_ec = first(cv_monthssincepcosdx[ec == "Yes" & ec_diff == 0], na_rm = T),
     time_from_first_ec = cv_monthssincepcosdx - time_of_first_ec,
-    time_of_first_metformin =
-      first(cv_monthssincepcosdx[metformin == "Yes"], na_rm = T),
+    metformin_diff = as.numeric(metformin) - lead(as.numeric(metformin)),
+    time_of_first_metformin = first(cv_monthssincepcosdx[metformin == "Yes" &
+      metformin_diff == 0], na_rm = T),
     time_from_first_metformin = cv_monthssincepcosdx - time_of_first_metformin,
-    time_of_first_lifestyle =
-      first(cv_monthssincepcosdx[lifestyle == "Yes"], na_rm = T),
+    lifestyle_diff = as.numeric(lifestyle) - lead(as.numeric(lifestyle)),
+    time_of_first_lifestyle = first(cv_monthssincepcosdx[lifestyle == "Yes" &
+      lifestyle_diff == 0], na_rm = T),
     time_from_first_lifestyle = cv_monthssincepcosdx - time_of_first_lifestyle,
-    time_of_first_larc = first(cv_monthssincepcosdx[larc == "Yes"], na_rm = T),
-    time_from_first_larc = cv_monthssincepcosdx - time_of_first_larc,
     baseline_weight = first(cv_weight, na_rm = T),
     baseline_bmi = first(cv_weight, na_rm = T)
   )
+label(df$time_from_first_weight_loss) <- "Months from First Visit on Weight Loss Medication"
+label(df$time_from_first_progesterone) <-
+  "Months from First Visit on Progesterone-Containing Medication"
 label(df$time_from_first_ec) <- "Months from First Visit on EC"
 label(df$time_from_first_metformin) <- "Months from First Visit on Metformin"
 label(df$time_from_first_lifestyle) <-
   "Months from First Visit Not on Metformin or EC"
-label(df$time_from_first_larc) <- "Months from First Visit on LARC"
 label(df$baseline_weight) <- "Baseline Weight (kg)"
 label(df$baseline_bmi) <- "Baseline BMI (kg/m2)"
-# Exclude visits where people were on weight loss medication or progesterone
-weight_loss <- df %>%
-  filter(
-    cv_medications___25 == "Checked" | cv_medications___26 == "Checked" |
-      cv_medications___27 == "Checked" | cv_medications___28 == "Checked" |
-      cv_medications___29 == "Checked"
-  )
-progesterone_meds <- df %>%
-  filter(
-    cv_medications___9 == "Checked" | cv_medications___10 == "Checked" |
-      cv_medications___11 == "Checked" | cv_medications___12 == "Checked"
-  )
-df <- df %>% filter(
-  cv_medications___25 != "Checked", cv_medications___26 != "Checked",
-  cv_medications___27 != "Checked", cv_medications___28 != "Checked",
-  cv_medications___29 != "Checked", cv_medications___17 != "Checked",
-  cv_medications___9 != "Checked", cv_medications___10 != "Checked",
-  cv_medications___11 != "Checked", cv_medications___12 != "Checked"
-)
-# Simplify the dataset
+# For weight loss medication and progesterone, remove all visits after
+# they first start
+df$weight_loss_remove <- NA
+df$weight_loss_remove[which(df$time_from_first_weight_loss >= 0)] <- "Remove"
+df <- df %>%
+  group_by(record_number) %>%
+  fill(weight_loss_remove, .direction = "down")
+df$progesterone_remove <- NA
+df$progesterone_remove[which(df$time_from_first_progesterone >= 0)] <- "Remove"
+df <- df %>%
+  group_by(record_number) %>%
+  fill(progesterone_remove, .direction = "down")
+# Don't allow people to go on and off medication, so for example once they've
+# started EC for the first time, exclude any visits where they go back to
+# not on EC after that
+df$ec_remove <- NA
+df$ec_remove[which(df$time_from_first_ec > 0 & df$ec == "No")] <- "Remove"
+df <- df %>%
+  group_by(record_number) %>%
+  fill(ec_remove, .direction = "down")
+df$metformin_remove <- NA
+df$metformin_remove[which(df$time_from_first_metformin > 0 & df$metformin == "No")] <- "Remove"
+df <- df %>%
+  group_by(record_number) %>%
+  fill(metformin_remove, .direction = "down")
+df$lifestyle_remove <- NA
+df$lifestyle_remove[which(df$time_from_first_lifestyle > 0 & df$lifestyle == "No")] <- "Remove"
+df <- df %>%
+  group_by(record_number) %>%
+  fill(lifestyle_remove, .direction = "down")
+# Simplify the dataset and write for checking
 df <- df %>%
   select(
     record_number, combined_race, insur_type, cv_age, pcosdx_age,
-    baseline_weight, baseline_bmi, cv_monthssincepcosdx, cv_medications___16,
-    ec, metformin, lifestyle, larc, time_from_first_ec,
-    time_from_first_metformin, time_from_first_lifestyle, time_from_first_larc,
-    cv_weight, cv_bmi, cv_a1c, cv_tg, cv_hdl,
-    cv_alt, cv_sbp
-  ) %>%
-  arrange(record_number, cv_monthssincepcosdx)
-# Write for Melanie and Grayson to check
-write.csv(df,
-  file = "./Data_Clean/aim_2_cleaned_data.csv", row.names = F, na = ""
-)
-# Set table options
-mycontrols <-
-  tableby.control(
-    numeric.stats = c("N", "Nmiss2", "meansd", "range"),
-    cat.stats = c("N", "Nmiss2", "countpct")
+    cv_monthssincepcosdx, cv_weight, cv_bmi, baseline_weight, baseline_bmi,
+    cv_medications___16,
+    time_from_first_weight_loss, weight_loss, weight_loss_remove,
+    time_from_first_progesterone, progesterone, progesterone_remove,
+    time_from_first_ec, ec, ec_remove,
+    time_from_first_metformin, metformin, metformin_remove,
+    time_from_first_lifestyle, lifestyle, lifestyle_remove,
+    cv_a1c, cv_tg, cv_hdl, cv_alt, cv_sbp
   )
+write.csv(df,
+  file = "./Data_Clean/aim_2_data_check.csv", row.names = F, na = ""
+)
 ```
 
 # Data cleaning
@@ -143,14 +154,10 @@ All mixed models were fit using the `lme4` R package in version `r paste0(R.vers
 Participants were considered to be on estrogen-containing (EC) medications when `cv_medications___5` (estrogen-containing pill), `cv_medications___6` (estrogen-containing patch), or `cv_medications___7` (estrogen-containing ring) boxes were checked in REDCap.
 
 ```{r}
-# Don't allow people to go on and off medication, so for example once they've
-# started EC for the first time, exclude any visits where they go back to
-# not on EC after that
-ec_remove <- which(df$time_from_first_ec > 0 & df$ec == "No")
-ec_df <- df[-ec_remove, ]
+ec_df <- df %>% filter(is.na(ec_remove))
 # Create a spline model dataset
 ec_12_month_spline <- ec_df %>%
-  filter(time_from_first_ec > -12) %>%
+  filter(time_from_first_ec >= -12) %>%
   mutate(x = (time_from_first_ec > 0) * time_from_first_ec) %>%
   arrange(record_number, time_from_first_ec)
 label(ec_12_month_spline$x) <- "Change in Slope After EC Start"
