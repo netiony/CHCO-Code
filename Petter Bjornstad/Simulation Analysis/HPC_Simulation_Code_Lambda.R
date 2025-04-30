@@ -10,6 +10,7 @@ library(qgcomp)
 library(parallel)
 library(fs)
 library(reticulate)
+library(MASS)
 #reticulate::use_python("/mmfs1/gscratch/scrubbed/hhampson/pytorch-cuda11/bin/python") 
 # library(tidyverse)
 # library(tidyr)
@@ -30,6 +31,7 @@ library(lme4)
 library(lmerTest)
 library(gitcreds)
 library(jsonlite)
+library(progressr)
 
 #Set number of cores for parallellization
 #maxCores <- detectCores()
@@ -79,22 +81,23 @@ s3 <- session$client("s3", endpoint_url = "https://s3.kopah.uw.edu")
 # df <- read.csv(temp_file)
 
 #Set location to store results ----
-dir.results <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Simulation Analysis")
-dir.data <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Simulation Analysis/Simulation_Data")
+# dir.results <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Simulation Analysis")
+dir.results <- ("/home/hailey/Documents/Simulation Results")
+# dir.data <- c("/Users/hhampson/Library/CloudStorage/OneDrive-UW/Biostatistics Core Shared Drive/Simulation Analysis/Simulation_Data")
 dir.code <- c("/home/hailey/Documents/CHCO-Code/Petter Bjornstad/Simulation Analysis")
 
 #Load functions----
-source(fs::path(dir.code,"HPC_Simulation_Functions_03_12.R"))
-
+source(fs::path(dir.code,"HPC_Simulation_Functions.R"))
 
 #Load data----
 #Formatted Taxonomy Information
 # Object <- readRDS("FormattedObject.RDS")
 invisible(gc())
-# bucket <- "simulation" # bucket name in Kopah
-# temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
-# s3$download_file(bucket, "Simulation_Data/FormattedObject.RDS", temp_file)
-Object <- readRDS(fs::path(dir.data,"FormattedObject.RDS"))
+bucket <- "simulation" # bucket name in Kopah
+temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
+s3$download_file(bucket, "Simulation_Data/FormattedObject.RDS", temp_file)
+Object<- readRDS(temp_file)
+# Object <- readRDS(fs::path(dir.data,"FormattedObject.RDS"))
 invisible(gc())
 Table <- data.frame(Object$Table)
 Table <- Table[-149]
@@ -102,9 +105,10 @@ Table <- Table[-149]
 #Simulation Scenarios & Parameters
 # P.s.causal.all <- readRDS("Simulation_Scenarios_03_12_25.rds")
 # invisible(gc())
-# temp_file <- tempfile(fileext = ".rds") # need to create a temporary file
-# s3$download_file(bucket, "Simulation_Data/Simulation_Scenarios_03_12_25.rds", temp_file)
-P.s.causal.all <- readRDS(fs::path(dir.data,"Simulation_Scenarios_03_12_25.rds"))
+temp_file <- tempfile(fileext = ".rds") # need to create a temporary file
+s3$download_file(bucket, "Simulation_Data/Simulation_Scenarios_03_12_25.rds", temp_file)
+P.s.causal.all <- readRDS(temp_file)
+# P.s.causal.all <- readRDS(fs::path(dir.data,"Simulation_Scenarios_03_12_25.rds"))
 # invisible(gc())
 
 #Set Parameters----
@@ -118,44 +122,44 @@ P.p <- 7
 # Load Z matrices----
 # Genus
 # Z.s.g <- readRDS("/Users/hhampson/Dropbox (USC Lab)/Chatzi Projects (Active)/Env Chem SOL-CHS/Analysis/2_ongoing/CHS PFAS Microbiome (Hailey)/BHRM_microbiome/Formatted Data/Z.s.g.RDS")
-Z.s.g <- readRDS(fs::path(dir.data,"Z.s.g.RDS"))
-# temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
-# s3$download_file(bucket, paste0("Simulation_Data/Z.s.g.RDS"), temp_file)
-# Z.s.g <- readRDS(temp_file)
+# Z.s.g <- readRDS(fs::path(dir.data,"Z.s.g.RDS"))
+temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
+s3$download_file(bucket, paste0("Simulation_Data/Z.s.g.RDS"), temp_file)
+Z.s.g <- readRDS(temp_file)
 # invisible(gc())
-# Genus.R <- ncol(Z.s.g)
+Genus.R <- ncol(Z.s.g)
 #Family
 # Z.g.f <- readRDS("/Users/hhampson/Dropbox (USC Lab)/Chatzi Projects (Active)/Env Chem SOL-CHS/Analysis/2_ongoing/CHS PFAS Microbiome (Hailey)/BHRM_microbiome/Formatted Data/Z.g.f.RDS")
-Z.g.f <- readRDS(fs::path(dir.data,"Z.g.f.RDS"))
-# temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
-# s3$download_file(bucket, paste0("Simulation_Data/Z.g.f.RDS"), temp_file)
-# Z.g.f <- readRDS(temp_file)
+# Z.g.f <- readRDS(fs::path(dir.data,"Z.g.f.RDS"))
+temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
+s3$download_file(bucket, paste0("Simulation_Data/Z.g.f.RDS"), temp_file)
+Z.g.f <- readRDS(temp_file)
 # invisible(gc())
-# Family.R <- ncol(Z.g.f)
+Family.R <- ncol(Z.g.f)
 #Order
 # Z.f.o <- readRDS("/Users/hhampson/Dropbox (USC Lab)/Chatzi Projects (Active)/Env Chem SOL-CHS/Analysis/2_ongoing/CHS PFAS Microbiome (Hailey)/BHRM_microbiome/Formatted Data/Z.f.o.RDS")
-Z.f.o <- readRDS(fs::path(dir.data,"Z.f.o.RDS"))
-# temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
-# s3$download_file(bucket, paste0("Simulation_Data/Z.f.o.RDS"), temp_file)
-# Z.f.o <- readRDS(temp_file)
-# invisible(gc())
-# Order.R <- ncol(Z.f.o)
+# Z.f.o <- readRDS(fs::path(dir.data,"Z.f.o.RDS"))
+temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
+s3$download_file(bucket, paste0("Simulation_Data/Z.f.o.RDS"), temp_file)
+Z.f.o <- readRDS(temp_file)
+invisible(gc())
+Order.R <- ncol(Z.f.o)
 #Class
 # Z.o.c <- readRDS("/Users/hhampson/Dropbox (USC Lab)/Chatzi Projects (Active)/Env Chem SOL-CHS/Analysis/2_ongoing/CHS PFAS Microbiome (Hailey)/BHRM_microbiome/Formatted Data/Z.o.c.RDS")
-Z.o.c <- readRDS(fs::path(dir.data,"Z.o.c.RDS"))
-# temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
-# s3$download_file(bucket, paste0("Simulation_Data/Z.o.c.RDS"), temp_file)
-# Z.o.c <- readRDS(temp_file)
-# invisible(gc())
-# Class.R <- ncol(Z.o.c)
+# Z.o.c <- readRDS(fs::path(dir.data,"Z.o.c.RDS"))
+temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
+s3$download_file(bucket, paste0("Simulation_Data/Z.o.c.RDS"), temp_file)
+Z.o.c <- readRDS(temp_file)
+invisible(gc())
+Class.R <- ncol(Z.o.c)
 #Phylum
 # Z.c.p <- readRDS("/Users/hhampson/Dropbox (USC Lab)/Chatzi Projects (Active)/Env Chem SOL-CHS/Analysis/2_ongoing/CHS PFAS Microbiome (Hailey)/BHRM_microbiome/Formatted Data/Z.c.p.RDS")
-Z.c.p <- readRDS(fs::path(dir.data,"Z.c.p.RDS"))
-# temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
-# s3$download_file(bucket, paste0("Simulation_Data/Z.c.p.RDS"), temp_file)
-# Z.c.p <- readRDS(temp_file)
-# invisible(gc())
-# Phylum.R <- ncol(Z.c.p)
+# Z.c.p <- readRDS(fs::path(dir.data,"Z.c.p.RDS"))
+temp_file <- tempfile(fileext = ".RDS") # need to create a temporary file
+s3$download_file(bucket, paste0("Simulation_Data/Z.c.p.RDS"), temp_file)
+Z.c.p <- readRDS(temp_file)
+invisible(gc())
+Phylum.R <- ncol(Z.c.p)
 
 #Create data for simulation
 Y.cont <- Table[, grep("d__", names(Table))]
@@ -168,16 +172,10 @@ Y.freq <- Y.freq[Y.freq !=0 & Y.freq !=1]
 Y.freq <- Y.freq[1:P.s] # frequency of species presence vs. absence
 phi <- 5 
 
-model.fxn <- function(i) {
-  # i = 1
-  #Set seed for reproducibility
-  set.seed(i)
+model.fxn <- function(i,scenario) {
   
   #Simulate Data----
   sim.output <- sim.fxn(i)
-  
-  # Save the simulated dataset for future use
-  # saveRDS(sim.output, file = paste0("Dataset_",scenario,"_scenario_", k, "_", i, ".RDS"))
   
   #Extract outputs from simulated data
   X <- sim.output$X
@@ -235,7 +233,8 @@ model.fxn <- function(i) {
   # model.fit <- coda.samples(model=model.fit, variable.names=var.s, n.iter=50, thin=1, progress.bar="none")
   model.fit <- jags.model(file=textConnection(BHRM.microbiome), data=jdata, n.chains=3, n.adapt=100, quiet=F)
   update(model.fit, n.iter=1000)
-  model.fit <- coda.samples(model=model.fit, variable.names=var.s, n.iter=5000, thin=1, progress.bar="none")
+  model.fit <- coda.samples(model=model.fit, variable.names=var.s, n.iter=5000, thin=1)
+  #progress.bar="none"
   # # summarize results
   r <- summary(model.fit)
   results <- data.frame(round(r$statistics[,1:2],3), round(r$quantiles[,c(1,5)],3))
@@ -273,7 +272,8 @@ model.fxn <- function(i) {
   # model.fit <- coda.samples(model=model.fit, variable.names=var.s, n.iter=50, thin=1, progress.bar="none")
   model.fit <- jags.model(file=textConnection(RBHRM.microbiome), data=jdata, n.chains=3, n.adapt=100, quiet=F)
   update(model.fit, n.iter=1000)
-  model.fit <- coda.samples(model=model.fit, variable.names=var.s, n.iter=5000, thin=1, progress.bar="none")
+  model.fit <- coda.samples(model=model.fit, variable.names=var.s, n.iter=5000, thin=1)
+  #, progress.bar="none"
   # summarize results
   r <- summary(model.fit)
   results <- data.frame(round(r$statistics[,1:2],3), round(r$quantiles[,c(1,5)],3))
@@ -301,55 +301,99 @@ model.fxn <- function(i) {
   # return(RBaHZING.results)
   Results.Output <- rbind(ZING.results,BaHZING.results)
   Results.Output <- rbind(Results.Output,RBaHZING.results)
+  Results.Output$Iteration <- i
+  Results.Output$Scenario <- scenario
   return(Results.Output)
+} 
+
+
+# Set up the cluster using all but one core
+# num_cores <- detectCores() - 1
+# cl <- makeCluster(num_cores)
+# registerDoParallel(cl)
+
+# # Optional: progress bar support
+# handlers(global = TRUE)
+# handlers("txtprogressbar")
+
+# # #Set scenario (1:40)
+# scenario <- 2
+# # #Set iteration (1:1000)
+# iteration <- 1:2
+# # 
+# results <- model.fxn(iteration,scenario)
+# #
+# write.csv(results,fs::path(dir.results,paste0("Simulation_Results_",scenario,"_iteration_",iteration,".csv")))
+
+
+# library(furrr)
+# library(fs)
+# library(purrr)
+# 
+# # Set up parallel processing (adjust number of workers as needed)
+# plan(multisession, workers = 60)  # Use detectCores() - 1 as a rule of thumb
+# 
+# # Parameters
+# scenario <- 1
+# iterations <- 1:3
+# batch_size <- 1
+# 
+# # Split iterations into batches
+# batches <- split(iterations, ceiling(seq_along(iterations) / batch_size))
+# 
+# # Define your model-running and saving function
+# run_model <- function(iter) {
+#   
+#   result <- model.fxn(iter, scenario)
+#   filepath <- path(dir.results, paste0("Simulation_Results_", scenario, "_iteration_", iter, ".csv"))
+#   write.csv(result, filepath, row.names = FALSE)
+#   # cat("Saved iteration", iter, "\n")  # Optional: print progress
+# }
+# 
+# # Run each batch in parallel and discard results to save memory
+# walk(batches, function(batch) {
+#   future_walk(batch, run_model)
+#   cat("Finished batch:", batch[1], "to", tail(batch, 1), "\n")
+# })
+
+library(furrr)
+library(fs)
+library(purrr)
+
+# Set up parallel processing
+plan(multisession, workers = 60)  # Adjust based on your system
+
+# Parameters
+scenario <- 1
+# === Download and load scenario-specific simulation parameters once ===
+temp_file <- tempfile(fileext = ".rds")
+s3$download_file(bucket, paste0("Simulation_Data/Simulation_Parameter_", scenario, ".rds"), temp_file)
+sim.par <- readRDS(temp_file)
+P.e <- sim.par$P.e[[1]]
+invisible(gc())
+
+iterations <- 22:100
+batch_size <- 10
+
+# Split iterations into batches
+batches <- split(iterations, ceiling(seq_along(iterations) / batch_size))
+
+# === Define model-running function, using preloaded P.e ===
+run_model <- function(iter) {
+  # Use P.e in model.fxn if needed (you can also pass it explicitly if needed)
+  result <- model.fxn(iter, scenario)
+  
+  # Save to file
+  filepath <- path(dir.results, paste0("Simulation_Results_", scenario, "_iteration_", iter, ".csv"))
+  write.csv(result, filepath, row.names = FALSE)
+  
 }
 
-# Get the number of cores your machine has
-num_cores <- 4  # Reserve one core for the system, adjust as needed
+# === Process in batches, parallelized, no return to console ===
+walk(batches, function(batch) {
+  future_walk(batch, run_model)
+  cat("Finished batch:", batch[1], "to", tail(batch, 1), "\n")
+})
 
-# Function to run the model for each k and scenario
-run_simulation <- function(k, scenario, dir.data, dir.results) {
-  # Load simulation parameter data
-  sim.par <- readRDS(fs::path(dir.data, paste0("Simulation_Parameter_", scenario, ".rds")))
-  P.e <- sim.par$P.e[[1]]
-  
-  # Run the model 100 times
-  full_results <- list()  # to store results
-  for (i in 1:100) {  # You can adjust the number of iterations here
-    result <- model.fxn(k)  # Run the model function
-    full_results[[i]] <- result
-  }
-  
-  # Combine all results into a single data frame or object
-  full_results_combined <- do.call(rbind, full_results)
-  
-  # Ensure the results directory exists, create it if not
-  if (!dir.exists(dir.results)) {
-    dir.create(dir.results, recursive = TRUE)
-  }
-  
-  # Define the output file path
-  output_file <- fs::path(dir.results, paste0("Full_results_scenario_", scenario, "_iteration_", k, "_04_07_2025.csv"))
-  
-  # Save the results to the CSV file
-  write.csv(full_results_combined, file = output_file)
-  
-  # Return a success message indicating the completion of this specific scenario and iteration
-  return(paste("Simulation complete for k =", k, "and scenario =", scenario, ". Results saved to:", output_file))
-}
 
-# Set up parallel execution (using mclapply for Unix-based systems)
-# If you're using Windows, you should replace mclapply with parLapply.
-all_combinations <- expand.grid(k = 1:10, scenario = 1:40)  # Adjust the ranges as needed
 
-# Parallel execution on all combinations of k and scenario
-results <- mclapply(1:nrow(all_combinations), function(i) {
-  k <- all_combinations$k[i]
-  scenario <- all_combinations$scenario[i]
-  
-  # Call the run_simulation function for each combination
-  run_simulation(k, scenario, dir.data, dir.results)
-}, mc.cores = num_cores)
-
-# Print results to check that it worked
-print(results)
