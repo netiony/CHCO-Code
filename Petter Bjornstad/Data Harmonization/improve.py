@@ -478,7 +478,7 @@ def clean_improve():
     screen.dropna(thresh=3, axis=0, inplace=True)
     accel.dropna(thresh=6, axis=0, inplace=True)
     mri.dropna(thresh=4, axis=0, inplace=True)
-    mmtt.dropna(thresh=10, axis=0, inplace=True)
+    mmtt.dropna(thresh=5, axis=0, inplace=True)
     dxa.dropna(thresh=4, axis=0, inplace=True)
     clamp.dropna(thresh=5, axis=0, inplace=True)
     out.dropna(thresh=10, axis=0, inplace=True)
