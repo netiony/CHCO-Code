@@ -55,6 +55,7 @@ library(broom.mixed)
 library(foreach)
 library(doParallel)
 library(nebula)
+library(Matrix)
 ```
 
 ```{r include = F}
@@ -500,7 +501,7 @@ attempt_so_hvg_pt <- subset(attempt_so_pt, features = hvgs_pt)
 ```
 
 #### Proportions
-```{r echo = F}
+```{r echo = F, eval = F}
 attempt_pt_meta <- attempt_so_hvg_pt@meta.data %>%
   mutate(visit_treatment = paste0(visit, " ", treatment))
 
@@ -602,15 +603,12 @@ s3$upload_file(temp_file, "attempt", "Figures/Proportions/attempt_pt_visit_treat
 # nebula built-in testing
 # data(sample_data)
 # pred = model.matrix(~X1+X2+cc,data=sample_data$pred)
-# re = nebula(count=sample_data$count,id=sample_data$sid,pred=pred, ncore = 1)
+# re = nebula(count=sample_data$count,id=sample_data$sid,pred=pred, , output_re = T, covariance = T)
 ```
-
-```{r echo = F}
+###### ML with rounded counts
+```{r echo = F, eval = F}
 # PT
 counts_hvg_pt <- round(GetAssayData(attempt_so_hvg_pt, layer = "counts")) # load counts and round
-# meta_hvg_pt <- attempt_so_hvg_pt@meta.data
-# pred = model.matrix(~treatment*visit, data = meta_hvg_pt)
-# data_g_hvg_pt = group_cell(count=counts_hvg_pt, id=meta_hvg_pt$subject, pred=pred)
 
 # With parallelization
 # List of genes
@@ -628,7 +626,7 @@ nebula_pt_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matri
     pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
     data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
 
-    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1)
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1, output_re = T, covariance = T)
     list(gene = g, result = result)  # return both gene name and result
     
   }, error = function(e) {
@@ -646,15 +644,107 @@ print(end_time - start_time)
 stopCluster(cl)
 
 nebula_nonconverged_percent <- (length(genes_list)-length(nebula_pt_results_list))/length(genes_list)
-print(paste0(nebula_nonconverged_percent*100, "% failed to converge"))
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
 temp_file <- tempfile(fileext = "rds") # need to create a temporary file
 saveRDS(nebula_pt_results_list, temp_file) # save the temp file locally (will delete after R session)
 s3$upload_file(temp_file, "attempt", 'PT/nebula/pt_attempt_hvg_nebula_res.rds')
 ```
 
-##### glmmTMB
+###### REML with rounded counts
 
 ```{r echo = F}
+# REML
+counts_hvg_pt <- round(GetAssayData(attempt_so_hvg_pt, layer = "counts")) # load counts and round
+genes_list <- rownames(counts_hvg_pt)
+cl <- makeCluster(100)
+registerDoParallel(cl)
+
+start_time <- Sys.time()
+
+nebula_pt_results_list_reml <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
+  tryCatch({
+    count_gene <- counts_hvg_pt[g, , drop = FALSE]
+    meta_gene <- subset(attempt_so_hvg_pt, features = g)@meta.data
+    pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
+    data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
+
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1, output_re = T, covariance = T, reml = 1)
+    list(gene = g, result = result)  # return both gene name and result
+    
+  }, error = function(e) {
+    NULL
+  })
+}
+# set the names of results based on gene names
+nebula_pt_results_list_reml <- Filter(Negate(is.null), nebula_pt_results_list_reml)  # remove NULLs first
+names(nebula_pt_results_list_reml) <- sapply(nebula_pt_results_list_reml, function(x) x$gene)  # set names
+nebula_pt_results_list_reml <- lapply(nebula_pt_results_list_reml, function(x) x$result)  # clean list back to just results
+
+
+end_time <- Sys.time()
+print(end_time - start_time)
+stopCluster(cl)
+
+nebula_nonconverged_percent <- (length(genes_list)-length(nebula_pt_results_list_reml))/length(genes_list)
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(nebula_pt_results_list_reml, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'PT/nebula/pt_attempt_hvg_nebula_res_reml.rds')
+```
+
+###### REML with rounded counts & offset
+
+```{r echo = F}
+counts_hvg_pt <- round(GetAssayData(attempt_so_hvg_pt, layer = "counts")) # load counts and round
+genes_list <- rownames(counts_hvg_pt)
+
+meta_hvg_pt <- attempt_so_hvg_pt@meta.data
+pred = model.matrix(~treatment*visit, data = meta_hvg_pt)
+data_g_hvg_pt = group_cell(count=counts_hvg_pt, id=meta_hvg_pt$subject, pred=pred)
+offset_hvg_pt = Matrix::colSums(data_g_hvg_pt$count) 
+
+cl <- makeCluster(100)
+registerDoParallel(cl)
+
+start_time <- Sys.time()
+
+
+nebula_pt_results_list_reml_offset <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
+  tryCatch({
+    count_gene <- counts_hvg_pt[g, , drop = FALSE]
+    meta_gene <- subset(attempt_so_hvg_pt, features = g)@meta.data
+    pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
+    data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
+
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, 
+                     ncore = 1, output_re = T, covariance = T, reml = 1, 
+                     offset = offset_hvg_pt)
+    list(gene = g, result = result)  # return both gene name and result
+    
+  }, error = function(e) {
+    NULL
+  })
+}
+# set the names of results based on gene names
+nebula_pt_results_list_reml_offset <- Filter(Negate(is.null), nebula_pt_results_list_reml_offset)  # remove NULLs first
+names(nebula_pt_results_list_reml_offset) <- sapply(nebula_pt_results_list_reml_offset, function(x) x$gene)  # set names
+nebula_pt_results_list_reml_offset <- lapply(nebula_pt_results_list_reml_offset, function(x) x$result)  # clean list back to just results
+
+
+end_time <- Sys.time()
+print(end_time - start_time)
+stopCluster(cl)
+
+nebula_nonconverged_percent <- (length(genes_list)-length(nebula_pt_results_list_reml_offset))/length(genes_list)
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(nebula_pt_results_list_reml_offset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'PT/nebula/pt_attempt_hvg_nebula_res_reml_offset.rds')
+```
+
+##### glmmTMB
+
+```{r echo = F, eval = F}
 # Subset Seurat object to retain only these genes
 # expr_matrix <- as.matrix(GetAssayData(attempt_so_hvg_pt, layer = "data"))
 expr_matrix <- round(as.matrix(GetAssayData(attempt_so_hvg_pt, layer = "count"))) # round soupX corrected non-integer count data to integers
@@ -723,7 +813,7 @@ nonconverged_genes_zinb_nested <- (final_results_zinb_nested %>%
 ```
 
 
-```{r echo = F}
+```{r echo = F, eval = F}
 # set up batches (of 1000)
 genes_list <- list()
 batch_size <- 1000
@@ -740,7 +830,7 @@ list2env(sc_data_list, envir = .GlobalEnv)
 remove(sc_data_list)
 ```
 
-```{r echo = F}
+```{r echo = F, eval = F}
 cl <- parallel::makeCluster(100)
 # Model 1
 registerDoParallel(cl)
@@ -769,7 +859,7 @@ stopCluster(cl)
 ```
 
 
-```{r echo = F}
+```{r echo = F, eval = F}
 # # Model 1
 # # Combine all model data tables into one
 model_df_list <- lapply(results_list, function(x) rbindlist(lapply(x, function(y) y$model), fill = TRUE))
@@ -867,7 +957,7 @@ attempt_so_hvg_tal <- subset(attempt_so_tal, features = hvgs_tal)
 ```
 
 #### Proportions
-```{r echo = F}
+```{r echo = F, eval = F}
 attempt_tal_meta <- attempt_so_hvg_tal@meta.data %>%
   mutate(visit_treatment = paste0(visit, " ", treatment))
 attempt_tal_meta$celltype <- factor(attempt_tal_meta$celltype, levels = c("TAL-1", "TAL-2", "TAL-3"))
@@ -979,6 +1069,8 @@ s3$upload_file(temp_file, "attempt", "Figures/Proportions/attempt_tal_visit_trea
 
 #### Mixed model (hurdle, nested random effect)
 ##### nebula
+###### ML with rounded counts
+
 ```{r echo = F}
 counts_hvg_tal <- round(GetAssayData(attempt_so_hvg_tal, layer = "counts")) # load counts and round
 # meta_hvg_tal <- attempt_so_hvg_tal@meta.data
@@ -1001,7 +1093,7 @@ nebula_tal_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matr
     pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
     data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
 
-    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1)
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1, output_re = T, covariance = T)
     list(gene = g, result = result)  # return both gene name and result
     
   }, error = function(e) {
@@ -1019,15 +1111,105 @@ print(end_time - start_time)
 stopCluster(cl)
 
 nebula_nonconverged_percent <- (length(genes_list)-length(nebula_tal_results_list))/length(genes_list)
-print(paste0(nebula_nonconverged_percent*100, "% failed to converge"))
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
 temp_file <- tempfile(fileext = "rds") # need to create a temporary file
 saveRDS(nebula_tal_results_list, temp_file) # save the temp file locally (will delete after R session)
 s3$upload_file(temp_file, "attempt", 'TAL/nebula/tal_attempt_hvg_nebula_res.rds')
 ```
+###### REML with rounded counts
 
+```{r echo = F}
+# REML
+counts_hvg_tal <- round(GetAssayData(attempt_so_hvg_tal, layer = "counts")) # load counts and round
+genes_list <- rownames(counts_hvg_tal)
+cl <- makeCluster(100)
+registerDoParallel(cl)
+
+start_time <- Sys.time()
+
+nebula_tal_results_list_reml <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
+  tryCatch({
+    count_gene <- counts_hvg_tal[g, , drop = FALSE]
+    meta_gene <- subset(attempt_so_hvg_tal, features = g)@meta.data
+    pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
+    data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
+
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1, output_re = T, covariance = T, reml = 1)
+    list(gene = g, result = result)  # return both gene name and result
+    
+  }, error = function(e) {
+    NULL
+  })
+}
+
+# set the names of results based on gene names
+nebula_tal_results_list_reml <- Filter(Negate(is.null), nebula_tal_results_list_reml)  # remove NULLs first
+names(nebula_tal_results_list_reml) <- sapply(nebula_tal_results_list_reml, function(x) x$gene)  # set names
+nebula_tal_results_list_reml <- lapply(nebula_tal_results_list_reml, function(x) x$result)  # clean list back to just results
+
+
+end_time <- Sys.time()
+print(end_time - start_time)
+stopCluster(cl)
+
+nebula_nonconverged_percent <- (length(genes_list)-length(nebula_tal_results_list_reml))/length(genes_list)
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(nebula_tal_results_list_reml, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'TAL/nebula/tal_attempt_hvg_nebula_res_reml.rds')
+```
+###### REML with rounded counts & offset
+
+```{r echo = F}
+counts_hvg_tal <- round(GetAssayData(attempt_so_hvg_tal, layer = "counts")) # load counts and round
+genes_list <- rownames(counts_hvg_tal)
+
+meta_hvg_tal <- attempt_so_hvg_tal@meta.data
+pred = model.matrix(~treatment*visit, data = meta_hvg_tal)
+data_g_hvg_tal = group_cell(count=counts_hvg_tal, id=meta_hvg_tal$subject, pred=pred)
+offset_hvg_tal = Matrix::colSums(data_g_hvg_tal$count) 
+
+cl <- makeCluster(100)
+registerDoParallel(cl)
+
+start_time <- Sys.time()
+
+
+nebula_tal_results_list_reml_offset <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
+  tryCatch({
+    count_gene <- counts_hvg_tal[g, , drop = FALSE]
+    meta_gene <- subset(attempt_so_hvg_tal, features = g)@meta.data
+    pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
+    data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
+
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, 
+                     ncore = 1, output_re = T, covariance = T, reml = 1, 
+                     offset = offset_hvg_tal)
+    list(gene = g, result = result)  # return both gene name and result
+    
+  }, error = function(e) {
+    NULL
+  })
+}
+# set the names of results based on gene names
+nebula_tal_results_list_reml_offset <- Filter(Negate(is.null), nebula_tal_results_list_reml_offset)  # remove NULLs first
+names(nebula_tal_results_list_reml_offset) <- sapply(nebula_tal_results_list_reml_offset, function(x) x$gene)  # set names
+nebula_tal_results_list_reml_offset <- lapply(nebula_tal_results_list_reml_offset, function(x) x$result)  # clean list back to just results
+
+
+end_time <- Sys.time()
+print(end_time - start_time)
+stopCluster(cl)
+
+nebula_nonconverged_percent <- (length(genes_list)-length(nebula_tal_results_list_reml_offset))/length(genes_list)
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(nebula_tal_results_list_reml_offset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'TAL/nebula/tal_attempt_hvg_nebula_res_reml_offset.rds')
+```
 ##### glmmTMB
 
-```{r echo = F}
+```{r echo = F, eval = F}
 # Subset Seurat object to retain only these genes
 # expr_matrix <- as.matrix(GetAssayData(attempt_so_hvg_tal, layer = "data"))
 expr_matrix <- round(as.matrix(GetAssayData(attempt_so_hvg_tal, layer = "count"))) # round soupX corrected non-integer count data to integers
@@ -1042,7 +1224,7 @@ sc_data <- data.frame(Gene = expr_df$Gene,
                       Count = as.vector(expr_df$Count))
 ```
 
-```{r echo = F}
+```{r echo = F, eval = F}
 # Subset Seurat object to retain only these genes
 # expr_matrix <- as.matrix(GetAssayData(attempt_so_hvg_tal, layer = "data"))
 expr_matrix <- round(as.matrix(GetAssayData(attempt_so_hvg_tal, layer = "count"))) # round soupX corrected non-integer count data to integers
@@ -1058,7 +1240,7 @@ sc_data <- data.frame(Gene = expr_df$Gene,
 ```
 
 
-```{r echo = F}
+```{r echo = F, eval = F}
 # set up batches (of 1000)
 genes_list <- list()
 batch_size <- 1000
@@ -1075,7 +1257,7 @@ list2env(sc_data_list, envir = .GlobalEnv)
 remove(sc_data_list)
 ```
 
-```{r echo = F}
+```{r echo = F, eval = F}
 cl <- parallel::makeCluster(100)
 
 # Model 1
@@ -1105,7 +1287,7 @@ print(end_time - start_time)
 stopCluster(cl)
 ```
 
-```{r echo = F}
+```{r echo = F, eval = F}
 # Model 1
 # Combine all model data tables into one
 model_df_list <- lapply(results_list, function(x) rbindlist(lapply(x, function(y) y$model), fill = TRUE))
@@ -1199,7 +1381,7 @@ attempt_so_hvg_immune <- subset(attempt_so_immune, features = hvgs_immune)
 
 
 #### Proportions
-```{r echo = F}
+```{r echo = F, eval = F}
 attempt_immune_meta <- attempt_so_hvg_immune@meta.data %>%
   mutate(visit_treatment = paste0(visit, " ", treatment))
 attempt_immune_meta$celltype <- factor(attempt_immune_meta$celltype, levels = c("MON", "MAC", "T", "B", "NKT/NKC"))
@@ -1257,6 +1439,8 @@ s3$upload_file(temp_file, "attempt", "Figures/Proportions/attempt_immune_treatme
 
 #### Mixed model (hurdle, nested random effect)
 ##### nebula
+###### ML with rounded counts
+
 ```{r echo = F}
 counts_hvg_immune <- round(GetAssayData(attempt_so_hvg_immune, layer = "counts")) # load counts and round
 # meta_hvg_immune <- attempt_so_hvg_immune@meta.data
@@ -1279,7 +1463,7 @@ nebula_immune_results_list <- foreach(g = genes_list, .packages = c("nebula", "M
     pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
     data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
 
-    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1)
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, , output_re = T, covariance = T)
     list(gene = g, result = result)  # return both gene name and result
     
   }, error = function(e) {
@@ -1297,15 +1481,108 @@ print(end_time - start_time)
 stopCluster(cl)
 
 nebula_nonconverged_percent <- (length(genes_list)-length(nebula_immune_results_list))/length(genes_list)
-print(paste0(nebula_nonconverged_percent*100, "% failed to converge"))
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
 temp_file <- tempfile(fileext = "rds") # need to create a temporary file
 saveRDS(nebula_immune_results_list, temp_file) # save the temp file locally (will delete after R session)
 s3$upload_file(temp_file, "attempt", 'Immune/nebula/immune_attempt_hvg_nebula_res.rds')
 ```
 
-##### glmmTMB
+###### REML with rounded counts
 
 ```{r echo = F}
+# REML
+counts_hvg_immune <- round(GetAssayData(attempt_so_hvg_immune, layer = "counts")) # load counts and round
+genes_list <- rownames(counts_hvg_immune)
+
+cl <- makeCluster(100)
+registerDoParallel(cl)
+
+start_time <- Sys.time()
+
+nebula_immune_results_list_reml <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
+  tryCatch({
+    count_gene <- counts_hvg_immune[g, , drop = FALSE]
+    meta_gene <- subset(attempt_so_hvg_immune, features = g)@meta.data
+    pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
+    data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
+
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1, output_re = T, covariance = T, reml = 1)
+    list(gene = g, result = result)  # return both gene name and result
+    
+  }, error = function(e) {
+    NULL
+  })
+}
+# set the names of results based on gene names
+nebula_immune_results_list_reml <- Filter(Negate(is.null), nebula_immune_results_list_reml)  # remove NULLs first
+names(nebula_immune_results_list_reml) <- sapply(nebula_immune_results_list_reml, function(x) x$gene)  # set names
+nebula_immune_results_list_reml <- lapply(nebula_immune_results_list_reml, function(x) x$result)  # clean list back to just results
+
+
+end_time <- Sys.time()
+print(end_time - start_time)
+stopCluster(cl)
+
+nebula_nonconverged_percent <- (length(genes_list)-length(nebula_immune_results_list_reml))/length(genes_list)
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(nebula_immune_results_list_reml, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'Immune/nebula/immune_attempt_hvg_nebula_res_reml.rds')
+```
+
+###### REML with rounded counts & offset
+
+```{r echo = F}
+counts_hvg_immune <- round(GetAssayData(attempt_so_hvg_immune, layer = "counts")) # load counts and round
+genes_list <- rownames(counts_hvg_immune)
+
+meta_hvg_immune <- attempt_so_hvg_immune@meta.data
+pred = model.matrix(~treatment*visit, data = meta_hvg_immune)
+data_g_hvg_immune = group_cell(count=counts_hvg_immune, id=meta_hvg_immune$subject, pred=pred)
+offset_hvg_immune = Matrix::colSums(data_g_hvg_immune$count) 
+
+cl <- makeCluster(100)
+registerDoParallel(cl)
+
+start_time <- Sys.time()
+
+
+nebula_immune_results_list_reml_offset <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
+  tryCatch({
+    count_gene <- counts_hvg_immune[g, , drop = FALSE]
+    meta_gene <- subset(attempt_so_hvg_immune, features = g)@meta.data
+    pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
+    data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
+
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, 
+                     ncore = 1, output_re = T, covariance = T, reml = 1, 
+                     offset = offset_hvg_immune)
+    list(gene = g, result = result)  # return both gene name and result
+    
+  }, error = function(e) {
+    NULL
+  })
+}
+# set the names of results based on gene names
+nebula_immune_results_list_reml_offset <- Filter(Negate(is.null), nebula_immune_results_list_reml_offset)  # remove NULLs first
+names(nebula_immune_results_list_reml_offset) <- sapply(nebula_immune_results_list_reml_offset, function(x) x$gene)  # set names
+nebula_immune_results_list_reml_offset <- lapply(nebula_immune_results_list_reml_offset, function(x) x$result)  # clean list back to just results
+
+
+end_time <- Sys.time()
+print(end_time - start_time)
+stopCluster(cl)
+
+nebula_nonconverged_percent <- (length(genes_list)-length(nebula_immune_results_list_reml_offset))/length(genes_list)
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(nebula_immune_results_list_reml_offset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'Immune/nebula/immune_attempt_hvg_nebula_res_reml_offset.rds')
+```
+
+##### glmmTMB
+
+```{r echo = F, eval = F}
 # Subset Seurat object to retain only these genes
 # expr_matrix <- as.matrix(GetAssayData(attempt_so_hvg_immune, layer = "data"))
 expr_matrix <- round(as.matrix(GetAssayData(attempt_so_hvg_immune, layer = "count"))) # round soupX corrected non-integer count data to integers
@@ -1321,7 +1598,7 @@ sc_data <- data.frame(Gene = expr_df$Gene,
 ```
 
 
-```{r echo = F}
+```{r echo = F, eval = F}
 # set up batches (of 1000)
 genes_list <- list()
 batch_size <- 1000
@@ -1338,7 +1615,7 @@ list2env(sc_data_list, envir = .GlobalEnv)
 remove(sc_data_list)
 ```
 
-```{r echo = F}
+```{r echo = F, eval = F}
 cl <- parallel::makeCluster(100)
 
 # Model 1
@@ -1368,7 +1645,7 @@ print(end_time - start_time)
 stopCluster(cl)
 ```
 
-```{r echo = F}
+```{r echo = F, eval = F}
 # Model 1
 # Combine all model data tables into one
 model_df_list <- lapply(results_list, function(x) rbindlist(lapply(x, function(y) y$model), fill = TRUE))
@@ -1461,7 +1738,7 @@ attempt_so_hvg_pc <- subset(attempt_so_pc, features = hvgs_pc)
 ```
 
 #### Proportions 
-```{r echo = F} 
+```{r echo = F, eval = F}
 attempt_pc_meta <- attempt_so_hvg_pc@meta.data %>% 
   mutate(visit_treatment = paste0(visit, " ", treatment)) 
 attempt_pc_meta$celltype <- factor(attempt_pc_meta$celltype, levels = c("PC-1", "PC-2", "tPC-IC")) 
@@ -1520,6 +1797,8 @@ s3$upload_file(temp_file, "attempt", "Figures/Proportions/attempt_pc_treatment_v
 
 #### Mixed model (hurdle, nested random effect) 
 ##### nebula
+###### ML with rounded counts
+
 ```{r echo = F}
 counts_hvg_pc <- round(GetAssayData(attempt_so_hvg_pc, layer = "counts")) # load counts and round
 # meta_hvg_pc <- attempt_so_hvg_pc@meta.data
@@ -1542,7 +1821,7 @@ nebula_pc_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matri
     pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
     data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
 
-    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1)
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, , output_re = T, covariance = T)
     list(gene = g, result = result)  # return both gene name and result
     
   }, error = function(e) {
@@ -1560,15 +1839,105 @@ print(end_time - start_time)
 stopCluster(cl)
 
 nebula_nonconverged_percent <- (length(genes_list)-length(nebula_pc_results_list))/length(genes_list)
-print(paste0(nebula_nonconverged_percent*100, "% failed to converge"))
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
 temp_file <- tempfile(fileext = "rds") # need to create a temporary file
 saveRDS(nebula_pc_results_list, temp_file) # save the temp file locally (will delete after R session)
 s3$upload_file(temp_file, "attempt", 'PC/nebula/pc_attempt_hvg_nebula_res.rds')
 ```
-
-##### glmmTMB
+###### REML with rounded counts
 
 ```{r echo = F}
+counts_hvg_pc <- round(GetAssayData(attempt_so_hvg_pc, layer = "counts")) # load counts and round
+genes_list <- rownames(counts_hvg_pc)
+# REML
+cl <- makeCluster(100)
+registerDoParallel(cl)
+
+start_time <- Sys.time()
+
+nebula_pc_results_list_reml <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
+  tryCatch({
+    count_gene <- counts_hvg_pc[g, , drop = FALSE]
+    meta_gene <- subset(attempt_so_hvg_pc, features = g)@meta.data
+    pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
+    data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
+
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1, output_re = T, covariance = T, reml = 1)
+    list(gene = g, result = result)  # return both gene name and result
+    
+  }, error = function(e) {
+    NULL
+  })
+}
+# set the names of results based on gene names
+nebula_pc_results_list_reml <- Filter(Negate(is.null), nebula_pc_results_list_reml)  # remove NULLs first
+names(nebula_pc_results_list_reml) <- sapply(nebula_pc_results_list_reml, function(x) x$gene)  # set names
+nebula_pc_results_list_reml <- lapply(nebula_pc_results_list_reml, function(x) x$result)  # clean list back to just results
+
+
+end_time <- Sys.time()
+print(end_time - start_time)
+stopCluster(cl)
+
+nebula_nonconverged_percent <- (length(genes_list)-length(nebula_pc_results_list_reml))/length(genes_list)
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(nebula_pc_results_list_reml, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'PC/nebula/pc_attempt_hvg_nebula_res_reml.rds')
+```
+
+###### REML with rounded counts & offset
+
+```{r echo = F}
+counts_hvg_pc <- round(GetAssayData(attempt_so_hvg_pc, layer = "counts")) # load counts and round
+genes_list <- rownames(counts_hvg_pc)
+
+meta_hvg_pc <- attempt_so_hvg_pc@meta.data
+pred = model.matrix(~treatment*visit, data = meta_hvg_pc)
+data_g_hvg_pc = group_cell(count=counts_hvg_pc, id=meta_hvg_pc$subject, pred=pred)
+offset_hvg_pc = Matrix::colSums(data_g_hvg_pc$count) 
+
+cl <- makeCluster(100)
+registerDoParallel(cl)
+
+start_time <- Sys.time()
+
+
+nebula_pc_results_list_reml_offset <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
+  tryCatch({
+    count_gene <- counts_hvg_pc[g, , drop = FALSE]
+    meta_gene <- subset(attempt_so_hvg_pc, features = g)@meta.data
+    pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
+    data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
+
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, 
+                     ncore = 1, output_re = T, covariance = T, reml = 1, 
+                     offset = offset_hvg_pc)
+    list(gene = g, result = result)  # return both gene name and result
+    
+  }, error = function(e) {
+    NULL
+  })
+}
+# set the names of results based on gene names
+nebula_pc_results_list_reml_offset <- Filter(Negate(is.null), nebula_pc_results_list_reml_offset)  # remove NULLs first
+names(nebula_pc_results_list_reml_offset) <- sapply(nebula_pc_results_list_reml_offset, function(x) x$gene)  # set names
+nebula_pc_results_list_reml_offset <- lapply(nebula_pc_results_list_reml_offset, function(x) x$result)  # clean list back to just results
+
+
+end_time <- Sys.time()
+print(end_time - start_time)
+stopCluster(cl)
+
+nebula_nonconverged_percent <- (length(genes_list)-length(nebula_pc_results_list_reml_offset))/length(genes_list)
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(nebula_pc_results_list_reml_offset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'PC/nebula/pc_attempt_hvg_nebula_res_reml_offset.rds')
+```
+##### glmmTMB
+
+```{r echo = F, eval = F}
 # Subset Seurat object to retain only these genes
 # expr_matrix <- as.matrix(GetAssayData(attempt_so_hvg_pc, layer = "data"))
 expr_matrix <- round(as.matrix(GetAssayData(attempt_so_hvg_pc, layer = "count"))) # round soupX corrected non-integer count data to integers
@@ -1583,7 +1952,7 @@ sc_data <- data.frame(Gene = expr_df$Gene,
                       Count = as.vector(expr_df$Count))
 ```
 
-```{r echo = F}
+```{r echo = F, eval = F}
 # set up batches (of 1000)
 genes_list <- list()
 batch_size <- 1000
@@ -1600,7 +1969,7 @@ list2env(sc_data_list, envir = .GlobalEnv)
 remove(sc_data_list)
 ```
 
-```{r echo = F}
+```{r echo = F, eval = F}
 cl <- parallel::makeCluster(100)
 
 # Model 1
@@ -1631,7 +2000,7 @@ stopCluster(cl)
 ```
 
 
-```{r echo = F}
+```{r echo = F, eval = F}
 # # Model 1
 # Combine all model data tables into one
 model_df_list <- lapply(results_list, function(x) rbindlist(lapply(x, function(y) y$model), fill = TRUE))
@@ -1724,7 +2093,7 @@ hvgs_ic <- VariableFeatures(attempt_so_ic)
 attempt_so_hvg_ic <- subset(attempt_so_ic, features = hvgs_ic)
 ```
 #### Proportions
-```{r echo = F}
+```{r echo = F, eval = F}
 attempt_ic_meta <- attempt_so_hvg_ic@meta.data %>%
   mutate(visit_treatment = paste0(visit, " ", treatment))
 attempt_ic_meta$celltype <- factor(attempt_ic_meta$celltype, levels = c("IC-A", "IC-B"))
@@ -1782,6 +2151,8 @@ s3$upload_file(temp_file, "attempt", "Figures/Proportions/attempt_ic_treatment_v
 
 #### Mixed model (hurdle, nested random effect)
 ##### nebula
+###### ML with rounded counts
+
 ```{r echo = F}
 counts_hvg_ic <- round(GetAssayData(attempt_so_hvg_ic, layer = "counts")) # load counts and round
 # meta_hvg_ic <- attempt_so_hvg_ic@meta.data
@@ -1804,7 +2175,7 @@ nebula_ic_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matri
     pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
     data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
 
-    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1)
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, , output_re = T, covariance = T)
     list(gene = g, result = result)  # return both gene name and result
     
   }, error = function(e) {
@@ -1822,15 +2193,106 @@ print(end_time - start_time)
 stopCluster(cl)
 
 nebula_nonconverged_percent <- (length(genes_list)-length(nebula_ic_results_list))/length(genes_list)
-print(paste0(nebula_nonconverged_percent*100, "% failed to converge"))
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
 temp_file <- tempfile(fileext = "rds") # need to create a temporary file
 saveRDS(nebula_ic_results_list, temp_file) # save the temp file locally (will delete after R session)
 s3$upload_file(temp_file, "attempt", 'IC/nebula/ic_attempt_hvg_nebula_res.rds')
 ```
-
-##### glmmTMB
+###### REML with rounded counts
 
 ```{r echo = F}
+counts_hvg_ic <- round(GetAssayData(attempt_so_hvg_ic, layer = "counts")) # load counts and round
+genes_list <- rownames(counts_hvg_ic)
+
+# REML
+cl <- makeCluster(100)
+registerDoParallel(cl)
+
+start_time <- Sys.time()
+
+nebula_ic_results_list_reml <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
+  tryCatch({
+    count_gene <- counts_hvg_ic[g, , drop = FALSE]
+    meta_gene <- subset(attempt_so_hvg_ic, features = g)@meta.data
+    pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
+    data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
+
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1, output_re = T, covariance = T, reml = 1)
+    list(gene = g, result = result)  # return both gene name and result
+    
+  }, error = function(e) {
+    NULL
+  })
+}
+# set the names of results based on gene names
+nebula_ic_results_list_reml <- Filter(Negate(is.null), nebula_ic_results_list_reml)  # remove NULLs first
+names(nebula_ic_results_list_reml) <- sapply(nebula_ic_results_list_reml, function(x) x$gene)  # set names
+nebula_ic_results_list_reml <- lapply(nebula_ic_results_list_reml, function(x) x$result)  # clean list back to just results
+
+
+end_time <- Sys.time()
+print(end_time - start_time)
+stopCluster(cl)
+
+nebula_nonconverged_percent <- (length(genes_list)-length(nebula_ic_results_list_reml))/length(genes_list)
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(nebula_ic_results_list_reml, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'IC/nebula/ic_attempt_hvg_nebula_res_reml.rds')
+```
+
+###### REML with rounded counts & offset
+
+```{r echo = F}
+counts_hvg_ic <- round(GetAssayData(attempt_so_hvg_ic, layer = "counts")) # load counts and round
+genes_list <- rownames(counts_hvg_ic)
+
+meta_hvg_ic <- attempt_so_hvg_ic@meta.data
+pred = model.matrix(~treatment*visit, data = meta_hvg_ic)
+data_g_hvg_ic = group_cell(count=counts_hvg_ic, id=meta_hvg_ic$subject, pred=pred)
+offset_hvg_ic = Matrix::colSums(data_g_hvg_ic$count) 
+
+cl <- makeCluster(100)
+registerDoParallel(cl)
+
+start_time <- Sys.time()
+
+
+nebula_ic_results_list_reml_offset <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
+  tryCatch({
+    count_gene <- counts_hvg_ic[g, , drop = FALSE]
+    meta_gene <- subset(attempt_so_hvg_ic, features = g)@meta.data
+    pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
+    data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
+
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, 
+                     ncore = 1, output_re = T, covariance = T, reml = 1, 
+                     offset = offset_hvg_ic)
+    list(gene = g, result = result)  # return both gene name and result
+    
+  }, error = function(e) {
+    NULL
+  })
+}
+# set the names of results based on gene names
+nebula_ic_results_list_reml_offset <- Filter(Negate(is.null), nebula_ic_results_list_reml_offset)  # remove NULLs first
+names(nebula_ic_results_list_reml_offset) <- sapply(nebula_ic_results_list_reml_offset, function(x) x$gene)  # set names
+nebula_ic_results_list_reml_offset <- lapply(nebula_ic_results_list_reml_offset, function(x) x$result)  # clean list back to just results
+
+
+end_time <- Sys.time()
+print(end_time - start_time)
+stopCluster(cl)
+
+nebula_nonconverged_percent <- (length(genes_list)-length(nebula_ic_results_list_reml_offset))/length(genes_list)
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(nebula_ic_results_list_reml_offset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'IC/nebula/ic_attempt_hvg_nebula_res_reml_offset.rds')
+```
+##### glmmTMB
+
+```{r echo = F, eval = F}
 # Subset Seurat object to retain only these genes
 # expr_matrix <- as.matrix(GetAssayData(attempt_so_hvg_ic, layer = "data"))
 expr_matrix <- round(as.matrix(GetAssayData(attempt_so_hvg_ic, layer = "count"))) # round soupX corrected non-integer count data to integers
@@ -1846,7 +2308,7 @@ sc_data <- data.frame(Gene = expr_df$Gene,
 ```
 
 
-```{r echo = F}
+```{r echo = F, eval = F}
 # set up batches (of 1000)
 genes_list <- list()
 batch_size <- 1000
@@ -1863,7 +2325,7 @@ list2env(sc_data_list, envir = .GlobalEnv)
 remove(sc_data_list)
 ```
 
-```{r echo = F}
+```{r echo = F, eval = F}
 cl <- parallel::makeCluster(100)
 
 # Model 1
@@ -1894,7 +2356,7 @@ stopCluster(cl)
 ```
 
 
-```{r echo = F}
+```{r echo = F, eval = F}
 # Model 1
 # Combine all model data tables into one
 model_df_list <- lapply(results_list, function(x) rbindlist(lapply(x, function(y) y$model), fill = TRUE))
@@ -1986,7 +2448,7 @@ attempt_so_hvg_ec <- subset(attempt_so_ec, features = hvgs_ec)
 ```
 
 #### Proportions
-```{r echo = F}
+```{r echo = F, eval = F}
 attempt_ec_meta <- attempt_so_hvg_ec@meta.data %>%
   mutate(visit_treatment = paste0(visit, " ", treatment))
 attempt_ec_meta$celltype <- factor(attempt_ec_meta$celltype, levels = c("EC-PTC", "EC-GC", "EC-AEA", "EC-LYM"))
@@ -2044,6 +2506,8 @@ s3$upload_file(temp_file, "attempt", "Figures/Proportions/attempt_ec_treatment_v
 
 #### Mixed model (hurdle, nested random effect)
 ##### nebula
+###### ML with rounded counts
+
 ```{r echo = F}
 counts_hvg_ec <- round(GetAssayData(attempt_so_hvg_ec, layer = "counts")) # load counts and round
 # meta_hvg_ec <- attempt_so_hvg_ec@meta.data
@@ -2066,7 +2530,7 @@ nebula_ec_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matri
     pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
     data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
 
-    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1)
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, , output_re = T, covariance = T)
     list(gene = g, result = result)  # return both gene name and result
     
   }, error = function(e) {
@@ -2084,15 +2548,106 @@ print(end_time - start_time)
 stopCluster(cl)
 
 nebula_nonconverged_percent <- (length(genes_list)-length(nebula_ec_results_list))/length(genes_list)
-print(paste0(nebula_nonconverged_percent*100, "% failed to converge"))
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
 temp_file <- tempfile(fileext = "rds") # need to create a temporary file
 saveRDS(nebula_ec_results_list, temp_file) # save the temp file locally (will delete after R session)
 s3$upload_file(temp_file, "attempt", 'EC/nebula/ec_attempt_hvg_nebula_res.rds')
 ```
-
-##### glmmTMB
+###### REML with rounded counts
 
 ```{r echo = F}
+counts_hvg_ec <- round(GetAssayData(attempt_so_hvg_ec, layer = "counts")) # load counts and round
+genes_list <- rownames(counts_hvg_ec)
+
+# REML
+cl <- makeCluster(100)
+registerDoParallel(cl)
+
+start_time <- Sys.time()
+
+nebula_ec_results_list_reml <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
+  tryCatch({
+    count_gene <- counts_hvg_ec[g, , drop = FALSE]
+    meta_gene <- subset(attempt_so_hvg_ec, features = g)@meta.data
+    pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
+    data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
+
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1, output_re = T, covariance = T, reml = 1)
+    list(gene = g, result = result)  # return both gene name and result
+    
+  }, error = function(e) {
+    NULL
+  })
+}
+# set the names of results based on gene names
+nebula_ec_results_list_reml <- Filter(Negate(is.null), nebula_ec_results_list_reml)  # remove NULLs first
+names(nebula_ec_results_list_reml) <- sapply(nebula_ec_results_list_reml, function(x) x$gene)  # set names
+nebula_ec_results_list_reml <- lapply(nebula_ec_results_list_reml, function(x) x$result)  # clean list back to just results
+
+
+end_time <- Sys.time()
+print(end_time - start_time)
+stopCluster(cl)
+
+nebula_nonconverged_percent <- (length(genes_list)-length(nebula_ec_results_list_reml))/length(genes_list)
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(nebula_ec_results_list_reml, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'EC/nebula/ec_attempt_hvg_nebula_res_reml.rds')
+```
+
+###### REML with rounded counts & offset
+
+```{r echo = F}
+counts_hvg_ec <- round(GetAssayData(attempt_so_hvg_ec, layer = "counts")) # load counts and round
+genes_list <- rownames(counts_hvg_ec)
+
+meta_hvg_ec <- attempt_so_hvg_ec@meta.data
+pred = model.matrix(~treatment*visit, data = meta_hvg_ec)
+data_g_hvg_ec = group_cell(count=counts_hvg_ec, id=meta_hvg_ec$subject, pred=pred)
+offset_hvg_ec = Matrix::colSums(data_g_hvg_ec$count) 
+
+cl <- makeCluster(100)
+registerDoParallel(cl)
+
+start_time <- Sys.time()
+
+
+nebula_ec_results_list_reml_offset <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
+  tryCatch({
+    count_gene <- counts_hvg_ec[g, , drop = FALSE]
+    meta_gene <- subset(attempt_so_hvg_ec, features = g)@meta.data
+    pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
+    data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
+
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, 
+                     ncore = 1, output_re = T, covariance = T, reml = 1, 
+                     offset = offset_hvg_ec)
+    list(gene = g, result = result)  # return both gene name and result
+    
+  }, error = function(e) {
+    NULL
+  })
+}
+# set the names of results based on gene names
+nebula_ec_results_list_reml_offset <- Filter(Negate(is.null), nebula_ec_results_list_reml_offset)  # remove NULLs first
+names(nebula_ec_results_list_reml_offset) <- sapply(nebula_ec_results_list_reml_offset, function(x) x$gene)  # set names
+nebula_ec_results_list_reml_offset <- lapply(nebula_ec_results_list_reml_offset, function(x) x$result)  # clean list back to just results
+
+
+end_time <- Sys.time()
+print(end_time - start_time)
+stopCluster(cl)
+
+nebula_nonconverged_percent <- (length(genes_list)-length(nebula_ec_results_list_reml_offset))/length(genes_list)
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(nebula_ec_results_list_reml_offset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'EC/nebula/ec_attempt_hvg_nebula_res_reml_offset.rds')
+```
+##### glmmTMB
+
+```{r echo = F, eval = F}
 # Subset Seurat object to retain only these genes
 # expr_matrix <- as.matrix(GetAssayData(attempt_so_hvg_ec, layer = "data"))
 expr_matrix <- round(as.matrix(GetAssayData(attempt_so_hvg_ec, layer = "count"))) # round soupX corrected non-integer count data to integers
@@ -2108,7 +2663,7 @@ sc_data <- data.frame(Gene = expr_df$Gene,
 ```
 
 
-```{r echo = F}
+```{r echo = F, eval = F}
 # set up batches (of 1000)
 genes_list <- list()
 batch_size <- 1000
@@ -2125,7 +2680,7 @@ list2env(sc_data_list, envir = .GlobalEnv)
 remove(sc_data_list)
 ```
 
-```{r echo = F}
+```{r echo = F, eval = F}
 cl <- parallel::makeCluster(100)
 
 # Model 1
@@ -2156,7 +2711,7 @@ stopCluster(cl)
 ```
 
 
-```{r echo = F}
+```{r echo = F, eval = F}
 # Model 1
 # Combine all model data tables into one
 model_df_list <- lapply(results_list, function(x) rbindlist(lapply(x, function(y) y$model), fill = TRUE))
@@ -2248,7 +2803,7 @@ attempt_so_hvg_fibvsmc <- subset(attempt_so_fibvsmc, features = hvgs_fibvsmc)
 ```
 
 #### Proportions
-```{r echo = F}
+```{r echo = F, eval = F}
 attempt_fibvsmc_meta <- attempt_so_hvg_fibvsmc@meta.data %>%
   mutate(visit_treatment = paste0(visit, " ", treatment))
 attempt_fibvsmc_meta$celltype <- factor(attempt_fibvsmc_meta$celltype, levels = c("FIB", "VSMC/P"))
@@ -2306,6 +2861,8 @@ s3$upload_file(temp_file, "attempt", "Figures/Proportions/attempt_fibvsmc_treatm
 
 #### Mixed model (hurdle, nested random effect)
 ##### nebula
+###### ML with rounded counts
+
 ```{r echo = F}
 counts_hvg_fibvsmc <- round(GetAssayData(attempt_so_hvg_fibvsmc, layer = "counts")) # load counts and round
 # meta_hvg_fibvsmc <- attempt_so_hvg_fibvsmc@meta.data
@@ -2328,7 +2885,7 @@ nebula_fibvsmc_results_list <- foreach(g = genes_list, .packages = c("nebula", "
     pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
     data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
 
-    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1)
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, , output_re = T, covariance = T)
     list(gene = g, result = result)  # return both gene name and result
     
   }, error = function(e) {
@@ -2346,15 +2903,105 @@ print(end_time - start_time)
 stopCluster(cl)
 
 nebula_nonconverged_percent <- (length(genes_list)-length(nebula_fibvsmc_results_list))/length(genes_list)
-print(paste0(nebula_nonconverged_percent*100, "% failed to converge"))
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
 temp_file <- tempfile(fileext = "rds") # need to create a temporary file
 saveRDS(nebula_fibvsmc_results_list, temp_file) # save the temp file locally (will delete after R session)
 s3$upload_file(temp_file, "attempt", 'FIBVSMCP/nebula/fibvsmc_attempt_hvg_nebula_res.rds')
 ```
-
-##### glmmTMB
+###### REML with rounded counts
 
 ```{r echo = F}
+counts_hvg_fibvsmc <- round(GetAssayData(attempt_so_hvg_fibvsmc, layer = "counts")) # load counts and round
+genes_list <- rownames(counts_hvg_fibvsmc)
+
+# REML
+cl <- makeCluster(100)
+registerDoParallel(cl)
+
+start_time <- Sys.time()
+
+nebula_fibvsmc_results_list_reml <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
+  tryCatch({
+    count_gene <- counts_hvg_fibvsmc[g, , drop = FALSE]
+    meta_gene <- subset(attempt_so_hvg_fibvsmc, features = g)@meta.data
+    pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
+    data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
+
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1, output_re = T, covariance = T, reml = 1)
+    list(gene = g, result = result)  # return both gene name and result
+    
+  }, error = function(e) {
+    NULL
+  })
+}
+# set the names of results based on gene names
+nebula_fibvsmc_results_list_reml <- Filter(Negate(is.null), nebula_fibvsmc_results_list_reml)  # remove NULLs first
+names(nebula_fibvsmc_results_list_reml) <- sapply(nebula_fibvsmc_results_list_reml, function(x) x$gene)  # set names
+nebula_fibvsmc_results_list_reml <- lapply(nebula_fibvsmc_results_list_reml, function(x) x$result)  # clean list back to just results
+
+
+end_time <- Sys.time()
+print(end_time - start_time)
+stopCluster(cl)
+
+nebula_nonconverged_percent <- (length(genes_list)-length(nebula_fibvsmc_results_list_reml))/length(genes_list)
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(nebula_fibvsmc_results_list_reml, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'FIBVSMCP/nebula/fibvsmc_attempt_hvg_nebula_res_reml.rds')
+```
+###### REML with rounded counts & offset
+
+```{r echo = F}
+counts_hvg_fibvsmc <- round(GetAssayData(attempt_so_hvg_fibvsmc, layer = "counts")) # load counts and round
+genes_list <- rownames(counts_hvg_fibvsmc)
+
+meta_hvg_fibvsmc <- attempt_so_hvg_fibvsmc@meta.data
+pred = model.matrix(~treatment*visit, data = meta_hvg_fibvsmc)
+data_g_hvg_fibvsmc = group_cell(count=counts_hvg_fibvsmc, id=meta_hvg_fibvsmc$subject, pred=pred)
+offset_hvg_fibvsmc = Matrix::colSums(data_g_hvg_fibvsmc$count) 
+
+cl <- makeCluster(100)
+registerDoParallel(cl)
+
+start_time <- Sys.time()
+
+
+nebula_fibvsmc_results_list_reml_offset <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
+  tryCatch({
+    count_gene <- counts_hvg_fibvsmc[g, , drop = FALSE]
+    meta_gene <- subset(attempt_so_hvg_fibvsmc, features = g)@meta.data
+    pred_gene <- model.matrix(~treatment * visit, data = meta_gene)
+    data_g_gene <- group_cell(count = count_gene, id = meta_gene$subject, pred = pred_gene)
+
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, 
+                     ncore = 1, output_re = T, covariance = T, reml = 1, 
+                     offset = offset_hvg_fibvsmc)
+    list(gene = g, result = result)  # return both gene name and result
+    
+  }, error = function(e) {
+    NULL
+  })
+}
+# set the names of results based on gene names
+nebula_fibvsmc_results_list_reml_offset <- Filter(Negate(is.null), nebula_fibvsmc_results_list_reml_offset)  # remove NULLs first
+names(nebula_fibvsmc_results_list_reml_offset) <- sapply(nebula_fibvsmc_results_list_reml_offset, function(x) x$gene)  # set names
+nebula_fibvsmc_results_list_reml_offset <- lapply(nebula_fibvsmc_results_list_reml_offset, function(x) x$result)  # clean list back to just results
+
+
+end_time <- Sys.time()
+print(end_time - start_time)
+stopCluster(cl)
+
+nebula_nonconverged_percent <- (length(genes_list)-length(nebula_fibvsmc_results_list_reml_offset))/length(genes_list)
+print(paste0(nebula_nonconverged_percent*100, "% filtered due to low expression"))
+temp_file <- tempfile(fileext = "rds") # need to create a temporary file
+saveRDS(nebula_fibvsmc_results_list_reml_offset, temp_file) # save the temp file locally (will delete after R session)
+s3$upload_file(temp_file, "attempt", 'FIBVSMCP/nebula/fibvsmc_attempt_hvg_nebula_res_reml_offset.rds')
+```
+##### glmmTMB
+
+```{r echo = F, eval = F}
 # Subset Seurat object to retain only these genes
 # expr_matrix <- as.matrix(GetAssayData(attempt_so_hvg_fibvsmc, layer = "data"))
 expr_matrix <- round(as.matrix(GetAssayData(attempt_so_hvg_fibvsmc, layer = "count"))) # round soupX corrected non-integer count data to integers
@@ -2370,7 +3017,7 @@ sc_data <- data.frame(Gene = expr_df$Gene,
 ```
 
 
-```{r echo = F}
+```{r echo = F, eval = F}
 # set up batches (of 1000)
 genes_list <- list()
 batch_size <- 1000
@@ -2387,7 +3034,7 @@ list2env(sc_data_list, envir = .GlobalEnv)
 remove(sc_data_list)
 ```
 
-```{r echo = F}
+```{r echo = F, eval = F}
 cl <- parallel::makeCluster(100)
 
 # Model 1
@@ -2418,7 +3065,7 @@ stopCluster(cl)
 ```
 
 
-```{r echo = F}
+```{r echo = F, eval = F}
 # Model 1
 # Combine all model data tables into one
 model_df_list <- lapply(results_list, function(x) rbindlist(lapply(x, function(y) y$model), fill = TRUE))
