@@ -167,6 +167,19 @@ df$metformin <- factor(df$metformin, levels = c(F, T), labels = c("No", "Yes"))
 # Lifestyle medicine means not on Metformin or EC
 df$lifestyle <- df$metformin == "No" & df$ec == "No"
 df$lifestyle <- factor(df$lifestyle, levels = c(F, T), labels = c("No", "Yes"))
+# Weight loss medication
+df$weight_loss <-
+  df$cv_medications___25 == "Checked" | df$cv_medications___26 == "Checked" |
+    df$cv_medications___27 == "Checked" | df$cv_medications___28 == "Checked" |
+    df$cv_medications___29 == "Checked"
+df$weight_loss <-
+  factor(df$weight_loss, levels = c(F, T), labels = c("No", "Yes"))
+# Progesterone containing medication
+df$progesterone <-
+  df$cv_medications___9 == "Checked" | df$cv_medications___10 == "Checked" |
+    df$cv_medications___11 == "Checked" | df$cv_medications___12 == "Checked"
+df$progesterone <-
+  factor(df$progesterone, levels = c(F, T), labels = c("No", "Yes"))
 # Age group at diagnosis
 df$age_group <- cut(df$pcosdx_age, c(-Inf, 15, Inf),
   right = F, labels = c("< 15 years", ">= 15 years")
@@ -189,9 +202,11 @@ label(df$overweight_perc) <- "Overweight Status (by percentile and raw value)"
 label(df$overweight_raw) <- "Overweight Status (by raw value)"
 label(df$cv_a1c) <- "HbA1C"
 label(df$larc) <- "On LARC?"
-label(df$ec) <- "On EC?"
+label(df$ec) <- "On Estrogen-Containing Medication?"
 label(df$metformin) <- "On Metformin?"
 label(df$lifestyle) <- "On Lifestyle Medicine?"
+label(df$weight_loss) <- "On Weight Loss Medication?"
+label(df$progesterone) <- "On Progesterone-Containing Medication?"
 label(df$pcosdx_age) <- "Age at time of PCOS diagnosis"
 label(df$mental_health_screening) <-
   "PHQ-2, PHQ-8, PHQ-9 or CED-S Score Available?"
