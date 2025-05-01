@@ -44,6 +44,73 @@ levels(df$combined_race) <- c(
   "Other"
 )
 df$combined_race <- relevel(df$combined_race, ref = "Caucasian")
+# Write a function to determine which visits to include
+visits_exclude <- function(data = d, column) {
+  # To dataframe
+  data <- as.data.frame(data)
+  # Yes and no run lengths, and the length of time between
+  r <- rle(as.character(data[, column]))
+  r <- data.frame(value = r$values, length = r$lengths)
+  # Get the end
+  r$end <- cumsum(r$length)
+  # Get the start
+  r$start <- r$end - r$length + 1
+  # Length of time between start and end
+  r$months <- as.numeric(data$cv_monthssincepcosdx[r$end] -
+    data$cv_monthssincepcosdx[r$start])
+  # If they only have one unique value, don't remove anything
+  if (nrow(r) == 1) {
+    data$remove <- NA
+  } else if (r$value[1] == "Yes") {
+    # If they start as "Yes" remove everything after first "No"
+    data$remove[r$start[2]:nrow(data)] <- "Remove"
+  } else if (r$value[1] == "No") {
+    # If they start a medication after diagnosis, check that they are on it
+    # for at least 3 months
+    first_yes <- which(r$value == "Yes" & r$months > 3)[1]
+    if (is.na(first_yes) & any(r$value == "Yes" & (r$end > r$start))) {
+      # If there is no 3 month stretch, but there are consecutive visits, remove
+      # everything after the first "Yes"
+      data$remove[r$start[2]:nrow(data)] <- "Remove"
+    } else if (is.na(first_yes) & !any(r$value == "Yes" & (r$end > r$start))) {
+      data$remove <- NA
+    } else if (r$end[first_yes] == nrow(data)) {
+      # If the first stretch of "yes" values doesn't end, don't exclude anything
+      data$remove <- NA
+    } else {
+      # Otherwise remove anything after the end of the first "Yes" stretch
+      data$remove[(r$end[first_yes] + 1):nrow(data)] <- "Remove"
+    }
+    # Remove any visits with a "Yes" singleton
+    data$remove[r[r$value == "Yes" & r$length == 1, "start"]] <- "Remove"
+  }
+  # # Checking
+  # t <- data %>% select(record_number, cv_monthssincepcosdx, lifestyle, remove)
+  # r$record_number <- data$record_number[1]
+  # return(r)
+  # Return
+  return(data$remove)
+}
+# This is probably not the most elegant approach, but it seems to work.
+dfs <- split(data.frame(df), df$record_number)
+dfs <- lapply(dfs, function(d) {
+  print(d$record_number[1])
+  # Get removal vector for each med
+  d$ec_remove <- visits_exclude(d, "ec")
+  d$metformin_remove <- visits_exclude(d, "metformin")
+  d$lifestyle_remove <- visits_exclude(d, "lifestyle")
+  # Return new dataframe for combining later
+  return(d)
+})
+t <- do.call(rbind, dfs)
+t <- t %>%
+  select(
+    record_number, cv_monthssincepcosdx, ec, ec_remove, metformin,
+    metformin_remove, lifestyle, lifestyle_remove
+  )
+write.csv(t,
+  file = "./Data_Clean/aim_2_data_check.csv", row.names = F, na = ""
+)
 # Get time of medication start for EC, Metformin, "Lifestyle", plus baseline
 # weight and BMI
 df <- df %>%
@@ -56,6 +123,7 @@ df <- df %>%
     time_from_first_progesterone = cv_monthssincepcosdx - time_of_first_progesterone,
     ec_diff = as.numeric(ec) - lead(as.numeric(ec)),
     time_of_first_ec = first(cv_monthssincepcosdx[ec == "Yes" & ec_diff == 0], na_rm = T),
+    time_of_last_ec = first(cv_monthssincepcosdx[ec == "Yes" & ec_diff == 1], na_rm = T),
     time_from_first_ec = cv_monthssincepcosdx - time_of_first_ec,
     metformin_diff = as.numeric(metformin) - lead(as.numeric(metformin)),
     time_of_first_metformin = first(cv_monthssincepcosdx[metformin == "Yes" &
@@ -66,7 +134,7 @@ df <- df %>%
       lifestyle_diff == 0], na_rm = T),
     time_from_first_lifestyle = cv_monthssincepcosdx - time_of_first_lifestyle,
     baseline_weight = first(cv_weight, na_rm = T),
-    baseline_bmi = first(cv_weight, na_rm = T)
+    baseline_bmi = first(cv_bmi, na_rm = T)
   )
 label(df$time_from_first_weight_loss) <- "Months from First Visit on Weight Loss Medication"
 label(df$time_from_first_progesterone) <-
@@ -91,34 +159,38 @@ df <- df %>%
   fill(progesterone_remove, .direction = "down")
 # Don't allow people to go on and off medication, so for example once they've
 # started EC for the first time, exclude any visits where they go back to
-# not on EC after that
+# not on EC after that. If they have random "Yes" visits but never consistently
+# started medication, remove those visits
 df$ec_remove <- NA
 df$ec_remove[which(df$time_from_first_ec > 0 & df$ec == "No")] <- "Remove"
 df <- df %>%
   group_by(record_number) %>%
   fill(ec_remove, .direction = "down")
+df$ec_remove[df$ec == "Yes" & is.na(df$time_from_first_ec)] <- "Remove"
 df$metformin_remove <- NA
 df$metformin_remove[which(df$time_from_first_metformin > 0 & df$metformin == "No")] <- "Remove"
 df <- df %>%
   group_by(record_number) %>%
   fill(metformin_remove, .direction = "down")
+df$metformin_remove[df$metformin == "Yes" & is.na(df$time_from_first_metformin)] <- "Remove"
 df$lifestyle_remove <- NA
 df$lifestyle_remove[which(df$time_from_first_lifestyle > 0 & df$lifestyle == "No")] <- "Remove"
 df <- df %>%
   group_by(record_number) %>%
   fill(lifestyle_remove, .direction = "down")
+df$lifestyle_remove[df$lifestyle == "Yes" & is.na(df$time_from_first_lifestyle)] <- "Remove"
 # Simplify the dataset and write for checking
 df <- df %>%
   select(
     record_number, combined_race, insur_type, cv_age, pcosdx_age,
-    cv_monthssincepcosdx, cv_weight, cv_bmi, baseline_weight, baseline_bmi,
+    cv_monthssincepcosdx, baseline_weight, baseline_bmi,
     cv_medications___16,
     time_from_first_weight_loss, weight_loss, weight_loss_remove,
     time_from_first_progesterone, progesterone, progesterone_remove,
     time_from_first_ec, ec, ec_remove,
     time_from_first_metformin, metformin, metformin_remove,
     time_from_first_lifestyle, lifestyle, lifestyle_remove,
-    cv_a1c, cv_tg, cv_hdl, cv_alt, cv_sbp
+    cv_weight, cv_bmi, cv_a1c, cv_tg, cv_hdl, cv_alt, cv_sbp
   )
 write.csv(df,
   file = "./Data_Clean/aim_2_data_check.csv", row.names = F, na = ""
