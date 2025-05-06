@@ -1955,8 +1955,8 @@ plot_fgsea_transpose <- function(fgsea_res,
                             (NES > 0 & pval <= 0.05 ~ "Positive"),
                             (NES < 0 & pval > 0.05 ~ "Negative p > 0.05"), 
                             (NES > 0 & pval > 0.05 ~ "Positive p > 0.05")),
-      face = case_when((NES < 0 & pval <= 0.05 ~ "bold"), 
-                       (NES > 0 & pval <= 0.05 ~ "bold"),
+      face = case_when((NES < 0 & pval <= 0.05 ~ "plain"), 
+                       (NES > 0 & pval <= 0.05 ~ "plain"),
                        (NES < 0 & pval > 0.05 ~ "plain"), 
                        (NES > 0 & pval > 0.05 ~ "plain")),
       pathway_clean = str_remove(pathway, "^KEGG_"), 
@@ -1986,8 +1986,8 @@ plot_fgsea_transpose <- function(fgsea_res,
     geom_text(aes(group = pathway_clean, color = direction, fontface = face), 
               hjust = 0, size = text1, nudge_x = xnudge) +
     scale_size_binned() +
-    scale_color_manual(values = c("Positive" = "#c75146", "Negative" = "#2c7da0", 
-                                  "Positive p > 0.05" = "#e18c80", "Negative p > 0.05" = "#7ab6d1")) +
+    scale_color_manual(values = c("Positive" = "#963b32", "Negative" = "#1f566f", 
+                                  "Positive p > 0.05" = "#f1bcb6", "Negative p > 0.05" = "#b3d6e5")) +
     scale_x_continuous(limits = c(0, xlimit), expand = expansion(mult = c(0, 0))) +
     scale_y_discrete(expand = expansion(add = 1)) +
     labs(
@@ -2005,7 +2005,7 @@ plot_fgsea_transpose <- function(fgsea_res,
       axis.text.x = element_text(size = text3),
       axis.title = element_text(size = text3),
       axis.ticks.y = element_blank(), 
-      legend.position = c(0.9, 0.2),
+      legend.position = c(0.15, 0.5),
       legend.background = element_blank(),
       legend.box.background = element_rect(color = "black"),
       legend.title = element_text(size = text2),
