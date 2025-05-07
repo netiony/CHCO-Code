@@ -121,9 +121,10 @@ source("Kidney_functions_sc.R")
 
 # 2. Pre-Processing & Qualtiy Control
 ## a. Load Data
+### i. Biopsy Data
 ```{r}
 #Set ids for organoid samples
-ids <- c("CRC-10","CRC-11","CRC-03","RH-50-T","RH-72-T","RH-62-T")
+ids <- c("CRC-10","CRC-11","CRC-03","RH-50-T","RH-72-T","RH-62-T","IT_19")
 
 ##d. Load Data ----
 so_kpmp_sc <- readRDS(fs::path(dir.dat2,"data_raw","PB_90_RPCAFix_Metadata_LR_RM_kpmpV1labelled.rds"))
@@ -214,6 +215,15 @@ so_kpmp_sc@meta.data$medication <- factor(so_kpmp_sc@meta.data$medication, level
 DefaultAssay(so_kpmp_sc) <- "RNA"
 invisible(gc())
 
+#Calculate cell library size for offset
+counts_layer <- round(GetAssayData(so_kpmp_sc, layer = "counts")) # load counts and round
+library_size <- Matrix::colSums(counts_layer) #calculate the column sums aka the sum of all genes in each cell
+so_kpmp_sc$library_size <- library_size #Put into the seurat object
+#Check that it is accessible in the metadata
+meta <- so_kpmp_sc@meta.data #It should be in the dataframe, delete meta data check df
+rm(meta,counts_layer)
+hist(so_kpmp_sc$library_size)
+
 # #Perform Quality Control & Preprocessing Steps
 ncol(so_kpmp_sc) #11386 cells
 nrow(so_kpmp_sc) #31332 genes
@@ -281,8 +291,219 @@ so_kpmp_sc$celltype2 <- ifelse(so_kpmp_sc$KPMP_celltype=="aPT" |
 
 ```
 
+### ii. Organoid Data
+```{r}
+ids <- c("CRC-10","CRC-11","CRC-03","RH-50-T","RH-72-T","RH-62-T","IT_19")
+# unique(sc_org$samples) #"sample_50_15"   "sample_42_15"   "sample_50_30"   "sample_41_1_15" "sample_11_30"   "ITD19_30" #"sample_10_15"   "sample_72_15"   "sample_10_30"   "ITD19_15"       "sample_41_1_30" "sample_72_30"  
+#  "41_G_15"        "sample_42_30"   "41_G_30"        "sample_11_15"  
+# DKD ids were 42, 50 and 72 and the controls were 10, 11 and 41 
+
+# The 10 and 11 have iCRC, the 50 and 72 have RH, and the remaining ones _ 41, 42, and ITD19 _ don’t have any letters.
+#CRC10 -sample_10_15, "sample_10_30
+# CRC11 - sample_11_15, sample_11_30
+# CRC03 (aka ‘line 41) - "41_G_15", "41_G_30" , sample_41_1_15, sample_41_1_30
+
+# RH50T -  "sample_50_30", sample_50_15
+# RH72T -  "sample_72_15" ,sample_72_30
+# RH62T (aka ‘line 42’) - "sample_42_15",  "sample_42_30"
+# IT2D19 - ITD19_30, ITD19_15
+
+#41 iPS clone I
+# 41 iPS clone G
+
+sc_org <- readRDS(fs::path(dir.dat,"scRNA","data_raw","organoids_processed_matrix.rds"))
+meta <- sc_org@meta.data
+
+diab_ids <- c("sample_50_15","sample_50_30","sample_72_15","sample_72_30","sample_42_15","sample_42_30","ITD19_15","ITD19_30")
+control_ids <- c("sample_10_15","sample_10_30","sample_11_15","sample_11_30","41_G_15","41_G_30","sample_41_1_15","sample_41_1_30")
+
+sc_org$diabetes <- ifelse(sc_org$samples %in% diab_ids,"Diabetes","Control")
+sc_org$diabetes <- factor(sc_org$diabetes)
+
+# biopsy_ids <- c("CRC-10","CRC-11","CRC-03","RH-50-T","RH-72-T","RH-62-T","IT_19")
+sc_org@meta.data <- sc_org@meta.data %>% 
+mutate(record_id = case_when(sc_org$samples=="sample_10_15" | sc_org$samples=="sample_10_30" ~ "CRC-10",
+                           sc_org$samples=="sample_11_15" | sc_org$samples=="sample_11_30" ~ "CRC-11",
+                           sc_org$samples=="41_G_15" | sc_org$samples=="41_G_30" | 
+                           sc_org$samples=="sample_41_1_15" | sc_org$samples=="sample_41_1_30" ~"CRC-03",
+                           sc_org$samples=="sample_50_15" | sc_org$samples=="sample_50_30" ~ "RH-50-T",
+                           sc_org$samples=="sample_72_15" | sc_org$samples=="sample_72_30" ~ "RH-72-T",
+                           sc_org$samples=="sample_42_15" | sc_org$samples=="sample_42_30" ~ "RH-62-T",
+                           sc_org$samples=="ITD19_15" | sc_org$samples=="ITD19_30" ~ "IT_19"))
+# meta <- sc_org@meta.data
+
+#Get gene annotations & rename rows
+gene_annotations <- data.frame(sc_org@misc$gene_annotations)
+nrow(sc_org) #62,754 genes
+ncol(sc_org) #194,063 cells
+rownames(sc_org)
+colnames(sc_org)
+
+# #Load harmonized data that has been filtered from 90 to the 83 participants that have baseline single cell data
+harm_meta_data <- read.csv(fs::path(dir.dat,"Kidney scRNAseq Project","Data","harmonized_data_kidney_sc_all_metadata2.csv"))
+
+##e. Filter to 6 organoid samples ----
+meta <- harm_meta_data %>%
+  dplyr::select(-X) %>%
+  filter(record_id %in% ids)
+rm(harm_meta_data)
+#Select metadata from seurat object to facilitate merge of new metadata into seurat object
+meta_kidney_sc <-  sc_org@meta.data
+rownames(meta_kidney_sc) <-NULL
+rownames(meta) <- NULL
+
+#Merge metadata from 83 participants at baseline into seurat object metadata
+meta_kidney_sc <- meta_kidney_sc %>%
+  left_join(meta,by="record_id")
+rownames(meta_kidney_sc) <- rownames(sc_org@meta.data)
+
+#Pull ids from 83 participants at baseline to filter seurat object to these participants only
+ids <- meta$record_id
+
+#Merge metadata back into seurat object
+sc_org <- AddMetaData(sc_org, meta_kidney_sc)
+
+#Check number of unique ids
+length(unique(sc_org$kit_id)) #should be 7
+
+#Remove metadatasets
+rm(meta_kidney_sc,meta)
+
+##f. Merge metadata into filtered seurat object ----
+#Load in most up to date medication data to update medication information
+med <- read.xlsx(fs::path(dir.dat,"Kidney scRNAseq Project/Data/Biopsies_w_mrn_Oct3.xlsx"))
+#Select Metformin, RASSI, Insulin data
+med <- med %>%
+  dplyr::select(all_of(c("record_id","mrn","raasi_1","insulin_1","mfm_1")))
+#Pull seurat object metadata to help harmoinize in new metadata
+meta_kidney_sc <-  sc_org@meta.data
+#Filter to only those with a unique identifier id in the seurat object metadata
+med <- med %>%
+  filter(mrn %in% as.character(meta_kidney_sc$mrn))
+length(unique(med$mrn)) #6 participants
+#Filter to only those that have a unique record id in the seurat object
+med <- med %>%
+  filter(record_id %in% meta_kidney_sc$record_id)
+length(unique(med$mrn)) #7 remain
+length(unique(med$record_id)) #7
+rownames(meta_kidney_sc) <- rownames(sc_org@meta.data)
+med$mrn <- as.numeric(med$mrn) #Make numeric to merge
+#Merge med data with seurat metadata
+meta_kidney_sc <- meta_kidney_sc %>%
+  left_join(med,by=c("mrn","record_id"))
+rownames(meta_kidney_sc) <- rownames(sc_org@meta.data)
+length(unique(meta_kidney_sc$mrn)) #7 remain
+length(unique(meta_kidney_sc$record_id)) #7
+
+#Add Med Meta Data to Seurat object
+sc_org <- AddMetaData(sc_org, meta_kidney_sc)
+#Remove med metadatset
+rm(med,meta_kidney_sc)
+
+#Create medication & disease status groups of interest
+sc_org@meta.data <- sc_org@meta.data %>%
+  mutate(glp1_sglt2=ifelse(epic_glp1ra_1=="Yes" & epic_sglti2_1=="Yes","Yes","No")) %>%
+  mutate(sglt2=ifelse(epic_sglti2_1=="Yes" & epic_glp1ra_1=="No","Yes","No")) %>%
+  mutate(glp1=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="Yes","Yes","No")) %>%
+  mutate(no_med=ifelse(epic_sglti2_1=="No" & epic_glp1ra_1=="No","Yes","No"))
+
+#Define 4 exposure groups:
+#SGLT2i(+)/GLP1RA(+), SGLT2i(+)/GLP1RA(-), SGLT2i(-)/GLPRA(+), SGLT2i(-)/GLP1RA(-)
+invisible(gc())
+sc_org@meta.data <- sc_org@meta.data %>%
+  mutate(medication = case_when(glp1_sglt2 == "Yes" ~ "glp1_sglt2",
+                                sglt2 == "Yes" ~ "sglt2",
+                                glp1 == "Yes" ~ "glp1",
+                                no_med == "Yes" ~ "no_med"))
+sc_org@meta.data$medication <- factor(sc_org@meta.data$medication, levels = c("no_med", "sglt2", "glp1","glp1_sglt2"))
+
+# #Ensure default assay in seurat object to RNA
+DefaultAssay(sc_org) <- "RNA"
+# invisible(gc())
+
+#Calculate cell library size for offset
+counts_layer <- round(GetAssayData(sc_org, layer = "counts")) # load counts and round
+library_size <- Matrix::colSums(counts_layer) #calculate the column sums aka the sum of all genes in each cell
+sc_org$library_size <- library_size #Put into the seurat object
+#Check that it is accessible in the metadata
+meta <- sc_org@meta.data #It should be in the dataframe, delete meta data check df
+rm(meta,counts_layer)
+hist(sc_org$library_size)
+
+# #Perform Quality Control & Preprocessing Steps
+# ncol(sc_org) #11386 cells
+# nrow(sc_org) #31332 genes
+nrow(sc_org) #62,754 genes before filtering
+ncol(sc_org) #194,063 cells before filtering
+#YE JI's filtering code for percent expression
+#Filter out rare genes expressed in less than "gene_pct" of cells
+# expr_matrix <- as.matrix(GetAssayData(sc_org, layer = "counts"))
+# expr_matrix <- as.matrix(GetAssayData(sc_org, assay = "RNA", layer = "counts"))
+expr_matrix <- GetAssayData(sc_org, assay = "RNA", layer = "counts")
+
+# expr_matrix <- as.matrix(sc_org@assays$RNA@layers$counts)
+# Calculate the proportion of cells expressing each gene
+num_cells_per_gene <- rowSums(expr_matrix > 0)  # Count nonzero cells per gene
+total_cells <- ncol(expr_matrix)  # Total number of cells
+gene_proportion <- num_cells_per_gene / total_cells  # Fraction of cells expressing each gene
+remove(expr_matrix)
+# Keep genes expressed in at least "gene_pct" of cells
+genes_to_keep <- names(gene_proportion[gene_proportion >= 0.05])
+sc_org <- subset(sc_org, features = genes_to_keep)
+ncol(sc_org) #11386 nuclei
+nrow(sc_org) # 9209 genes
+
+# Step 2: Remove mitochondrial genes (those starting with "MT")
+mito_genes <- grep("^MT-", rownames(sc_org), value = TRUE)
+#keep_ids <- unique(rownames(sc_org)[which(!rownames(sc_org) %in% mito_genes)])
+# sc_org <- subset(sc_org, features = setdiff(rownames(sc_org), mito_genes))
+# sc_org <- subset(sc_org,kit_id!="KL-0029535")
+#sc_org$Gene <- rownames(sc_org)
+#sc_org <- subset(sc_org, Gene %in% keep_ids)
+sc_org <- subset(sc_org, features = setdiff(rownames(sc_org), mito_genes))
+#sc_org <- subset(sc_org, features = setdiff(rownames(sc_org@assays$RNA@counts), mito_genes))
+# sc_org <- subset(sc_org, !rownames(sc_org) %in% mito_genes)
+# grep("^MT-", rownames(sc_org@assays$RNA@counts), value = TRUE)
+# dim(sc_org@assays$RNA@counts) #9276 186125
+# dim(sc_org@assays$RNA@data) #9276 186125
+# dim(sc_org@assays$RNA)#9276 186125
+sum(grepl("^MT-", rownames(sc_org))) #0
+ncol(sc_org) #11386 cells
+nrow(sc_org) #9196 genes
+
+#Renormalize & Scale after filtering
+sc_org <- NormalizeData(sc_org)
+sc_org <- ScaleData(sc_org, features = VariableFeatures(sc_org))
+
+# #Create general hepatocyte cell type variable
+# #Create PT and TAL pseudobulk cell type variable
+# sc_org$celltype1 <- case_when(grepl("PT-",sc_org$celltype_rpca)~"PT",
+#                                   grepl("TAL-",sc_org$celltype_rpca)~"TAL",
+#                                   grepl("EC-",sc_org$celltype_rpca)~"EC",
+#                                   grepl("POD",sc_org$celltype_rpca)~"POD",
+#                                   grepl("MAC",sc_org$celltype_rpca)~"MAC",
+#                                   grepl("MON",sc_org$celltype_rpca)~"MON",
+#                                   grepl("PC-",sc_org$celltype_rpca)~"PC",
+#                                   grepl("FIB",sc_org$celltype_rpca)~"FIB_MC_VSMC",
+#                                   grepl("DTL",sc_org$celltype_rpca)~"DTL",
+#                                   sc_org$celltype_rpca=="DCT"~"DCT",
+#                                   sc_org$celltype_rpca=="ATL"~"ATL",
+#                                   sc_org$celltype_rpca=="B"~"B",
+#                                   sc_org$celltype_rpca=="T"~"T")
+# sc_org$celltype1 <- as.character(sc_org$celltype1)
+# 
+# sc_org$KPMP_celltype2 <- as.character(sc_org$KPMP_celltype)
+# sc_org$celltype2 <- ifelse(sc_org$KPMP_celltype=="aPT" | 
+#                                  sc_org$KPMP_celltype=="PT-S1/S2" | 
+#                                  sc_org$KPMP_celltype == "PT-S3","PT",
+#                                ifelse(grepl("TAL",sc_org$KPMP_celltype),"TAL",
+#                                       ifelse(grepl("EC-",sc_org$KPMP_celltype),"EC",sc_org$KPMP_celltype2)))
+
+
+```
 
 ## b. Explore Distribution & Zero-Inflation
+### i. Biopsy Data
 ```{r}
 #Check if data have been normalized 
 so_kpmp_sc@assays  # Should show e.g., "RNA" with "counts" and "data"
@@ -338,7 +559,7 @@ dispersion <- dispersion[valid_genes]
 
 # View distribution
 pdf(fs::path(dir.results,"Overdispersion_Visualization.pdf"), width = 8, height = 6)
-hist(dispersion, breaks=300, main="Dispersion across genes", xlab="Dispersion (Var / Mean)",xlim = c(0, 30))
+hist(dispersion, breaks=300, main="Dispersion across genes", xlab="Dispersion (Var / Mean)",xlim = c(0, 10))
 abline(v = 1, col="red")  # Poisson expectation
 dev.off()
 
@@ -362,6 +583,104 @@ if (percent_overdispersed > 10) {
   print("ℹ️ Little evidence of overdispersion. Poisson model may be sufficient.")
 }
 rm(counts)
+
+```
+
+### ii. Organoid Data
+```{r}
+#Check if data have been normalized 
+sc_org@assays  # Should show e.g., "RNA" with "counts" and "data"
+head(GetAssayData(sc_org, layer = "counts")[, 1:5])  # Raw counts
+head(GetAssayData(sc_org, layer = "data")[, 1:5])    # Normalized data
+
+#Check for normality
+# Open a PDF device (all plots go here)
+pdf(fs::path(dir.results,"Organoid_Raw_gene_expression_histograms_counts.pdf"), width = 8, height = 6)
+# Randomly select 100 genes from the Seurat object
+genes <- sample(rownames(sc_org), 100)
+# Set up a 2x3 plotting layout so you can plot multiple histograms in one figure
+par(mfrow = c(2, 3))
+# Loop over each randomly selected gene
+for (g in genes) {
+  
+  # Plot a histogram of the expression values for gene 'g'
+  # using normalized expression values from the "data" slot
+  hist(GetAssayData(sc_org, layer = "counts")[g, ],
+       main = g,                # Title of the plot = gene name
+       xlab = "Raw Counts Expression")     # Label for x-axis
+}
+# Close the PDF device — this writes the file to disk
+dev.off()
+
+pdf(fs::path(dir.results,"Organoid_Normalized_gene_expression_histograms_counts.pdf"), width = 8, height = 6)
+# Randomly select 100 genes from the Seurat object
+genes <- sample(rownames(sc_org), 100)
+# Set up a 2x3 plotting layout so you can plot multiple histograms in one figure
+par(mfrow = c(2, 3))
+# Loop over each randomly selected gene
+for (g in genes) {
+  
+  # Plot a histogram of the expression values for gene 'g'
+  # using normalized expression values from the "data" slot
+  hist(GetAssayData(sc_org, layer = "data")[g, ],
+       main = g,                # Title of the plot = gene name
+       xlab = "Expression")     # Label for x-axis
+}
+# Close the PDF device — this writes the file to disk
+dev.off()
+
+#Check for zero inflation
+pdf(fs::path(dir.results,"Organoid_Zero_Inflation_Visualization.pdf"), width = 8, height = 6)
+counts <- GetAssayData(sc_org, layer = "counts")
+zero_prop <- rowMeans(counts == 0)
+hist(zero_prop, main = "Proportion of Zeros for Genes", xlab = "Zero Proportion")
+# Add a vertical line at 50%
+abline(v = 0.5, col = "red", lwd = 2, lty = 2)
+dev.off()
+
+#Check for overdispersion
+# Use raw counts
+counts <- GetAssayData(sc_org, layer = "counts")
+
+# Pick a few genes or do this genome-wide
+gene_means <- rowMeans(counts)
+gene_vars <- apply(counts, 1, var)
+
+# Dispersion estimate (Var / Mean)
+dispersion <- gene_vars / gene_means
+
+# Filter to only genes where mean > 0 (to avoid divide-by-zero)
+valid_genes <- gene_means > 0
+dispersion <- dispersion[valid_genes]
+
+# View distribution
+pdf(fs::path(dir.results,"Organoid_Overdispersion_Visualization.pdf"), width = 8, height = 6)
+hist(dispersion, breaks=300, main="Dispersion across genes", xlab="Dispersion (Var / Mean)",xlim = c(0, 10))
+abline(v = 1, col="red")  # Poisson expectation
+dev.off()
+
+# Check how many genes have dispersion > 1
+overdispersed_genes <- sum(dispersion > 1)
+total_genes <- length(dispersion)
+percent_overdispersed <- (overdispersed_genes / total_genes) * 100
+
+# Print summary and recommendation
+print(paste0("Overdispersed genes: ", 
+             overdispersed_genes, 
+             " out of ", 
+             total_genes, 
+             " (", 
+             round(percent_overdispersed, 3), 
+             "%)"))
+
+if (percent_overdispersed > 10) {
+  print("✅ Overdispersion detected. Consider using a Negative Binomial model.")
+} else {
+  print("ℹ️ Little evidence of overdispersion. Poisson model may be sufficient.")
+}
+rm(counts)
+
+
 ```
 
 ## c. Select Highly Variable Genes (HVGs)
@@ -592,9 +911,9 @@ cat_covariates <- c("sex", "race_ethnicity", "medication", "mfm_1", "insulin_1")
 plot_list <- list()
 
 for (covariate in cat_covariates) {
-  p <- ggplot(dat, aes_string(x = covariate, fill = "group")) +
+  p <- ggplot(dat, aes_string(x = "group", fill = covariate)) +
     geom_bar(position = "fill") +  # use "dodge" for absolute counts
-    labs(title = paste0("Distribution of ", covariate, " by group"),
+    labs(title = paste0("Distribution of ", covariate),
          y = "Proportion", x = NULL) +
     scale_y_continuous(labels = scales::percent_format()) +
     theme_minimal() +
@@ -615,7 +934,7 @@ for (covariate in con_covariates) {
   p <- ggplot(dat, aes_string(x = "group", y = covariate, fill = "group")) +
     geom_boxplot(outlier.shape = NA, alpha = 0.7) +
     geom_jitter(width = 0.2, alpha = 0.4, color = "black") +  # optional: show points
-    labs(title = paste0("Distribution of ", covariate, " by group"),
+    labs(title = paste0("Distribution of ", covariate),
          x = "Group", y = covariate) +
     theme_minimal() +
     theme(legend.position = "none")
@@ -624,7 +943,7 @@ for (covariate in con_covariates) {
 }
 
 # Display all plots together (adjust ncol/nrow as needed)
-wrap_plots(plot_list, ncol = 4)
+wrap_plots(plot_list, ncol = 3)
 ```
 
 #4. Analysis 
@@ -648,17 +967,18 @@ so_celltype_hvg <- subset(so_celltype, features = hvgs)
 DefaultAssay(so_celltype_hvg) <- "RNA" 
 
 ###
-counts_hvg <- round(GetAssayData(so_celltype_hvg, layer = "counts")) # load counts and round
-meta_hvg <- so_celltype@meta.data
-pred = model.matrix(~group, data = meta_hvg)
-data_g_hvg = list(count=counts_hvg, id=meta_hvg$kit_id, pred=pred)
+# meta_hvg <- so_celltype@meta.data
+# pred = model.matrix(~group, data = meta_hvg)
+# data_g_hvg = list(count=counts_hvg, id=meta_hvg$kit_id, pred=pred)
 
 #Make sure exposure/independent/x variable or group variable is a factor variable
 so_celltype_hvg$group <- factor(so_celltype_hvg$group)
 #Make sure to set reference level
 so_celltype_hvg$group <- relevel(so_celltype_hvg$group,ref="Lean_Control")
 
-offset_hvg = Matrix::colSums(data_g_hvg$count) 
+counts_hvg <- round(GetAssayData(so_celltype_hvg, layer = "counts")) # load counts and round
+
+# offset_hvg = Matrix::colSums(data_g_hvg$count) 
 
 # With parallelization
 # List of genes
@@ -666,18 +986,24 @@ genes_list <- rownames(counts_hvg)
 
 cl <- makeCluster(4)
 registerDoParallel(cl)
- 
+
 start_time <- Sys.time()
 
 nebula_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
   tryCatch({
     count_gene <- counts_hvg[g, , drop = FALSE]
-    meta_gene <- subset(so_celltype_hvg, features = g)@meta.data
+    meta_gene <- so_celltype_hvg@meta.data
     pred_gene <- model.matrix(~group, data = meta_gene)
-    data_g_gene <- group_cell(count = count_gene, id = meta_gene$kit_id, pred = pred_gene)
-
-    result <- nebula(count = count_gene, id = meta_gene$kit_id, pred = pred_gene, ncore = 1,output_re = T,reml=T,covariance=T,
-                     offset=offset_hvg)
+    library <- meta_gene$library_size
+    data_g_gene <- group_cell(count = count_gene, id = meta_gene$kit_id, pred = pred_gene,offset=library)
+    
+    if (is.null(data_g_gene)) {
+      data_g_gene <- list(count = count_gene, id = meta_gene$kit_id, pred = pred_gene, offset = library)
+    }
+    
+    #With offset
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1, reml=T,model="NBLMM",output_re = T,covariance=T,offset=data_g_gene$library)
+    
     list(gene = g, result = result)  # return both gene name and result
     
   }, error = function(e) {
@@ -730,7 +1056,7 @@ full_results <- full_results %>%
 # mutate(fdr3=p.adjust(PValue3,method="fdr"))
 full_results$PValue10 <- -log10(pmax(full_results$`p_groupType_2_Diabetes`, 1e-10))  # Avoid log(0)
 
-write.csv(full_results,fs::path(dir.results,"NEBULA_PT_cells_diabetes_unadjusted_2000_hvg_reml_offset.csv"))
+write.csv(full_results,fs::path(dir.results,"NEBULA_PT_cells_diabetes_unadjusted_2000.csv"))
 
 full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$`logFC_groupType_2_Diabetes` > 0, "lightcoral",
                              ifelse(full_results$fdr < 0.05 & full_results$`logFC_groupType_2_Diabetes` < 0, "lightblue", "gray"))
@@ -757,7 +1083,7 @@ volcano_plot <- ggplot(full_results, aes(x = `logFC_groupType_2_Diabetes`, y = P
   theme_minimal() +  # Minimal theme
   labs(
     title = "Type 2 Diabetes vs. Lean Controls",
-    subtitle = "PT, Unadjusted (REML, Offset)",
+    subtitle = "PT, Unadjusted (REML, Log Normal, Offset)",
     x = "FC",
     y = "-log10(P-Value)",
     color = "FC Direction Direction",
@@ -781,7 +1107,7 @@ volcano_plot
 # pdf(fs::path(dir.results,"Plot_NEBULA_PT_Diabetes_unadjusted_2000_hvg.pdf"),width=10,height=7)
 # print(volcano_plot)
 # dev.off()
-png(fs::path(dir.results, "Plot_NEBULA_PT_Diabetes_unadjusted_2000_hvg_reml_offset.png"), 
+png(fs::path(dir.results, "Plot_NEBULA_PT_Diabetes_unadjusted_2000_hvg_new_offset.png"), 
     width = 3000, height = 2100, res = 300)
 print(volcano_plot)
 dev.off()
@@ -790,10 +1116,10 @@ dev.off()
 
 ### iii. GSEA
 ```{r echo = F}
-full_results <- read.csv(fs::path(dir.results,"NEBULA_Hepatocytes_Steatosis_unadjusted_2000_hvg_reml.csv")) %>%
+full_results <- read.csv(fs::path(dir.results,"NEBULA_PT_cells_diabetes_unadjusted_2000.csv")) %>%
   clean_names() %>% 
   dplyr::select(-x) %>% 
-  dplyr::rename(Gene=gene,LogFC=log_fc_steatosis_cat_high_steatosis_2_3)
+  dplyr::rename(Gene=gene,LogFC=log_fc_group_type_2_diabetes)
 
 # Filter out the gmt files for KEGG, Reactome and GOBP
 list.files(bg_path)
@@ -804,57 +1130,62 @@ reactome <- prepare_gmt(gmt_files[3], unique(full_results$Gene), savefile = FALS
 go <- prepare_gmt(gmt_files[4], unique(full_results$Gene), savefile = FALSE)
 
 # rank genes by t-stats in DiD
-rankings_Hepatocytes <- full_results$LogFC
-names(rankings_Hepatocytes) <- full_results$Gene
-rankings_Hepatocytes <- sort(rankings_Hepatocytes, decreasing = TRUE)
-plot(rankings_Hepatocytes)
-min(rankings_Hepatocytes)
-max(rankings_Hepatocytes)
+rankings_PT <- full_results$LogFC
+names(rankings_PT) <- full_results$Gene
+rankings_PT <- sort(rankings_PT, decreasing = TRUE)
+plot(rankings_PT)
+min(rankings_PT)
+max(rankings_PT)
+
 
 set.seed(1234)
 
-kegg_legacy_res_Hepatocytes <- fgsea(pathways = kegg_legacy,
-                              stats = rankings_Hepatocytes,
-                              scoreType = 'std', 
-                              minSize = 3,
-                              maxSize = 500,
-                              nproc = 1)
+kegg_legacy_res_PT <- fgsea(pathways = kegg_legacy,
+                            stats = rankings_PT,
+                            scoreType = 'std', 
+                            minSize = 3,
+                            maxSize = 500,
+                            nproc = 1)
 
-reactome_res_Hepatocytes <- fgsea(pathways = reactome,
-                           stats = rankings_Hepatocytes,
-                           scoreType = 'std', 
-                           minSize = 3,
-                           maxSize = 500,
-                           nproc = 1)
-go_res_Hepatocytes <- fgsea(pathways = go,
-                     stats = rankings_Hepatocytes,
-                     scoreType = 'std', 
-                     minSize = 5,
-                     maxSize = 500,
-                     nproc = 1)
+reactome_res_PT <- fgsea(pathways = reactome,
+                         stats = rankings_PT,
+                         scoreType = 'std', 
+                         minSize = 3,
+                         maxSize = 500,
+                         nproc = 1)
+go_res_PT <- fgsea(pathways = go,
+                   stats = rankings_PT,
+                   scoreType = 'std', 
+                   minSize = 5,
+                   maxSize = 500,
+                   nproc = 1)
 
-Hepatocytes_fgsea <- data.frame("KEGG Legacy"=c(sum(kegg_legacy_res_Hepatocytes[, padj < 0.05]), sum(kegg_legacy_res_Hepatocytes[, pval < 0.05])),
-                         "REACTOME"=c(sum(reactome_res_Hepatocytes[, padj < 0.05]), sum(reactome_res_Hepatocytes[, pval < 0.05])),
-                         "GO"=c(sum(go_res_Hepatocytes[, padj < 0.05]), sum(go_res_Hepatocytes[, pval < 0.05])))
-rownames(Hepatocytes_fgsea) <- c("adj.pval", "p.val")
-Hepatocytes_fgsea
+PT_fgsea <- data.frame("KEGG Legacy"=c(sum(kegg_legacy_res_PT[, padj < 0.05]), sum(kegg_legacy_res_PT[, pval < 0.05])),
+                       "REACTOME"=c(sum(reactome_res_PT[, padj < 0.05]), sum(reactome_res_PT[, pval < 0.05])),
+                       "GO"=c(sum(go_res_PT[, padj < 0.05]), sum(go_res_PT[, pval < 0.05])))
+rownames(PT_fgsea) <- c("adj.pval", "p.val")
 
 ##### KEGG Legacy
-plot_fgsea_transpose(kegg_legacy_res_Hepatocytes, title = "Hepatocytes Unadjusted Top 30 KEGG (REML)", xnudge = 0.03)
+a <- plot_fgsea_transpose(kegg_legacy_res_PT, title = "PT Unadjusted Top 30 KEGG (REML, Log Normal, Offset)",xlimit = 4, xnudge = 0.03)+ theme(legend.position.inside = c(0.2, 0.5))
 
-ggsave(fs::path(dir.results,"Hepatocytes_top30_kegg_pathways_unadjusted_reml.jpeg"),
-       width = 13, height = 10, scale = 1)
+# ggsave(fs::path(dir.results,"PT_top30_kegg_pathways_unadjusted.jpeg"),
+#        width = 13, height = 10, scale = 1)
 
 ##### REACTOME
-plot_fgsea_transpose(reactome_res_Hepatocytes, title = "Hepatocytes Unadjusted Top 30 REACTOME (REML)", xlimit = 5)
+b <- plot_fgsea_transpose(reactome_res_PT, title = "PT Unadjusted Top 30 REACTOME (REML, Log Normal, Offset)", xlimit = 5) + theme(legend.position.inside = c(0.15, 0.5))
 
-ggsave(fs::path(dir.results,"Hepatocytes_top30_reactome_pathways_unadjusted_reml.jpeg"),
-       width = 13, height = 10, scale = 1)
+# ggsave(fs::path(dir.results,"PT_top30_reactome_pathways_unadjusted.jpeg"),
+#        width = 13, height = 10, scale = 1)
 ##### GO
-plot_fgsea_transpose(go_res_Hepatocytes, title = "Hepatocytes Unadjusted Top 30 GO (REML)", xlimit = 8)
+c <- plot_fgsea_transpose(go_res_PT, title = "PT Unadjusted Top 30 GO (REML, Log Normal, Offset)", xlimit = 8)+ theme(legend.position.inside = c(0.1, 0.5))
 
-ggsave(fs::path(dir.results,"Hepatocytes_top30_go_pathways_unadjusted_reml.jpeg"),
-       width = 13, height = 10, scale = 1)
+# ggsave(fs::path(dir.results,"PT_top30_go_pathways_unadjusted_reml_offset.jpeg"),
+#        width = 13, height = 10, scale = 1)
+
+combined_plot <- a + b + c + plot_layout(ncol = 3)
+print(combined_plot)
+ggsave(fs::path(dir.results,"PT_top30_pathways_unadjusted.jpeg"),
+       width = 40, height = 10, scale = 1)
 ```
 
 ### iv. Targeted Genes
@@ -1207,16 +1538,19 @@ hvgs <- VariableFeatures(so_celltype)
 so_celltype_hvg <- subset(so_celltype, features = hvgs)
 DefaultAssay(so_celltype_hvg) <- "RNA" 
 
-counts_hvg <- round(GetAssayData(so_celltype_hvg, layer = "counts")) # load counts and round
-# meta_hvg_tal <- attempt_so_hvg_tal@meta.data
-# pred = model.matrix(~treatment*visit, data = meta_hvg_tal)
-# data_g_hvg_tal = group_cell(count=counts_hvg_tal, id=meta_hvg_tal$subject, pred=pred)
+###
+# meta_hvg <- so_celltype@meta.data
+# pred = model.matrix(~group, data = meta_hvg)
+# data_g_hvg = list(count=counts_hvg, id=meta_hvg$kit_id, pred=pred)
 
 #Make sure exposure/independent/x variable or group variable is a factor variable
 so_celltype_hvg$group <- factor(so_celltype_hvg$group)
 #Make sure to set reference level
 so_celltype_hvg$group <- relevel(so_celltype_hvg$group,ref="Lean_Control")
 
+counts_hvg <- round(GetAssayData(so_celltype_hvg, layer = "counts")) # load counts and round
+
+# offset_hvg = Matrix::colSums(data_g_hvg$count) 
 
 # With parallelization
 # List of genes
@@ -1224,17 +1558,24 @@ genes_list <- rownames(counts_hvg)
 
 cl <- makeCluster(4)
 registerDoParallel(cl)
- 
+
 start_time <- Sys.time()
 
 nebula_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
   tryCatch({
     count_gene <- counts_hvg[g, , drop = FALSE]
-    meta_gene <- subset(so_celltype_hvg, features = g)@meta.data
+    meta_gene <- so_celltype_hvg@meta.data
     pred_gene <- model.matrix(~group, data = meta_gene)
-    data_g_gene <- group_cell(count = count_gene, id = meta_gene$kit_id, pred = pred_gene)
-
-    result <- nebula(count = count_gene, id = meta_gene$kit_id, pred = pred_gene, ncore = 1,output_re = T)
+    library <- meta_gene$library_size
+    data_g_gene <- group_cell(count = count_gene, id = meta_gene$kit_id, pred = pred_gene,offset=library)
+    
+    if (is.null(data_g_gene)) {
+      data_g_gene <- list(count = count_gene, id = meta_gene$kit_id, pred = pred_gene, offset = library)
+    }
+    
+    #With offset
+    result <- nebula(count = data_g_gene$count, id = data_g_gene$id, pred = data_g_gene$pred, ncore = 1, reml=T,model="NBLMM",output_re = T,covariance=T,offset = data_g_gene$offset)
+    
     list(gene = g, result = result)  # return both gene name and result
     
   }, error = function(e) {
@@ -1287,7 +1628,7 @@ full_results <- full_results %>%
 # mutate(fdr3=p.adjust(PValue3,method="fdr"))
 full_results$PValue10 <- -log10(pmax(full_results$`p_groupType_2_Diabetes`, 1e-10))  # Avoid log(0)
 
-write.csv(full_results,fs::path(dir.results,"NEBULA_aPT_cells_diabetes_unadjusted_2000_hvgreml.csv"))
+write.csv(full_results,fs::path(dir.results,"NEBULA_aPT_cells_diabetes_unadjusted_2000.csv"))
 
 full_results$color <- ifelse(full_results$fdr < 0.05 & full_results$`logFC_groupType_2_Diabetes` > 0, "lightcoral",
                              ifelse(full_results$fdr < 0.05 & full_results$`logFC_groupType_2_Diabetes` < 0, "lightblue", "gray"))
@@ -1314,7 +1655,7 @@ volcano_plot <- ggplot(full_results, aes(x = `logFC_groupType_2_Diabetes`, y = P
   theme_minimal() +  # Minimal theme
   labs(
     title = "Type 2 Diabetes vs. Lean Controls",
-    subtitle = "aPT, Unadjusted",
+    subtitle = "aPT, Unadjusted (REML, Log Normal, Offset)",
     x = "FC",
     y = "-log10(P-Value)",
     color = "FC Direction Direction",
@@ -1343,6 +1684,79 @@ png(fs::path(dir.results, "Plot_NEBULA_aPT_Diabetes_unadjusted_2000_hvg.png"),
 print(volcano_plot)
 dev.off()
 
+```
+### iii. GSEA
+```{r echo = F}
+full_results <- read.csv(fs::path(dir.results,"NEBULA_aPT_cells_diabetes_unadjusted_2000.csv")) %>%
+  clean_names() %>% 
+  dplyr::select(-x) %>% 
+  dplyr::rename(Gene=gene,LogFC=log_fc_group_type_2_diabetes)
+
+# Filter out the gmt files for KEGG, Reactome and GOBP
+list.files(bg_path)
+gmt_files <- list.files(path = bg_path, pattern = '.gmt', full.names = TRUE)
+gmt_files
+kegg_legacy <- prepare_gmt(gmt_files[1], unique(full_results$Gene), savefile = FALSE)
+reactome <- prepare_gmt(gmt_files[3], unique(full_results$Gene), savefile = FALSE)
+go <- prepare_gmt(gmt_files[4], unique(full_results$Gene), savefile = FALSE)
+
+# rank genes by t-stats in DiD
+rankings_PT <- full_results$LogFC
+names(rankings_PT) <- full_results$Gene
+rankings_PT <- sort(rankings_PT, decreasing = TRUE)
+plot(rankings_PT)
+min(rankings_PT)
+max(rankings_PT)
+
+
+set.seed(1234)
+
+kegg_legacy_res_PT <- fgsea(pathways = kegg_legacy,
+                            stats = rankings_PT,
+                            scoreType = 'std', 
+                            minSize = 3,
+                            maxSize = 500,
+                            nproc = 1)
+
+reactome_res_PT <- fgsea(pathways = reactome,
+                         stats = rankings_PT,
+                         scoreType = 'std', 
+                         minSize = 3,
+                         maxSize = 500,
+                         nproc = 1)
+go_res_PT <- fgsea(pathways = go,
+                   stats = rankings_PT,
+                   scoreType = 'std', 
+                   minSize = 5,
+                   maxSize = 500,
+                   nproc = 1)
+
+PT_fgsea <- data.frame("KEGG Legacy"=c(sum(kegg_legacy_res_PT[, padj < 0.05]), sum(kegg_legacy_res_PT[, pval < 0.05])),
+                       "REACTOME"=c(sum(reactome_res_PT[, padj < 0.05]), sum(reactome_res_PT[, pval < 0.05])),
+                       "GO"=c(sum(go_res_PT[, padj < 0.05]), sum(go_res_PT[, pval < 0.05])))
+rownames(PT_fgsea) <- c("adj.pval", "p.val")
+
+##### KEGG Legacy
+a <- plot_fgsea_transpose(kegg_legacy_res_PT, title = "aPT Unadjusted Top 30 KEGG (REML, Log Normal, Offset)",xlimit = 4, xnudge = 0.03)+ theme(legend.position.inside = c(0.2, 0.5))
+
+# ggsave(fs::path(dir.results,"PT_top30_kegg_pathways_unadjusted.jpeg"),
+#        width = 13, height = 10, scale = 1)
+
+##### REACTOME
+b <- plot_fgsea_transpose(reactome_res_PT, title = "aPT Unadjusted Top 30 REACTOME (REML, Log Normal, Offset)", xlimit = 5) + theme(legend.position.inside = c(0.15, 0.5))
+
+# ggsave(fs::path(dir.results,"PT_top30_reactome_pathways_unadjusted.jpeg"),
+#        width = 13, height = 10, scale = 1)
+##### GO
+c <- plot_fgsea_transpose(go_res_PT, title = "aPT Unadjusted Top 30 GO (REML, Log Normal, Offset)", xlimit = 8)+ theme(legend.position.inside = c(0.1, 0.5))
+
+# ggsave(fs::path(dir.results,"PT_top30_go_pathways_unadjusted_reml_offset.jpeg"),
+#        width = 13, height = 10, scale = 1)
+
+combined_plot <- a + b + c + plot_layout(ncol = 3)
+print(combined_plot)
+ggsave(fs::path(dir.results,"aPT_top30_pathways_unadjusted.jpeg"),
+       width = 40, height = 10, scale = 1)
 ```
 
 ## c. PT-S1/S2 
@@ -1380,7 +1794,7 @@ genes_list <- rownames(counts_hvg)
 
 cl <- makeCluster(4)
 registerDoParallel(cl)
- 
+
 start_time <- Sys.time()
 
 nebula_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
@@ -1389,7 +1803,7 @@ nebula_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matrix")
     meta_gene <- subset(so_celltype_hvg, features = g)@meta.data
     pred_gene <- model.matrix(~group, data = meta_gene)
     data_g_gene <- group_cell(count = count_gene, id = meta_gene$kit_id, pred = pred_gene)
-
+    
     result <- nebula(count = count_gene, id = meta_gene$kit_id, pred = pred_gene, ncore = 1,output_re = T)
     list(gene = g, result = result)  # return both gene name and result
     
@@ -1536,7 +1950,7 @@ genes_list <- rownames(counts_hvg)
 
 cl <- makeCluster(4)
 registerDoParallel(cl)
- 
+
 start_time <- Sys.time()
 
 nebula_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
@@ -1545,7 +1959,7 @@ nebula_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matrix")
     meta_gene <- subset(so_celltype_hvg, features = g)@meta.data
     pred_gene <- model.matrix(~group, data = meta_gene)
     data_g_gene <- group_cell(count = count_gene, id = meta_gene$kit_id, pred = pred_gene)
-
+    
     result <- nebula(count = count_gene, id = meta_gene$kit_id, pred = pred_gene, ncore = 1,output_re = T)
     list(gene = g, result = result)  # return both gene name and result
     
@@ -1694,7 +2108,7 @@ genes_list <- rownames(counts_hvg)
 
 cl <- makeCluster(4)
 registerDoParallel(cl)
- 
+
 start_time <- Sys.time()
 
 nebula_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
@@ -1703,7 +2117,7 @@ nebula_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matrix")
     meta_gene <- subset(so_celltype_hvg, features = g)@meta.data
     pred_gene <- model.matrix(~group, data = meta_gene)
     data_g_gene <- group_cell(count = count_gene, id = meta_gene$kit_id, pred = pred_gene)
-
+    
     result <- nebula(count = count_gene, id = meta_gene$kit_id, pred = pred_gene, ncore = 1,output_re = T)
     list(gene = g, result = result)  # return both gene name and result
     
@@ -1846,7 +2260,7 @@ genes_list <- rownames(counts_hvg)
 
 cl <- makeCluster(4)
 registerDoParallel(cl)
- 
+
 start_time <- Sys.time()
 
 nebula_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
@@ -1855,7 +2269,7 @@ nebula_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matrix")
     meta_gene <- subset(so_celltype_hvg, features = g)@meta.data
     pred_gene <- model.matrix(~group, data = meta_gene)
     data_g_gene <- group_cell(count = count_gene, id = meta_gene$kit_id, pred = pred_gene)
-
+    
     result <- nebula(count = count_gene, id = meta_gene$kit_id, pred = pred_gene, ncore = 1,output_re = T)
     list(gene = g, result = result)  # return both gene name and result
     
@@ -1998,7 +2412,7 @@ genes_list <- rownames(counts_hvg)
 
 cl <- makeCluster(4)
 registerDoParallel(cl)
- 
+
 start_time <- Sys.time()
 
 nebula_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
@@ -2007,7 +2421,7 @@ nebula_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matrix")
     meta_gene <- subset(so_celltype_hvg, features = g)@meta.data
     pred_gene <- model.matrix(~group, data = meta_gene)
     data_g_gene <- group_cell(count = count_gene, id = meta_gene$kit_id, pred = pred_gene)
-
+    
     result <- nebula(count = count_gene, id = meta_gene$kit_id, pred = pred_gene, ncore = 1,output_re = T)
     list(gene = g, result = result)  # return both gene name and result
     
@@ -2150,7 +2564,7 @@ genes_list <- rownames(counts_hvg)
 
 cl <- makeCluster(4)
 registerDoParallel(cl)
- 
+
 start_time <- Sys.time()
 
 nebula_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
@@ -2159,7 +2573,7 @@ nebula_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matrix")
     meta_gene <- subset(so_celltype_hvg, features = g)@meta.data
     pred_gene <- model.matrix(~group, data = meta_gene)
     data_g_gene <- group_cell(count = count_gene, id = meta_gene$kit_id, pred = pred_gene)
-
+    
     result <- nebula(count = count_gene, id = meta_gene$kit_id, pred = pred_gene, ncore = 1,output_re = T)
     list(gene = g, result = result)  # return both gene name and result
     
@@ -2301,7 +2715,7 @@ genes_list <- rownames(counts_hvg)
 
 cl <- makeCluster(4)
 registerDoParallel(cl)
- 
+
 start_time <- Sys.time()
 
 nebula_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matrix")) %dopar% {
@@ -2310,7 +2724,7 @@ nebula_results_list <- foreach(g = genes_list, .packages = c("nebula", "Matrix")
     meta_gene <- subset(so_celltype_hvg, features = g)@meta.data
     pred_gene <- model.matrix(~group, data = meta_gene)
     data_g_gene <- group_cell(count = count_gene, id = meta_gene$kit_id, pred = pred_gene)
-
+    
     result <- nebula(count = count_gene, id = meta_gene$kit_id, pred = pred_gene, ncore = 1,output_re = T)
     list(gene = g, result = result)  # return both gene name and result
     
